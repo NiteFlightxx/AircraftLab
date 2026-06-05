@@ -32,11 +32,8 @@ struct AIRCRAFTLAB_API FDroneRotorDefinition
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	FName Name = NAME_None;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	FVector LocalPosition = FVector::ZeroVector;
-
+	FName BoneName = NAME_None;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
 	float SpinDirection = 1.0f;
 };
@@ -82,6 +79,7 @@ struct AIRCRAFTLAB_API FDronePidState
 	float PreviousError = 0.0f;
 	bool bHasPreviousError = false;
 
+	
 	void Reset()
 	{
 		Integral = 0.0f;
@@ -89,6 +87,7 @@ struct AIRCRAFTLAB_API FDronePidState
 		bHasPreviousError = false;
 	}
 
+	
 	float Update(float Error, float DeltaSeconds, const FDronePidGains& Gains)
 	{
 		if (DeltaSeconds <= UE_SMALL_NUMBER)
