@@ -27,10 +27,6 @@ public class AircraftLab : ModuleRules
 			{
 				"Core",
 				"EnhancedInput",
-				"ChaosMover",
-				"Mover",
-				"Chaos",
-				"PhysicsCore",
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);

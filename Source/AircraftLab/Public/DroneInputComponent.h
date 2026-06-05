@@ -22,7 +22,6 @@ public:
 	void ApplyMappingContext() const;
 	void BindInput(UInputComponent* PlayerInputComponent);
 
-	UFUNCTION(BlueprintPure, Category = "Drone|Input")
 	const FDronePilotInput& GetPilotInput() const { return PilotInput; }
 
 	UFUNCTION(BlueprintCallable, Category = "Drone|Input")

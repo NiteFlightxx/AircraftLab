@@ -7,9 +7,8 @@
 #include "AircraftPawn.generated.h"
 
 class UDroneInputComponent;
-class UDroneMoverComponent;
-class UBoxComponent;
-class UStaticMeshComponent;
+class UFlightControllerComponent;
+class USkeletalMeshComponent;
 
 UCLASS()
 class AIRCRAFTLAB_API AAircraftPawn : public APawn
@@ -20,27 +19,21 @@ public:
 	AAircraftPawn();
 
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	
 	UFUNCTION(BlueprintPure, Category = "Drone")
-	UStaticMeshComponent* GetBodyMesh() const { return BodyMesh; }
+	USkeletalMeshComponent* GetBodyMesh() const { return BodyMesh; }
 
 	UFUNCTION(BlueprintPure, Category = "Drone")
 	UDroneInputComponent* GetDroneInputComponent() const { return DroneInput; }
 
-private:
-	void UpdateFlightControl(float DeltaTime);
-	
-	UPROPERTY(EditAnywhere, Category = "Drone|Flight")
-	FDroneFlightConfig Config;
+	UFUNCTION(BlueprintPure, Category = "Drone")
+	UFlightControllerComponent* GetFlightControllerComponent() const { return FlightController; }
 
-	UPROPERTY(EditAnywhere, Category = "Drone|Flight")
-	TArray<FDroneRotorDefinition> Rotors;
-	
-	FDronePidState VerticalVelocityPidState;
-	FDronePidState RollAnglePidState;
-	FDronePidState PitchAnglePidState;
-	FDronePidState YawRatePidState;
+private:
+
+
 
 private:
 
@@ -49,5 +42,8 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UDroneInputComponent> DroneInput;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UFlightControllerComponent> FlightController;
 
 };

@@ -1,24 +1,26 @@
 #include "AircraftPawn.h"
 
-#include "Components/BoxComponent.h"
-#include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "DroneInputComponent.h"
-#include "DroneMoverComponent.h"
 #include "Engine/CollisionProfile.h"
+#include "FlightControllerComponent.h"
 
 AAircraftPawn::AAircraftPawn()
 {
-	PrimaryActorTick.bCanEverTick = false;
-
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickGroup = TG_PrePhysics;
 	
-	BodyMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BodyMesh"));
-	
-	BodyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	BodyMesh->SetSimulatePhysics(false);
+	BodyMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("BodyMesh"));
 	RootComponent = BodyMesh;
 
-	DroneInput = CreateDefaultSubobject<UDroneInputComponent>(TEXT("DroneInput"));
+	BodyMesh->SetCollisionProfileName(UCollisionProfile::PhysicsActor_ProfileName);
+	BodyMesh->SetSimulatePhysics(true);
+	BodyMesh->SetEnableGravity(true);
+	BodyMesh->SetLinearDamping(0.6f);
+	BodyMesh->SetAngularDamping(1.5f);
 
+	DroneInput = CreateDefaultSubobject<UDroneInputComponent>(TEXT("DroneInput"));
+	FlightController = CreateDefaultSubobject<UFlightControllerComponent>(TEXT("FlightController"));
 	AutoPossessPlayer = EAutoReceiveInput::Player0;
 }
 
@@ -27,7 +29,12 @@ void AAircraftPawn::BeginPlay()
 	Super::BeginPlay();
 
 	DroneInput->ApplyMappingContext();
-	
+	BodyMesh->WakeAllRigidBodies();
+}
+
+void AAircraftPawn::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
 }
 
 void AAircraftPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -37,6 +44,3 @@ void AAircraftPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 	DroneInput->BindInput(PlayerInputComponent);
 }
 
-void AAircraftPawn::UpdateFlightControl(float DeltaTime)
-{
-}
