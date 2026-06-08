@@ -75,6 +75,16 @@ protected:
 	FVector ComputeDesiredHorizontalVelocity(const FDronePilotInput& PilotInput) const;
 	FVector ComputeDesiredHorizontalAcceleration(const FDronePilotInput& PilotInput, float DeltaSeconds);
 	FDroneRotorMixerCoefficients BuildMixerCoefficients(const UAirscrewComponent* Airscrew, const FVector& LocalPosition, float MaxAbsX, float MaxAbsY) const;
+	void LogRotorLayoutIfNeeded();
+	void MaybeEmitDebugLog(
+		const FDronePilotInput& PilotInput,
+		float DeltaSeconds,
+		float CollectiveCommand,
+		float DesiredVerticalVelocity,
+		const FRotator& DesiredAttitude,
+		float DesiredYawRate,
+		const FVector& DesiredBodyRates,
+		const FVector& AxisCommands);
 
 	float MapCenteredThrottleToCollective(float ThrottleInput) const;
 	float GetWorldGravityMagnitude() const;
@@ -106,6 +116,21 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController", meta = (ClampMin = "1.0"))
 	float ControlLoopRateHz = 250.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
+	bool bEnableDebugLog = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
+	bool bLogRotorCommands = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
+	bool bLogRotorLayout = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
+	bool bLogSignDiagnostics = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug", meta = (ClampMin = "0.0"))
+	float DebugLogIntervalSeconds = 0.20f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float HorizontalHoldStickDeadband = 0.08f;
@@ -186,4 +211,9 @@ private:
 	bool bYawHoldInitialized = false;
 	FVector PreviousLinearVelocityCmPerSec = FVector::ZeroVector;
 	bool bHasPreviousLinearVelocity = false;
+	float DebugLogAccumulatorSeconds = 0.0f;
+	bool bHasLoggedRotorLayout = false;
+	FRotator PreviousDebugAttitudeDegrees = FRotator::ZeroRotator;
+	float PreviousDebugSampleTimeSeconds = 0.0f;
+	bool bHasPreviousDebugSample = false;
 };

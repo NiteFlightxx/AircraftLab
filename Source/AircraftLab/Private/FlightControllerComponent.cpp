@@ -9,6 +9,103 @@
 #include "GameFramework/Actor.h"
 #include "Math/RotationMatrix.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogFlightController, Log, All);
+
+namespace FlightControllerDebug
+{
+const TCHAR* GetArmStateLabel(EDroneArmState ArmState)
+{
+	switch (ArmState)
+	{
+	case EDroneArmState::Disarmed:
+		return TEXT("Disarmed");
+	case EDroneArmState::Arming:
+		return TEXT("Arming");
+	case EDroneArmState::Armed:
+		return TEXT("Armed");
+	case EDroneArmState::Failsafe:
+		return TEXT("Failsafe");
+	case EDroneArmState::EmergencyStop:
+		return TEXT("EmergencyStop");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+const TCHAR* GetFlightModeLabel(EDroneFlightMode FlightMode)
+{
+	switch (FlightMode)
+	{
+	case EDroneFlightMode::Manual:
+		return TEXT("Manual");
+	case EDroneFlightMode::Acro:
+		return TEXT("Acro");
+	case EDroneFlightMode::Angle:
+		return TEXT("Angle");
+	case EDroneFlightMode::AltitudeHold:
+		return TEXT("AltitudeHold");
+	case EDroneFlightMode::PositionHold:
+		return TEXT("PositionHold");
+	case EDroneFlightMode::VelocityHold:
+		return TEXT("VelocityHold");
+	case EDroneFlightMode::Mission:
+		return TEXT("Mission");
+	case EDroneFlightMode::ReturnToHome:
+		return TEXT("ReturnToHome");
+	case EDroneFlightMode::AutoLand:
+		return TEXT("AutoLand");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+const TCHAR* GetSpinDirectionLabel(EDroneRotorSpinDirection SpinDirection)
+{
+	switch (SpinDirection)
+	{
+	case EDroneRotorSpinDirection::Clockwise:
+		return TEXT("CW");
+	case EDroneRotorSpinDirection::CounterClockwise:
+		return TEXT("CCW");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+int32 GetSignBucket(float Value, float Deadband)
+{
+	if (Value > Deadband)
+	{
+		return 1;
+	}
+
+	if (Value < -Deadband)
+	{
+		return -1;
+	}
+
+	return 0;
+}
+
+const TCHAR* GetSignLabel(int32 SignBucket)
+{
+	switch (SignBucket)
+	{
+	case 1:
+		return TEXT("+");
+	case -1:
+		return TEXT("-");
+	default:
+		return TEXT("0");
+	}
+}
+
+const TCHAR* GetConsistencyLabel(bool bIsConsistent)
+{
+	return bIsConsistent ? TEXT("OK") : TEXT("Mismatch");
+}
+}
+
 UFlightControllerComponent::UFlightControllerComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -282,6 +379,26 @@ void UFlightControllerComponent::UpdateRequestedModeAndArmState(const FDronePilo
 	{
 		ResetControllerState();
 	}
+
+	if (PreviousArmState != ArmState)
+	{
+		UE_LOG(
+			LogFlightController,
+			Log,
+			TEXT("[State] Arm %s -> %s"),
+			FlightControllerDebug::GetArmStateLabel(PreviousArmState),
+			FlightControllerDebug::GetArmStateLabel(ArmState));
+	}
+
+	if (PreviousFlightMode != ActiveFlightMode)
+	{
+		UE_LOG(
+			LogFlightController,
+			Log,
+			TEXT("[State] FlightMode %s -> %s"),
+			FlightControllerDebug::GetFlightModeLabel(PreviousFlightMode),
+			FlightControllerDebug::GetFlightModeLabel(ActiveFlightMode));
+	}
 }
 
 void UFlightControllerComponent::UpdateHomeState(bool bForceResetHome)
@@ -333,6 +450,15 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 	ControlOutput.Wrench.BodyTorque = AxisCommands;
 
 	AllocateToRotors(CollectiveCommand, AxisCommands);
+	MaybeEmitDebugLog(
+		PilotInput,
+		DeltaSeconds,
+		CollectiveCommand,
+		DesiredVerticalVelocity,
+		DesiredAttitude,
+		DesiredYawRate,
+		DesiredBodyRates,
+		AxisCommands);
 }
 
 void UFlightControllerComponent::ResetControllerState()
@@ -352,6 +478,10 @@ void UFlightControllerComponent::ResetControllerState()
 	HeldPositionCm = EstimatedState.State.PositionCm;
 	HeldAltitudeCm = EstimatedState.State.PositionCm.Z;
 	HeldYawDegrees = EstimatedState.State.AttitudeDegrees.Yaw;
+	DebugLogAccumulatorSeconds = DebugLogIntervalSeconds;
+	PreviousDebugAttitudeDegrees = EstimatedState.State.AttitudeDegrees;
+	PreviousDebugSampleTimeSeconds = EstimatedState.State.TimeSeconds;
+	bHasPreviousDebugSample = false;
 }
 
 void UFlightControllerComponent::StopAllRotors(bool bResetController)
@@ -407,6 +537,10 @@ void UFlightControllerComponent::UpdateRotorCache()
 		Airscrews.Add(Airscrew);
 		Airscrew->AddTickPrerequisiteComponent(this);
 	}
+
+	bHasLoggedRotorLayout = false;
+	DebugLogAccumulatorSeconds = DebugLogIntervalSeconds;
+	bHasPreviousDebugSample = false;
 }
 
 float UFlightControllerComponent::ComputeVerticalControl(const FDronePilotInput& PilotInput, float DeltaSeconds, float& OutDesiredVerticalVelocity)
@@ -872,6 +1006,299 @@ FDroneRotorMixerCoefficients UFlightControllerComponent::BuildMixerCoefficients(
 	return Mixer;
 }
 
+void UFlightControllerComponent::LogRotorLayoutIfNeeded()
+{
+	if (!bEnableDebugLog || !bLogRotorLayout || bHasLoggedRotorLayout || Airscrews.IsEmpty())
+	{
+		return;
+	}
+
+	float MaxAbsX = 1.0f;
+	float MaxAbsY = 1.0f;
+	const FTransform BodyTransform = BodyPrimitive ? BodyPrimitive->GetComponentTransform() : FTransform::Identity;
+	TArray<FVector> RotorLocalPositions;
+	RotorLocalPositions.Reserve(Airscrews.Num());
+
+	for (UAirscrewComponent* Airscrew : Airscrews)
+	{
+		if (!Airscrew)
+		{
+			RotorLocalPositions.Add(FVector::ZeroVector);
+			continue;
+		}
+
+		const FVector LocalPosition = BodyPrimitive
+			? BodyTransform.InverseTransformPositionNoScale(Airscrew->GetComponentLocation())
+			: Airscrew->GetRelativeLocation();
+
+		RotorLocalPositions.Add(LocalPosition);
+		MaxAbsX = FMath::Max(MaxAbsX, FMath::Abs(LocalPosition.X));
+		MaxAbsY = FMath::Max(MaxAbsY, FMath::Abs(LocalPosition.Y));
+	}
+
+	const FString OwnerName = GetOwner() ? GetOwner()->GetName() : TEXT("None");
+	UE_LOG(LogFlightController, Log, TEXT("[RotorLayout] Owner=%s Rotors=%d"), *OwnerName, Airscrews.Num());
+
+	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
+	{
+		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
+		if (!Airscrew)
+		{
+			continue;
+		}
+
+		const FVector LocalPosition = RotorLocalPositions.IsValidIndex(RotorIndex)
+			? RotorLocalPositions[RotorIndex]
+			: FVector::ZeroVector;
+		const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
+		const FDroneRotorMixerCoefficients Mixer = BuildMixerCoefficients(Airscrew, LocalPosition, MaxAbsX, MaxAbsY);
+		const FVector ThrustAxisLocal = RotorDefinition.GetNormalizedThrustAxisLocal();
+		const FName RotorName = RotorDefinition.RotorName.IsNone()
+			? Airscrew->GetFName()
+			: RotorDefinition.RotorName;
+
+		UE_LOG(
+			LogFlightController,
+			Log,
+			TEXT("[RotorLayout] [%d] %s Pos=(%.1f, %.1f, %.1f) Axis=(%.2f, %.2f, %.2f) Spin=%s Mix=(C %.2f R %.2f P %.2f Y %.2f) Scale=%.2f MaxRpm=%.0f IdleRpm=%.0f MaxThrust=%.1f"),
+			RotorIndex,
+			*RotorName.ToString(),
+			LocalPosition.X,
+			LocalPosition.Y,
+			LocalPosition.Z,
+			ThrustAxisLocal.X,
+			ThrustAxisLocal.Y,
+			ThrustAxisLocal.Z,
+			FlightControllerDebug::GetSpinDirectionLabel(RotorDefinition.SpinDirection),
+			Mixer.Collective,
+			Mixer.Roll,
+			Mixer.Pitch,
+			Mixer.Yaw,
+			RotorDefinition.ControlAuthorityScale,
+			RotorDefinition.Motor.MaxRpm,
+			RotorDefinition.Motor.IdleRpm,
+			RotorDefinition.GetEffectiveMaxThrust());
+	}
+
+	bHasLoggedRotorLayout = true;
+}
+
+void UFlightControllerComponent::MaybeEmitDebugLog(
+	const FDronePilotInput& PilotInput,
+	float DeltaSeconds,
+	float CollectiveCommand,
+	float DesiredVerticalVelocity,
+	const FRotator& DesiredAttitude,
+	float DesiredYawRate,
+	const FVector& DesiredBodyRates,
+	const FVector& AxisCommands)
+{
+	if (!bEnableDebugLog)
+	{
+		return;
+	}
+
+	LogRotorLayoutIfNeeded();
+
+	DebugLogAccumulatorSeconds += DeltaSeconds;
+	if (DebugLogIntervalSeconds > UE_SMALL_NUMBER
+		&& DebugLogAccumulatorSeconds + UE_SMALL_NUMBER < DebugLogIntervalSeconds)
+	{
+		return;
+	}
+
+	DebugLogAccumulatorSeconds = 0.0f;
+
+	const FRotator CurrentAttitude = EstimatedState.State.AttitudeDegrees;
+	const FVector CurrentVelocity = EstimatedState.State.VelocityCmPerSec;
+	const FVector CurrentBodyRates = EstimatedState.State.AngularVelocityBodyDegreesPerSec;
+	const float RollError = FRotator::NormalizeAxis(DesiredAttitude.Roll - CurrentAttitude.Roll);
+	const float PitchError = FRotator::NormalizeAxis(DesiredAttitude.Pitch - CurrentAttitude.Pitch);
+	const bool bYawHoldActive = UsesYawHoldMode() && FMath::Abs(PilotInput.Yaw) <= YawHoldStickDeadband;
+	const float YawError = bYawHoldActive
+		? FRotator::NormalizeAxis(HeldYawDegrees - CurrentAttitude.Yaw)
+		: 0.0f;
+
+	UE_LOG(
+		LogFlightController,
+		Log,
+		TEXT("[Ctrl] t=%.2f Mode=%s Arm=%s Input[T %.2f R %.2f P %.2f Y %.2f] Alt[Z %.1f Held %.1f Vz %.1f DesVz %.1f Col %.3f] Att[P %.2f/%.2f E %.2f | Y %.2f Held %.2f E %.2f | R %.2f/%.2f E %.2f] Rate[R %.2f/%.2f I %.3f | P %.2f/%.2f I %.3f | Y %.2f/%.2f I %.3f] Axis[R %.3f P %.3f Y %.3f] VelXY=(%.1f, %.1f)"),
+		EstimatedState.State.TimeSeconds,
+		FlightControllerDebug::GetFlightModeLabel(ActiveFlightMode),
+		FlightControllerDebug::GetArmStateLabel(ArmState),
+		PilotInput.Throttle,
+		PilotInput.Roll,
+		PilotInput.Pitch,
+		PilotInput.Yaw,
+		EstimatedState.State.PositionCm.Z,
+		HeldAltitudeCm,
+		CurrentVelocity.Z,
+		DesiredVerticalVelocity,
+		CollectiveCommand,
+		CurrentAttitude.Pitch,
+		DesiredAttitude.Pitch,
+		PitchError,
+		CurrentAttitude.Yaw,
+		HeldYawDegrees,
+		YawError,
+		CurrentAttitude.Roll,
+		DesiredAttitude.Roll,
+		RollError,
+		CurrentBodyRates.X,
+		DesiredBodyRates.X,
+		RatePidState.Roll.Integral,
+		CurrentBodyRates.Y,
+		DesiredBodyRates.Y,
+		RatePidState.Pitch.Integral,
+		CurrentBodyRates.Z,
+		DesiredYawRate,
+		RatePidState.Yaw.Integral,
+		AxisCommands.X,
+		AxisCommands.Y,
+		AxisCommands.Z,
+		CurrentVelocity.X,
+		CurrentVelocity.Y);
+
+	if (Airscrews.IsEmpty())
+	{
+		PreviousDebugAttitudeDegrees = CurrentAttitude;
+		PreviousDebugSampleTimeSeconds = EstimatedState.State.TimeSeconds;
+		bHasPreviousDebugSample = true;
+		return;
+	}
+
+	float MaxAbsX = 1.0f;
+	float MaxAbsY = 1.0f;
+	const FTransform BodyTransform = BodyPrimitive ? BodyPrimitive->GetComponentTransform() : FTransform::Identity;
+	TArray<FVector> RotorLocalPositions;
+	RotorLocalPositions.Reserve(Airscrews.Num());
+
+	for (UAirscrewComponent* Airscrew : Airscrews)
+	{
+		if (!Airscrew)
+		{
+			RotorLocalPositions.Add(FVector::ZeroVector);
+			continue;
+		}
+
+		const FVector LocalPosition = BodyPrimitive
+			? BodyTransform.InverseTransformPositionNoScale(Airscrew->GetComponentLocation())
+			: Airscrew->GetRelativeLocation();
+
+		RotorLocalPositions.Add(LocalPosition);
+		MaxAbsX = FMath::Max(MaxAbsX, FMath::Abs(LocalPosition.X));
+		MaxAbsY = FMath::Max(MaxAbsY, FMath::Abs(LocalPosition.Y));
+	}
+
+	FString RotorSummary;
+	float LeftCommandSum = 0.0f;
+	float RightCommandSum = 0.0f;
+	int32 LeftCommandCount = 0;
+	int32 RightCommandCount = 0;
+
+	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
+	{
+		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
+		const FDroneRotorCommand* RotorCommand = ControlOutput.RotorCommands.IsValidIndex(RotorIndex)
+			? &ControlOutput.RotorCommands[RotorIndex]
+			: nullptr;
+
+		if (!Airscrew || !RotorCommand)
+		{
+			continue;
+		}
+
+		const FVector LocalPosition = RotorLocalPositions.IsValidIndex(RotorIndex)
+			? RotorLocalPositions[RotorIndex]
+			: FVector::ZeroVector;
+		const FDroneRotorMixerCoefficients Mixer = BuildMixerCoefficients(Airscrew, LocalPosition, MaxAbsX, MaxAbsY);
+
+		if (LocalPosition.Y > UE_SMALL_NUMBER)
+		{
+			RightCommandSum += RotorCommand->NormalizedCommand;
+			++RightCommandCount;
+		}
+		else if (LocalPosition.Y < -UE_SMALL_NUMBER)
+		{
+			LeftCommandSum += RotorCommand->NormalizedCommand;
+			++LeftCommandCount;
+		}
+
+		if (bLogRotorCommands)
+		{
+			RotorSummary += FString::Printf(
+				TEXT("[%d:%s Y=%+.1f MixR=%+.2f Cmd=%.3f Cur=%.3f Rpm=%.0f Thr=%.1f] "),
+				RotorIndex,
+				*RotorCommand->RotorName.ToString(),
+				LocalPosition.Y,
+				Mixer.Roll,
+				RotorCommand->NormalizedCommand,
+				Airscrew->GetCurrentCommand(),
+				RotorCommand->CurrentRpm,
+				RotorCommand->GeneratedThrust);
+		}
+	}
+
+	if (bLogRotorCommands && !RotorSummary.IsEmpty())
+	{
+		UE_LOG(LogFlightController, Log, TEXT("[Rotors] %s"), *RotorSummary);
+	}
+
+	if (bLogSignDiagnostics)
+	{
+		const float SampleDeltaSeconds = bHasPreviousDebugSample
+			? FMath::Max(EstimatedState.State.TimeSeconds - PreviousDebugSampleTimeSeconds, 0.0f)
+			: 0.0f;
+		const float RollDeltaDegrees = bHasPreviousDebugSample
+			? FRotator::NormalizeAxis(CurrentAttitude.Roll - PreviousDebugAttitudeDegrees.Roll)
+			: 0.0f;
+		const float LeftAverageCommand = LeftCommandCount > 0 ? LeftCommandSum / static_cast<float>(LeftCommandCount) : 0.0f;
+		const float RightAverageCommand = RightCommandCount > 0 ? RightCommandSum / static_cast<float>(RightCommandCount) : 0.0f;
+		const float RightMinusLeftCommand = RightAverageCommand - LeftAverageCommand;
+
+		const int32 RollAngleDeltaSign = FlightControllerDebug::GetSignBucket(RollDeltaDegrees, 0.05f);
+		const int32 BodyRateXSign = FlightControllerDebug::GetSignBucket(CurrentBodyRates.X, 1.0f);
+		const int32 RollErrorSign = FlightControllerDebug::GetSignBucket(RollError, 0.1f);
+		const int32 DesiredRollRateSign = FlightControllerDebug::GetSignBucket(DesiredBodyRates.X, 0.5f);
+		const int32 AxisRollSign = FlightControllerDebug::GetSignBucket(AxisCommands.X, 0.005f);
+		const int32 RightMinusLeftSign = FlightControllerDebug::GetSignBucket(RightMinusLeftCommand, 0.01f);
+		const int32 ExpectedRightMinusLeftSign = AxisRollSign == 0 ? 0 : -AxisRollSign;
+
+		const bool bRateVsAngleConsistent = !bHasPreviousDebugSample
+			|| RollAngleDeltaSign == 0
+			|| BodyRateXSign == 0
+			|| RollAngleDeltaSign == BodyRateXSign;
+		const bool bOuterLoopConsistent = RollErrorSign == 0
+			|| DesiredRollRateSign == 0
+			|| RollErrorSign == DesiredRollRateSign;
+		const bool bMixerResponseConsistent = AxisRollSign == 0
+			|| RightMinusLeftSign == 0
+			|| ExpectedRightMinusLeftSign == RightMinusLeftSign;
+
+		UE_LOG(
+			LogFlightController,
+			Log,
+			TEXT("[Diag] Roll dA=%.2f dt=%.3f AngleDeltaSign=%s BodyRateXSign=%s RollErrorSign=%s DesiredRollRateSign=%s AxisRollSign=%s RightMinusLeft=%.3f Sign=%s ExpSign=%s RateVsAngle=%s ErrorVsRate=%s AxisVsMixer=%s"),
+			RollDeltaDegrees,
+			SampleDeltaSeconds,
+			FlightControllerDebug::GetSignLabel(RollAngleDeltaSign),
+			FlightControllerDebug::GetSignLabel(BodyRateXSign),
+			FlightControllerDebug::GetSignLabel(RollErrorSign),
+			FlightControllerDebug::GetSignLabel(DesiredRollRateSign),
+			FlightControllerDebug::GetSignLabel(AxisRollSign),
+			RightMinusLeftCommand,
+			FlightControllerDebug::GetSignLabel(RightMinusLeftSign),
+			FlightControllerDebug::GetSignLabel(ExpectedRightMinusLeftSign),
+			FlightControllerDebug::GetConsistencyLabel(bRateVsAngleConsistent),
+			FlightControllerDebug::GetConsistencyLabel(bOuterLoopConsistent),
+			FlightControllerDebug::GetConsistencyLabel(bMixerResponseConsistent));
+	}
+
+	PreviousDebugAttitudeDegrees = CurrentAttitude;
+	PreviousDebugSampleTimeSeconds = EstimatedState.State.TimeSeconds;
+	bHasPreviousDebugSample = true;
+}
+
 float UFlightControllerComponent::MapCenteredThrottleToCollective(float ThrottleInput) const
 {
 	const float ClampedInput = FMath::Clamp(ThrottleInput, -1.0f, 1.0f);
@@ -977,7 +1404,10 @@ FVector UFlightControllerComponent::GetBodyAngularVelocityDegreesPerSecond() con
 	}
 
 	const FVector AngularVelocityWorld = BodyPrimitive->GetPhysicsAngularVelocityInDegrees();
-	return BodyPrimitive->GetComponentTransform().InverseTransformVectorNoScale(AngularVelocityWorld);
+	const FVector AngularVelocityBody = BodyPrimitive->GetComponentTransform().InverseTransformVectorNoScale(AngularVelocityWorld);
+
+	// Match the local physics angular velocity signs to the FRotator pitch/roll conventions used by the attitude loop.
+	return FVector(-AngularVelocityBody.X, -AngularVelocityBody.Y, AngularVelocityBody.Z);
 }
 
 FVector UFlightControllerComponent::GetBodyLinearVelocityCmPerSec() const
