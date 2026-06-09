@@ -153,49 +153,46 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
 	FDroneFlightControllerConfig ControllerConfig;
 
-	
-	
-	
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	EDroneArmState ArmState = EDroneArmState::Disarmed;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	EDroneFlightMode ActiveFlightMode = EDroneFlightMode::Angle;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDroneEstimatedState EstimatedState;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDroneControlOutput ControlOutput;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDroneCartesianPidState PositionPidState;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDroneCartesianPidState VelocityPidState;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDroneEulerPidState AnglePidState;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDroneEulerPidState RatePidState;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDronePidState AltitudePidState;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDronePidState VerticalVelocityPidState;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDroneHomeState HomeState;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FVector HeldPositionCm = FVector::ZeroVector;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	float HeldAltitudeCm = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	float HeldYawDegrees = 0.0f;
 
 private:
