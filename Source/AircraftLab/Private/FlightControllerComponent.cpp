@@ -996,7 +996,8 @@ FDroneRotorMixerCoefficients UFlightControllerComponent::BuildMixerCoefficients(
 	FDroneRotorMixerCoefficients Mixer;
 	Mixer.Collective = 1.0f;
 	Mixer.Roll = MaxAbsY > UE_SMALL_NUMBER ? FMath::Clamp(-LocalPosition.Y / MaxAbsY, -1.0f, 1.0f) : 0.0f;
-	Mixer.Pitch = MaxAbsX > UE_SMALL_NUMBER ? FMath::Clamp(-LocalPosition.X / MaxAbsX, -1.0f, 1.0f) : 0.0f;
+	//Mixer.Pitch = MaxAbsX > UE_SMALL_NUMBER ? FMath::Clamp(-LocalPosition.X / MaxAbsX, -1.0f, 1.0f) : 0.0f;
+	Mixer.Pitch = MaxAbsX > UE_SMALL_NUMBER ? FMath::Clamp(LocalPosition.X / MaxAbsX, -1.0f, 1.0f) : 0.0f;
 	Mixer.Yaw = RotorDefinition.GetSpinDirectionSign();
 
 	Mixer.Roll *= RotorDefinition.ControlAuthorityScale;
