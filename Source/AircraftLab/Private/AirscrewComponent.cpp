@@ -133,6 +133,7 @@ void UAirscrewComponent::ApplyThrustForce()
 
 	TargetPrimitive->AddForceAtLocation(CurrentThrustVectorWorld, CurrentApplicationPointWorld, TEXT("Root"));
 	TargetPrimitive->AddTorqueInRadians(CurrentReactionTorqueVectorWorld, TEXT("Root"));
+
 }
 
 void UAirscrewComponent::DrawDebugVisualization() const
@@ -196,7 +197,14 @@ UPrimitiveComponent* UAirscrewComponent::ResolveTargetPrimitive() const
 FVector UAirscrewComponent::GetThrustDirectionWorld() const
 {
 	const FVector WorldDirection = GetComponentTransform().TransformVectorNoScale(RotorDefinition.GetNormalizedThrustAxisLocal());
-	return WorldDirection.IsNearlyZero() ? GetUpVector() : WorldDirection.GetSafeNormal();
+	
+	FVector UpVector=FVector::ZeroVector;
+	
+	UpVector.X= GetUpVector().X>0.05?GetUpVector().X:0.f;
+	UpVector.Y= GetUpVector().Y>0.05?GetUpVector().Y:0.f;
+	UpVector.Z= GetUpVector().Z>0.05?GetUpVector().Z:0.f;
+	
+	return UpVector;
 }
 
 float UAirscrewComponent::GetEffectiveTargetCommand() const
