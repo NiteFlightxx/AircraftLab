@@ -59,7 +59,7 @@ public:
 	const FDroneRotorDefinition& GetRotorDefinition() const { return RotorDefinition; }
 	bool IsRotorEnabled() const { return RotorDefinition.IsEnabled(); }
 
-protected:
+public:
 	void SyncDefinitionFromComponentTransform();
 	void UpdateRotorState(float DeltaTime);
 	void ApplyThrustForce();

@@ -325,7 +325,6 @@ void UFlightControllerComponent::UpdateEstimatedState(float DeltaSeconds)
 	EstimatedState.State.AttitudeDegrees = BodyPrimitive->GetComponentRotation();
 	EstimatedState.State.AngularVelocityBodyDegreesPerSec = GetBodyAngularVelocityDegreesPerSecond();
 	EstimatedState.State.AngularAccelerationBodyDegreesPerSecSq = FVector::ZeroVector;
-	EstimatedState.PositionSource = EDronePositionSource::GroundTruth;
 	EstimatedState.AltitudeReference = EDroneAltitudeReference::WorldZ;
 	EstimatedState.AttitudeConfidence = 1.0f;
 	EstimatedState.PositionConfidence = 1.0f;
@@ -391,6 +390,19 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 	ControlOutput.Wrench.BodyTorque = AxisCommands;
 
 	AllocateToRotors(CollectiveCommand, AxisCommands);
+	
+	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
+	{
+		UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
+		if (!Airscrew)
+		{
+			continue;
+		}
+		
+		Airscrew->UpdateRotorState(DeltaSeconds);
+		Airscrew->ApplyThrustForce();
+	}
+	
 	MaybeEmitDebugLog(
 		PilotInput,
 		DeltaSeconds,
@@ -807,6 +819,7 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 		RotorCommand.CurrentRpm = Airscrew->GetCurrentRpm();
 		RotorCommand.GeneratedThrust = Airscrew->GetCurrentThrustForce();
 		ControlOutput.RotorCommands.Add(RotorCommand);
+		
 	}
 }
 

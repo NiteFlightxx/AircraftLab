@@ -30,14 +30,15 @@ void UAirscrewComponent::BeginPlay()
 
 void UAirscrewComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
+	
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	SyncDefinitionFromComponentTransform();
-	UpdateRotorState(DeltaTime);
+	//SyncDefinitionFromComponentTransform();
+	//UpdateRotorState(DeltaTime);
 
 	if (bApplyForce)
 	{
-		ApplyThrustForce();
+		//ApplyThrustForce();
 	}
 
 	if (bDrawDebug)

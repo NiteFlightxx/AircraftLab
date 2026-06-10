@@ -95,27 +95,7 @@ enum class EDroneRotorSpinDirection : uint8
 	CounterClockwise UMETA(DisplayName = "Counter-Clockwise")
 };
 
-/**
- * 传感器健康状态枚举
- */
-UENUM(BlueprintType)
-enum class EDroneSensorStatus : uint8
-{
-	/** 传感器已禁用：未启用或未被系统使用。 */
-	Disabled UMETA(DisplayName = "Disabled"),
 
-	/** 正在初始化：传感器正在进行自检或校准，暂未提供有效数据。 */
-	Initializing UMETA(DisplayName = "Initializing"),
-
-	/** 健康状态：传感器工作正常，数据可信。 */
-	Healthy UMETA(DisplayName = "Healthy"),
-
-	/** 性能降级：传感器可能受干扰或部分失效，数据精度下降但仍可用。 */
-	Degraded UMETA(DisplayName = "Degraded"),
-
-	/** 信号丢失：传感器无数据或通信中断，完全不可用。 */
-	Lost UMETA(DisplayName = "Lost")
-};
 
 /**
  * 高度参考系枚举
@@ -133,30 +113,6 @@ enum class EDroneAltitudeReference : uint8
 	AboveGround UMETA(DisplayName = "Above Ground")
 };
 
-/**
- * 定位源枚举
- */
-UENUM(BlueprintType)
-enum class EDronePositionSource : uint8
-{
-	/** 无定位源：未提供位置数据。 */
-	None UMETA(DisplayName = "None"),
-
-	/** 气压计：通过气压测量高度，主要用于垂直位置估算（易受天气影响）。 */
-	Barometer UMETA(DisplayName = "Barometer"),
-
-	/** 全球定位系统：提供经纬度和海拔，精度数米，需卫星锁。 */
-	GPS UMETA(DisplayName = "GPS"),
-
-	/** 光流传感器：通过摄像头测量地面纹理移动，推算水平位移（常用于室内）。 */
-	OpticalFlow UMETA(DisplayName = "Optical Flow"),
-
-	/** 视觉定位：使用相机和视觉算法（如VIO/SLAM）估计位置。 */
-	Vision UMETA(DisplayName = "Vision"),
-
-	/** 真值数据：通常用于仿真或调试，直接提供精确位置而不带噪声。 */
-	GroundTruth UMETA(DisplayName = "Ground Truth")
-};
 
 /**
  * 飞行员输入结构体：包含遥控器各通道值及请求标志
@@ -829,42 +785,6 @@ struct AIRCRAFTLAB_API FDroneAerodynamicsConfig
 	FVector WindVelocityCmPerSec = FVector::ZeroVector;
 };
 
-/**
- * 电池模型配置
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneBatteryConfig
-{
-	GENERATED_BODY()
-
-	/** 电芯数量 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Battery", meta = (ClampMin = "1"))
-	int32 CellCount = 4;
-
-	/** 电池容量（毫安时） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Battery", meta = (ClampMin = "0.0"))
-	float CapacityMilliampHours = 5000.0f;
-
-	/** 单节电芯标称电压（伏特） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Battery", meta = (ClampMin = "0.0"))
-	float NominalCellVoltage = 3.7f;
-
-	/** 单节电芯充满电压（伏特） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Battery", meta = (ClampMin = "0.0"))
-	float FullyChargedCellVoltage = 4.2f;
-
-	/** 单节电芯低压报警电压（伏特） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Battery", meta = (ClampMin = "0.0"))
-	float LowCellVoltage = 3.5f;
-
-	/** 单节电芯临界电压（伏特，触发紧急降落） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Battery", meta = (ClampMin = "0.0"))
-	float CriticalCellVoltage = 3.3f;
-
-	/** 电池内阻（欧姆） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Battery", meta = (ClampMin = "0.0"))
-	float InternalResistanceOhm = 0.02f;
-};
 
 /**
  * 无刷电机模型配置（转速响应、怠速等）
@@ -1296,217 +1216,7 @@ struct AIRCRAFTLAB_API FDroneSensorSuiteConfig
 	FDroneRangefinderConfig Rangefinder;
 };
 
-/**
- * IMU 采样数据（含时间戳）
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneImuSample
-{
-	GENERATED_BODY()
 
-	/** 是否有效 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	bool bValid = false;
-
-	/** 采样时间（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	float TimeSeconds = 0.0f;
-
-	/** 机体角速度（度/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FVector AngularVelocityBodyDegreesPerSec = FVector::ZeroVector;
-
-	/** 机体线性加速度（厘米/秒²） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FVector LinearAccelerationBodyCmPerSecSq = FVector::ZeroVector;
-};
-
-/**
- * 气压计采样数据
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneBarometerSample
-{
-	GENERATED_BODY()
-
-	/** 是否有效 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	bool bValid = false;
-
-	/** 采样时间（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	float TimeSeconds = 0.0f;
-
-	/** 气压高度（厘米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	float AltitudeCm = 0.0f;
-};
-
-/**
- * GPS 采样数据
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneGpsSample
-{
-	GENERATED_BODY()
-
-	/** 是否有效 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	bool bValid = false;
-
-	/** 采样时间（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	float TimeSeconds = 0.0f;
-
-	/** 位置（厘米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FVector PositionCm = FVector::ZeroVector;
-
-	/** 速度（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FVector VelocityCmPerSec = FVector::ZeroVector;
-
-	/** 卫星数量 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	int32 SatelliteCount = 0;
-};
-
-/**
- * 磁力计采样数据
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneMagnetometerSample
-{
-	GENERATED_BODY()
-
-	/** 是否有效 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	bool bValid = false;
-
-	/** 采样时间（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	float TimeSeconds = 0.0f;
-
-	/** 机体坐标系下的磁场向量（高斯） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FVector MagneticFieldBody = FVector::ZeroVector;
-
-	/** 计算出的航向角（度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	float HeadingDegrees = 0.0f;
-};
-
-/**
- * 光流采样数据
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneOpticalFlowSample
-{
-	GENERATED_BODY()
-
-	/** 是否有效 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	bool bValid = false;
-
-	/** 采样时间（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	float TimeSeconds = 0.0f;
-
-	/** 地面速度（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FVector GroundVelocityCmPerSec = FVector::ZeroVector;
-};
-
-/**
- * 测距仪采样数据
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneRangefinderSample
-{
-	GENERATED_BODY()
-
-	/** 是否有效 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	bool bValid = false;
-
-	/** 采样时间（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	float TimeSeconds = 0.0f;
-
-	/** 距离（厘米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	float DistanceCm = 0.0f;
-};
-
-/**
- * 各传感器健康状态汇总
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneSensorHealth
-{
-	GENERATED_BODY()
-
-	/** IMU 状态 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	EDroneSensorStatus Imu = EDroneSensorStatus::Healthy;
-
-	/** 气压计状态 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	EDroneSensorStatus Barometer = EDroneSensorStatus::Healthy;
-
-	/** GPS 状态 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	EDroneSensorStatus Gps = EDroneSensorStatus::Healthy;
-
-	/** 磁力计状态 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	EDroneSensorStatus Magnetometer = EDroneSensorStatus::Healthy;
-
-	/** 光流状态 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	EDroneSensorStatus OpticalFlow = EDroneSensorStatus::Disabled;
-
-	/** 测距仪状态 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	EDroneSensorStatus Rangefinder = EDroneSensorStatus::Disabled;
-};
-
-/**
- * 单帧所有传感器数据集合
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneSensorFrame
-{
-	GENERATED_BODY()
-
-	/** IMU 数据 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FDroneImuSample Imu;
-
-	/** 气压计数据 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FDroneBarometerSample Barometer;
-
-	/** GPS 数据 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FDroneGpsSample Gps;
-
-	/** 磁力计数据 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FDroneMagnetometerSample Magnetometer;
-
-	/** 光流数据 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FDroneOpticalFlowSample OpticalFlow;
-
-	/** 测距仪数据 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FDroneRangefinderSample Rangefinder;
-
-	/** 传感器健康状态 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Sensor")
-	FDroneSensorHealth Health;
-};
 
 /**
  * Home 点（起飞点）状态
@@ -1566,30 +1276,6 @@ struct AIRCRAFTLAB_API FDroneKinematicState
 	FVector AngularAccelerationBodyDegreesPerSecSq = FVector::ZeroVector;
 };
 
-/**
- * 传感器偏置估计状态
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneBiasState
-{
-	GENERATED_BODY()
-
-	/** 陀螺仪偏置（度/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
-	FVector GyroBiasDegreesPerSec = FVector::ZeroVector;
-
-	/** 加速度计偏置（厘米/秒²） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
-	FVector AccelerometerBiasCmPerSecSq = FVector::ZeroVector;
-
-	/** 气压计偏置（厘米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
-	float BarometerBiasCm = 0.0f;
-
-	/** 磁力计偏置（高斯） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
-	FVector MagnetometerBias = FVector::ZeroVector;
-};
 
 /**
  * 融合后的估计状态（含置信度）
@@ -1603,17 +1289,7 @@ struct AIRCRAFTLAB_API FDroneEstimatedState
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
 	FDroneKinematicState State;
 
-	/** 传感器偏置估计 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
-	FDroneBiasState Biases;
 
-	/** 各传感器健康状态 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
-	FDroneSensorHealth SensorHealth;
-
-	/** 当前使用的位置源 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
-	EDronePositionSource PositionSource = EDronePositionSource::GroundTruth;
 
 	/** 高度参考系 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
@@ -1845,11 +1521,7 @@ struct AIRCRAFTLAB_API FDroneFlightConfig
 	/** 空气动力学参数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
 	FDroneAerodynamicsConfig Aerodynamics;
-
-	/** 电池参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	FDroneBatteryConfig Battery;
-
+	
 	/** 旋翼定义数组（支持多旋翼） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config", meta = (TitleProperty = "RotorName"))
 	TArray<FDroneRotorDefinition> Rotors;
