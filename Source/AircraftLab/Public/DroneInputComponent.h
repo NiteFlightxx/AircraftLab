@@ -24,8 +24,6 @@ public:
 
 	const FDronePilotInput& GetPilotInput() const { return PilotInput; }
 
-	UFUNCTION(BlueprintCallable, Category = "Drone|Input")
-	void SetArmed(bool bNewArmed);
 
 private:
 	UPROPERTY(EditAnywhere, Category = "Drone|Input")

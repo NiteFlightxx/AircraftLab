@@ -333,72 +333,13 @@ void UFlightControllerComponent::UpdateEstimatedState(float DeltaSeconds)
 
 void UFlightControllerComponent::UpdateRequestedModeAndArmState(const FDronePilotInput& PilotInput)
 {
-	const EDroneArmState PreviousArmState = ArmState;
-	const EDroneFlightMode PreviousFlightMode = ActiveFlightMode;
-
-	if (PilotInput.bEmergencyStopRequested)
-	{
-		ArmState = EDroneArmState::EmergencyStop;
-	}
-	else if (PilotInput.bDisarmRequested)
-	{
-		ArmState = EDroneArmState::Disarmed;
-	}
-	else if (PilotInput.bArmRequested)
-	{
-		ArmState = EDroneArmState::Armed;
-	}
-
-	if (PilotInput.bReturnToHomeRequested)
-	{
-		ActiveFlightMode = EDroneFlightMode::ReturnToHome;
-	}
-	else if (PilotInput.bHoldPositionRequested)
-	{
-		ActiveFlightMode = EDroneFlightMode::PositionHold;
-	}
-	else if (PilotInput.bHoldAltitudeRequested)
-	{
-		ActiveFlightMode = EDroneFlightMode::AltitudeHold;
-	}
-	else
-	{
-		ActiveFlightMode = PilotInput.RequestedFlightMode;
-	}
-
-	if (PreviousArmState != ArmState)
-	{
+	
 		if (ArmState == EDroneArmState::Armed)
 		{
 			UpdateHomeState(true);
 		}
+	
 
-		ResetControllerState();
-	}
-	else if (PreviousFlightMode != ActiveFlightMode)
-	{
-		ResetControllerState();
-	}
-
-	if (PreviousArmState != ArmState)
-	{
-		UE_LOG(
-			LogFlightController,
-			Log,
-			TEXT("[State] Arm %s -> %s"),
-			FlightControllerDebug::GetArmStateLabel(PreviousArmState),
-			FlightControllerDebug::GetArmStateLabel(ArmState));
-	}
-
-	if (PreviousFlightMode != ActiveFlightMode)
-	{
-		UE_LOG(
-			LogFlightController,
-			Log,
-			TEXT("[State] FlightMode %s -> %s"),
-			FlightControllerDebug::GetFlightModeLabel(PreviousFlightMode),
-			FlightControllerDebug::GetFlightModeLabel(ActiveFlightMode));
-	}
 }
 
 void UFlightControllerComponent::UpdateHomeState(bool bForceResetHome)
@@ -1406,9 +1347,9 @@ FVector UFlightControllerComponent::GetBodyAngularVelocityDegreesPerSecond() con
 
 	const FVector AngularVelocityWorld = BodyPrimitive->GetPhysicsAngularVelocityInDegrees();
 	const FVector AngularVelocityBody = BodyPrimitive->GetComponentTransform().InverseTransformVectorNoScale(AngularVelocityWorld);
-
 	// Match the local physics angular velocity signs to the FRotator pitch/roll conventions used by the attitude loop.
 	return FVector(-AngularVelocityBody.X, -AngularVelocityBody.Y, AngularVelocityBody.Z);
+	//return AngularVelocityBody;
 }
 
 FVector UFlightControllerComponent::GetBodyLinearVelocityCmPerSec() const

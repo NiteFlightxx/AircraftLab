@@ -181,35 +181,7 @@ struct AIRCRAFTLAB_API FDronePilotInput
 	/** 偏航指令，范围 -1.0 ~ 1.0，正值顺时针旋转，负值逆时针 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input", meta = (ClampMin = "-1.0", ClampMax = "1.0"))
 	float Yaw = 0.0f;
-
-	/** 请求切换的飞行模式 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input")
-	EDroneFlightMode RequestedFlightMode = EDroneFlightMode::Angle;
-
-	/** 请求解锁（上电使能电机） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input")
-	bool bArmRequested = false;
-
-	/** 请求上锁（关闭电机） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input")
-	bool bDisarmRequested = false;
-
-	/** 请求进入定高模式（维持当前高度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input")
-	bool bHoldAltitudeRequested = false;
-
-	/** 请求进入定点模式（锁定位置） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input")
-	bool bHoldPositionRequested = false;
-
-	/** 请求自动返航 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input")
-	bool bReturnToHomeRequested = false;
-
-	/** 请求紧急停止（立刻停桨） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input")
-	bool bEmergencyStopRequested = false;
-
+	
 	/** 重置所有摇杆轴为0 */
 	void ResetAxes()
 	{

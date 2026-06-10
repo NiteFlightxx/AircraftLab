@@ -46,9 +46,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void SetHeldYaw(float YawDegrees);
 
+	
 	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
 	EDroneArmState GetArmState() const { return ArmState; }
-
+	
 	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
 	EDroneFlightMode GetActiveFlightMode() const { return ActiveFlightMode; }
 

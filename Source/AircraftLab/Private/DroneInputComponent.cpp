@@ -11,9 +11,7 @@
 UDroneInputComponent::UDroneInputComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
-	PilotInput.RequestedFlightMode = EDroneFlightMode::Angle;
-	PilotInput.bArmRequested = bStartArmed;
-	PilotInput.bDisarmRequested = !bStartArmed;
+
 }
 
 void UDroneInputComponent::ApplyMappingContext() const
@@ -70,12 +68,6 @@ void UDroneInputComponent::BindInput(UInputComponent* PlayerInputComponent)
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Completed, this, &UDroneInputComponent::ResetTurn);
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Canceled, this, &UDroneInputComponent::ResetTurn);
 	}
-}
-
-void UDroneInputComponent::SetArmed(bool bNewArmed)
-{
-	PilotInput.bArmRequested = bNewArmed;
-	PilotInput.bDisarmRequested = !bNewArmed;
 }
 
 void UDroneInputComponent::InputMove(const FInputActionValue& Value)
