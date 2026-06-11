@@ -1,0 +1,3 @@
+#include "AircraftAsset/AircraftAssetEditorToolsModule.h"
+
+IMPLEMENT_MODULE(FAircraftAssetEditorToolsModule, AircraftAssetEditorTools)
