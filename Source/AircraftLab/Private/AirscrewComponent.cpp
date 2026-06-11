@@ -151,8 +151,8 @@ void UAirscrewComponent::DrawDebugVisualization() const
 	const FVector AxisEnd = Origin + GetThrustDirectionWorld() * DebugAxisLength;
 	const FVector ForceEnd = Origin + CurrentThrustVectorWorld * DebugForceScale;
 
-	DrawDebugSphere(World, Origin, 4.0f, 8, DebugColor, false, 0.0f, 0, 1.5f);
-	DrawDebugLine(World, Origin, AxisEnd, DebugColor, false, 0.0f, 0, 1.0f);
+	//DrawDebugSphere(World, Origin, 4.0f, 8, DebugColor, false, 0.0f, 0, 1.5f);
+	//DrawDebugLine(World, Origin, AxisEnd, DebugColor, false, 0.0f, 0, 1.0f);
 	DrawDebugDirectionalArrow(World, Origin, ForceEnd, 10.0f, DebugColor, false, 0.0f, 0, 2.0f);
 
 	if (!bDrawDebugText)
