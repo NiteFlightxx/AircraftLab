@@ -31,9 +31,13 @@
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "AircraftAsset/AircraftAssetBase.h"
+#include "AircraftAsset/AircraftAssetThumbnailRenderer.h"
 #include "AircraftAsset/AircraftDataflowEditor.h"
+#include "Dataflow/DataflowEditorToolkit.h"
+#include "Dataflow/DataflowSimulationScene.h"
 
 
+class UDataflowEvaluationSettings;
 class UAircraftAssetBase;
 
 namespace UE::AircraftDataflowAssetEditor::Private
@@ -636,7 +640,24 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			
 			if (UAircraftDataflowEditor* const AssetEditor = NewObject<UAircraftDataflowEditor>(AssetEditorSubsystem, NAME_None, RF_Transient))
 			{
-				AssetEditor->Initialize({ AircraftAsset });
+			
+			
+			if (UDataflowSimulationSettings* const SimulationSettings = NewObject<UDataflowSimulationSettings>())
+			{
+				SimulationSettings->bIsSimulationPlayingByDefault = true;
+				SimulationSettings->bIsAsyncCachingSupported = false;
+				SimulationSettings->bIsAsyncCachingEnabledByDefault = false;
+				AssetEditor->AddEditorSettings(SimulationSettings);
+			}
+
+				if (UDataflowEvaluationSettings* const EvaluationSettings = NewObject<UDataflowEvaluationSettings>())
+				{
+					EvaluationSettings->bAllowEvaluationInPIE = true;
+					AssetEditor->AddEditorSettings(EvaluationSettings);
+				}
+				
+				const TSubclassOf<AActor> ActorClass = AAircraftPreviewActor::StaticClass();
+				AssetEditor->Initialize({ AircraftAsset },ActorClass);
 				return true;
 			}
 		}

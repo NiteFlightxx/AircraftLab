@@ -3,10 +3,16 @@
 
 #include "AssetDefinition_AircraftAsset.h"
 
+#include "AircraftAsset/AircraftAsset.h"
 #include "ThumbnailRendering/SceneThumbnailInfo.h"
 #include "Toolkits/SimpleAssetEditor.h"
 #include "AircraftAsset/AircraftAssetBase.h"
+#include "AircraftAsset/AircraftAssetThumbnailRenderer.h"
 #include "AircraftAsset/AircraftDataflowAssetEditorUtils.h"
+#include "Dataflow/DataflowEditorToolkit.h"
+#include "Dataflow/DataflowSimulationScene.h"
+
+class UDataflowEditor;
 
 FText UAssetDefinition_AircraftAsset::GetAssetDisplayName() const
 {
@@ -36,8 +42,8 @@ UThumbnailInfo* UAssetDefinition_AircraftAsset::LoadThumbnailInfo(const FAssetDa
 
 EAssetCommandResult UAssetDefinition_AircraftAsset::OpenAssets(const FAssetOpenArgs& OpenArgs) const
 {
-	TArray<UAircraftAssetBase*> AircraftAssets = OpenArgs.LoadObjects<UAircraftAssetBase>();
-
+	TArray<UAircraftAsset*> AircraftAssets = OpenArgs.LoadObjects<UAircraftAsset>();
+	
 	ensure(AircraftAssets.Num() == 0 || AircraftAssets.Num() == 1);
 	if (AircraftAssets.Num() > 0 )
 	{
@@ -45,7 +51,7 @@ EAssetCommandResult UAssetDefinition_AircraftAsset::OpenAssets(const FAssetOpenA
 		{
 			return EAssetCommandResult::Handled;
 		}
-
+		
 		FSimpleAssetEditor::CreateEditor(EToolkitMode::Standalone, OpenArgs.ToolkitHost, AircraftAssets[0]);
 		return EAssetCommandResult::Handled;
 	}

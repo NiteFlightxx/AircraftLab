@@ -102,7 +102,7 @@ void UAircraftAssetThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, ui
 	ViewFamily.EngineShowFlags.LOD = 0;
 
 	RenderViewFamily(Canvas, &ViewFamily, ThumbnailScene->CreateView(&ViewFamily, X, Y, Width, Height));
-	ThumbnailScene->SetAircraftAsset(nullptr);
+	//ThumbnailScene->SetAircraftAsset(nullptr);
 	
 }
 
