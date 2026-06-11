@@ -824,32 +824,7 @@ struct AIRCRAFTLAB_API FDroneMotorModelConfig
 };
 
 /**
- * 单个旋翼在混控器中的系数（影响如何从总距/滚转/俯仰/偏航映射到该电机）
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneRotorMixerCoefficients
-{
-	GENERATED_BODY()
-
-	/** 总距系数（通常为1.0） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	float Collective = 1.0f;
-
-	/** 滚转系数（正负决定滚转方向） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	float Roll = 0.0f;
-
-	/** 俯仰系数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	float Pitch = 0.0f;
-
-	/** 偏航系数（正负由旋转方向决定） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	float Yaw = 0.0f;
-};
-
-/**
- * 单个旋翼的定义（位置、方向、物理参数、混控系数）
+ * 单个旋翼的定义（位置、方向、物理参数）
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FDroneRotorDefinition
@@ -908,17 +883,9 @@ struct AIRCRAFTLAB_API FDroneRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
 	float Efficiency = 1.0f;
 
-	/** 控制权限缩放（用于混控器输出调整） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+	/** 控制分配可用推力缩放 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float ControlAuthorityScale = 1.0f;
-
-	/** 是否使用自定义混控系数（否则根据布局自动生成） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	bool bUseCustomMixerCoefficients = false;
-
-	/** 自定义混控系数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	FDroneRotorMixerCoefficients MixerCoefficients;
 
 	/** 电机动态模型参数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
@@ -1386,17 +1353,9 @@ struct AIRCRAFTLAB_API FDroneControlAllocationConfig
 {
 	GENERATED_BODY()
 
-	/** 是否对混控器输出进行归一化（确保所有电机指令不超过1） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator")
-	bool bNormalizeMixerOutput = true;
-
-	/** 饱和时是否优先保持偏航能力 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator")
-	bool bPreserveYawAtSaturation = false;
-
-	/** 总距优先级（饱和时先削减哪个通道，值越大总距越优先） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator")
-	float CollectivePriority = 1.0f;
+	/** 阻尼最小二乘伪逆的阻尼系数，越大越稳定但控制跟踪越软 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (ClampMin = "0.0"))
+	float DampedPseudoInverseLambda = 0.05f;
 };
 
 /**

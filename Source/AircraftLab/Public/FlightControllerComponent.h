@@ -75,7 +75,9 @@ protected:
 
 	FVector ComputeDesiredHorizontalVelocity(const FDronePilotInput& PilotInput) const;
 	FVector ComputeDesiredHorizontalAcceleration(const FDronePilotInput& PilotInput, float DeltaSeconds);
-	FDroneRotorMixerCoefficients BuildMixerCoefficients(const UAirscrewComponent* Airscrew, const FVector& LocalPosition, float MaxAbsX, float MaxAbsY) const;
+	FVector GetRotorPositionFromCenterOfMassBodyCm(const UAirscrewComponent* Airscrew) const;
+	FVector GetRotorThrustAxisBody(const UAirscrewComponent* Airscrew) const;
+	FVector4 BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm) const;
 	void LogRotorLayoutIfNeeded();
 	void MaybeEmitDebugLog(
 		const FDronePilotInput& PilotInput,

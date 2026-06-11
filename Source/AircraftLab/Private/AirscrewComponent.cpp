@@ -30,16 +30,7 @@ void UAirscrewComponent::BeginPlay()
 
 void UAirscrewComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
-	
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	//SyncDefinitionFromComponentTransform();
-	//UpdateRotorState(DeltaTime);
-
-	if (bApplyForce)
-	{
-		//ApplyThrustForce();
-	}
 
 	if (bDrawDebug)
 	{
@@ -126,6 +117,11 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime)
 
 void UAirscrewComponent::ApplyThrustForce()
 {
+	if (!bApplyForce)
+	{
+		return;
+	}
+
 	UPrimitiveComponent* TargetPrimitive = ResolveTargetPrimitive();
 	if (!TargetPrimitive || !TargetPrimitive->IsSimulatingPhysics())
 	{
@@ -197,14 +193,7 @@ UPrimitiveComponent* UAirscrewComponent::ResolveTargetPrimitive() const
 
 FVector UAirscrewComponent::GetThrustDirectionWorld() const
 {
-	 FVector WorldDirection = GetComponentTransform().TransformVectorNoScale(RotorDefinition.GetNormalizedThrustAxisLocal());
-	
-	
-	WorldDirection.X= FMath::Abs(WorldDirection.X)>0.05?WorldDirection.X:0.f;
-	WorldDirection.Y= FMath::Abs(WorldDirection.Y)>0.05?WorldDirection.Y:0.f;
-	WorldDirection.Z= FMath::Abs(WorldDirection.Z)>0.05?WorldDirection.Z:0.f;
-	
-	return WorldDirection;
+	return GetComponentTransform().TransformVectorNoScale(RotorDefinition.GetNormalizedThrustAxisLocal()).GetSafeNormal();
 }
 
 float UAirscrewComponent::GetEffectiveTargetCommand() const

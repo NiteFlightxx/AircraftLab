@@ -137,6 +137,145 @@ const TCHAR* GetConsistencyLabel(bool bIsConsistent)
 }
 }
 
+namespace FlightControllerAllocation
+{
+constexpr int32 WrenchAxisCount = 4;
+constexpr double AuthorityEpsilon = 1.0e-6;
+constexpr double CommandTolerance = 1.0e-4;
+
+double GetRotorMaxPhysicalThrust(const FDroneRotorDefinition& RotorDefinition)
+{
+	return RotorDefinition.GetEffectiveMaxThrust() * FMath::Max(RotorDefinition.ThrustCoefficient, 0.0f);
+}
+
+double GetRotorMaxAllocatedThrust(const FDroneRotorDefinition& RotorDefinition)
+{
+	return GetRotorMaxPhysicalThrust(RotorDefinition) * FMath::Clamp(RotorDefinition.ControlAuthorityScale, 0.0f, 1.0f);
+}
+
+float ConvertThrustToCommand(const FDroneRotorDefinition& RotorDefinition, double TargetThrust)
+{
+	const double MaxPhysicalThrust = GetRotorMaxPhysicalThrust(RotorDefinition);
+	if (TargetThrust <= AuthorityEpsilon || MaxPhysicalThrust <= AuthorityEpsilon)
+	{
+		return 0.0f;
+	}
+
+	const double MaxRpm = FMath::Max(static_cast<double>(RotorDefinition.Motor.MaxRpm), 1.0);
+	const double IdleRpm = FMath::Clamp(static_cast<double>(RotorDefinition.Motor.IdleRpm), 0.0, MaxRpm);
+	const double TargetRpm = FMath::Sqrt(FMath::Clamp(TargetThrust / MaxPhysicalThrust, 0.0, 1.0)) * MaxRpm;
+	const double ShapedCommand = FMath::Clamp((TargetRpm - IdleRpm) / FMath::Max(MaxRpm - IdleRpm, static_cast<double>(UE_SMALL_NUMBER)), 0.0, 1.0);
+
+	return ShapedCommand <= AuthorityEpsilon
+		? 0.0f
+		: static_cast<float>(FMath::Pow(ShapedCommand, 1.0 / FMath::Max(static_cast<double>(RotorDefinition.Motor.CommandExponent), 0.01)));
+}
+
+double GetBalancedAuthority(double PositiveAuthority, double NegativeAuthority)
+{
+	if (PositiveAuthority > AuthorityEpsilon && NegativeAuthority > AuthorityEpsilon)
+	{
+		return FMath::Min(PositiveAuthority, NegativeAuthority);
+	}
+
+	return FMath::Max(PositiveAuthority, NegativeAuthority);
+}
+
+bool SolveLinearSystem4(const double Matrix[WrenchAxisCount][WrenchAxisCount], const double Rhs[WrenchAxisCount], double OutSolution[WrenchAxisCount])
+{
+	double Augmented[WrenchAxisCount][WrenchAxisCount + 1] = {};
+
+	for (int32 Row = 0; Row < WrenchAxisCount; ++Row)
+	{
+		for (int32 Col = 0; Col < WrenchAxisCount; ++Col)
+		{
+			Augmented[Row][Col] = Matrix[Row][Col];
+		}
+		Augmented[Row][WrenchAxisCount] = Rhs[Row];
+	}
+
+	for (int32 PivotCol = 0; PivotCol < WrenchAxisCount; ++PivotCol)
+	{
+		int32 PivotRow = PivotCol;
+		double PivotAbs = FMath::Abs(Augmented[PivotRow][PivotCol]);
+
+		for (int32 Row = PivotCol + 1; Row < WrenchAxisCount; ++Row)
+		{
+			const double CandidateAbs = FMath::Abs(Augmented[Row][PivotCol]);
+			if (CandidateAbs > PivotAbs)
+			{
+				PivotAbs = CandidateAbs;
+				PivotRow = Row;
+			}
+		}
+
+		if (PivotAbs <= UE_SMALL_NUMBER)
+		{
+			return false;
+		}
+
+		if (PivotRow != PivotCol)
+		{
+			for (int32 Col = PivotCol; Col <= WrenchAxisCount; ++Col)
+			{
+				Swap(Augmented[PivotCol][Col], Augmented[PivotRow][Col]);
+			}
+		}
+
+		const double InvPivot = 1.0 / Augmented[PivotCol][PivotCol];
+		for (int32 Col = PivotCol; Col <= WrenchAxisCount; ++Col)
+		{
+			Augmented[PivotCol][Col] *= InvPivot;
+		}
+
+		for (int32 Row = 0; Row < WrenchAxisCount; ++Row)
+		{
+			if (Row == PivotCol)
+			{
+				continue;
+			}
+
+			const double Factor = Augmented[Row][PivotCol];
+			if (FMath::Abs(Factor) <= UE_SMALL_NUMBER)
+			{
+				continue;
+			}
+
+			for (int32 Col = PivotCol; Col <= WrenchAxisCount; ++Col)
+			{
+				Augmented[Row][Col] -= Factor * Augmented[PivotCol][Col];
+			}
+		}
+	}
+
+	for (int32 Row = 0; Row < WrenchAxisCount; ++Row)
+	{
+		OutSolution[Row] = Augmented[Row][WrenchAxisCount];
+	}
+
+	return true;
+}
+
+FDroneRotorCommand MakeRotorCommand(const UAirscrewComponent* Airscrew)
+{
+	FDroneRotorCommand RotorCommand;
+	if (!Airscrew)
+	{
+		return RotorCommand;
+	}
+
+	const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
+	RotorCommand.RotorName = RotorDefinition.RotorName.IsNone() ? Airscrew->GetFName() : RotorDefinition.RotorName;
+	RotorCommand.NormalizedCommand = Airscrew->GetNormalizedCommand();
+	RotorCommand.TargetRpm = Airscrew->ComputeTargetRpm(Airscrew->GetEffectiveTargetCommand());
+	RotorCommand.CurrentRpm = Airscrew->GetCurrentRpm();
+	RotorCommand.GeneratedThrust = Airscrew->GetCurrentThrustForce();
+	RotorCommand.GeneratedReactionTorque = Airscrew->GetCurrentReactionTorqueMagnitude() * RotorDefinition.GetSpinDirectionSign();
+
+	return RotorCommand;
+}
+}
+
 /**
  * @brief 飞行控制器组件构造函数
  * 初始化组件的Tick设置和默认控制器配置
@@ -436,9 +575,7 @@ void UFlightControllerComponent::InitializeDefaultControllerConfig()
 	ControllerConfig.Altitude.VerticalVelocityGains = { 0.0018f, 0.00025f, 0.00060f, 2500.0f, 0.35f };
 	ControllerConfig.Altitude.VerticalVelocityGains.DerivativeCutoffHz = 15.0f;
 
-	ControllerConfig.Allocator.bNormalizeMixerOutput = true;
-	ControllerConfig.Allocator.bPreserveYawAtSaturation = false;
-	ControllerConfig.Allocator.CollectivePriority = 1.0f;
+	ControllerConfig.Allocator.DampedPseudoInverseLambda = 0.05f;
 }
 
 /**
@@ -580,8 +717,6 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 	ControlOutput.Targets.Rate.CollectiveThrust = CollectiveCommand;
 	ControlOutput.Targets.Velocity.bEnabled = true;
 	ControlOutput.Targets.Velocity.VelocityCmPerSec.Z = DesiredVerticalVelocity;
-	ControlOutput.Wrench.CollectiveThrust = CollectiveCommand;
-	ControlOutput.Wrench.BodyTorque = AxisCommands;
 
 	AllocateToRotors(CollectiveCommand, AxisCommands);
 	
@@ -595,6 +730,11 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 		
 		Airscrew->UpdateRotorState(DeltaSeconds);
 		Airscrew->ApplyThrustForce();
+
+		if (ControlOutput.RotorCommands.IsValidIndex(RotorIndex))
+		{
+			ControlOutput.RotorCommands[RotorIndex] = FlightControllerAllocation::MakeRotorCommand(Airscrew);
+		}
 	}
 	
 	MaybeEmitDebugLog(
@@ -648,24 +788,19 @@ void UFlightControllerComponent::StopAllRotors(bool bResetController)
 
 	ControlOutput = FDroneControlOutput();
 	ControlOutput.Targets.FlightMode = ActiveFlightMode;
+	ControlOutput.RotorCommands.SetNum(Airscrews.Num());
 
-	for (UAirscrewComponent* Airscrew : Airscrews)
+	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
 	{
+		UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew)
 		{
 			continue;
 		}
 
 		Airscrew->SetNormalizedCommand(0.0f);
-
-		FDroneRotorCommand RotorCommand;
-		RotorCommand.RotorName = Airscrew->GetRotorDefinition().RotorName.IsNone()
-			? Airscrew->GetFName()
-			: Airscrew->GetRotorDefinition().RotorName;
-		RotorCommand.NormalizedCommand = 0.0f;
-		RotorCommand.CurrentRpm = Airscrew->GetCurrentRpm();
-		RotorCommand.GeneratedThrust = Airscrew->GetCurrentThrustForce();
-		ControlOutput.RotorCommands.Add(RotorCommand);
+		Airscrew->UpdateRotorState(0.0f);
+		ControlOutput.RotorCommands[RotorIndex] = FlightControllerAllocation::MakeRotorCommand(Airscrew);
 	}
 }
 
@@ -1072,32 +1207,7 @@ FVector UFlightControllerComponent::ApplyRatePid(const FVector& DesiredBodyRates
 }
 
 /**
- * @brief 将控制指令分配到各个旋翼
- *
- * 数学原理 - 控制分配（Control Allocation / Mixer）：
- * 将总距和三轴力矩指令映射到各旋翼的归一化推力指令。
- *
- * 混合方程（线性混合模型）：
- *   cmd_i = Collective × M_Collective_i + τ_roll × M_Roll_i + τ_pitch × M_Pitch_i + τ_yaw × M_Yaw_i
- *
- * 写成矩阵形式：
- *   ┌cmd_1┐   ┌M_C1  M_R1  M_P1  M_Y1┐ ┌Collective┐
- *   │cmd_2│ = │M_C2  M_R2  M_P2  M_Y2│ │τ_roll    │
- *   │ ... │   │ ...   ...   ...  ... │ │τ_pitch   │
- *   └cmd_n┘   └M_Cn  M_Rn  M_Pn  M_Yn┘ └τ_yaw    ┘
- *
- * 归一化处理（bNormalizeMixerOutput）：
- * 由于旋翼推力不能为负（不能产生向下的力），且最大为1.0：
- *   1. 若最小指令 < 0：所有指令减去最小值（平移到非负区间）
- *      cmd_i -= min(cmd)    →  消除负值，保持相对差
- *   2. 若最大指令 > 1：等比缩放使最大值为1
- *      cmd_i /= max(cmd)    →  保持比例关系，防止饱和
- *
- * 物理含义：归一化确保旋翼指令在[0,1]范围内，但可能在饱和时
- * 损失部分控制权限。更高级的实现会按优先级分配（如优先保持Yaw）。
- *
- * @param CollectiveCommand 总距指令
- * @param AxisCommands 轴指令（Roll, Pitch, Yaw）
+ * @brief 基于力矩雅可比矩阵的阻尼伪逆控制分配
  */
 void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const FVector& AxisCommands)
 {
@@ -1106,83 +1216,217 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 		return;
 	}
 
-	TArray<FVector> RotorLocalPositions;
-	RotorLocalPositions.Reserve(Airscrews.Num());
+	const int32 NumRotors = Airscrews.Num();
 
-	float MaxAbsX = 1.0f;
-	float MaxAbsY = 1.0f;
-	const FTransform BodyTransform = BodyPrimitive ? BodyPrimitive->GetComponentTransform() : FTransform::Identity;
+	TArray<FVector4> PhysicalColumns;
+	TArray<FVector4> NormalizedColumns;
+	TArray<double> MaxAllocatedThrusts;
+	TArray<bool> FreeRotors;
+	PhysicalColumns.SetNumZeroed(NumRotors);
+	NormalizedColumns.SetNumZeroed(NumRotors);
+	MaxAllocatedThrusts.SetNumZeroed(NumRotors);
+	FreeRotors.SetNumZeroed(NumRotors);
 
-	for (UAirscrewComponent* Airscrew : Airscrews)
-	{
-		if (!Airscrew)
-		{
-			RotorLocalPositions.Add(FVector::ZeroVector);
-			continue;
-		}
+	double CollectiveAuthority = 0.0;
+	double PositiveTorqueAuthority[3] = {};
+	double NegativeTorqueAuthority[3] = {};
+	int32 NumActiveRotors = 0;
 
-		const FVector LocalPosition = BodyPrimitive
-			? BodyTransform.InverseTransformPositionNoScale(Airscrew->GetComponentLocation())
-			: Airscrew->GetRelativeLocation();
-
-		RotorLocalPositions.Add(LocalPosition);
-		MaxAbsX = FMath::Max(MaxAbsX, FMath::Abs(LocalPosition.X));
-		MaxAbsY = FMath::Max(MaxAbsY, FMath::Abs(LocalPosition.Y));
-	}
-
-	TArray<float> RawCommands;
-	RawCommands.Reserve(Airscrews.Num());
-
-	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
+	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew || !Airscrew->IsRotorEnabled())
 		{
-			RawCommands.Add(0.0f);
 			continue;
 		}
 
-		const FDroneRotorMixerCoefficients Mixer = BuildMixerCoefficients(Airscrew, RotorLocalPositions[RotorIndex], MaxAbsX, MaxAbsY);
-		const float RawCommand = CollectiveCommand * Mixer.Collective
-			+ AxisCommands.X * Mixer.Roll
-			+ AxisCommands.Y * Mixer.Pitch
-			+ AxisCommands.Z * Mixer.Yaw;
-		RawCommands.Add(RawCommand);
+		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
+		const FVector4 PhysicalColumn = BuildJacobianColumn(Airscrew, LocalPosition);
+		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
+		const double ColumnMagnitude = FMath::Abs(PhysicalColumn[0])
+			+ FMath::Abs(PhysicalColumn[1])
+			+ FMath::Abs(PhysicalColumn[2])
+			+ FMath::Abs(PhysicalColumn[3]);
+
+		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ColumnMagnitude <= FlightControllerAllocation::AuthorityEpsilon)
+		{
+			continue;
+		}
+
+		PhysicalColumns[RotorIndex] = PhysicalColumn;
+		MaxAllocatedThrusts[RotorIndex] = MaxAllocatedThrust;
+		FreeRotors[RotorIndex] = true;
+		CollectiveAuthority += FMath::Max(PhysicalColumn[0], 0.0f);
+
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			const double AxisMoment = PhysicalColumn[Axis + 1];
+			if (AxisMoment >= 0.0f)
+			{
+				PositiveTorqueAuthority[Axis] += AxisMoment;
+			}
+			else
+			{
+				NegativeTorqueAuthority[Axis] -= AxisMoment;
+			}
+		}
+
+		++NumActiveRotors;
 	}
 
-	if (ControllerConfig.Allocator.bNormalizeMixerOutput && RawCommands.Num() > 0)
+	ControlOutput.RotorCommands.SetNum(NumRotors);
+
+	if (NumActiveRotors == 0)
 	{
-		float MinCommand = RawCommands[0];
-		float MaxCommand = RawCommands[0];
-
-		for (float RawCommand : RawCommands)
+		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 		{
-			MinCommand = FMath::Min(MinCommand, RawCommand);
-			MaxCommand = FMath::Max(MaxCommand, RawCommand);
+			if (UAirscrewComponent* Airscrew = Airscrews[RotorIndex])
+			{
+				Airscrew->SetNormalizedCommand(0.0f);
+				ControlOutput.RotorCommands[RotorIndex] = FlightControllerAllocation::MakeRotorCommand(Airscrew);
+			}
+		}
+		return;
+	}
+
+	double RowScale[FlightControllerAllocation::WrenchAxisCount] = {};
+	RowScale[0] = CollectiveAuthority;
+	RowScale[1] = FlightControllerAllocation::GetBalancedAuthority(PositiveTorqueAuthority[0], NegativeTorqueAuthority[0]);
+	RowScale[2] = FlightControllerAllocation::GetBalancedAuthority(PositiveTorqueAuthority[1], NegativeTorqueAuthority[1]);
+	RowScale[3] = FlightControllerAllocation::GetBalancedAuthority(PositiveTorqueAuthority[2], NegativeTorqueAuthority[2]);
+
+	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+	{
+		if (!FreeRotors[RotorIndex])
+		{
+			continue;
 		}
 
-		if (MinCommand < 0.0f)
+		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 		{
-			for (float& RawCommand : RawCommands)
-			{
-				RawCommand -= MinCommand;
-			}
-
-			MaxCommand -= MinCommand;
-		}
-
-		if (MaxCommand > 1.0f)
-		{
-			const float Scale = 1.0f / MaxCommand;
-			for (float& RawCommand : RawCommands)
-			{
-				RawCommand *= Scale;
-			}
+			NormalizedColumns[RotorIndex][Axis] = RowScale[Axis] > FlightControllerAllocation::AuthorityEpsilon
+				? PhysicalColumns[RotorIndex][Axis] / RowScale[Axis]
+				: 0.0f;
 		}
 	}
 
-	ControlOutput.RotorCommands.Reset();
-	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
+	double DesiredWrench[FlightControllerAllocation::WrenchAxisCount] = {};
+	DesiredWrench[0] = RowScale[0] > FlightControllerAllocation::AuthorityEpsilon
+		? FMath::Clamp(static_cast<double>(CollectiveCommand), 0.0, 1.0)
+		: 0.0;
+	DesiredWrench[1] = RowScale[1] > FlightControllerAllocation::AuthorityEpsilon
+		? FMath::Clamp(AxisCommands.X, -1.0, 1.0)
+		: 0.0;
+	DesiredWrench[2] = RowScale[2] > FlightControllerAllocation::AuthorityEpsilon
+		? FMath::Clamp(AxisCommands.Y, -1.0, 1.0)
+		: 0.0;
+	DesiredWrench[3] = RowScale[3] > FlightControllerAllocation::AuthorityEpsilon
+		? FMath::Clamp(AxisCommands.Z, -1.0, 1.0)
+		: 0.0;
+
+	ControlOutput.Wrench.CollectiveThrust = static_cast<float>(DesiredWrench[0] * RowScale[0]);
+	ControlOutput.Wrench.BodyTorque = FVector(
+		DesiredWrench[1] * RowScale[1],
+		DesiredWrench[2] * RowScale[2],
+		DesiredWrench[3] * RowScale[3]);
+
+	TArray<double> AllocatedThrustFractions;
+	AllocatedThrustFractions.SetNumZeroed(NumRotors);
+
+	TArray<bool> SolvedRotors;
+	SolvedRotors.SetNumZeroed(NumRotors);
+
+	for (int32 Iteration = 0; Iteration < NumActiveRotors; ++Iteration)
+	{
+		double ResidualWrench[FlightControllerAllocation::WrenchAxisCount];
+		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
+		{
+			ResidualWrench[Axis] = DesiredWrench[Axis];
+		}
+
+		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+		{
+			if (!SolvedRotors[RotorIndex])
+			{
+				continue;
+			}
+
+			for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
+			{
+				ResidualWrench[Axis] -= NormalizedColumns[RotorIndex][Axis] * AllocatedThrustFractions[RotorIndex];
+			}
+		}
+
+		double NormalMatrix[FlightControllerAllocation::WrenchAxisCount][FlightControllerAllocation::WrenchAxisCount] = {};
+		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+		{
+			if (!FreeRotors[RotorIndex] || SolvedRotors[RotorIndex])
+			{
+				continue;
+			}
+
+			const FVector4& Column = NormalizedColumns[RotorIndex];
+			for (int32 Row = 0; Row < FlightControllerAllocation::WrenchAxisCount; ++Row)
+			{
+				for (int32 Col = 0; Col < FlightControllerAllocation::WrenchAxisCount; ++Col)
+				{
+					NormalMatrix[Row][Col] += Column[Row] * Column[Col];
+				}
+			}
+		}
+
+		const double Lambda = FMath::Max(static_cast<double>(ControllerConfig.Allocator.DampedPseudoInverseLambda), 0.0);
+		const double Damping = FMath::Square(Lambda);
+		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
+		{
+			NormalMatrix[Axis][Axis] += Damping;
+		}
+
+		double DualSolution[FlightControllerAllocation::WrenchAxisCount] = {};
+		if (!FlightControllerAllocation::SolveLinearSystem4(NormalMatrix, ResidualWrench, DualSolution))
+		{
+			break;
+		}
+
+		int32 ViolatingRotorIndex = INDEX_NONE;
+		double LargestViolation = 0.0;
+
+		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+		{
+			if (!FreeRotors[RotorIndex] || SolvedRotors[RotorIndex])
+			{
+				continue;
+			}
+
+			const FVector4& Column = NormalizedColumns[RotorIndex];
+			double Candidate = 0.0;
+			for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
+			{
+				Candidate += Column[Axis] * DualSolution[Axis];
+			}
+
+			AllocatedThrustFractions[RotorIndex] = Candidate;
+
+			const double Violation = Candidate < 0.0
+				? -Candidate
+				: FMath::Max(Candidate - 1.0, 0.0);
+			if (Violation > LargestViolation)
+			{
+				LargestViolation = Violation;
+				ViolatingRotorIndex = RotorIndex;
+			}
+		}
+
+		if (LargestViolation <= FlightControllerAllocation::CommandTolerance || ViolatingRotorIndex == INDEX_NONE)
+		{
+			break;
+		}
+
+		AllocatedThrustFractions[ViolatingRotorIndex] = AllocatedThrustFractions[ViolatingRotorIndex] < 0.0 ? 0.0 : 1.0;
+		SolvedRotors[ViolatingRotorIndex] = true;
+	}
+
+	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
 		UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew)
@@ -1190,22 +1434,16 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 			continue;
 		}
 
-		const float NormalizedCommand = FMath::Clamp(
-			RawCommands.IsValidIndex(RotorIndex) ? RawCommands[RotorIndex] : 0.0f,
-			0.0f,
-			1.0f);
+		const double AllocatedFraction = FreeRotors[RotorIndex]
+			? FMath::Clamp(AllocatedThrustFractions[RotorIndex], 0.0, 1.0)
+			: 0.0;
+		const double TargetThrust = AllocatedFraction * MaxAllocatedThrusts[RotorIndex];
+		const float NormalizedCommand = FreeRotors[RotorIndex]
+			? FlightControllerAllocation::ConvertThrustToCommand(Airscrew->GetRotorDefinition(), TargetThrust)
+			: 0.0f;
 
 		Airscrew->SetNormalizedCommand(NormalizedCommand);
-
-		FDroneRotorCommand RotorCommand;
-		RotorCommand.RotorName = Airscrew->GetRotorDefinition().RotorName.IsNone()
-			? Airscrew->GetFName()
-			: Airscrew->GetRotorDefinition().RotorName;
-		RotorCommand.NormalizedCommand = NormalizedCommand;
-		RotorCommand.CurrentRpm = Airscrew->GetCurrentRpm();
-		RotorCommand.GeneratedThrust = Airscrew->GetCurrentThrustForce();
-		ControlOutput.RotorCommands.Add(RotorCommand);
-		
+		ControlOutput.RotorCommands[RotorIndex] = FlightControllerAllocation::MakeRotorCommand(Airscrew);
 	}
 }
 
@@ -1284,7 +1522,14 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const F
 	const FVector CurrentPosition = EstimatedState.State.PositionCm;
 	const FVector CurrentVelocity = EstimatedState.State.VelocityCmPerSec;
 
-	FVector DesiredVelocity = FVector::ZeroVector;
+	if (!UsesPositionHoldMode() && !UsesHorizontalVelocityMode())
+	{
+		VelocityPidState.X.Reset();
+		VelocityPidState.Y.Reset();
+		return FVector::ZeroVector;
+	}
+
+	FVector DesiredVelocity = ComputeDesiredHorizontalVelocity(PilotInput);
 
 	if (UsesPositionHoldMode())
 	{
@@ -1310,37 +1555,31 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const F
 			HeldPositionCm = CurrentPosition;
 			PositionPidState.X.Reset();
 			PositionPidState.Y.Reset();
-			DesiredVelocity = ComputeDesiredHorizontalVelocity(PilotInput);
 		}
 		else
 		{
-			DesiredVelocity.X = PositionPidState.X.UpdateFromMeasurement(
-				HeldPositionCm.X,
-				CurrentPosition.X,
-				DeltaSeconds,
-				ControllerConfig.Position.PositionGains.X);
-			DesiredVelocity.Y = PositionPidState.Y.UpdateFromMeasurement(
-				HeldPositionCm.Y,
-				CurrentPosition.Y,
-				DeltaSeconds,
-				ControllerConfig.Position.PositionGains.Y);
+			DesiredVelocity = FVector(
+				PositionPidState.X.UpdateFromMeasurement(
+					HeldPositionCm.X,
+					CurrentPosition.X,
+					DeltaSeconds,
+					ControllerConfig.Position.PositionGains.X),
+				PositionPidState.Y.UpdateFromMeasurement(
+					HeldPositionCm.Y,
+					CurrentPosition.Y,
+					DeltaSeconds,
+					ControllerConfig.Position.PositionGains.Y),
+				0.0);
 		}
 
 		ControlOutput.Targets.Position.bEnabled = true;
 		ControlOutput.Targets.Position.PositionCm = FVector(HeldPositionCm.X, HeldPositionCm.Y, HeldAltitudeCm);
 	}
-	else if (UsesHorizontalVelocityMode())
+	else
 	{
 		bPositionHoldInitialized = false;
 		PositionPidState.X.Reset();
 		PositionPidState.Y.Reset();
-		DesiredVelocity = ComputeDesiredHorizontalVelocity(PilotInput);
-	}
-	else
-	{
-		VelocityPidState.X.Reset();
-		VelocityPidState.Y.Reset();
-		return FVector::ZeroVector;
 	}
 
 	DesiredVelocity.Z = 0.0f;
@@ -1382,64 +1621,50 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const F
 	return FVector(DesiredAcceleration.X, DesiredAcceleration.Y, 0.0f);
 }
 
-/**
- * @brief 构建旋翼混合系数
- *
- * 物理推导 - 力矩与旋翼位置的关系：
- * 旋翼产生的力矩等于推力与力臂的叉积：τ = r × F
- *
- * 1. Collective（总距）系数：
- *    所有旋翼对总推力的贡献相同，M_Collective = 1.0
- *
- * 2. Roll（滚转）系数：
- *    滚转力矩由左右旋翼推力差产生：
- *      τ_roll = Σ(F_i × (-y_i))     （y_i为旋翼在机体Y方向的偏移）
- *    归一化：M_Roll_i = -y_i / max(|y|)
- *    负号：Y>0的旋翼（右侧）增大推力时产生负滚转力矩（向左滚转），
- *    因此右侧旋翼增推 → 机身左滚，符合力矩方向。
- *
- * 3. Pitch（俯仰）系数：
- *    俯仰力矩由前后旋翼推力差产生：
- *      τ_pitch = Σ(F_i × x_i)       （x_i为旋翼在机体X方向的偏移）
- *    归一化：M_Pitch_i = x_i / max(|x|)
- *    正号：X>0的旋翼（前方）增大推力时产生正俯仰力矩（抬头）。
- *    注意：此处与原始注释版本符号相反，使用了 x_i 而非 -x_i，
- *    这取决于具体的机体坐标系约定和Pitch正方向定义。
- *
- * 4. Yaw（偏航）系数：
- *    偏航力矩由旋翼反扭矩产生，取决于旋转方向：
- *      M_Yaw_i = sign(spin_direction) × ControlAuthorityScale
- *    CW旋翼产生负偏航力矩（反扭矩方向），CCW产生正偏航力矩。
- *    增大CW旋翼转速 → 增大反扭矩 → 产生正偏航（右转）
- *
- * 5. ControlAuthorityScale（控制权限缩放）：
- *    对Roll/Pitch/Yaw系数统一缩放，调整控制灵敏度。
- *
- * @param Airscrew 旋翼组件
- * @param LocalPosition 旋翼局部位置
- * @param MaxAbsX X方向最大距离
- * @param MaxAbsY Y方向最大距离
- * @return 混合系数结构体
- */
-FDroneRotorMixerCoefficients UFlightControllerComponent::BuildMixerCoefficients(const UAirscrewComponent* Airscrew, const FVector& LocalPosition, float MaxAbsX, float MaxAbsY) const
+FVector UFlightControllerComponent::GetRotorPositionFromCenterOfMassBodyCm(const UAirscrewComponent* Airscrew) const
 {
-	const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
-	if (RotorDefinition.bUseCustomMixerCoefficients)
+	if (!Airscrew)
 	{
-		return RotorDefinition.MixerCoefficients;
+		return FVector::ZeroVector;
 	}
 
-	FDroneRotorMixerCoefficients Mixer;
-	Mixer.Collective = 1.0f;
-	Mixer.Roll = MaxAbsY > UE_SMALL_NUMBER ? FMath::Clamp(-LocalPosition.Y / MaxAbsY, -1.0f, 1.0f) : 0.0f;
-	Mixer.Pitch = MaxAbsX > UE_SMALL_NUMBER ? FMath::Clamp(LocalPosition.X / MaxAbsX, -1.0f, 1.0f) : 0.0f;
-	Mixer.Yaw = RotorDefinition.GetSpinDirectionSign();
+	if (!BodyPrimitive)
+	{
+		return Airscrew->GetRelativeLocation();
+	}
 
-	Mixer.Roll *= RotorDefinition.ControlAuthorityScale;
-	Mixer.Pitch *= RotorDefinition.ControlAuthorityScale;
-	Mixer.Yaw *= RotorDefinition.ControlAuthorityScale;
+	const FTransform BodyTransform = BodyPrimitive->GetComponentTransform();
+	const FVector CenterOfMassWorld = BodyPrimitive->GetCenterOfMass();
+	return BodyTransform.InverseTransformVectorNoScale(Airscrew->GetComponentLocation() - CenterOfMassWorld);
+}
 
-	return Mixer;
+FVector UFlightControllerComponent::GetRotorThrustAxisBody(const UAirscrewComponent* Airscrew) const
+{
+	if (!Airscrew)
+	{
+		return FVector::UpVector;
+	}
+
+	const FVector ThrustAxisWorld = Airscrew->GetThrustDirectionWorld();
+	const FVector ThrustAxisBody = BodyPrimitive
+		? BodyPrimitive->GetComponentTransform().InverseTransformVectorNoScale(ThrustAxisWorld)
+		: ThrustAxisWorld;
+
+	return ThrustAxisBody.IsNearlyZero() ? FVector::UpVector : ThrustAxisBody.GetSafeNormal();
+}
+
+FVector4 UFlightControllerComponent::BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm) const
+{
+	const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
+	const float MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition);
+	const FVector ThrustAxisBody = GetRotorThrustAxisBody(Airscrew);
+	const FVector ForceAtMax = ThrustAxisBody * MaxAllocatedThrust;
+	const FVector MomentArmMeters = LocalPositionFromCenterOfMassCm * 0.01f;
+	const FVector ReactionTorque = ThrustAxisBody
+		* (MaxAllocatedThrust * RotorDefinition.GetEffectiveReactionTorqueCoefficient() * RotorDefinition.GetSpinDirectionSign());
+	const FVector PhysicalTorque = FVector::CrossProduct(MomentArmMeters, ForceAtMax) + ReactionTorque;
+
+	return FVector4(ForceAtMax.Z, -PhysicalTorque.X, -PhysicalTorque.Y, PhysicalTorque.Z);
 }
 
 /**
@@ -1450,29 +1675,6 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 	if (!bEnableDebugLog || !bLogRotorLayout || bHasLoggedRotorLayout || Airscrews.IsEmpty())
 	{
 		return;
-	}
-
-	float MaxAbsX = 1.0f;
-	float MaxAbsY = 1.0f;
-	const FTransform BodyTransform = BodyPrimitive ? BodyPrimitive->GetComponentTransform() : FTransform::Identity;
-	TArray<FVector> RotorLocalPositions;
-	RotorLocalPositions.Reserve(Airscrews.Num());
-
-	for (UAirscrewComponent* Airscrew : Airscrews)
-	{
-		if (!Airscrew)
-		{
-			RotorLocalPositions.Add(FVector::ZeroVector);
-			continue;
-		}
-
-		const FVector LocalPosition = BodyPrimitive
-			? BodyTransform.InverseTransformPositionNoScale(Airscrew->GetComponentLocation())
-			: Airscrew->GetRelativeLocation();
-
-		RotorLocalPositions.Add(LocalPosition);
-		MaxAbsX = FMath::Max(MaxAbsX, FMath::Abs(LocalPosition.X));
-		MaxAbsY = FMath::Max(MaxAbsY, FMath::Abs(LocalPosition.Y));
 	}
 
 	const FString OwnerName = GetOwner() ? GetOwner()->GetName() : TEXT("None");
@@ -1486,12 +1688,10 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 			continue;
 		}
 
-		const FVector LocalPosition = RotorLocalPositions.IsValidIndex(RotorIndex)
-			? RotorLocalPositions[RotorIndex]
-			: FVector::ZeroVector;
+		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
 		const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
-		const FDroneRotorMixerCoefficients Mixer = BuildMixerCoefficients(Airscrew, LocalPosition, MaxAbsX, MaxAbsY);
-		const FVector ThrustAxisLocal = RotorDefinition.GetNormalizedThrustAxisLocal();
+		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition);
+		const FVector ThrustAxisBody = GetRotorThrustAxisBody(Airscrew);
 		const FName RotorName = RotorDefinition.RotorName.IsNone()
 			? Airscrew->GetFName()
 			: RotorDefinition.RotorName;
@@ -1499,24 +1699,25 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 		UE_LOG(
 			LogFlightController,
 			Log,
-			TEXT("[RotorLayout] [%d] %s Pos=(%.1f, %.1f, %.1f) Axis=(%.2f, %.2f, %.2f) Spin=%s Mix=(C %.2f R %.2f P %.2f Y %.2f) Scale=%.2f MaxRpm=%.0f IdleRpm=%.0f MaxThrust=%.1f"),
+			TEXT("[RotorLayout] [%d] %s ArmCm=(%.1f, %.1f, %.1f) AxisBody=(%.2f, %.2f, %.2f) Spin=%s Jac=(Fz %.2f Roll %.2f Pitch %.2f Yaw %.2f) Scale=%.2f MaxRpm=%.0f IdleRpm=%.0f MaxThrust=%.1f AllocThrust=%.1f"),
 			RotorIndex,
 			*RotorName.ToString(),
 			LocalPosition.X,
 			LocalPosition.Y,
 			LocalPosition.Z,
-			ThrustAxisLocal.X,
-			ThrustAxisLocal.Y,
-			ThrustAxisLocal.Z,
+			ThrustAxisBody.X,
+			ThrustAxisBody.Y,
+			ThrustAxisBody.Z,
 			FlightControllerDebug::GetSpinDirectionLabel(RotorDefinition.SpinDirection),
-			Mixer.Collective,
-			Mixer.Roll,
-			Mixer.Pitch,
-			Mixer.Yaw,
+			JacobianCol[0],
+			JacobianCol[1],
+			JacobianCol[2],
+			JacobianCol[3],
 			RotorDefinition.ControlAuthorityScale,
 			RotorDefinition.Motor.MaxRpm,
 			RotorDefinition.Motor.IdleRpm,
-			RotorDefinition.GetEffectiveMaxThrust());
+			FlightControllerAllocation::GetRotorMaxPhysicalThrust(RotorDefinition),
+			FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition));
 	}
 
 	bHasLoggedRotorLayout = true;
@@ -1617,29 +1818,6 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 		return;
 	}
 
-	float MaxAbsX = 1.0f;
-	float MaxAbsY = 1.0f;
-	const FTransform BodyTransform = BodyPrimitive ? BodyPrimitive->GetComponentTransform() : FTransform::Identity;
-	TArray<FVector> RotorLocalPositions;
-	RotorLocalPositions.Reserve(Airscrews.Num());
-
-	for (UAirscrewComponent* Airscrew : Airscrews)
-	{
-		if (!Airscrew)
-		{
-			RotorLocalPositions.Add(FVector::ZeroVector);
-			continue;
-		}
-
-		const FVector LocalPosition = BodyPrimitive
-			? BodyTransform.InverseTransformPositionNoScale(Airscrew->GetComponentLocation())
-			: Airscrew->GetRelativeLocation();
-
-		RotorLocalPositions.Add(LocalPosition);
-		MaxAbsX = FMath::Max(MaxAbsX, FMath::Abs(LocalPosition.X));
-		MaxAbsY = FMath::Max(MaxAbsY, FMath::Abs(LocalPosition.Y));
-	}
-
 	FString RotorSummary;
 	float LeftCommandSum = 0.0f;
 	float RightCommandSum = 0.0f;
@@ -1658,10 +1836,8 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 			continue;
 		}
 
-		const FVector LocalPosition = RotorLocalPositions.IsValidIndex(RotorIndex)
-			? RotorLocalPositions[RotorIndex]
-			: FVector::ZeroVector;
-		const FDroneRotorMixerCoefficients Mixer = BuildMixerCoefficients(Airscrew, LocalPosition, MaxAbsX, MaxAbsY);
+		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
+		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition);
 
 		if (LocalPosition.Y > UE_SMALL_NUMBER)
 		{
@@ -1677,11 +1853,11 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 		if (bLogRotorCommands)
 		{
 			RotorSummary += FString::Printf(
-				TEXT("[%d:%s Y=%+.1f MixR=%+.2f Cmd=%.3f Cur=%.3f Rpm=%.0f Thr=%.1f] "),
+				TEXT("[%d:%s Y=%+.1f JacRoll=%+.2f Cmd=%.3f Cur=%.3f Rpm=%.0f Thr=%.1f] "),
 				RotorIndex,
 				*RotorCommand->RotorName.ToString(),
 				LocalPosition.Y,
-				Mixer.Roll,
+				JacobianCol[1],
 				RotorCommand->NormalizedCommand,
 				Airscrew->GetCurrentCommand(),
 				RotorCommand->CurrentRpm,
