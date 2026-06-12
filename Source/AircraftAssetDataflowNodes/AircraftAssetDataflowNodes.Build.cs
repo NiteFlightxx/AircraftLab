@@ -10,7 +10,8 @@ public class AircraftAssetDataflowNodes : ModuleRules
         PublicDependencyModuleNames.AddRange(
             new string[]
             {
-                "Core"
+                "Core",
+                "AircraftAsset"
             }
         );
 
@@ -30,7 +31,6 @@ public class AircraftAssetDataflowNodes : ModuleRules
                 
 
                 "Aircraft",
-                "AircraftAsset",
                 "AircraftAssetEngine",
                 "AircraftAssetTools",
                 "AircraftRuntimeCommon"

@@ -53,12 +53,10 @@ void FAircraftBrakeConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper*/
 
 void FAircraftBrakeConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (bReplaceAllBrakes)
 	{
@@ -71,13 +69,13 @@ void FAircraftBrakeConfigNode::EvaluateAircraftCollection(
 	}
 
 	TManagedArray<FName>& BrakeNames =
-		AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::BrakeName, AircraftCollectionGroup::Brakes);
+		InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::BrakeName, AircraftCollectionGroup::Brakes);
 	TManagedArray<FString>& BrakeWheelNames =
-		AircraftFacade.FindOrAddAttribute<FString>(AircraftCollectionAttribute::BrakeWheelNames, AircraftCollectionGroup::Brakes);
+		InFacade.FindOrAddAttribute<FString>(AircraftCollectionAttribute::BrakeWheelNames, AircraftCollectionGroup::Brakes);
 	TManagedArray<float>& BrakeMaxTorques =
-		AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::BrakeMaxTorqueNm, AircraftCollectionGroup::Brakes);
+		InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::BrakeMaxTorqueNm, AircraftCollectionGroup::Brakes);
 	TManagedArray<bool>& BrakeHandbrakeFlags =
-		AircraftFacade.FindOrAddAttribute<bool>(AircraftCollectionAttribute::BrakeIsHandbrake, AircraftCollectionGroup::Brakes);
+		InFacade.FindOrAddAttribute<bool>(AircraftCollectionAttribute::BrakeIsHandbrake, AircraftCollectionGroup::Brakes);
 
 	int32 BrakeIndex = UE::AircraftLab::AircraftAssetDataflowNodes::Private::FindBrakeIndex(BrakeNames, BrakeName);
 	if (BrakeIndex == INDEX_NONE)

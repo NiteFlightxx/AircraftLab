@@ -660,11 +660,6 @@ void FAircraftAssetEditorToolkit::InvalidateViews()
 	{
 		ViewportClient->Invalidate();
 	}
-
-	if (PreviewViewportClient.IsValid())
-	{
-		PreviewViewportClient->Invalidate();
-	}
 }
 
 void FAircraftAssetEditorToolkit::EvaluateNode(const FDataflowNode* Node, const FDataflowOutput* Output)

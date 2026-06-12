@@ -59,7 +59,20 @@
 			"Name": "AircraftAssetTools",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "Default"
+		},
+		
+		
+		
+		
+		{
+			"Name": "AircraftLab",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
 		}
+		
+		
+		
+		
 	],
 	"Plugins": [
 		{

@@ -22,7 +22,8 @@ void FAircraftThrottleInputConfigNode::AddProperties(FPropertyHelper& /*Property
 
 void FAircraftThrottleInputConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& /*AircraftCollection*/) const
+	const TSharedRef<FManagedArrayCollection>& /*AircraftCollection*/,
+	FAircraftConfigNodeBase::FAircraftFacade& /*InFacade*/) const
 {
 }
 

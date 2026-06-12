@@ -20,12 +20,10 @@ void FAircraftSolverConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper*
 
 void FAircraftSolverConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& Context,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (AircraftCollection->NumElements(AircraftCollectionGroup::Solver) == 0)
 	{
@@ -36,6 +34,6 @@ void FAircraftSolverConfigNode::EvaluateAircraftCollection(
 		AircraftCollection->Resize(1, AircraftCollectionGroup::Solver);
 	}
 
-	AircraftFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::SolverMaxSolverSubsteps, AircraftCollectionGroup::Solver)[0] =
+	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::SolverMaxSolverSubsteps, AircraftCollectionGroup::Solver)[0] =
 		FMath::Max(1, GetValue(Context, &MaxSolverSubsteps));
 }

@@ -64,12 +64,10 @@ void FAircraftEngineConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper*
 
 void FAircraftEngineConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (AircraftCollection->NumElements(AircraftCollectionGroup::Powertrain) == 0)
 	{
@@ -80,21 +78,21 @@ void FAircraftEngineConfigNode::EvaluateAircraftCollection(
 		AircraftCollection->Resize(1, AircraftCollectionGroup::Powertrain);
 	}
 
-	AircraftFacade.FindOrAddAttribute<FString>(
+	InFacade.FindOrAddAttribute<FString>(
 		AircraftCollectionAttribute::PowertrainEngineFullThrottleTorqueCurve,
 		AircraftCollectionGroup::Powertrain)[0] =
 		UE::AircraftLab::AircraftAssetDataflowNodes::Private::SerializeRuntimeFloatCurve(FullThrottleTorqueCurve);
-	AircraftFacade.FindOrAddAttribute<FString>(
+	InFacade.FindOrAddAttribute<FString>(
 		AircraftCollectionAttribute::PowertrainEngineZeroThrottleTorqueCurve,
 		AircraftCollectionGroup::Powertrain)[0] =
 		UE::AircraftLab::AircraftAssetDataflowNodes::Private::SerializeRuntimeFloatCurve(ZeroThrottleTorqueCurve);
-	AircraftFacade.FindOrAddAttribute<float>(
+	InFacade.FindOrAddAttribute<float>(
 		AircraftCollectionAttribute::PowertrainEngineIdleRPM,
 		AircraftCollectionGroup::Powertrain)[0] = IdleRPM;
-	AircraftFacade.FindOrAddAttribute<float>(
+	InFacade.FindOrAddAttribute<float>(
 		AircraftCollectionAttribute::PowertrainEngineMaxRPM,
 		AircraftCollectionGroup::Powertrain)[0] = MaxRPM;
-	AircraftFacade.FindOrAddAttribute<float>(
+	InFacade.FindOrAddAttribute<float>(
 		AircraftCollectionAttribute::PowertrainEngineInertia,
 		AircraftCollectionGroup::Powertrain)[0] = EngineInertia;
 }

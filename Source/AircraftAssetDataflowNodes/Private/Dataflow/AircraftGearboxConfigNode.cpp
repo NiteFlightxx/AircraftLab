@@ -42,12 +42,10 @@ void FAircraftGearboxConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper
 
 void FAircraftGearboxConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (AircraftCollection->NumElements(AircraftCollectionGroup::Powertrain) == 0)
 	{
@@ -58,24 +56,24 @@ void FAircraftGearboxConfigNode::EvaluateAircraftCollection(
 		AircraftCollection->Resize(1, AircraftCollectionGroup::Powertrain);
 	}
 
-	AircraftFacade.FindOrAddAttribute<FString>(
+	InFacade.FindOrAddAttribute<FString>(
 		AircraftCollectionAttribute::PowertrainGearboxForwardRatios,
 		AircraftCollectionGroup::Powertrain)[0] =
 		UE::AircraftLab::AircraftAssetDataflowNodes::Private::SerializeFloatArray(ForwardRatios);
-	AircraftFacade.FindOrAddAttribute<FString>(
+	InFacade.FindOrAddAttribute<FString>(
 		AircraftCollectionAttribute::PowertrainGearboxReverseRatios,
 		AircraftCollectionGroup::Powertrain)[0] =
 		UE::AircraftLab::AircraftAssetDataflowNodes::Private::SerializeFloatArray(ReverseRatios);
-	AircraftFacade.FindOrAddAttribute<float>(
+	InFacade.FindOrAddAttribute<float>(
 		AircraftCollectionAttribute::PowertrainGearboxFinalDriveRatio,
 		AircraftCollectionGroup::Powertrain)[0] = FinalDriveRatio;
-	AircraftFacade.FindOrAddAttribute<float>(
+	InFacade.FindOrAddAttribute<float>(
 		AircraftCollectionAttribute::PowertrainGearboxShiftUpRPM,
 		AircraftCollectionGroup::Powertrain)[0] = ShiftUpRPM;
-	AircraftFacade.FindOrAddAttribute<float>(
+	InFacade.FindOrAddAttribute<float>(
 		AircraftCollectionAttribute::PowertrainGearboxShiftDownRPM,
 		AircraftCollectionGroup::Powertrain)[0] = ShiftDownRPM;
-	AircraftFacade.FindOrAddAttribute<bool>(
+	InFacade.FindOrAddAttribute<bool>(
 		AircraftCollectionAttribute::PowertrainGearboxAutoReverse,
 		AircraftCollectionGroup::Powertrain)[0] = bAutoReverse;
 }

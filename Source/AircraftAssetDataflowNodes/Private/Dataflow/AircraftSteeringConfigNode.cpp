@@ -54,19 +54,17 @@ void FAircraftSteeringConfigNode::AddProperties(FPropertyHelper& /*PropertyHelpe
 
 void FAircraftSteeringConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (bReplaceAllSteeringSystems)
 	{
 		AircraftCollection->Resize(0, AircraftCollectionGroup::Steering);
 
 		if (TManagedArray<FName>* const WheelSteeringNames =
-			AircraftFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelSteeringName, AircraftCollectionGroup::Wheels))
+			InFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelSteeringName, AircraftCollectionGroup::Wheels))
 		{
 			for (FName& WheelSteeringName : *WheelSteeringNames)
 			{
@@ -81,11 +79,11 @@ void FAircraftSteeringConfigNode::EvaluateAircraftCollection(
 	}
 
 	TManagedArray<FName>& SteeringNames =
-		AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::SteeringName, AircraftCollectionGroup::Steering);
+		InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::SteeringName, AircraftCollectionGroup::Steering);
 	TManagedArray<float>& MaxSteerAngles =
-		AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SteeringMaxSteerAngleDeg, AircraftCollectionGroup::Steering);
+		InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SteeringMaxSteerAngleDeg, AircraftCollectionGroup::Steering);
 	TManagedArray<float>& AckermannRatios =
-		AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SteeringAckermannRatio, AircraftCollectionGroup::Steering);
+		InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SteeringAckermannRatio, AircraftCollectionGroup::Steering);
 
 	int32 SteeringIndex = UE::AircraftLab::AircraftAssetDataflowNodes::Private::FindSteeringIndex(SteeringNames, SteeringName);
 	if (SteeringIndex == INDEX_NONE)
@@ -98,7 +96,7 @@ void FAircraftSteeringConfigNode::EvaluateAircraftCollection(
 	AckermannRatios[SteeringIndex] = AckermannRatio;
 
 	if (TManagedArray<FName>* const WheelSteeringNames =
-		AircraftFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelSteeringName, AircraftCollectionGroup::Wheels))
+		InFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelSteeringName, AircraftCollectionGroup::Wheels))
 	{
 		for (FName& WheelSteeringName : *WheelSteeringNames)
 		{
@@ -109,7 +107,7 @@ void FAircraftSteeringConfigNode::EvaluateAircraftCollection(
 		}
 
 		if (const TManagedArray<FName>* const ExistingWheelNames =
-			AircraftFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelName, AircraftCollectionGroup::Wheels))
+			InFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelName, AircraftCollectionGroup::Wheels))
 		{
 			for (const FName ConfiguredWheelName : WheelNames)
 			{

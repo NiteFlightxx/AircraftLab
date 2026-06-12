@@ -42,12 +42,10 @@ void FAircraftSuspensionConfigNode::AddProperties(FPropertyHelper& /*PropertyHel
 
 void FAircraftSuspensionConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (bReplaceAllSuspensions)
 	{
@@ -59,7 +57,7 @@ void FAircraftSuspensionConfigNode::EvaluateAircraftCollection(
 		return;
 	}
 
-	TManagedArray<FName>& SuspensionNames = AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::SuspensionName, AircraftCollectionGroup::Suspensions);
+	TManagedArray<FName>& SuspensionNames = InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::SuspensionName, AircraftCollectionGroup::Suspensions);
 
 	int32 SuspensionIndex = UE::AircraftLab::AircraftAssetDataflowNodes::Private::FindSuspensionIndex(SuspensionNames, SuspensionName);
 	if (SuspensionIndex == INDEX_NONE)
@@ -68,12 +66,11 @@ void FAircraftSuspensionConfigNode::EvaluateAircraftCollection(
 	}
 
 	SuspensionNames[SuspensionIndex] = SuspensionName;
-	AircraftFacade.FindOrAddAttribute<FVector3f>(AircraftCollectionAttribute::SuspensionTopMountLocal, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = FVector3f(TopMountLocal);
-	AircraftFacade.FindOrAddAttribute<FVector3f>(AircraftCollectionAttribute::SuspensionLowerBallJointLocal, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = FVector3f(LowerBallJointLocal);
-	AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SuspensionMaxRaiseCm, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = MaxRaiseCm;
-	AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SuspensionMaxDropCm, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = MaxDropCm;
-	AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SuspensionNaturalFrequencyHz, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = NaturalFrequencyHz;
-	AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SuspensionDampingRatio, AircraftCollectionGroup::Suspensions)[SuspensionIndex] =
+	InFacade.FindOrAddAttribute<FVector3f>(AircraftCollectionAttribute::SuspensionTopMountLocal, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = FVector3f(TopMountLocal);
+	InFacade.FindOrAddAttribute<FVector3f>(AircraftCollectionAttribute::SuspensionLowerBallJointLocal, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = FVector3f(LowerBallJointLocal);
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SuspensionMaxRaiseCm, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = MaxRaiseCm;
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SuspensionMaxDropCm, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = MaxDropCm;
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SuspensionNaturalFrequencyHz, AircraftCollectionGroup::Suspensions)[SuspensionIndex] = NaturalFrequencyHz;
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::SuspensionDampingRatio, AircraftCollectionGroup::Suspensions)[SuspensionIndex] =
 		DampingRatio;
 }
-

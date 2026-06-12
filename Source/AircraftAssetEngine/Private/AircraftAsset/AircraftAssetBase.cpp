@@ -211,7 +211,7 @@ FMatrix UAircraftAssetBase::GetComposedRefPoseMatrix(int32 BoneIndex) const
 		return SourceSkeletalMesh->GetComposedRefPoseMatrix(BoneIndex);
 	}
 
-	return BoneIndex == 0 ? FMatrix::Identity : FMatrix::Identity;
+	return FMatrix::Identity;
 }
 
 const FMeshUVChannelInfo* UAircraftAssetBase::GetUVChannelData(int32 MaterialIndex) const
@@ -278,6 +278,10 @@ const TArray<FSkeletalMeshLODInfo>& UAircraftAssetBase::GetLODInfoArray() const
 
 FSkeletalMeshRenderData* UAircraftAssetBase::GetResourceForRendering() const
 {
+	if (const USkeletalMesh* SourceSkeletalMesh = GetSourceSkeletalMesh())
+	{
+		return SourceSkeletalMesh->GetResourceForRendering();
+	}
 	return nullptr;
 }
 
@@ -527,6 +531,20 @@ void UAircraftAssetBase::OnAssetChanged(const bool bReregisterComponents) const
 
 void UAircraftAssetBase::UpdateSimulationActor(TObjectPtr<AActor>& SimulationActor) const
 {
+	TInlineComponentArray<UAircraftComponent*> AircraftComponents(SimulationActor);
+	for (UAircraftComponent* Component : AircraftComponents)
+	{
+		if (Component->GetAsset() == this)
+		{
+#if WITH_EDITOR
+			Component->RefreshAssetState();
+#endif
+		}
+		else if (!Component->GetAsset())
+		{
+			Component->SetAsset(const_cast<UAircraftAssetBase*>(this));
+		}
+	}
 }
 
 TArray<UActorComponent*> UAircraftAssetBase::GetDependentComponents() const

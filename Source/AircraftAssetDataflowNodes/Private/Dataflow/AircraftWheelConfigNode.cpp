@@ -45,12 +45,10 @@ void FAircraftWheelConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper*/
 
 void FAircraftWheelConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (bReplaceAllWheels)
 	{
@@ -62,7 +60,7 @@ void FAircraftWheelConfigNode::EvaluateAircraftCollection(
 		return;
 	}
 
-	TManagedArray<FName>& WheelNames = AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelName, AircraftCollectionGroup::Wheels);
+	TManagedArray<FName>& WheelNames = InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelName, AircraftCollectionGroup::Wheels);
 
 	int32 WheelIndex = UE::AircraftLab::AircraftAssetDataflowNodes::Private::FindWheelIndex(WheelNames, WheelName);
 	if (WheelIndex == INDEX_NONE)
@@ -71,13 +69,13 @@ void FAircraftWheelConfigNode::EvaluateAircraftCollection(
 	}
 
 	WheelNames[WheelIndex] = WheelName;
-	AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelBoneName, AircraftCollectionGroup::Wheels)[WheelIndex] = BoneName;
-	AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelSuspensionName, AircraftCollectionGroup::Wheels)[WheelIndex] = SuspensionName;
-	AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelAxleName, AircraftCollectionGroup::Wheels)[WheelIndex] = AxleName;
-	AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelSteeringName, AircraftCollectionGroup::Wheels)[WheelIndex] = SteeringName;
-	AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelBrakeName, AircraftCollectionGroup::Wheels)[WheelIndex] = BrakeName;
-	AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelTireName, AircraftCollectionGroup::Wheels)[WheelIndex] = TireName;
-	AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::WheelRadiusCm, AircraftCollectionGroup::Wheels)[WheelIndex] = RadiusCm;
-	AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::WheelWidthCm, AircraftCollectionGroup::Wheels)[WheelIndex] = WidthCm;
-	AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::WheelMassKg, AircraftCollectionGroup::Wheels)[WheelIndex] = MassKg;
+	InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelBoneName, AircraftCollectionGroup::Wheels)[WheelIndex] = BoneName;
+	InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelSuspensionName, AircraftCollectionGroup::Wheels)[WheelIndex] = SuspensionName;
+	InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelAxleName, AircraftCollectionGroup::Wheels)[WheelIndex] = AxleName;
+	InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelSteeringName, AircraftCollectionGroup::Wheels)[WheelIndex] = SteeringName;
+	InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelBrakeName, AircraftCollectionGroup::Wheels)[WheelIndex] = BrakeName;
+	InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::WheelTireName, AircraftCollectionGroup::Wheels)[WheelIndex] = TireName;
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::WheelRadiusCm, AircraftCollectionGroup::Wheels)[WheelIndex] = RadiusCm;
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::WheelWidthCm, AircraftCollectionGroup::Wheels)[WheelIndex] = WidthCm;
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::WheelMassKg, AircraftCollectionGroup::Wheels)[WheelIndex] = MassKg;
 }

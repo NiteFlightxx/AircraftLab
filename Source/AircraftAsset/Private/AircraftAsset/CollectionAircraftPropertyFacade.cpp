@@ -14,7 +14,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName StringValueName(TEXT("StringValue"));
 		const FName FlagsName(TEXT("Flags"));
 	}
-}
 
 FCollectionAircraftPropertyConstFacade::FCollectionAircraftPropertyConstFacade(
 	const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection)
@@ -33,8 +32,6 @@ FCollectionAircraftPropertyConstFacade::FCollectionAircraftPropertyConstFacade()
 
 bool FCollectionAircraftPropertyConstFacade::IsValid() const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	return
 		ManagedArrayCollection->HasAttribute(AircraftCollectionProperty::KeyNameName, AircraftCollectionProperty::PropertyGroup) &&
 		ManagedArrayCollection->HasAttribute(AircraftCollectionProperty::LowValueName, AircraftCollectionProperty::PropertyGroup) &&
@@ -51,37 +48,37 @@ int32 FCollectionAircraftPropertyConstFacade::GetKeyNameIndex(const FName& Key) 
 
 bool FCollectionAircraftPropertyConstFacade::IsEnabled(int32 KeyIndex) const
 {
-	return HasAnyFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Enabled);
+	return HasAnyFlags(KeyIndex, EAircraftCollectionPropertyFlags::Enabled);
 }
 
 bool FCollectionAircraftPropertyConstFacade::IsAnimatable(int32 KeyIndex) const
 {
-	return HasAnyFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Animatable);
+	return HasAnyFlags(KeyIndex, EAircraftCollectionPropertyFlags::Animatable);
 }
 
 bool FCollectionAircraftPropertyConstFacade::IsLegacy(int32 KeyIndex) const
 {
-	return HasAnyFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Legacy);
+	return HasAnyFlags(KeyIndex, EAircraftCollectionPropertyFlags::Legacy);
 }
 
 bool FCollectionAircraftPropertyConstFacade::IsIntrinsic(int32 KeyIndex) const
 {
-	return HasAnyFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Intrinsic);
+	return HasAnyFlags(KeyIndex, EAircraftCollectionPropertyFlags::Intrinsic);
 }
 
 bool FCollectionAircraftPropertyConstFacade::IsStringDirty(int32 KeyIndex) const
 {
-	return HasAnyFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::StringDirty);
+	return HasAnyFlags(KeyIndex, EAircraftCollectionPropertyFlags::StringDirty);
 }
 
 bool FCollectionAircraftPropertyConstFacade::IsDirty(int32 KeyIndex) const
 {
-	return HasAnyFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Dirty);
+	return HasAnyFlags(KeyIndex, EAircraftCollectionPropertyFlags::Dirty);
 }
 
 bool FCollectionAircraftPropertyConstFacade::IsInterpolable(int32 KeyIndex) const
 {
-	return HasAnyFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Interpolable);
+	return HasAnyFlags(KeyIndex, EAircraftCollectionPropertyFlags::Interpolable);
 }
 
 bool FCollectionAircraftPropertyConstFacade::IsEnabled(const FName& Key, bool bDefault, int32* OutKeyIndex) const
@@ -121,8 +118,6 @@ bool FCollectionAircraftPropertyConstFacade::IsInterpolable(const FName& Key, bo
 
 void FCollectionAircraftPropertyConstFacade::UpdateArrays()
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	const TManagedArray<FName>* const KeyNames = ManagedArrayCollection->FindAttributeTyped<FName>(AircraftCollectionProperty::KeyNameName, AircraftCollectionProperty::PropertyGroup);
 	const TManagedArray<FVector3f>* const LowValues = ManagedArrayCollection->FindAttributeTyped<FVector3f>(AircraftCollectionProperty::LowValueName, AircraftCollectionProperty::PropertyGroup);
 	const TManagedArray<FVector3f>* const HighValues = ManagedArrayCollection->FindAttributeTyped<FVector3f>(AircraftCollectionProperty::HighValueName, AircraftCollectionProperty::PropertyGroup);
@@ -147,7 +142,7 @@ void FCollectionAircraftPropertyConstFacade::RebuildKeyIndices()
 
 bool FCollectionAircraftPropertyConstFacade::HasAnyFlags(
 	int32 KeyIndex,
-	UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags Flags) const
+	EAircraftCollectionPropertyFlags Flags) const
 {
 	return EnumHasAnyFlags(GetFlags(KeyIndex), Flags);
 }
@@ -174,10 +169,8 @@ void FCollectionAircraftPropertyFacade::SetStringValue(int32 KeyIndex, const FSt
 	}
 }
 
-void FCollectionAircraftPropertyFacade::SetFlags(int32 KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags Flags)
+void FCollectionAircraftPropertyFacade::SetFlags(int32 KeyIndex, EAircraftCollectionPropertyFlags Flags)
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	EAircraftCollectionPropertyFlags NewFlags = Flags;
 	if (EnumHasAnyFlags(NewFlags, EAircraftCollectionPropertyFlags::StringDirty))
 	{
@@ -192,43 +185,41 @@ void FCollectionAircraftPropertyFacade::SetFlags(int32 KeyIndex, UE::AircraftLab
 
 void FCollectionAircraftPropertyFacade::SetEnabled(int32 KeyIndex, bool bEnabled)
 {
-	EnableFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Enabled, bEnabled);
+	EnableFlags(KeyIndex, EAircraftCollectionPropertyFlags::Enabled, bEnabled);
 }
 
 void FCollectionAircraftPropertyFacade::SetAnimatable(int32 KeyIndex, bool bAnimatable)
 {
-	EnableFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Animatable, bAnimatable);
+	EnableFlags(KeyIndex, EAircraftCollectionPropertyFlags::Animatable, bAnimatable);
 }
 
 void FCollectionAircraftPropertyFacade::SetLegacy(int32 KeyIndex, bool bLegacy)
 {
-	EnableFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Legacy, bLegacy);
+	EnableFlags(KeyIndex, EAircraftCollectionPropertyFlags::Legacy, bLegacy);
 }
 
 void FCollectionAircraftPropertyFacade::SetIntrinsic(int32 KeyIndex)
 {
-	EnableFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Intrinsic, true);
+	EnableFlags(KeyIndex, EAircraftCollectionPropertyFlags::Intrinsic, true);
 }
 
 void FCollectionAircraftPropertyFacade::SetDirty(int32 KeyIndex)
 {
-	EnableFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Dirty, true);
+	EnableFlags(KeyIndex, EAircraftCollectionPropertyFlags::Dirty, true);
 }
 
 void FCollectionAircraftPropertyFacade::SetStringDirty(int32 KeyIndex)
 {
-	EnableFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::StringDirty, true);
+	EnableFlags(KeyIndex, EAircraftCollectionPropertyFlags::StringDirty, true);
 }
 
 void FCollectionAircraftPropertyFacade::SetInterpolable(int32 KeyIndex)
 {
-	EnableFlags(KeyIndex, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Interpolable, true);
+	EnableFlags(KeyIndex, EAircraftCollectionPropertyFlags::Interpolable, true);
 }
 
 void FCollectionAircraftPropertyFacade::ClearDirtyFlags()
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	for (uint8& FlagsValue : MutableFlagsArray)
 	{
 		EAircraftCollectionPropertyFlags Flags = static_cast<EAircraftCollectionPropertyFlags>(FlagsValue);
@@ -244,8 +235,6 @@ TSharedRef<FManagedArrayCollection> FCollectionAircraftPropertyFacade::GetManage
 
 void FCollectionAircraftPropertyFacade::UpdateMutableArrays()
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	TManagedArray<FName>* const KeyNames = GetManagedArrayCollection()->FindAttributeTyped<FName>(AircraftCollectionProperty::KeyNameName, AircraftCollectionProperty::PropertyGroup);
 	TManagedArray<FVector3f>* const LowValues = GetManagedArrayCollection()->FindAttributeTyped<FVector3f>(AircraftCollectionProperty::LowValueName, AircraftCollectionProperty::PropertyGroup);
 	TManagedArray<FVector3f>* const HighValues = GetManagedArrayCollection()->FindAttributeTyped<FVector3f>(AircraftCollectionProperty::HighValueName, AircraftCollectionProperty::PropertyGroup);
@@ -261,11 +250,9 @@ void FCollectionAircraftPropertyFacade::UpdateMutableArrays()
 
 void FCollectionAircraftPropertyFacade::EnableFlags(
 	int32 KeyIndex,
-	UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags Flags,
+	EAircraftCollectionPropertyFlags Flags,
 	bool bEnable)
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	EAircraftCollectionPropertyFlags CurrentFlags = static_cast<EAircraftCollectionPropertyFlags>(MutableFlagsArray[KeyIndex]);
 
 	if (bEnable)
@@ -320,8 +307,6 @@ FCollectionAircraftPropertyMutableFacade::FCollectionAircraftPropertyMutableFaca
 
 void FCollectionAircraftPropertyMutableFacade::DefineSchema()
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	if (!GetManagedArrayCollection()->HasGroup(AircraftCollectionProperty::PropertyGroup))
 	{
 		GetManagedArrayCollection()->AddGroup(AircraftCollectionProperty::PropertyGroup);
@@ -359,7 +344,7 @@ void FCollectionAircraftPropertyMutableFacade::DefineSchema()
 
 int32 FCollectionAircraftPropertyMutableFacade::AddProperty(
 	const FName& Key,
-	UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags Flags)
+	EAircraftCollectionPropertyFlags Flags)
 {
 	DefineSchema();
 
@@ -369,7 +354,7 @@ int32 FCollectionAircraftPropertyMutableFacade::AddProperty(
 		return ExistingIndex;
 	}
 
-	const int32 NewIndex = GetManagedArrayCollection()->AddElements(1, UE::AircraftLab::AircraftAsset::AircraftCollectionProperty::PropertyGroup);
+	const int32 NewIndex = GetManagedArrayCollection()->AddElements(1, AircraftCollectionProperty::PropertyGroup);
 	UpdateArrays();
 	UpdateMutableArrays();
 
@@ -385,8 +370,6 @@ int32 FCollectionAircraftPropertyMutableFacade::AddProperty(
 
 int32 FCollectionAircraftPropertyMutableFacade::AddProperty(const FName& Key, bool bEnabled, bool bAnimatable, bool bIntrinsic)
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	EAircraftCollectionPropertyFlags Flags = EAircraftCollectionPropertyFlags::None;
 	if (bEnabled)
 	{
@@ -406,7 +389,7 @@ int32 FCollectionAircraftPropertyMutableFacade::AddProperty(const FName& Key, bo
 
 int32 FCollectionAircraftPropertyMutableFacade::AddProperties(
 	const TArray<FName>& Keys,
-	UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags Flags)
+	EAircraftCollectionPropertyFlags Flags)
 {
 	int32 FirstIndex = INDEX_NONE;
 	for (const FName& Key : Keys)
@@ -422,8 +405,6 @@ int32 FCollectionAircraftPropertyMutableFacade::AddProperties(
 
 int32 FCollectionAircraftPropertyMutableFacade::AddProperties(const TArray<FName>& Keys, bool bEnabled, bool bAnimatable, bool bIntrinsic)
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	EAircraftCollectionPropertyFlags Flags = EAircraftCollectionPropertyFlags::None;
 	if (bEnabled)
 	{
@@ -445,8 +426,6 @@ void FCollectionAircraftPropertyMutableFacade::Append(
 	const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection,
 	bool bUpdateExistingProperties)
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	Update(
 		InManagedArrayCollection,
 		EAircraftCollectionPropertyUpdateFlags::AppendNewProperties |
@@ -455,10 +434,8 @@ void FCollectionAircraftPropertyMutableFacade::Append(
 
 void FCollectionAircraftPropertyMutableFacade::Update(
 	const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection,
-	UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyUpdateFlags UpdateFlags)
+	EAircraftCollectionPropertyUpdateFlags UpdateFlags)
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	if (UpdateFlags == EAircraftCollectionPropertyUpdateFlags::None)
 	{
 		return;
@@ -516,3 +493,5 @@ void FCollectionAircraftPropertyMutableFacade::PostSerialize(const FArchive& Ar)
 	(void)Ar;
 	// TODO: Property facade post-serialize upgrade logic should be implemented together with versioning.
 }
+
+} // namespace UE::AircraftLab::AircraftAsset

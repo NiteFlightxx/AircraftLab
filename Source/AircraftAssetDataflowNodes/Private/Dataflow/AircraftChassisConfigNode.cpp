@@ -21,12 +21,10 @@ void FAircraftChassisConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper
 
 void FAircraftChassisConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (AircraftCollection->NumElements(AircraftCollectionGroup::Chassis) == 0)
 	{
@@ -37,9 +35,9 @@ void FAircraftChassisConfigNode::EvaluateAircraftCollection(
 		AircraftCollection->Resize(1, AircraftCollectionGroup::Chassis);
 	}
 
-	AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::ChassisRootBone, AircraftCollectionGroup::Chassis)[0] = RootBone;
-	AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::ChassisMassKg, AircraftCollectionGroup::Chassis)[0] = MassKg;
-	AircraftFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::ChassisDragCoefficient, AircraftCollectionGroup::Chassis)[0] = DragCoefficient;
-	AircraftFacade.FindOrAddAttribute<FVector3f>(AircraftCollectionAttribute::ChassisCenterOfMassOffset, AircraftCollectionGroup::Chassis)[0] = FVector3f(CenterOfMassOffset);
-	AircraftFacade.FindOrAddAttribute<FVector3f>(AircraftCollectionAttribute::ChassisInertiaTensorScale, AircraftCollectionGroup::Chassis)[0] = FVector3f(InertiaTensorScale);
+	InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::ChassisRootBone, AircraftCollectionGroup::Chassis)[0] = RootBone;
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::ChassisMassKg, AircraftCollectionGroup::Chassis)[0] = MassKg;
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::ChassisDragCoefficient, AircraftCollectionGroup::Chassis)[0] = DragCoefficient;
+	InFacade.FindOrAddAttribute<FVector3f>(AircraftCollectionAttribute::ChassisCenterOfMassOffset, AircraftCollectionGroup::Chassis)[0] = FVector3f(CenterOfMassOffset);
+	InFacade.FindOrAddAttribute<FVector3f>(AircraftCollectionAttribute::ChassisInertiaTensorScale, AircraftCollectionGroup::Chassis)[0] = FVector3f(InertiaTensorScale);
 }

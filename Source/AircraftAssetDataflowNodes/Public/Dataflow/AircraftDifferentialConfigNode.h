@@ -15,9 +15,6 @@ struct  FAircraftDifferentialConfigNode : public FAircraftConfigNodeBase
 public:
 	FAircraftDifferentialConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-//	UPROPERTY(EditAnywhere, Category = "Differential", meta = (DataflowInput))
-	//EAircraftDataflowDifferentialType DifferentialType = EAircraftDataflowDifferentialType::Open;
-
 	UPROPERTY(EditAnywhere, Category = "Differential", meta = (DataflowInput, ClampMin = "0.0", ClampMax = "1.0"))
 	float FrontRearSplit = 0.5f;
 
@@ -31,6 +28,7 @@ protected:
 	virtual void AddProperties(FPropertyHelper& PropertyHelper) const override;
 	virtual void EvaluateAircraftCollection(
 		UE::Dataflow::FContext& Context,
-		const TSharedRef<FManagedArrayCollection>& AircraftCollection) const override;
+		const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+		FAircraftConfigNodeBase::FAircraftFacade& InFacade) const override;
 };
 

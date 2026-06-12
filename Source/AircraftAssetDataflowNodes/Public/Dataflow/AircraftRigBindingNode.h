@@ -21,9 +21,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rig", meta = (DataflowInput))
 	FName BindingName = NAME_None;
 
-	//UPROPERTY(EditAnywhere, Category = "Rig", meta = (DataflowInput))
-	//EAircraftDataflowRigBindingRole BindingRole = EAircraftDataflowRigBindingRole::Generic;
-
 	UPROPERTY(EditAnywhere, Category = "Rig", meta = (DataflowInput))
 	FName BoneName = NAME_None;
 

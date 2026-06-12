@@ -23,6 +23,7 @@ void FAircraftSteeringInputConfigNode::AddProperties(FPropertyHelper& /*Property
 
 void FAircraftSteeringInputConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& /*AircraftCollection*/) const
+	const TSharedRef<FManagedArrayCollection>& /*AircraftCollection*/,
+	FAircraftConfigNodeBase::FAircraftFacade& /*InFacade*/) const
 {
 }

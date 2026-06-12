@@ -19,6 +19,7 @@ void FAircraftClutchConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper*
 
 void FAircraftClutchConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& /*AircraftCollection*/) const
+	const TSharedRef<FManagedArrayCollection>& /*AircraftCollection*/,
+	FAircraftConfigNodeBase::FAircraftFacade& /*InFacade*/) const
 {
 }

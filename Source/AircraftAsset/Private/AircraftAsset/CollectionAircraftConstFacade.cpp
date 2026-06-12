@@ -1,5 +1,4 @@
 
-
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/AircraftCollection.h"
 
@@ -26,6 +25,9 @@ namespace UE::AircraftLab::AircraftAsset
 
 	namespace AircraftCollectionAttribute
 	{
+		const FName SkeletalMeshSoftObjectPathName(TEXT("SkeletalMeshSoftObjectPathName"));
+		const FName PhysicsAssetSoftObjectPathName(TEXT("PhysicsAssetSoftObjectPathName"));
+
 		const FName SolverMaxSolverSubsteps(TEXT("MaxSolverSubsteps"));
 
 		const FName ChassisRootBone(TEXT("RootBone"));
@@ -132,19 +134,18 @@ namespace UE::AircraftLab::AircraftAsset
 
 FCollectionAircraftConstFacade::FCollectionAircraftConstFacade(
 	const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection)
-	: FCollectionAircraftConstFacade(MakeShared<FConstAircraftCollection>(InManagedArrayCollection))
+	: AircraftCollection(MakeShared<FConstAircraftCollection>(InManagedArrayCollection))
 {
 }
 
 FCollectionAircraftConstFacade::FCollectionAircraftConstFacade()
-	: FCollectionAircraftConstFacade(MakeShared<FManagedArrayCollection>())
+	: AircraftCollection(MakeShared<FConstAircraftCollection>(MakeShared<FManagedArrayCollection>()))
 {
 }
 
 FCollectionAircraftConstFacade::FCollectionAircraftConstFacade(
 	const TSharedRef<const FConstAircraftCollection>& InAircraftCollection)
-	: ManagedArrayCollection(InAircraftCollection->GetManagedArrayCollection())
-	, AircraftCollection(InAircraftCollection)
+	: AircraftCollection(InAircraftCollection)
 {
 }
 
@@ -170,17 +171,17 @@ bool FCollectionAircraftConstFacade::IsValid() const
 
 bool FCollectionAircraftConstFacade::HasGroup(const FName& GroupName) const
 {
-	return ManagedArrayCollection->HasGroup(GroupName);
+	return AircraftCollection->GetManagedArrayCollection()->HasGroup(GroupName);
 }
 
 bool FCollectionAircraftConstFacade::HasAttribute(const FName& AttributeName, const FName& GroupName) const
 {
-	return ManagedArrayCollection->HasAttribute(AttributeName, GroupName);
+	return AircraftCollection->GetManagedArrayCollection()->HasAttribute(AttributeName, GroupName);
 }
 
 int32 FCollectionAircraftConstFacade::GetNumElements(const FName& GroupName) const
 {
-	return ManagedArrayCollection->HasGroup(GroupName) ? ManagedArrayCollection->NumElements(GroupName) : 0;
+	return AircraftCollection->GetNumElements(GroupName);
 }
 
 FCollectionAircraftFacade::FCollectionAircraftFacade(const TSharedRef<FManagedArrayCollection>& InManagedArrayCollection)
@@ -189,7 +190,7 @@ FCollectionAircraftFacade::FCollectionAircraftFacade(const TSharedRef<FManagedAr
 }
 
 FCollectionAircraftFacade::FCollectionAircraftFacade()
-	: FCollectionAircraftFacade(MakeShared<FManagedArrayCollection>())
+	: FCollectionAircraftFacade(MakeShared<FAircraftCollection>(MakeShared<FManagedArrayCollection>()))
 {
 }
 
@@ -201,8 +202,6 @@ FCollectionAircraftFacade::FCollectionAircraftFacade(
 
 void FCollectionAircraftFacade::DefineSchema()
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
 	GetAircraftCollection()->DefineSchema();
 
 	FManagedArrayCollection& Collection = GetCollection();
@@ -335,25 +334,17 @@ int32 FCollectionAircraftFacade::AddElements(int32 NumberElements, const FName& 
 
 TSharedRef<FManagedArrayCollection> FCollectionAircraftFacade::GetManagedArrayCollection() const
 {
-	return ConstCastSharedRef<FManagedArrayCollection>(FCollectionAircraftConstFacade::GetManagedArrayCollection());
+	return ConstCastSharedRef<FManagedArrayCollection>(AircraftCollection->GetManagedArrayCollection());
 }
 
 void FCollectionAircraftFacade::SetPhysicsAssetSoftObjectPathName(const FSoftObjectPath& PathName)
 {
-	if (AircraftCollection->GetNumElements(AircraftCollectionGroup::Import) &&
-		GetAircraftCollection()->GetPhysicsAssetSoftObjectPathName())
-	{
-		(*GetAircraftCollection()->GetPhysicsAssetSoftObjectPathName())[0] = PathName;
-	}
+	GetAircraftCollection()->SetPhysicsAssetSoftObjectPathName(PathName);
 }
 
 void FCollectionAircraftFacade::SetSkeletalMeshSoftObjectPathName(const FSoftObjectPath& PathName)
 {
-	if (AircraftCollection->GetNumElements(AircraftCollectionGroup::Import) &&
-		GetAircraftCollection()->GetSkeletalMeshSoftObjectPathName())
-	{
-		(*GetAircraftCollection()->GetSkeletalMeshSoftObjectPathName())[0] = PathName;
-	}
+	GetAircraftCollection()->SetSkeletalMeshSoftObjectPathName(PathName);
 }
 
 TSharedRef<FAircraftCollection> FCollectionAircraftFacade::GetAircraftCollection()

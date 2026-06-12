@@ -54,19 +54,17 @@ void FAircraftAxleConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper*/)
 
 void FAircraftAxleConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (bReplaceAllAxles)
 	{
 		AircraftCollection->Resize(0, AircraftCollectionGroup::Axles);
 
 		if (TManagedArray<FName>* const WheelAxleNames =
-			AircraftFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelAxleName, AircraftCollectionGroup::Wheels))
+			InFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelAxleName, AircraftCollectionGroup::Wheels))
 		{
 			for (FName& WheelAxleName : *WheelAxleNames)
 			{
@@ -81,11 +79,11 @@ void FAircraftAxleConfigNode::EvaluateAircraftCollection(
 	}
 
 	TManagedArray<FName>& AxleNames =
-		AircraftFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::AxleName, AircraftCollectionGroup::Axles);
+		InFacade.FindOrAddAttribute<FName>(AircraftCollectionAttribute::AxleName, AircraftCollectionGroup::Axles);
 	TManagedArray<bool>& AxleSteeringFlags =
-		AircraftFacade.FindOrAddAttribute<bool>(AircraftCollectionAttribute::AxleIsSteeringAxle, AircraftCollectionGroup::Axles);
+		InFacade.FindOrAddAttribute<bool>(AircraftCollectionAttribute::AxleIsSteeringAxle, AircraftCollectionGroup::Axles);
 	TManagedArray<bool>& AxleDrivenFlags =
-		AircraftFacade.FindOrAddAttribute<bool>(AircraftCollectionAttribute::AxleIsDrivenAxle, AircraftCollectionGroup::Axles);
+		InFacade.FindOrAddAttribute<bool>(AircraftCollectionAttribute::AxleIsDrivenAxle, AircraftCollectionGroup::Axles);
 
 	int32 AxleIndex = UE::AircraftLab::AircraftAssetDataflowNodes::Private::FindAxleIndex(AxleNames, AxleName);
 	if (AxleIndex == INDEX_NONE)
@@ -98,7 +96,7 @@ void FAircraftAxleConfigNode::EvaluateAircraftCollection(
 	AxleDrivenFlags[AxleIndex] = bIsDrivenAxle;
 
 	if (TManagedArray<FName>* const WheelAxleNames =
-		AircraftFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelAxleName, AircraftCollectionGroup::Wheels))
+		InFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelAxleName, AircraftCollectionGroup::Wheels))
 	{
 		for (FName& WheelAxleName : *WheelAxleNames)
 		{
@@ -109,7 +107,7 @@ void FAircraftAxleConfigNode::EvaluateAircraftCollection(
 		}
 
 		if (const TManagedArray<FName>* const ExistingWheelNames =
-			AircraftFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelName, AircraftCollectionGroup::Wheels))
+			InFacade.FindAttribute<FName>(AircraftCollectionAttribute::WheelName, AircraftCollectionGroup::Wheels))
 		{
 			for (const FName ConfiguredWheelName : WheelNames)
 			{

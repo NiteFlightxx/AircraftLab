@@ -20,12 +20,10 @@ void FAircraftDifferentialConfigNode::AddProperties(FPropertyHelper& /*PropertyH
 
 void FAircraftDifferentialConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& AircraftCollection) const
+	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	FCollectionAircraftFacade AircraftFacade(AircraftCollection);
-	AircraftFacade.DefineSchema();
 
 	if (AircraftCollection->NumElements(AircraftCollectionGroup::Powertrain) == 0)
 	{
@@ -36,13 +34,13 @@ void FAircraftDifferentialConfigNode::EvaluateAircraftCollection(
 		AircraftCollection->Resize(1, AircraftCollectionGroup::Powertrain);
 	}
 
-	AircraftFacade.FindOrAddAttribute<float>(
+	InFacade.FindOrAddAttribute<float>(
 		AircraftCollectionAttribute::PowertrainDifferentialFrontRearSplit,
 		AircraftCollectionGroup::Powertrain)[0] = FrontRearSplit;
-	AircraftFacade.FindOrAddAttribute<bool>(
+	InFacade.FindOrAddAttribute<bool>(
 		AircraftCollectionAttribute::PowertrainDifferentialDriveFrontAxle,
 		AircraftCollectionGroup::Powertrain)[0] = bDriveFrontAxle;
-	AircraftFacade.FindOrAddAttribute<bool>(
+	InFacade.FindOrAddAttribute<bool>(
 		AircraftCollectionAttribute::PowertrainDifferentialDriveRearAxle,
 		AircraftCollectionGroup::Powertrain)[0] = bDriveRearAxle;
 }

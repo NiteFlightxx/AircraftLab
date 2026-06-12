@@ -136,7 +136,6 @@ namespace UE::AircraftLab::AircraftAsset
 			}
 		};
 	}
-}
 
 class AIRCRAFTASSET_API FCollectionAircraftPropertyConstFacade
 {
@@ -425,3 +424,5 @@ public:
 		UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyUpdateFlags UpdateFlags);
 	void PostSerialize(const FArchive& Ar);
 };
+
+} // namespace UE::AircraftLab::AircraftAsset

@@ -23,7 +23,8 @@ void FAircraftHandbrakeInputConfigNode::AddProperties(FPropertyHelper& /*Propert
 
 void FAircraftHandbrakeInputConfigNode::EvaluateAircraftCollection(
 	UE::Dataflow::FContext& /*Context*/,
-	const TSharedRef<FManagedArrayCollection>& /*AircraftCollection*/) const
+	const TSharedRef<FManagedArrayCollection>& /*AircraftCollection*/,
+	FAircraftConfigNodeBase::FAircraftFacade& /*InFacade*/) const
 {
 }
 

@@ -43,6 +43,7 @@ protected:
 	virtual void AddProperties(FPropertyHelper& PropertyHelper) const override;
 	virtual void EvaluateAircraftCollection(
 		UE::Dataflow::FContext& Context,
-		const TSharedRef<FManagedArrayCollection>& AircraftCollection) const override;
+		const TSharedRef<FManagedArrayCollection>& AircraftCollection,
+		FAircraftConfigNodeBase::FAircraftFacade& InFacade) const override;
 };
 
