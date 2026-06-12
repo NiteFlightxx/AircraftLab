@@ -6,24 +6,12 @@
 #include "Dataflow/DataflowNodeFactory.h"
 #include "Dataflow/DataflowObject.h"
 #include "Dataflow/DataflowSchema.h"
-#include "Dataflow/AircraftAxleConfigNode.h"
+
 #include "Dataflow/AircraftAssetTerminalNode.h"
-#include "Dataflow/AircraftBrakeConfigNode.h"
-#include "Dataflow/AircraftBrakeInputConfigNode.h"
-#include "Dataflow/AircraftChassisConfigNode.h"
-#include "Dataflow/AircraftClutchConfigNode.h"
-#include "Dataflow/AircraftDifferentialConfigNode.h"
-#include "Dataflow/AircraftEngineConfigNode.h"
-#include "Dataflow/AircraftGearboxConfigNode.h"
-#include "Dataflow/AircraftHandbrakeInputConfigNode.h"
+
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSolverConfigNode.h"
-#include "Dataflow/AircraftSteeringConfigNode.h"
-#include "Dataflow/AircraftSteeringInputConfigNode.h"
-#include "Dataflow/AircraftSuspensionConfigNode.h"
-#include "Dataflow/AircraftThrottleInputConfigNode.h"
-#include "Dataflow/AircraftTireConfigNode.h"
-#include "Dataflow/AircraftWheelConfigNode.h"
+
 
 #include "Editor.h"
 #include "Subsystems/AssetEditorSubsystem.h"
@@ -239,6 +227,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 
 		void CreateAircraftTemplateGraph(UDataflow* DataflowAsset)
 		{
+			/*
 			if (!DataflowAsset || !DataflowAsset->GetDataflow())
 			{
 				return;
@@ -564,7 +553,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					TEXT("Collection"),
 					NodeChain[ChainIndex + 1],
 					TEXT("Collection"));
-			}
+			}*/
 		}
 	
 	}
