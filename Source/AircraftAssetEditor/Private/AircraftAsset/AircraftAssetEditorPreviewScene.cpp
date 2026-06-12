@@ -54,10 +54,16 @@ void FAircraftAssetEditorPreviewScene::SetAircraftAsset(UAircraftAssetBase* InAi
 		FSkinnedAssetCompilingManager::Get().FinishCompilation(TArrayView<USkinnedAsset* const>(AssetsToCompile, UE_ARRAY_COUNT(AssetsToCompile)));
 	}
 
+	
+	if (USkeletalMesh* const SkeletalMesh = InAircraftAsset->GetPreviewSceneSkeletalMesh())
+	{
+		AircraftComponent->SetSkeletalMeshAsset(SkeletalMesh);
+	}
+	
 	PreviewAircraftComponent->SetAsset(InAircraftAsset);
 	InitializePreviewAircraft();
 }
-
+/*
 void FAircraftAssetEditorPreviewScene::SoftResetSimulation()
 {
 	if (UAircraftComponent* const PreviewAircraftComponent = GetAircraftComponent())
@@ -142,7 +148,7 @@ bool FAircraftAssetEditorPreviewScene::IsSimulationEnabled() const
 
 	return false;
 }
-
+*/
 UAircraftComponent* FAircraftAssetEditorPreviewScene::GetAircraftComponent() const
 {
 	return AircraftComponent;

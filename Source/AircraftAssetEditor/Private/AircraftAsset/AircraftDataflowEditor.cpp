@@ -3,8 +3,10 @@
 
 #include "AircraftAsset/AircraftDataflowEditor.h"
 #include "AircraftAsset/AircraftAssetEditorToolkit.h"
+#include "Dataflow/DataflowEditorToolkit.h"
 
 TSharedPtr<FBaseAssetToolkit> UAircraftDataflowEditor::CreateToolkit()
 {
-	return MakeShared<FAircraftAssetEditorToolkit>(this);
+	return MakeShared<FDataflowEditorToolkit>(this);
+	//return MakeShared<FAircraftAssetEditorToolkit>(this);
 }

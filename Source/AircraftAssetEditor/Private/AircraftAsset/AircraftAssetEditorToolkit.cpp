@@ -632,24 +632,25 @@ void FAircraftAssetEditorToolkit::OnAircraftAssetChanged()
 
 		const UAircraftComponent* const PreviewAircraftComponent = PreviewScene->GetAircraftComponent();
 		const bool bHadAircraftAsset = PreviewAircraftComponent && PreviewAircraftComponent->GetAsset() != nullptr;
-		const bool bWasSimulationEnabled = bHadAircraftAsset ? PreviewScene->IsSimulationEnabled() : true;
-		const bool bWasSimulationSuspended = bHadAircraftAsset && PreviewScene->IsSimulationSuspended();
+		//const bool bWasSimulationEnabled = bHadAircraftAsset ? PreviewScene->IsSimulationEnabled() : true;
+		//const bool bWasSimulationSuspended = bHadAircraftAsset && PreviewScene->IsSimulationSuspended();
 		PreviewScene->SetAircraftAsset(AircraftAsset);
 
 		if (bHadAircraftAsset)
 		{
-			PreviewScene->SetEnableSimulation(bWasSimulationEnabled);
+			/*
+			 *PreviewScene->SetEnableSimulation(bWasSimulationEnabled);
 			if (bWasSimulationEnabled)
 			{
 				if (bWasSimulationSuspended)
 				{
-					PreviewScene->SuspendSimulation();
+					//PreviewScene->SuspendSimulation();
 				}
 				else
 				{
-					PreviewScene->ResumeSimulation();
+					//PreviewScene->ResumeSimulation();
 				}
-			}
+			}*/
 		}
 	}
 }

@@ -28,7 +28,7 @@ void UAircraftAssetEditorMode::SoftResetSimulation()
 {
 	if (PreviewScene)
 	{
-		PreviewScene->SoftResetSimulation();
+	//	PreviewScene->SoftResetSimulation();
 	}
 }
 
@@ -36,7 +36,7 @@ void UAircraftAssetEditorMode::HardResetSimulation()
 {
 	if (PreviewScene)
 	{
-		PreviewScene->HardResetSimulation();
+	//	PreviewScene->HardResetSimulation();
 	}
 }
 
@@ -44,7 +44,7 @@ void UAircraftAssetEditorMode::SuspendSimulation()
 {
 	if (PreviewScene)
 	{
-		PreviewScene->SuspendSimulation();
+	//	PreviewScene->SuspendSimulation();
 	}
 }
 
@@ -52,26 +52,26 @@ void UAircraftAssetEditorMode::ResumeSimulation()
 {
 	if (PreviewScene)
 	{
-		PreviewScene->ResumeSimulation();
+		//PreviewScene->ResumeSimulation();
 	}
 }
 
 bool UAircraftAssetEditorMode::IsSimulationSuspended() const
 {
-	return PreviewScene && PreviewScene->IsSimulationSuspended();
+	return false;// && PreviewScene->IsSimulationSuspended();
 }
 
 void UAircraftAssetEditorMode::SetEnableSimulation(bool bEnable)
 {
 	if (PreviewScene)
 	{
-		PreviewScene->SetEnableSimulation(bEnable);
+	//	PreviewScene->SetEnableSimulation(bEnable);
 	}
 }
 
 bool UAircraftAssetEditorMode::IsSimulationEnabled() const
 {
-	return PreviewScene && PreviewScene->IsSimulationEnabled();
+	return false; //&& PreviewScene->IsSimulationEnabled();
 }
 
 void UAircraftAssetEditorMode::ModeTick(float DeltaTime)
