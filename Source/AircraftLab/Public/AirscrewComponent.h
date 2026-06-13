@@ -26,6 +26,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Drone|Airscrew")
 	void SetRotorEnabled(bool bNewEnabled);
 
+	/** 设置旋翼效能（0~1），0=完全失效电机停转，1=正常，中间值模拟不同程度损坏 */
+	UFUNCTION(BlueprintCallable, Category = "Drone|Airscrew")
+	void SetRotorEffectiveness(float Effectiveness);
+
+	/** 快捷方式：设置旋翼完全失效（效能=0） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|Airscrew")
+	void FailRotor();
+
+	/** 快捷方式：恢复旋翼正常效能（效能=1） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|Airscrew")
+	void RestoreRotor();
+
 	UFUNCTION(BlueprintCallable, Category = "Drone|Airscrew")
 	void SetForceApplicationEnabled(bool bNewEnabled);
 
@@ -57,7 +69,8 @@ public:
 	FVector GetCurrentReactionTorqueVectorWorld() const { return CurrentReactionTorqueVectorWorld; }
 
 	const FDroneRotorDefinition& GetRotorDefinition() const { return RotorDefinition; }
-	bool IsRotorEnabled() const { return RotorDefinition.IsEnabled(); }
+	bool IsRotorEnabled() const { return RotorDefinition.IsEnabled() && RotorEffectiveness > 0.0f; }
+	float GetRotorEffectiveness() const { return RotorEffectiveness; }
 
 public:
 	void SyncDefinitionFromComponentTransform();
@@ -103,6 +116,14 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
 	FLinearColor DebugDisabledColor = FLinearColor(0.35f, 0.35f, 0.35f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
+	FLinearColor DebugFailedColor = FLinearColor(1.0f, 0.1f, 0.1f, 1.0f);
+
+	/** 旋翼效能（0~1）：1=正常，0=完全失效，中间值表示部分损坏。
+	 *  效能>0时电机仍响应指令但推力按比例缩放；效能=0时电机停转RPM自然衰减 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Airscrew", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
+	float RotorEffectiveness = 1.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Airscrew", meta = (AllowPrivateAccess = "true"))
 	float CurrentNormalizedCommand = 0.0f;

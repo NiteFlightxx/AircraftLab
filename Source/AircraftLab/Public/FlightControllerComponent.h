@@ -37,6 +37,38 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void SetControllerEnabled(bool bNewEnabled);
 
+	/** 设置指定索引旋翼的效能（0~1），0=完全失效，1=正常，中间值=部分损坏 */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	bool SetRotorEffectivenessByIndex(int32 RotorIndex, float Effectiveness);
+
+	/** 设置指定名称旋翼的效能（0~1） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	bool SetRotorEffectivenessByName(FName RotorName, float Effectiveness);
+
+	/** 快捷方式：设置指定索引旋翼完全失效（效能=0） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	bool FailRotorByIndex(int32 RotorIndex);
+
+	/** 快捷方式：设置指定名称旋翼完全失效（效能=0） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	bool FailRotorByName(FName RotorName);
+
+	/** 快捷方式：恢复指定索引旋翼正常效能（效能=1） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	bool RestoreRotorByIndex(int32 RotorIndex);
+
+	/** 快捷方式：恢复指定名称旋翼正常效能（效能=1） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	bool RestoreRotorByName(FName RotorName);
+
+	/** 恢复所有旋翼正常效能（效能=1） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	void RestoreAllRotors();
+
+	/** 获取当前效能<1的旋翼数量（含完全失效） */
+	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
+	int32 GetDegradedRotorCount() const;
+
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void SetHeldPosition(const FVector& WorldPositionCm);
 
@@ -77,7 +109,7 @@ protected:
 	FVector ComputeDesiredHorizontalAcceleration(const FDronePilotInput& PilotInput, float DeltaSeconds);
 	FVector GetRotorPositionFromCenterOfMassBodyCm(const UAirscrewComponent* Airscrew) const;
 	FVector GetRotorThrustAxisBody(const UAirscrewComponent* Airscrew) const;
-	FVector4 BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm) const;
+	FVector4 BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm, float Effectiveness) const;
 	void LogRotorLayoutIfNeeded();
 	void MaybeEmitDebugLog(
 		const FDronePilotInput& PilotInput,
