@@ -2,7 +2,13 @@
 
 #include "AircraftAsset/AircraftAssetEditorPreviewScene.h"
 #include "AircraftAsset/AircraftComponent.h"
+#include "AircraftAsset/AircraftEditorContextObject.h"
 #include "AircraftAsset/AircraftEditorModeToolkit.h"
+#include "AircraftAsset/AircraftMotorPlacementTool.h"
+#include "AircraftAsset/AircraftPidTuningTool.h"
+#include "AircraftAsset/AircraftThrustVectorOrientationTool.h"
+#include "ContextObjectStore.h"
+#include "InteractiveToolManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftEditorMode)
 
@@ -22,6 +28,22 @@ UAircraftAssetEditorMode::UAircraftAssetEditorMode()
 void UAircraftAssetEditorMode::SetPreviewScene(FAircraftAssetEditorPreviewScene* InPreviewScene)
 {
 	PreviewScene = InPreviewScene;
+
+	// 把上下文对象加入 ToolManager 的 ContextObjectStore，让 InteractiveTool 在 Build/Setup 时可以
+	// 通过 FindContext<UAircraftEditorContextObject>() 拿到当前 Component / Asset。
+	if (UInteractiveToolManager* const Manager = GetToolManager())
+	{
+		if (UContextObjectStore* const Store = Manager->GetContextObjectStore())
+		{
+			UAircraftEditorContextObject* Ctx = Store->FindContext<UAircraftEditorContextObject>();
+			if (!Ctx)
+			{
+				Ctx = NewObject<UAircraftEditorContextObject>(Manager);
+				Store->AddContextObject(Ctx);
+			}
+			Ctx->SetAircraftComponent(PreviewScene ? PreviewScene->GetAircraftComponent() : nullptr);
+		}
+	}
 }
 
 void UAircraftAssetEditorMode::SoftResetSimulation()
@@ -58,7 +80,7 @@ void UAircraftAssetEditorMode::ResumeSimulation()
 
 bool UAircraftAssetEditorMode::IsSimulationSuspended() const
 {
-	return false;// && PreviewScene->IsSimulationSuspended();
+	return false;
 }
 
 void UAircraftAssetEditorMode::SetEnableSimulation(bool bEnable)
@@ -71,7 +93,7 @@ void UAircraftAssetEditorMode::SetEnableSimulation(bool bEnable)
 
 bool UAircraftAssetEditorMode::IsSimulationEnabled() const
 {
-	return false; //&& PreviewScene->IsSimulationEnabled();
+	return false;
 }
 
 void UAircraftAssetEditorMode::ModeTick(float DeltaTime)
@@ -103,6 +125,20 @@ void UAircraftAssetEditorMode::AddToolTargetFactories()
 
 void UAircraftAssetEditorMode::RegisterTools()
 {
+	// 对齐 ChaosClothAssetEditorMode::RegisterTools()：把 3 个 Builder 注册到 ToolManager
+	// 关联到字符串 ID，外部（Toolkit / EditorMode 命令）通过这些 ID 激活相应 Tool。
+	UInteractiveToolManager* const Manager = GetToolManager();
+	if (!Manager)
+	{
+		return;
+	}
+
+	Manager->RegisterToolType(TEXT("AircraftMotorPlacement"),
+		NewObject<UAircraftMotorPlacementToolBuilder>(Manager));
+	Manager->RegisterToolType(TEXT("AircraftPidTuning"),
+		NewObject<UAircraftPidTuningToolBuilder>(Manager));
+	Manager->RegisterToolType(TEXT("AircraftThrustVectorOrientation"),
+		NewObject<UAircraftThrustVectorOrientationToolBuilder>(Manager));
 }
 
 void UAircraftAssetEditorMode::CreateToolTargets(const TArray<TObjectPtr<UObject>>& AssetsIn)

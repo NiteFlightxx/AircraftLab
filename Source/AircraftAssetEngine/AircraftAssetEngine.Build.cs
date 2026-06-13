@@ -9,15 +9,14 @@ public class AircraftAssetEngine : ModuleRules
         PublicDependencyModuleNames.AddRange(
             new string[]
             {
-                "AnimGraphRuntime",
                 "Chaos",
                 "Core",
                 "CoreUObject",
                 "DataflowCore",
                 "DataflowEngine",
+                "DataflowSimulation",
                 "Engine",
                 "AircraftAsset",
-                "AircraftRuntimeCommon",
                 "AircraftRuntimeInterface"
             }
         );
@@ -25,30 +24,9 @@ public class AircraftAssetEngine : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
-                "DataflowSimulation",
-                "Json",
-                "JsonUtilities",
-                "RenderCore",
-                "RHI",
+                "PhysicsCore",
                 "Aircraft"
             }
         );
-
-        PrivateIncludePathModuleNames.AddRange(
-            new string[]
-            {
-                "DerivedDataCache"
-            }
-        );
-
-        if (Target.bBuildEditor || Target.bCompileAgainstEditor)
-        {
-            PrivateDependencyModuleNames.AddRange(
-                new string[]
-                {
-                    "MeshBuilder"
-                }
-            );
-        }
     }
 }

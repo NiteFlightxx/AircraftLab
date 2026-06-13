@@ -11,6 +11,10 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAssetTerminalNode)
 
+// 对齐 ChaosClothAssetDataflowNodes::FChaosClothAssetTerminalNode：
+// Terminal 节点是 Dataflow 图末端，把当前 ManagedArrayCollection 提交给 UAircraftAsset::Build()，
+// 由资产编译产生 FAircraftSimulationModel。校验和用于跳过几何/结构未变的情况，避免重复 Build。
+
 namespace UE::AircraftLab::AircraftAsset::Private
 {
 	static void ResetDisconnectedInputs(FAircraftAssetTerminalNode& Node)
@@ -48,7 +52,7 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 
 	uint32 Checksum = 0;
 
-	// Helper lambda: accumulate a raw array's data into the checksum
+	// 把 TConstArrayView<T>（POD 元素）累加到校验和中。
 	auto AccumulateArray = [&Checksum](const auto& ArrayView) -> uint32
 	{
 		using ElementType = typename std::decay_t<decltype(ArrayView)>::ElementType;
@@ -59,8 +63,7 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 		return Checksum;
 	};
 
-	// Helper lambda: accumulate a TManagedArray<bool> into the checksum
-	// (TManagedArray<bool> uses bitset storage and has no GetData())
+	// TManagedArray<bool> 内部为 bitset 存储，没有 GetData()，需要逐元素累加。
 	auto AccumulateBoolArray = [&Checksum](const TManagedArray<bool>* Array) -> uint32
 	{
 		if (Array && Array->Num() > 0)
@@ -74,13 +77,12 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 		return Checksum;
 	};
 
-	// Import group: SkeletalMesh and PhysicsAsset paths define the skeleton/physics geometry
+	// 字符串路径需要单独处理（FSoftObjectPath 不可直接 memcrc）
+	auto AccumulateSoftObjectPathArray = [&Checksum](const TManagedArray<FSoftObjectPath>* Array) -> uint32
 	{
-		const TManagedArray<FSoftObjectPath>* SkelMeshPaths = Facade.FindAttribute<FSoftObjectPath>(
-			AircraftCollectionAttribute::SkeletalMeshSoftObjectPathName, AircraftCollectionGroup::Import);
-		if (SkelMeshPaths && SkelMeshPaths->Num() > 0)
+		if (Array && Array->Num() > 0)
 		{
-			for (const FSoftObjectPath& Path : *SkelMeshPaths)
+			for (const FSoftObjectPath& Path : *Array)
 			{
 				const FString PathStr = Path.ToString();
 				if (!PathStr.IsEmpty())
@@ -89,108 +91,103 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 				}
 			}
 		}
+		return Checksum;
+	};
 
-		const TManagedArray<FSoftObjectPath>* PhysAssetPaths = Facade.FindAttribute<FSoftObjectPath>(
-			AircraftCollectionAttribute::PhysicsAssetSoftObjectPathName, AircraftCollectionGroup::Import);
-		if (PhysAssetPaths && PhysAssetPaths->Num() > 0)
-		{
-			for (const FSoftObjectPath& Path : *PhysAssetPaths)
-			{
-				const FString PathStr = Path.ToString();
-				if (!PathStr.IsEmpty())
-				{
-					Checksum = FCrc::MemCrc32(*PathStr, PathStr.Len() * sizeof(TCHAR), Checksum);
-				}
-			}
-		}
-	}
+	/* Import：骨骼网格 / 物理资产路径决定基础几何 */
+	AccumulateSoftObjectPathArray(Facade.FindAttribute<FSoftObjectPath>(
+		AircraftCollectionAttribute::SkeletalMeshSoftObjectPathName, AircraftCollectionGroup::Import));
+	AccumulateSoftObjectPathArray(Facade.FindAttribute<FSoftObjectPath>(
+		AircraftCollectionAttribute::PhysicsAssetSoftObjectPathName, AircraftCollectionGroup::Import));
 
-	// Solver group: substeps affect simulation structure
-	AccumulateArray(Facade.GetSolverMaxSolverSubsteps());
+	/* Solver */
+	AccumulateArray(Facade.GetMaxSolverSubsteps());
 
-	// Chassis group: root bone name, mass, drag, COM offset, inertia scale
-	AccumulateArray(Facade.GetChassisRootBone());
-	AccumulateArray(Facade.GetChassisMassKg());
-	AccumulateArray(Facade.GetChassisDragCoefficient());
-	AccumulateArray(Facade.GetChassisCenterOfMassOffset());
-	AccumulateArray(Facade.GetChassisInertiaTensorScale());
+	/* Frame：根骨骼 + 机架类型 + 质量惯性 + 气动是结构性的 */
+	AccumulateArray(Facade.GetFrameRootBone());
+	AccumulateArray(Facade.GetFrameType());
+	AccumulateArray(Facade.GetFrameMassKg());
+	AccumulateArray(Facade.GetFrameCenterOfMassOffsetCm());
+	AccumulateArray(Facade.GetFrameInertiaDiagonalKgCmSq());
+	AccumulateArray(Facade.GetFrameLinearDragPerAxis());
+	AccumulateArray(Facade.GetFrameAngularDragPerAxis());
+	AccumulateArray(Facade.GetFrameWindVelocityCmPerSec());
+	AccumulateArray(Facade.GetFrameGroundEffectStartHeightCm());
+	AccumulateArray(Facade.GetFrameGroundEffectStrength());
 
-	// Axles group: structure (names and flags) determines wheel layout
-	AccumulateArray(Facade.GetAxleName());
-	AccumulateBoolArray(Facade.GetAxleIsSteeringAxle());
-	AccumulateBoolArray(Facade.GetAxleIsDrivenAxle());
+	/* Motors：电机数量 / 名字 / 一阶滞后参数都是结构性的 */
+	AccumulateArray(Facade.GetMotorName());
+	AccumulateBoolArray(Facade.GetMotorEnabled());
+	AccumulateArray(Facade.GetMotorMinRpm());
+	AccumulateArray(Facade.GetMotorIdleRpm());
+	AccumulateArray(Facade.GetMotorMaxRpm());
+	AccumulateArray(Facade.GetMotorSpinUpTimeSeconds());
+	AccumulateArray(Facade.GetMotorSpinDownTimeSeconds());
+	AccumulateArray(Facade.GetMotorCommandExponent());
+	AccumulateArray(Facade.GetMotorMaxCommandSlewPerSecond());
 
-	// Wheels group: bone names and geometry determine physical layout
-	AccumulateArray(Facade.GetWheelName());
-	AccumulateArray(Facade.GetWheelBoneName());
-	AccumulateArray(Facade.GetWheelSuspensionName());
-	AccumulateArray(Facade.GetWheelAxleName());
-	AccumulateArray(Facade.GetWheelSteeringName());
-	AccumulateArray(Facade.GetWheelBrakeName());
-	AccumulateArray(Facade.GetWheelTireName());
-	AccumulateArray(Facade.GetWheelRadiusCm());
-	AccumulateArray(Facade.GetWheelWidthCm());
-	AccumulateArray(Facade.GetWheelMassKg());
+	/* Propellers：旋翼数量 / 位置 / 旋向直接决定混控矩阵，是结构性的 */
+	AccumulateArray(Facade.GetPropellerName());
+	AccumulateArray(Facade.GetPropellerMotorName());
+	AccumulateArray(Facade.GetPropellerSocketName());
+	AccumulateBoolArray(Facade.GetPropellerUseSocketTransform());
+	AccumulateArray(Facade.GetPropellerPositionLocalCm());
+	AccumulateArray(Facade.GetPropellerRotationLocalEulerDeg());
+	AccumulateArray(Facade.GetPropellerThrustAxisLocal());
+	AccumulateArray(Facade.GetPropellerSpinDirection());
+	AccumulateArray(Facade.GetPropellerRadiusCm());
+	AccumulateArray(Facade.GetPropellerMaxThrustForce());
+	AccumulateArray(Facade.GetPropellerThrustCoefficient());
+	AccumulateArray(Facade.GetPropellerReactionTorqueCoefficient());
+	AccumulateArray(Facade.GetPropellerEfficiency());
+	AccumulateArray(Facade.GetPropellerControlAuthorityScale());
 
-	// Suspensions group: mount positions define geometry
-	AccumulateArray(Facade.GetSuspensionName());
-	AccumulateArray(Facade.GetSuspensionTopMountLocal());
-	AccumulateArray(Facade.GetSuspensionLowerBallJointLocal());
-	AccumulateArray(Facade.GetSuspensionMaxRaiseCm());
-	AccumulateArray(Facade.GetSuspensionMaxDropCm());
-	AccumulateArray(Facade.GetSuspensionNaturalFrequencyHz());
-	AccumulateArray(Facade.GetSuspensionDampingRatio());
+	/* Battery：电池容量 / 电压决定续航，但不会改变运行时模型结构。
+	 * 仍纳入校验和以便 PID 重算时可获取最新参数。 */
+	AccumulateArray(Facade.GetBatteryCapacityMilliAmpHour());
+	AccumulateArray(Facade.GetBatteryNominalVoltageV());
+	AccumulateArray(Facade.GetBatteryMinVoltageV());
+	AccumulateArray(Facade.GetBatteryMaxDischargeC());
+	AccumulateArray(Facade.GetBatteryInternalResistanceOhm());
 
-	// Steering group: names and angles affect structure
-	AccumulateArray(Facade.GetSteeringName());
-	AccumulateArray(Facade.GetSteeringMaxSteerAngleDeg());
-	AccumulateArray(Facade.GetSteeringAckermannRatio());
+	/* FlightController：PID 增益本身是属性而非结构，但限幅与分配阻尼会
+	 * 影响 SimulationProxy 的初始化路径，需要触发重建。 */
+	AccumulateArray(Facade.GetFcPositionKp());
+	AccumulateArray(Facade.GetFcPositionKi());
+	AccumulateArray(Facade.GetFcPositionKd());
+	AccumulateArray(Facade.GetFcVelocityKp());
+	AccumulateArray(Facade.GetFcVelocityKi());
+	AccumulateArray(Facade.GetFcVelocityKd());
+	AccumulateArray(Facade.GetFcAngleKp());
+	AccumulateArray(Facade.GetFcAngleKi());
+	AccumulateArray(Facade.GetFcAngleKd());
+	AccumulateArray(Facade.GetFcRateKp());
+	AccumulateArray(Facade.GetFcRateKi());
+	AccumulateArray(Facade.GetFcRateKd());
+	AccumulateArray(Facade.GetFcAltitudeKp());
+	AccumulateArray(Facade.GetFcAltitudeKi());
+	AccumulateArray(Facade.GetFcAltitudeKd());
+	AccumulateArray(Facade.GetFcVerticalVelocityKp());
+	AccumulateArray(Facade.GetFcVerticalVelocityKi());
+	AccumulateArray(Facade.GetFcVerticalVelocityKd());
+	AccumulateArray(Facade.GetFcMaxTiltAngleDegrees());
+	AccumulateArray(Facade.GetFcMaxYawRateDegreesPerSec());
+	AccumulateArray(Facade.GetFcMaxClimbRateCmPerSec());
+	AccumulateArray(Facade.GetFcMaxDescentRateCmPerSec());
+	AccumulateArray(Facade.GetFcMaxHorizontalSpeedCmPerSec());
+	AccumulateArray(Facade.GetFcDerivativeCutoffHz());
+	AccumulateArray(Facade.GetFcAllocationDamping());
 
-	// Brakes group: names and torque affect structure
-	AccumulateArray(Facade.GetBrakeName());
-	AccumulateArray(Facade.GetBrakeWheelNames());
-	AccumulateArray(Facade.GetBrakeMaxTorqueNm());
-	AccumulateBoolArray(Facade.GetBrakeIsHandbrake());
-
-	// Tires group: names and parameters
-	AccumulateArray(Facade.GetTireName());
-	AccumulateBoolArray(Facade.GetTireUseAutoNominalLoad());
-	AccumulateArray(Facade.GetTireNominalLoadN());
-	AccumulateArray(Facade.GetTireLongitudinalPeakFrictionScale());
-	AccumulateArray(Facade.GetTireLongitudinalLoadSensitivity());
-	AccumulateArray(Facade.GetTireLongitudinalShapeFactor());
-	AccumulateArray(Facade.GetTireLongitudinalStiffnessFactor());
-	AccumulateArray(Facade.GetTireLongitudinalCurvatureFactor());
-	AccumulateArray(Facade.GetTireLateralPeakFrictionScale());
-	AccumulateArray(Facade.GetTireLateralLoadSensitivity());
-	AccumulateArray(Facade.GetTireLateralShapeFactor());
-	AccumulateArray(Facade.GetTireLateralStiffnessFactor());
-	AccumulateArray(Facade.GetTireLateralCurvatureFactor());
-	AccumulateArray(Facade.GetTireCombinedLongitudinalShapeFactor());
-	AccumulateArray(Facade.GetTireCombinedLongitudinalStiffnessFactor());
-	AccumulateArray(Facade.GetTireCombinedLongitudinalCurvatureFactor());
-	AccumulateArray(Facade.GetTireCombinedLateralShapeFactor());
-	AccumulateArray(Facade.GetTireCombinedLateralStiffnessFactor());
-	AccumulateArray(Facade.GetTireCombinedLateralCurvatureFactor());
-	AccumulateArray(Facade.GetTireMinSlipSpeedCmPerSec());
-	AccumulateArray(Facade.GetTireRollingResistanceCoefficient());
-	AccumulateArray(Facade.GetTireWheelViscousDampingNmPerRadPerSec());
-
-	// Powertrain group
-	AccumulateArray(Facade.GetPowertrainEngineFullThrottleTorqueCurve());
-	AccumulateArray(Facade.GetPowertrainEngineZeroThrottleTorqueCurve());
-	AccumulateArray(Facade.GetPowertrainEngineIdleRPM());
-	AccumulateArray(Facade.GetPowertrainEngineMaxRPM());
-	AccumulateArray(Facade.GetPowertrainEngineInertia());
-	AccumulateArray(Facade.GetPowertrainGearboxForwardRatios());
-	AccumulateArray(Facade.GetPowertrainGearboxReverseRatios());
-	AccumulateArray(Facade.GetPowertrainGearboxFinalDriveRatio());
-	AccumulateArray(Facade.GetPowertrainGearboxShiftUpRPM());
-	AccumulateArray(Facade.GetPowertrainGearboxShiftDownRPM());
-	AccumulateBoolArray(Facade.GetPowertrainGearboxAutoReverse());
-	AccumulateArray(Facade.GetPowertrainDifferentialFrontRearSplit());
-	AccumulateBoolArray(Facade.GetPowertrainDifferentialDriveFrontAxle());
-	AccumulateBoolArray(Facade.GetPowertrainDifferentialDriveRearAxle());
+	/* GameFeel：手感参数仅影响 input pre-processing，不是结构性数据，
+	 * 但放入校验和后任何手感修改也会触发增量重建。 */
+	AccumulateArray(Facade.GetGameFeelRcExpoRoll());
+	AccumulateArray(Facade.GetGameFeelRcExpoPitch());
+	AccumulateArray(Facade.GetGameFeelRcExpoYaw());
+	AccumulateArray(Facade.GetGameFeelRcExpoThrottle());
+	AccumulateArray(Facade.GetGameFeelInputDeadzone());
+	AccumulateArray(Facade.GetGameFeelHoverCollectiveCommand());
+	AccumulateArray(Facade.GetGameFeelStickResponseTimeSeconds());
+	AccumulateArray(Facade.GetGameFeelCameraShakeScale());
 
 	return Checksum;
 }
@@ -211,20 +208,15 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 
 	FManagedArrayCollection AircraftCollection = GetValue(Context, &Collection);
 
-	// Compute the new checksum to detect geometry changes
 	const uint32 NewChecksum = ComputeCollectionChecksum(AircraftCollection);
 	const bool bGeometryChanged = (NewChecksum != CollectionChecksum);
 
 	if (!bGeometryChanged && !bPropertyStructureChanged)
 	{
-		// Incremental path: geometry and property structure are unchanged.
-		// Only property values may have changed. Once UAircraftAsset supports
-		// a separate property-only update path (e.g. UpdateProperties on the
-		// simulation model), this branch can apply those updates directly
-		// without a full Build(). For now, fall through to full rebuild.
+		// 增量路径：当前阶段直接 fall-through 到 Build()；Phase 4 后可以加上"仅属性更新"的快路径
+		// （直接对 SimulationProxy 写新参数而无需重新 Build SimulationModel）。
 	}
 
-	// Full rebuild path
 	TArray<TSharedRef<const FManagedArrayCollection>> Collections;
 	Collections.Add(MakeShared<FManagedArrayCollection>(MoveTemp(AircraftCollection)));
 
@@ -232,16 +224,9 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 	FText VerboseText;
 	AircraftAssetObject->Build(Collections, &ErrorText, &VerboseText);
 
-	if (!ErrorText.IsEmpty())
-	{
-		//FAircraftDataflowTools::LogAndToastWarning(*this, ErrorText, VerboseText);
-	}
-
-	// Update cached checksum and property structure state
 	CollectionChecksum = NewChecksum;
 	bPropertyStructureChanged = false;
 
-	// Asset must be resaved
 	AircraftAssetObject->MarkPackageDirty();
 }
 

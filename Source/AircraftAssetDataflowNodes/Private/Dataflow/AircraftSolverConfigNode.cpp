@@ -34,6 +34,6 @@ void FAircraftSolverConfigNode::EvaluateAircraftCollection(
 		AircraftCollection->Resize(1, AircraftCollectionGroup::Solver);
 	}
 
-	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::SolverMaxSolverSubsteps, AircraftCollectionGroup::Solver)[0] =
+	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::MaxSolverSubsteps, AircraftCollectionGroup::Solver)[0] =
 		FMath::Max(1, GetValue(Context, &MaxSolverSubsteps));
 }

@@ -1,4 +1,3 @@
-
 using UnrealBuildTool;
 
 public class AircraftAsset : ModuleRules
@@ -13,18 +12,6 @@ public class AircraftAsset : ModuleRules
                 "Core",
                 "CoreUObject",
                 "Chaos"
-            }
-        );
-
-        PrivateDependencyModuleNames.AddRange(
-            new string[]
-            {
-                "DataflowSimulation",
-                "Json",
-                "JsonUtilities",
-                "RenderCore",
-                "RHI",
-                "Aircraft"
             }
         );
     }

@@ -1,4 +1,3 @@
-
 using UnrealBuildTool;
 
 public class AircraftAssetDataflowNodes : ModuleRules
@@ -28,12 +27,7 @@ public class AircraftAssetDataflowNodes : ModuleRules
                 "SlateCore",
                 "UnrealEd",
                 "Chaos",
-                
-
-                "Aircraft",
-                "AircraftAssetEngine",
-                "AircraftAssetTools",
-                "AircraftRuntimeCommon"
+                "AircraftAssetEngine"
             }
         );
     }

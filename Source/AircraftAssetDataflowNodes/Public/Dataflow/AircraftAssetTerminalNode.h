@@ -36,12 +36,12 @@ public:
 	//~ End FDataflowNode interface
 
 private:
-	/** Compute a checksum from the collection's geometry-defining data (Import paths, Chassis, Solver, etc.) */
+	/** 计算 Collection 的几何/结构性数据校验和（Import / Solver / Frame / Motors / Propellers / Battery / FlightController / GameFeel）。 */
 	static uint32 ComputeCollectionChecksum(const FManagedArrayCollection& InCollection);
 
-	/** Cached checksum from the last Build, used to detect geometry changes */
+	/** 上一次 Build 时记录的校验和，用于检测几何/结构变化。 */
 	mutable uint32 CollectionChecksum = 0;
 
-	/** Whether the property structure (keys/names) changed since last Build, requiring a full rebuild */
+	/** 自上次 Build 以来属性结构（key 名/数量）是否改变；改变则必须全量重建。 */
 	mutable bool bPropertyStructureChanged = true;
 };

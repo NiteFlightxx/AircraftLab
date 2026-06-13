@@ -1,4 +1,7 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// 对齐 ChaosClothAssetEngine/Public/ChaosClothAsset/ClothAssetBase.h
+//
+// 职责：UAircraftAssetBase 是 USkinnedAsset 的抽象派生，承载与 Dataflow 的对接，
+// 不直接持有具体的多旋翼运行时数据。具体资产（UAircraftAsset）由 UAircraftComponent 引用。
 
 #pragma once
 
@@ -7,6 +10,7 @@
 #include "Dataflow/DataflowInstance.h"
 #include "Engine/SkinnedAsset.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
+
 #include "AircraftAssetBase.generated.h"
 
 class AActor;
@@ -18,6 +22,13 @@ class USkeletalMesh;
 struct FPropertyChangedEvent;
 struct FAircraftSimulationModel;
 
+/**
+ * 多旋翼资产基类
+ *
+ * 与 ChaosCloth 中的 UChaosClothAssetBase 完全对齐：作为 USkinnedAsset 的抽象派生，仅声明
+ * "聚合多个 Collection / 暴露 Dataflow / 提供运行时静态模型"等接口。具体的几何/编辑器数据
+ * 在 UAircraftAsset 中实现。
+ */
 UCLASS(Abstract, BlueprintType)
 class AIRCRAFTASSETENGINE_API UAircraftAssetBase
 	: public USkinnedAsset
@@ -107,20 +118,9 @@ public:
 	virtual const FPerPlatformBool& GetDisableBelowMinLodStripping() const override;
 
 #if WITH_EDITOR
-	virtual bool GetEnableLODStreaming(const ITargetPlatform* TargetPlatform) const override
-	{
-		return false;
-	}
-
-	virtual int32 GetMaxNumStreamedLODs(const ITargetPlatform* TargetPlatform) const override
-	{
-		return 0;
-	}
-
-	virtual int32 GetMaxNumOptionalLODs(const ITargetPlatform* TargetPlatform) const override
-	{
-		return 0;
-	}
+	virtual bool GetEnableLODStreaming(const ITargetPlatform* TargetPlatform) const override { return false; }
+	virtual int32 GetMaxNumStreamedLODs(const ITargetPlatform* TargetPlatform) const override { return 0; }
+	virtual int32 GetMaxNumOptionalLODs(const ITargetPlatform* TargetPlatform) const override { return 0; }
 #endif
 	//~ End USkinnedAsset interface
 

@@ -3,7 +3,7 @@
 	"Version": 1,
 	"VersionName": "0.1.0",
 	"FriendlyName": "AircraftLab",
-	"Description": "Aircraft runtime, asset, editor, and dataflow modules patterned after the Chaos Aircraft framework.",
+	"Description": "Multirotor aircraft asset, runtime, editor, and dataflow modules patterned after the ChaosCloth + ChaosClothAsset architecture.",
 	"Category": "Simulation",
 	"CanContainContent": true,
 	"IsBetaVersion": true,
@@ -59,20 +59,7 @@
 			"Name": "AircraftAssetTools",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "Default"
-		},
-		
-		
-		
-		
-		{
-			"Name": "AircraftLab",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
 		}
-		
-		
-		
-		
 	],
 	"Plugins": [
 		{

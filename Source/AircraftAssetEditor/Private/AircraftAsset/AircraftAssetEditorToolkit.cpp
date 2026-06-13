@@ -499,46 +499,28 @@ TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_SimulationVisualizati
 		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetCenterOfMassDebugDrawEnabled(bEnable); });
 	AddVisualizationToggle(
 		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationWheels", "Wheels"),
-		LOCTEXT("AircraftSimulationVisualizationWheelsTooltip", "Draw wheel positions and wheel radius debug shapes."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsWheelDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetWheelDebugDrawEnabled(bEnable); });
+		LOCTEXT("AircraftSimulationVisualizationRotors", "Rotors"),
+		LOCTEXT("AircraftSimulationVisualizationRotorsTooltip", "Draw rotor disc positions, radius, and spin direction arrows."),
+		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsRotorDebugDrawEnabled(); },
+		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetRotorDebugDrawEnabled(bEnable); });
 	AddVisualizationToggle(
 		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationSuspensions", "Suspensions"),
-		LOCTEXT("AircraftSimulationVisualizationSuspensionsTooltip", "Draw suspension hardpoints and suspension links."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsSuspensionDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetSuspensionDebugDrawEnabled(bEnable); });
+		LOCTEXT("AircraftSimulationVisualizationThrustVectors", "Thrust Vectors"),
+		LOCTEXT("AircraftSimulationVisualizationThrustVectorsTooltip", "Draw per-rotor thrust vectors at each rotor location."),
+		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsThrustVectorDebugDrawEnabled(); },
+		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetThrustVectorDebugDrawEnabled(bEnable); });
 	AddVisualizationToggle(
 		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationSuspensionTraces", "Suspension Traces"),
-		LOCTEXT("AircraftSimulationVisualizationSuspensionTracesTooltip", "Draw suspension line traces used for ground detection."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsSuspensionTraceDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetSuspensionTraceDebugDrawEnabled(bEnable); });
+		LOCTEXT("AircraftSimulationVisualizationTorque", "Body Torque"),
+		LOCTEXT("AircraftSimulationVisualizationTorqueTooltip", "Draw the resulting body torque from control allocation."),
+		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsTorqueDebugDrawEnabled(); },
+		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetTorqueDebugDrawEnabled(bEnable); });
 	AddVisualizationToggle(
 		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationContacts", "Contacts"),
-		LOCTEXT("AircraftSimulationVisualizationContactsTooltip", "Draw suspension contact points and contact normals."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsContactDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetContactDebugDrawEnabled(bEnable); });
-	AddVisualizationToggle(
-		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationTireForces", "Tire Forces"),
-		LOCTEXT("AircraftSimulationVisualizationTireForcesTooltip", "Draw longitudinal, lateral and combined tire force vectors at the contact patch."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsTireForceDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetTireForceDebugDrawEnabled(bEnable); });
-	AddVisualizationToggle(
-		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationTireFrictionCircle", "Tire Friction Circle"),
-		LOCTEXT("AircraftSimulationVisualizationTireFrictionCircleTooltip", "Draw the tire force envelope and current operating point at the contact patch."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsTireFrictionCircleDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetTireFrictionCircleDebugDrawEnabled(bEnable); });
-	AddVisualizationToggle(
-		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationTireForceText", "Tire Force Text"),
-		LOCTEXT("AircraftSimulationVisualizationTireForceTextTooltip", "Print tire longitudinal, lateral, combined and normal force magnitudes near the contact patch."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsTireForceTextDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetTireForceTextDebugDrawEnabled(bEnable); });
+		LOCTEXT("AircraftSimulationVisualizationVelocity", "Velocity"),
+		LOCTEXT("AircraftSimulationVisualizationVelocityTooltip", "Draw the chassis linear velocity vector at center of mass."),
+		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsVelocityDebugDrawEnabled(); },
+		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetVelocityDebugDrawEnabled(bEnable); });
 	MenuBuilder.EndSection();
 
 	SimulationVisualizationDockTab->SetContent(MenuBuilder.MakeWidget());

@@ -303,6 +303,13 @@ void UAircraftAsset::BuildAircraftSimulationModel()
 	AircraftSimulationModel = MakeShared<FAircraftSimulationModel>(
 		const_cast<const UAircraftAsset*>(this)->GetAircraftCollections(),
 		GetFName());
+
+	// 把资产层引用的 SkeletalMesh / PhysicsAsset 同步到运行时只读模型中，供 SimulationProxy 消费。
+	if (AircraftSimulationModel.IsValid())
+	{
+		AircraftSimulationModel->SkeletalMesh = const_cast<USkeletalMesh*>(GetSourceSkeletalMesh());
+		AircraftSimulationModel->PhysicsAsset = PhysicsAsset;
+	}
 }
 
 #if WITH_EDITORONLY_DATA

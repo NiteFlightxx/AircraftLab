@@ -25,9 +25,11 @@ public class AircraftAssetEditor : ModuleRules
                 "DataflowEditor",
                 "DataflowEngine",
                 "EditorFramework",
+                "EditorInteractiveToolsFramework",
                 "Engine",
                 "GraphEditor",
                 "InputCore",
+                "InteractiveToolsFramework",
                 "PropertyEditor",
                 "Slate",
                 "SlateCore",
@@ -36,8 +38,8 @@ public class AircraftAssetEditor : ModuleRules
                 "Aircraft",
                 "AircraftAsset",
                 "AircraftAssetDataflowNodes",
+                "AircraftAssetEditorTools",
                 "AircraftAssetTools",
-                "AircraftRuntimeCommon",
                 "AircraftRuntimeInterface"
             }
         );

@@ -1,26 +1,24 @@
+// 对齐 ChaosClothAsset/Private/ChaosClothAsset/CollectionClothFacade.cpp
+//
+// 多旋翼 schema 的 Group / Attribute 名常量定义 + Facade 实现。
 
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
-#include "AircraftAsset/AircraftCollection.h"
 
-#include "Serialization/Archive.h"
+#include "AircraftAsset/AircraftCollection.h"
+#include "GeometryCollection/ManagedArrayCollection.h"
 
 namespace UE::AircraftLab::AircraftAsset
 {
 	namespace AircraftCollectionGroup
 	{
-		const FName Aircraft(TEXT("Aircraft"));
-		const FName Chassis(TEXT("Chassis"));
-		const FName Axles(TEXT("Axles"));
-		const FName Wheels(TEXT("Wheels"));
-		const FName Rig(TEXT("Rig"));
-		const FName Solver(TEXT("Solver"));
-		const FName Tires(TEXT("Tires"));
-		const FName Suspensions(TEXT("Suspensions"));
-		const FName Powertrain(TEXT("Powertrain"));
-		const FName Steering(TEXT("Steering"));
-		const FName Brakes(TEXT("Brakes"));
-		const FName ControlInputs(TEXT("ControlInputs"));
 		const FName Import(TEXT("Import"));
+		const FName Solver(TEXT("Solver"));
+		const FName Frame(TEXT("Frame"));
+		const FName Motors(TEXT("Motors"));
+		const FName Propellers(TEXT("Propellers"));
+		const FName Battery(TEXT("Battery"));
+		const FName FlightController(TEXT("FlightController"));
+		const FName GameFeel(TEXT("GameFeel"));
 	}
 
 	namespace AircraftCollectionAttribute
@@ -28,328 +26,203 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName SkeletalMeshSoftObjectPathName(TEXT("SkeletalMeshSoftObjectPathName"));
 		const FName PhysicsAssetSoftObjectPathName(TEXT("PhysicsAssetSoftObjectPathName"));
 
-		const FName SolverMaxSolverSubsteps(TEXT("MaxSolverSubsteps"));
+		const FName MaxSolverSubsteps(TEXT("MaxSolverSubsteps"));
 
-		const FName ChassisRootBone(TEXT("RootBone"));
-		const FName ChassisMassKg(TEXT("MassKg"));
-		const FName ChassisDragCoefficient(TEXT("DragCoefficient"));
-		const FName ChassisCenterOfMassOffset(TEXT("CenterOfMassOffset"));
-		const FName ChassisInertiaTensorScale(TEXT("InertiaTensorScale"));
+		const FName FrameRootBone(TEXT("RootBone"));
+		const FName FrameType(TEXT("FrameType"));
+		const FName FrameMassKg(TEXT("MassKg"));
+		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
+		const FName FrameInertiaDiagonalKgCmSq(TEXT("InertiaDiagonalKgCmSq"));
+		const FName FrameLinearDragPerAxis(TEXT("LinearDragPerAxis"));
+		const FName FrameAngularDragPerAxis(TEXT("AngularDragPerAxis"));
+		const FName FrameWindVelocityCmPerSec(TEXT("WindVelocityCmPerSec"));
+		const FName FrameGroundEffectStartHeightCm(TEXT("GroundEffectStartHeightCm"));
+		const FName FrameGroundEffectStrength(TEXT("GroundEffectStrength"));
 
-		const FName AxleName(TEXT("AxleName"));
-		const FName AxleIsSteeringAxle(TEXT("IsSteeringAxle"));
-		const FName AxleIsDrivenAxle(TEXT("IsDrivenAxle"));
+		const FName MotorName(TEXT("Name"));
+		const FName MotorEnabled(TEXT("Enabled"));
+		const FName MotorMinRpm(TEXT("MinRpm"));
+		const FName MotorIdleRpm(TEXT("IdleRpm"));
+		const FName MotorMaxRpm(TEXT("MaxRpm"));
+		const FName MotorSpinUpTimeSeconds(TEXT("SpinUpTimeSeconds"));
+		const FName MotorSpinDownTimeSeconds(TEXT("SpinDownTimeSeconds"));
+		const FName MotorCommandExponent(TEXT("CommandExponent"));
+		const FName MotorMaxCommandSlewPerSecond(TEXT("MaxCommandSlewPerSecond"));
 
-		const FName WheelName(TEXT("WheelName"));
-		const FName WheelBoneName(TEXT("BoneName"));
-		const FName WheelSuspensionName(TEXT("SuspensionName"));
-		const FName WheelAxleName(TEXT("AxleName"));
-		const FName WheelSteeringName(TEXT("SteeringName"));
-		const FName WheelBrakeName(TEXT("BrakeName"));
-		const FName WheelTireName(TEXT("TireName"));
-		const FName WheelRadiusCm(TEXT("RadiusCm"));
-		const FName WheelWidthCm(TEXT("WidthCm"));
-		const FName WheelMassKg(TEXT("MassKg"));
+		const FName PropellerName(TEXT("Name"));
+		const FName PropellerMotorName(TEXT("MotorName"));
+		const FName PropellerSocketName(TEXT("SocketName"));
+		const FName PropellerUseSocketTransform(TEXT("UseSocketTransform"));
+		const FName PropellerPositionLocalCm(TEXT("PositionLocalCm"));
+		const FName PropellerRotationLocalEulerDeg(TEXT("RotationLocalEulerDeg"));
+		const FName PropellerThrustAxisLocal(TEXT("ThrustAxisLocal"));
+		const FName PropellerSpinDirection(TEXT("SpinDirection"));
+		const FName PropellerRadiusCm(TEXT("RadiusCm"));
+		const FName PropellerMaxThrustForce(TEXT("MaxThrustForce"));
+		const FName PropellerThrustCoefficient(TEXT("ThrustCoefficient"));
+		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
+		const FName PropellerEfficiency(TEXT("Efficiency"));
+		const FName PropellerControlAuthorityScale(TEXT("ControlAuthorityScale"));
 
-		const FName PowertrainEngineFullThrottleTorqueCurve(TEXT("EngineFullThrottleTorqueCurve"));
-		const FName PowertrainEngineZeroThrottleTorqueCurve(TEXT("EngineZeroThrottleTorqueCurve"));
-		const FName PowertrainEngineIdleRPM(TEXT("EngineIdleRPM"));
-		const FName PowertrainEngineMaxRPM(TEXT("EngineMaxRPM"));
-		const FName PowertrainEngineInertia(TEXT("EngineInertia"));
-		const FName PowertrainGearboxForwardRatios(TEXT("GearboxForwardRatios"));
-		const FName PowertrainGearboxReverseRatios(TEXT("GearboxReverseRatios"));
-		const FName PowertrainGearboxFinalDriveRatio(TEXT("GearboxFinalDriveRatio"));
-		const FName PowertrainGearboxShiftUpRPM(TEXT("GearboxShiftUpRPM"));
-		const FName PowertrainGearboxShiftDownRPM(TEXT("GearboxShiftDownRPM"));
-		const FName PowertrainGearboxAutoReverse(TEXT("GearboxAutoReverse"));
-		const FName PowertrainDifferentialFrontRearSplit(TEXT("DifferentialFrontRearSplit"));
-		const FName PowertrainDifferentialDriveFrontAxle(TEXT("DifferentialDriveFrontAxle"));
-		const FName PowertrainDifferentialDriveRearAxle(TEXT("DifferentialDriveRearAxle"));
+		const FName BatteryCapacityMilliAmpHour(TEXT("CapacityMilliAmpHour"));
+		const FName BatteryNominalVoltageV(TEXT("NominalVoltageV"));
+		const FName BatteryMinVoltageV(TEXT("MinVoltageV"));
+		const FName BatteryMaxDischargeC(TEXT("MaxDischargeC"));
+		const FName BatteryInternalResistanceOhm(TEXT("InternalResistanceOhm"));
 
-		const FName TireName(TEXT("TireName"));
-		const FName TireUseAutoNominalLoad(TEXT("UseAutoNominalLoad"));
-		const FName TireNominalLoadN(TEXT("NominalLoadN"));
-		const FName TireLongitudinalPeakFrictionScale(TEXT("LongitudinalPeakFrictionScale"));
-		const FName TireLongitudinalLoadSensitivity(TEXT("LongitudinalLoadSensitivity"));
-		const FName TireLongitudinalShapeFactor(TEXT("LongitudinalShapeFactor"));
-		const FName TireLongitudinalStiffnessFactor(TEXT("LongitudinalStiffnessFactor"));
-		const FName TireLongitudinalCurvatureFactor(TEXT("LongitudinalCurvatureFactor"));
-		const FName TireLateralPeakFrictionScale(TEXT("LateralPeakFrictionScale"));
-		const FName TireLateralLoadSensitivity(TEXT("LateralLoadSensitivity"));
-		const FName TireLateralShapeFactor(TEXT("LateralShapeFactor"));
-		const FName TireLateralStiffnessFactor(TEXT("LateralStiffnessFactor"));
-		const FName TireLateralCurvatureFactor(TEXT("LateralCurvatureFactor"));
-		const FName TireCombinedLongitudinalShapeFactor(TEXT("CombinedLongitudinalShapeFactor"));
-		const FName TireCombinedLongitudinalStiffnessFactor(TEXT("CombinedLongitudinalStiffnessFactor"));
-		const FName TireCombinedLongitudinalCurvatureFactor(TEXT("CombinedLongitudinalCurvatureFactor"));
-		const FName TireCombinedLateralShapeFactor(TEXT("CombinedLateralShapeFactor"));
-		const FName TireCombinedLateralStiffnessFactor(TEXT("CombinedLateralStiffnessFactor"));
-		const FName TireCombinedLateralCurvatureFactor(TEXT("CombinedLateralCurvatureFactor"));
-		const FName TireMinSlipSpeedCmPerSec(TEXT("MinSlipSpeedCmPerSec"));
-		const FName TireRollingResistanceCoefficient(TEXT("RollingResistanceCoefficient"));
-		const FName TireWheelViscousDampingNmPerRadPerSec(TEXT("WheelViscousDampingNmPerRadPerSec"));
+		const FName FcPositionKp(TEXT("PositionKp"));
+		const FName FcPositionKi(TEXT("PositionKi"));
+		const FName FcPositionKd(TEXT("PositionKd"));
+		const FName FcVelocityKp(TEXT("VelocityKp"));
+		const FName FcVelocityKi(TEXT("VelocityKi"));
+		const FName FcVelocityKd(TEXT("VelocityKd"));
+		const FName FcAngleKp(TEXT("AngleKp"));
+		const FName FcAngleKi(TEXT("AngleKi"));
+		const FName FcAngleKd(TEXT("AngleKd"));
+		const FName FcRateKp(TEXT("RateKp"));
+		const FName FcRateKi(TEXT("RateKi"));
+		const FName FcRateKd(TEXT("RateKd"));
+		const FName FcAltitudeKp(TEXT("AltitudeKp"));
+		const FName FcAltitudeKi(TEXT("AltitudeKi"));
+		const FName FcAltitudeKd(TEXT("AltitudeKd"));
+		const FName FcVerticalVelocityKp(TEXT("VerticalVelocityKp"));
+		const FName FcVerticalVelocityKi(TEXT("VerticalVelocityKi"));
+		const FName FcVerticalVelocityKd(TEXT("VerticalVelocityKd"));
+		const FName FcMaxTiltAngleDegrees(TEXT("MaxTiltAngleDegrees"));
+		const FName FcMaxYawRateDegreesPerSec(TEXT("MaxYawRateDegreesPerSec"));
+		const FName FcMaxClimbRateCmPerSec(TEXT("MaxClimbRateCmPerSec"));
+		const FName FcMaxDescentRateCmPerSec(TEXT("MaxDescentRateCmPerSec"));
+		const FName FcMaxHorizontalSpeedCmPerSec(TEXT("MaxHorizontalSpeedCmPerSec"));
+		const FName FcDerivativeCutoffHz(TEXT("DerivativeCutoffHz"));
+		const FName FcAllocationDamping(TEXT("AllocationDamping"));
 
-		const FName SuspensionName(TEXT("SuspensionName"));
-		const FName SuspensionTopMountLocal(TEXT("TopMountLocal"));
-		const FName SuspensionLowerBallJointLocal(TEXT("LowerBallJointLocal"));
-		const FName SuspensionMaxRaiseCm(TEXT("MaxRaiseCm"));
-		const FName SuspensionMaxDropCm(TEXT("MaxDropCm"));
-		const FName SuspensionNaturalFrequencyHz(TEXT("NaturalFrequencyHz"));
-		const FName SuspensionDampingRatio(TEXT("DampingRatio"));
-
-		const FName SteeringName(TEXT("SteeringName"));
-		const FName SteeringMaxSteerAngleDeg(TEXT("MaxSteerAngleDeg"));
-		const FName SteeringAckermannRatio(TEXT("AckermannRatio"));
-
-		const FName BrakeName(TEXT("BrakeName"));
-		const FName BrakeWheelNames(TEXT("WheelNames"));
-		const FName BrakeMaxTorqueNm(TEXT("MaxTorqueNm"));
-		const FName BrakeIsHandbrake(TEXT("IsHandbrake"));
+		const FName GameFeelRcExpoRoll(TEXT("RcExpoRoll"));
+		const FName GameFeelRcExpoPitch(TEXT("RcExpoPitch"));
+		const FName GameFeelRcExpoYaw(TEXT("RcExpoYaw"));
+		const FName GameFeelRcExpoThrottle(TEXT("RcExpoThrottle"));
+		const FName GameFeelInputDeadzone(TEXT("InputDeadzone"));
+		const FName GameFeelHoverCollectiveCommand(TEXT("HoverCollectiveCommand"));
+		const FName GameFeelStickResponseTimeSeconds(TEXT("StickResponseTimeSeconds"));
+		const FName GameFeelCameraShakeScale(TEXT("CameraShakeScale"));
 	}
 
-	namespace Private
+	/* ===========================================================================
+	 *  FCollectionAircraftConstFacade
+	 * =========================================================================== */
+
+	FCollectionAircraftConstFacade::FCollectionAircraftConstFacade(const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection)
+		: AircraftCollection(MakeShared<FConstAircraftCollection>(InManagedArrayCollection))
 	{
-		static void AddSchemaGroup(FManagedArrayCollection& Collection, const FName& GroupName)
-		{
-			if (!Collection.HasGroup(GroupName))
-			{
-				Collection.AddGroup(GroupName);
-			}
-		}
-
-		static bool HasSchemaGroup(const FManagedArrayCollection& Collection, const FName& GroupName)
-		{
-			return Collection.HasGroup(GroupName);
-		}
-
-		template<typename T>
-		static void EnsureAttribute(FManagedArrayCollection& Collection, const FName& AttributeName, const FName& GroupName)
-		{
-			if (!Collection.HasAttribute(AttributeName, GroupName))
-			{
-				Collection.AddAttribute<T>(AttributeName, GroupName);
-			}
-		}
 	}
 
-FCollectionAircraftConstFacade::FCollectionAircraftConstFacade(
-	const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection)
-	: AircraftCollection(MakeShared<FConstAircraftCollection>(InManagedArrayCollection))
-{
-}
-
-FCollectionAircraftConstFacade::FCollectionAircraftConstFacade()
-	: AircraftCollection(MakeShared<FConstAircraftCollection>(MakeShared<FManagedArrayCollection>()))
-{
-}
-
-FCollectionAircraftConstFacade::FCollectionAircraftConstFacade(
-	const TSharedRef<const FConstAircraftCollection>& InAircraftCollection)
-	: AircraftCollection(InAircraftCollection)
-{
-}
-
-bool FCollectionAircraftConstFacade::IsValid() const
-{
-	const FManagedArrayCollection& Collection = GetCollection();
-
-	return
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Aircraft) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Chassis) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Axles) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Wheels) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Rig) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Solver) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Tires) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Suspensions) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Powertrain) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Steering) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Brakes) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::ControlInputs) &&
-		Private::HasSchemaGroup(Collection, AircraftCollectionGroup::Import);
-}
-
-bool FCollectionAircraftConstFacade::HasGroup(const FName& GroupName) const
-{
-	return AircraftCollection->GetManagedArrayCollection()->HasGroup(GroupName);
-}
-
-bool FCollectionAircraftConstFacade::HasAttribute(const FName& AttributeName, const FName& GroupName) const
-{
-	return AircraftCollection->GetManagedArrayCollection()->HasAttribute(AttributeName, GroupName);
-}
-
-int32 FCollectionAircraftConstFacade::GetNumElements(const FName& GroupName) const
-{
-	return AircraftCollection->GetNumElements(GroupName);
-}
-
-FCollectionAircraftFacade::FCollectionAircraftFacade(const TSharedRef<FManagedArrayCollection>& InManagedArrayCollection)
-	: FCollectionAircraftFacade(MakeShared<FAircraftCollection>(InManagedArrayCollection))
-{
-}
-
-FCollectionAircraftFacade::FCollectionAircraftFacade()
-	: FCollectionAircraftFacade(MakeShared<FAircraftCollection>(MakeShared<FManagedArrayCollection>()))
-{
-}
-
-FCollectionAircraftFacade::FCollectionAircraftFacade(
-	const TSharedRef<FAircraftCollection>& InAircraftCollection)
-	: FCollectionAircraftConstFacade(InAircraftCollection)
-{
-}
-
-void FCollectionAircraftFacade::DefineSchema()
-{
-	GetAircraftCollection()->DefineSchema();
-
-	FManagedArrayCollection& Collection = GetCollection();
-
-	const FName Groups[] =
+	FCollectionAircraftConstFacade::FCollectionAircraftConstFacade()
+		: AircraftCollection(MakeShared<FConstAircraftCollection>(MakeShared<FManagedArrayCollection>()))
 	{
-		AircraftCollectionGroup::Aircraft,
-		AircraftCollectionGroup::Chassis,
-		AircraftCollectionGroup::Axles,
-		AircraftCollectionGroup::Wheels,
-		AircraftCollectionGroup::Rig,
-		AircraftCollectionGroup::Solver,
-		AircraftCollectionGroup::Tires,
-		AircraftCollectionGroup::Suspensions,
-		AircraftCollectionGroup::Powertrain,
-		AircraftCollectionGroup::Steering,
-		AircraftCollectionGroup::Brakes,
-		AircraftCollectionGroup::ControlInputs,
-		AircraftCollectionGroup::Import
-	};
-
-	for (const FName& GroupName : Groups)
-	{
-		Private::AddSchemaGroup(Collection, GroupName);
 	}
 
-	Private::EnsureAttribute<int32>(Collection, AircraftCollectionAttribute::SolverMaxSolverSubsteps, AircraftCollectionGroup::Solver);
+	FCollectionAircraftConstFacade::FCollectionAircraftConstFacade(const TSharedRef<const FConstAircraftCollection>& InAircraftCollection)
+		: AircraftCollection(InAircraftCollection)
+	{
+	}
 
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::ChassisRootBone, AircraftCollectionGroup::Chassis);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::ChassisMassKg, AircraftCollectionGroup::Chassis);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::ChassisDragCoefficient, AircraftCollectionGroup::Chassis);
-	Private::EnsureAttribute<FVector3f>(Collection, AircraftCollectionAttribute::ChassisCenterOfMassOffset, AircraftCollectionGroup::Chassis);
-	Private::EnsureAttribute<FVector3f>(Collection, AircraftCollectionAttribute::ChassisInertiaTensorScale, AircraftCollectionGroup::Chassis);
+	bool FCollectionAircraftConstFacade::IsValid() const
+	{
+		return AircraftCollection->IsValid();
+	}
 
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::AxleName, AircraftCollectionGroup::Axles);
-	Private::EnsureAttribute<bool>(Collection, AircraftCollectionAttribute::AxleIsSteeringAxle, AircraftCollectionGroup::Axles);
-	Private::EnsureAttribute<bool>(Collection, AircraftCollectionAttribute::AxleIsDrivenAxle, AircraftCollectionGroup::Axles);
+	bool FCollectionAircraftConstFacade::HasGroup(const FName& GroupName) const
+	{
+		return AircraftCollection->GetCollection().HasGroup(GroupName);
+	}
 
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::WheelName, AircraftCollectionGroup::Wheels);
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::WheelBoneName, AircraftCollectionGroup::Wheels);
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::WheelSuspensionName, AircraftCollectionGroup::Wheels);
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::WheelAxleName, AircraftCollectionGroup::Wheels);
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::WheelSteeringName, AircraftCollectionGroup::Wheels);
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::WheelBrakeName, AircraftCollectionGroup::Wheels);
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::WheelTireName, AircraftCollectionGroup::Wheels);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::WheelRadiusCm, AircraftCollectionGroup::Wheels);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::WheelWidthCm, AircraftCollectionGroup::Wheels);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::WheelMassKg, AircraftCollectionGroup::Wheels);
+	bool FCollectionAircraftConstFacade::HasAttribute(const FName& AttributeName, const FName& GroupName) const
+	{
+		return AircraftCollection->GetCollection().HasAttribute(AttributeName, GroupName);
+	}
 
-	Private::EnsureAttribute<FString>(Collection, AircraftCollectionAttribute::PowertrainEngineFullThrottleTorqueCurve, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<FString>(Collection, AircraftCollectionAttribute::PowertrainEngineZeroThrottleTorqueCurve, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::PowertrainEngineIdleRPM, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::PowertrainEngineMaxRPM, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::PowertrainEngineInertia, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<FString>(Collection, AircraftCollectionAttribute::PowertrainGearboxForwardRatios, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<FString>(Collection, AircraftCollectionAttribute::PowertrainGearboxReverseRatios, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::PowertrainGearboxFinalDriveRatio, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::PowertrainGearboxShiftUpRPM, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::PowertrainGearboxShiftDownRPM, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<bool>(Collection, AircraftCollectionAttribute::PowertrainGearboxAutoReverse, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::PowertrainDifferentialFrontRearSplit, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<bool>(Collection, AircraftCollectionAttribute::PowertrainDifferentialDriveFrontAxle, AircraftCollectionGroup::Powertrain);
-	Private::EnsureAttribute<bool>(Collection, AircraftCollectionAttribute::PowertrainDifferentialDriveRearAxle, AircraftCollectionGroup::Powertrain);
+	int32 FCollectionAircraftConstFacade::GetNumElements(const FName& GroupName) const
+	{
+		return AircraftCollection->GetNumElements(GroupName);
+	}
 
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::TireName, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<bool>(Collection, AircraftCollectionAttribute::TireUseAutoNominalLoad, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireNominalLoadN, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLongitudinalPeakFrictionScale, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLongitudinalLoadSensitivity, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLongitudinalShapeFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLongitudinalStiffnessFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLongitudinalCurvatureFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLateralPeakFrictionScale, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLateralLoadSensitivity, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLateralShapeFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLateralStiffnessFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireLateralCurvatureFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireCombinedLongitudinalShapeFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireCombinedLongitudinalStiffnessFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireCombinedLongitudinalCurvatureFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireCombinedLateralShapeFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireCombinedLateralStiffnessFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireCombinedLateralCurvatureFactor, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireMinSlipSpeedCmPerSec, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireRollingResistanceCoefficient, AircraftCollectionGroup::Tires);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::TireWheelViscousDampingNmPerRadPerSec, AircraftCollectionGroup::Tires);
+	/* ===========================================================================
+	 *  FCollectionAircraftFacade
+	 * =========================================================================== */
 
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::SuspensionName, AircraftCollectionGroup::Suspensions);
-	Private::EnsureAttribute<FVector3f>(Collection, AircraftCollectionAttribute::SuspensionTopMountLocal, AircraftCollectionGroup::Suspensions);
-	Private::EnsureAttribute<FVector3f>(Collection, AircraftCollectionAttribute::SuspensionLowerBallJointLocal, AircraftCollectionGroup::Suspensions);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::SuspensionMaxRaiseCm, AircraftCollectionGroup::Suspensions);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::SuspensionMaxDropCm, AircraftCollectionGroup::Suspensions);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::SuspensionNaturalFrequencyHz, AircraftCollectionGroup::Suspensions);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::SuspensionDampingRatio, AircraftCollectionGroup::Suspensions);
+	FCollectionAircraftFacade::FCollectionAircraftFacade(const TSharedRef<FManagedArrayCollection>& InManagedArrayCollection)
+		: FCollectionAircraftConstFacade(MakeShared<FAircraftCollection>(InManagedArrayCollection))
+	{
+	}
 
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::SteeringName, AircraftCollectionGroup::Steering);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::SteeringMaxSteerAngleDeg, AircraftCollectionGroup::Steering);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::SteeringAckermannRatio, AircraftCollectionGroup::Steering);
+	FCollectionAircraftFacade::FCollectionAircraftFacade()
+		: FCollectionAircraftConstFacade(MakeShared<FAircraftCollection>(MakeShared<FManagedArrayCollection>()))
+	{
+	}
 
-	Private::EnsureAttribute<FName>(Collection, AircraftCollectionAttribute::BrakeName, AircraftCollectionGroup::Brakes);
-	Private::EnsureAttribute<FString>(Collection, AircraftCollectionAttribute::BrakeWheelNames, AircraftCollectionGroup::Brakes);
-	Private::EnsureAttribute<float>(Collection, AircraftCollectionAttribute::BrakeMaxTorqueNm, AircraftCollectionGroup::Brakes);
-	Private::EnsureAttribute<bool>(Collection, AircraftCollectionAttribute::BrakeIsHandbrake, AircraftCollectionGroup::Brakes);
+	FCollectionAircraftFacade::FCollectionAircraftFacade(const TSharedRef<FAircraftCollection>& InAircraftCollection)
+		: FCollectionAircraftConstFacade(InAircraftCollection)
+	{
+	}
+
+	void FCollectionAircraftFacade::DefineSchema()
+	{
+		GetAircraftCollection()->DefineSchema();
+	}
+
+	void FCollectionAircraftFacade::Reset()
+	{
+		FManagedArrayCollection& Collection = *GetManagedArrayCollection();
+		Collection.Reset();
+	}
+
+	void FCollectionAircraftFacade::PostSerialize(const FArchive& /*Ar*/)
+	{
+		// 反序列化后重建 schema 中可能新增的属性，旧资产数据保持原值。
+		GetAircraftCollection()->DefineSchema();
+	}
+
+	bool FCollectionAircraftFacade::FindOrAddGroup(const FName& GroupName)
+	{
+		FManagedArrayCollection& Collection = *GetManagedArrayCollection();
+		if (!Collection.HasGroup(GroupName))
+		{
+			Collection.AddGroup(GroupName);
+		}
+		return Collection.HasGroup(GroupName);
+	}
+
+	int32 FCollectionAircraftFacade::AddElements(int32 NumberElements, const FName& GroupName)
+	{
+		if (NumberElements <= 0)
+		{
+			return INDEX_NONE;
+		}
+
+		FindOrAddGroup(GroupName);
+		FManagedArrayCollection& Collection = *GetManagedArrayCollection();
+		const int32 StartIndex = Collection.AddElements(NumberElements, GroupName);
+		// 数组容量改变，需要刷新底层 const TManagedArray<T>* 缓存。
+		ConstCastSharedRef<FAircraftCollection>(StaticCastSharedRef<const FAircraftCollection>(AircraftCollection))->UpdateArrays();
+		return StartIndex;
+	}
+
+	TSharedRef<FManagedArrayCollection> FCollectionAircraftFacade::GetManagedArrayCollection() const
+	{
+		return ConstCastSharedRef<FManagedArrayCollection>(AircraftCollection->GetManagedArrayCollection());
+	}
+
+	void FCollectionAircraftFacade::SetSkeletalMeshSoftObjectPathName(const FSoftObjectPath& PathName)
+	{
+		GetAircraftCollection()->SetSkeletalMeshSoftObjectPathName(PathName);
+	}
+
+	void FCollectionAircraftFacade::SetPhysicsAssetSoftObjectPathName(const FSoftObjectPath& PathName)
+	{
+		GetAircraftCollection()->SetPhysicsAssetSoftObjectPathName(PathName);
+	}
+
+	TSharedRef<FAircraftCollection> FCollectionAircraftFacade::GetAircraftCollection()
+	{
+		return ConstCastSharedRef<FAircraftCollection>(StaticCastSharedRef<const FAircraftCollection>(AircraftCollection));
+	}
 }
-
-void FCollectionAircraftFacade::Reset()
-{
-	// TODO: AircraftCollection reset behavior should be implemented after the final schema is stabilized.
-}
-
-void FCollectionAircraftFacade::PostSerialize(const FArchive& Ar)
-{
-	(void)Ar;
-	// TODO: PostSerialize upgrade logic should be implemented together with schema versioning.
-}
-
-bool FCollectionAircraftFacade::FindOrAddGroup(const FName& GroupName)
-{
-	FManagedArrayCollection& Collection = GetCollection();
-	const bool bAlreadyExists = Collection.HasGroup(GroupName);
-	Private::AddSchemaGroup(Collection, GroupName);
-	return !bAlreadyExists;
-}
-
-int32 FCollectionAircraftFacade::AddElements(int32 NumberElements, const FName& GroupName)
-{
-	FindOrAddGroup(GroupName);
-	return GetManagedArrayCollection()->AddElements(NumberElements, GroupName);
-}
-
-TSharedRef<FManagedArrayCollection> FCollectionAircraftFacade::GetManagedArrayCollection() const
-{
-	return ConstCastSharedRef<FManagedArrayCollection>(AircraftCollection->GetManagedArrayCollection());
-}
-
-void FCollectionAircraftFacade::SetPhysicsAssetSoftObjectPathName(const FSoftObjectPath& PathName)
-{
-	GetAircraftCollection()->SetPhysicsAssetSoftObjectPathName(PathName);
-}
-
-void FCollectionAircraftFacade::SetSkeletalMeshSoftObjectPathName(const FSoftObjectPath& PathName)
-{
-	GetAircraftCollection()->SetSkeletalMeshSoftObjectPathName(PathName);
-}
-
-TSharedRef<FAircraftCollection> FCollectionAircraftFacade::GetAircraftCollection()
-{
-	return StaticCastSharedRef<FAircraftCollection>(
-		ConstCastSharedRef<FConstAircraftCollection>(AircraftCollection));
-}
-} // End namespace UE::AircraftLab::AircraftAsset

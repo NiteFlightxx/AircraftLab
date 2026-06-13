@@ -18,9 +18,6 @@ public class AircraftEditor : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
-                "DetailCustomizations",
-                "EditorFramework",
-                "InputCore",
                 "Slate",
                 "SlateCore",
                 "UnrealEd",

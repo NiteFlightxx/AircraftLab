@@ -8,10 +8,14 @@
 #include "Dataflow/DataflowSchema.h"
 
 #include "Dataflow/AircraftAssetTerminalNode.h"
-
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSolverConfigNode.h"
-
+#include "Dataflow/AircraftFrameConfigNode.h"
+#include "Dataflow/AircraftMotorConfigNode.h"
+#include "Dataflow/AircraftPropellerConfigNode.h"
+#include "Dataflow/AircraftBatteryConfigNode.h"
+#include "Dataflow/AircraftPIDConfigNode.h"
+#include "Dataflow/AircraftGameFeelNode.h"
 
 #include "Editor.h"
 #include "Subsystems/AssetEditorSubsystem.h"
@@ -32,36 +36,13 @@ namespace UE::AircraftDataflowAssetEditor::Private
 {
 	namespace
 	{
+		// 模板节点画布布局：每行最多 N 个节点；行间距 / 列间距与 ChaosClothAsset 模板图一致风格。
 		constexpr int32 TemplateNodesPerRow = 10;
 		constexpr double TemplateNodeSpacingX = 460.0;
 		constexpr double TemplateNodeSpacingY = 600.0;
+
+		// 默认骨骼根节点名。多旋翼资产模板假设 SkeletalMesh 的根骨骼为 "Root"；用户可在节点中改写。
 		const FName RootBoneName(TEXT("Root"));
-		const FName FrontAxleName(TEXT("FrontAxle"));
-		const FName RearAxleName(TEXT("RearAxle"));
-		const FName FrontSteeringName(TEXT("FrontSteering"));
-		const FName ServiceBrakeName(TEXT("ServiceBrake"));
-		const FName HandbrakeName(TEXT("Handbrake"));
-		const FName SharedTireName(TEXT("DefaultTire"));
-
-		struct FDefaultWheelTemplate
-		{
-			FName SuspensionNodeName;
-			FName SuspensionName;
-			FName WheelNodeName;
-			FName WheelName;
-			FName BoneName;
-			FName AxleName;
-			FName SteeringName;
-			FName BrakeName;
-		};
-
-		const FDefaultWheelTemplate DefaultWheelTemplates[] =
-		{
-			{ TEXT("AircraftSuspension_FL"), TEXT("Suspension_FL"), TEXT("AircraftWheel_FL"), TEXT("Wheel_FL"), TEXT("Wheel_F_L_Tire"), FrontAxleName, FrontSteeringName, ServiceBrakeName },
-			{ TEXT("AircraftSuspension_FR"), TEXT("Suspension_FR"), TEXT("AircraftWheel_FR"), TEXT("Wheel_FR"), TEXT("Wheel_F_R_Tire"), FrontAxleName, FrontSteeringName, ServiceBrakeName },
-			{ TEXT("AircraftSuspension_BL"), TEXT("Suspension_BL"), TEXT("AircraftWheel_BL"), TEXT("Wheel_BL"), TEXT("Wheel_B_L_Tire"), RearAxleName, NAME_None, ServiceBrakeName },
-			{ TEXT("AircraftSuspension_BR"), TEXT("Suspension_BR"), TEXT("AircraftWheel_BR"), TEXT("Wheel_BR"), TEXT("Wheel_B_R_Tire"), RearAxleName, NAME_None, ServiceBrakeName }
-		};
 
 		struct FCreatedTemplateNode
 		{
@@ -227,31 +208,39 @@ namespace UE::AircraftDataflowAssetEditor::Private
 
 		void CreateAircraftTemplateGraph(UDataflow* DataflowAsset)
 		{
-			/*
 			if (!DataflowAsset || !DataflowAsset->GetDataflow())
 			{
 				return;
 			}
 
-			int32 NodeIndex = 0;
-			const TArray<FName> FrontWheelNames =
+			// 默认 QuadX 旋翼布局（用 30cm 臂长作为模板默认）。Phase 1 中 FAircraftSimulationModel
+			// 在 Propellers 组为空时也会回退生成相同的 4 个旋翼，但模板把它们显式列出来便于编辑器
+			// 用户调整位置/旋向。
+			//
+			// QuadX 编号约定（俯视图）：
+			//     2(CW)   1(CCW)
+			//           x
+			//     3(CCW)  4(CW)
+			constexpr float DefaultArmLengthCm = 30.0f;
+			const FName DefaultMotorName(TEXT("Motor"));
+
+			struct FQuadXEntry
 			{
-				DefaultWheelTemplates[0].WheelName,
-				DefaultWheelTemplates[1].WheelName
+				FName RotorName;
+				FVector3f Position;
+				EAircraftRotorSpinDirectionNode SpinDirection;
 			};
-			const TArray<FName> RearWheelNames =
+			const FQuadXEntry QuadXEntries[] =
 			{
-				DefaultWheelTemplates[2].WheelName,
-				DefaultWheelTemplates[3].WheelName
-			};
-			const TArray<FName> AllWheelNames =
-			{
-				DefaultWheelTemplates[0].WheelName,
-				DefaultWheelTemplates[1].WheelName,
-				DefaultWheelTemplates[2].WheelName,
-				DefaultWheelTemplates[3].WheelName
+				{ TEXT("Rotor1_FR"), FVector3f( DefaultArmLengthCm, -DefaultArmLengthCm, 0.f), EAircraftRotorSpinDirectionNode::CounterClockwise },
+				{ TEXT("Rotor2_FL"), FVector3f( DefaultArmLengthCm,  DefaultArmLengthCm, 0.f), EAircraftRotorSpinDirectionNode::Clockwise },
+				{ TEXT("Rotor3_RL"), FVector3f(-DefaultArmLengthCm,  DefaultArmLengthCm, 0.f), EAircraftRotorSpinDirectionNode::CounterClockwise },
+				{ TEXT("Rotor4_RR"), FVector3f(-DefaultArmLengthCm, -DefaultArmLengthCm, 0.f), EAircraftRotorSpinDirectionNode::Clockwise },
 			};
 
+			int32 NodeIndex = 0;
+
+			/* ---------- 1. Source 节点（骨骼网格 + 物理资产） ---------- */
 			const FCreatedTemplateNode SourceNode = AddConfiguredTemplateNode<FAircraftSkeletalMeshSourceNode>(
 				DataflowAsset,
 				TEXT("AircraftSkeletalMeshSource"),
@@ -262,245 +251,136 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.PhysicsAsset = nullptr;
 				});
 
+			/* ---------- 2. Solver 节点 ---------- */
 			const FCreatedTemplateNode SolverNode = AddConfiguredTemplateNode<FAircraftSolverConfigNode>(
 				DataflowAsset,
 				TEXT("AircraftSolverConfig"),
 				NodeIndex++,
 				[](FAircraftSolverConfigNode& Node)
 				{
-					Node.MaxSolverSubsteps = 1;
+					Node.MaxSolverSubsteps = 4;
 				});
 
-			const FCreatedTemplateNode ChassisNode = AddConfiguredTemplateNode<FAircraftChassisConfigNode>(
+			/* ---------- 3. Frame 节点（机架 + 质量惯性 + 气动） ---------- */
+			const FCreatedTemplateNode FrameNode = AddConfiguredTemplateNode<FAircraftFrameConfigNode>(
 				DataflowAsset,
-				TEXT("AircraftChassisConfig"),
+				TEXT("AircraftFrameConfig"),
 				NodeIndex++,
-				[](FAircraftChassisConfigNode& Node)
+				[](FAircraftFrameConfigNode& Node)
 				{
 					Node.RootBone = RootBoneName;
-					Node.MassKg = 1200.0f;
-					Node.DragCoefficient = 0.32f;
-					Node.CenterOfMassOffset = FVector::ZeroVector;
-					Node.InertiaTensorScale = FVector(1.0, 1.0, 1.0);
+					Node.FrameType = EAircraftFrameTypeNode::QuadX;
+					Node.MassKg = 1.2f;
+					Node.CenterOfMassOffsetCm = FVector3f::ZeroVector;
+					Node.InertiaDiagonalKgCmSq = FVector3f(5000.f, 5000.f, 9000.f);
+					Node.LinearDragPerAxis = FVector3f(0.12f, 0.12f, 0.18f);
+					Node.AngularDragPerAxis = FVector3f(0.02f, 0.02f, 0.03f);
+					Node.WindVelocityCmPerSec = FVector3f::ZeroVector;
+					Node.GroundEffectStartHeightCm = 80.f;
+					Node.GroundEffectStrength = 0.15f;
 				});
 
-			const FCreatedTemplateNode EngineNode = AddConfiguredTemplateNode<FAircraftEngineConfigNode>(
+			/* ---------- 4. Motors 节点（4 个默认电机） ---------- */
+			const FCreatedTemplateNode MotorNode = AddConfiguredTemplateNode<FAircraftMotorConfigNode>(
 				DataflowAsset,
-				TEXT("AircraftEngineConfig"),
+				TEXT("AircraftMotorConfig"),
 				NodeIndex++,
-				[](FAircraftEngineConfigNode& Node)
+				[QuadXCount = static_cast<int32>(UE_ARRAY_COUNT(QuadXEntries))](FAircraftMotorConfigNode& Node)
 				{
-					Node.IdleRPM = 900.0f;
-					Node.MaxRPM = 6500.0f;
-					Node.EngineInertia = 0.35f;
-				});
-
-			const FCreatedTemplateNode ClutchNode = AddConfiguredTemplateNode<FAircraftClutchConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftClutchConfig"),
-				NodeIndex++,
-				[](FAircraftClutchConfigNode& Node)
-				{
-					Node.CapacityNm = 900.0f;
-					Node.StiffnessNmPerRadPerSec = 75.0f;
-				});
-
-			const FCreatedTemplateNode GearboxNode = AddConfiguredTemplateNode<FAircraftGearboxConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftGearboxConfig"),
-				NodeIndex++,
-				[](FAircraftGearboxConfigNode& Node)
-				{
-					Node.ForwardRatios = { 3.20f, 2.10f, 1.50f, 1.00f, 0.80f };
-					Node.ReverseRatios = { -3.00f };
-					Node.FinalDriveRatio = 3.42f;
-					Node.ShiftUpRPM = 5800.0f;
-					Node.ShiftDownRPM = 1800.0f;
-					Node.bAutoReverse = true;
-				});
-
-			const FCreatedTemplateNode DifferentialNode = AddConfiguredTemplateNode<FAircraftDifferentialConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftDifferentialConfig"),
-				NodeIndex++,
-				[](FAircraftDifferentialConfigNode& Node)
-				{
-					Node.FrontRearSplit = 0.5f;
-					Node.bDriveFrontAxle = true;
-					Node.bDriveRearAxle = true;
-				});
-
-			const FCreatedTemplateNode FrontAxleNode = AddConfiguredTemplateNode<FAircraftAxleConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftAxle_Front"),
-				NodeIndex++,
-				[FrontWheelNames](FAircraftAxleConfigNode& Node)
-				{
-					Node.bReplaceAllAxles = true;
-					Node.AxleName = FrontAxleName;
-					Node.WheelNames = FrontWheelNames;
-					Node.bIsSteeringAxle = true;
-					Node.bIsDrivenAxle = true;
-				});
-
-			const FCreatedTemplateNode RearAxleNode = AddConfiguredTemplateNode<FAircraftAxleConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftAxle_Rear"),
-				NodeIndex++,
-				[RearWheelNames](FAircraftAxleConfigNode& Node)
-				{
-					Node.bReplaceAllAxles = false;
-					Node.AxleName = RearAxleName;
-					Node.WheelNames = RearWheelNames;
-					Node.bIsSteeringAxle = false;
-					Node.bIsDrivenAxle = true;
-				});
-
-			const FCreatedTemplateNode SteeringNode = AddConfiguredTemplateNode<FAircraftSteeringConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftSteering_Front"),
-				NodeIndex++,
-				[FrontWheelNames](FAircraftSteeringConfigNode& Node)
-				{
-					Node.bReplaceAllSteeringSystems = true;
-					Node.SteeringName = FrontSteeringName;
-					Node.WheelNames = FrontWheelNames;
-					Node.MaxSteerAngleDeg = 35.0f;
-					Node.AckermannRatio = 1.0f;
-				});
-
-			const FCreatedTemplateNode ServiceBrakeNode = AddConfiguredTemplateNode<FAircraftBrakeConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftBrake_Service"),
-				NodeIndex++,
-				[AllWheelNames](FAircraftBrakeConfigNode& Node)
-				{
-					Node.bReplaceAllBrakes = true;
-					Node.BrakeName = ServiceBrakeName;
-					Node.WheelNames = AllWheelNames;
-					Node.MaxBrakeTorqueNm = 2500.0f;
-					Node.bHandbrake = false;
-				});
-
-			const FCreatedTemplateNode HandbrakeNode = AddConfiguredTemplateNode<FAircraftBrakeConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftBrake_Handbrake"),
-				NodeIndex++,
-				[RearWheelNames](FAircraftBrakeConfigNode& Node)
-				{
-					Node.bReplaceAllBrakes = false;
-					Node.BrakeName = HandbrakeName;
-					Node.WheelNames = RearWheelNames;
-					Node.MaxBrakeTorqueNm = 3500.0f;
-					Node.bHandbrake = true;
-				});
-
-			TArray<FCreatedTemplateNode> SuspensionNodes;
-			SuspensionNodes.Reserve(UE_ARRAY_COUNT(DefaultWheelTemplates));
-			for (int32 TemplateIndex = 0; TemplateIndex < UE_ARRAY_COUNT(DefaultWheelTemplates); ++TemplateIndex)
-			{
-				const FDefaultWheelTemplate& WheelTemplate = DefaultWheelTemplates[TemplateIndex];
-				SuspensionNodes.Add(AddConfiguredTemplateNode<FAircraftSuspensionConfigNode>(
-					DataflowAsset,
-					WheelTemplate.SuspensionNodeName,
-					NodeIndex++,
-					[TemplateIndex, &WheelTemplate](FAircraftSuspensionConfigNode& Node)
+					Node.Motors.Reset();
+					Node.Motors.Reserve(QuadXCount);
+					for (int32 i = 0; i < QuadXCount; ++i)
 					{
-						Node.bReplaceAllSuspensions = (TemplateIndex == 0);
-						Node.SuspensionName = WheelTemplate.SuspensionName;
-						Node.TopMountLocal = FVector::ZeroVector;
-						Node.LowerBallJointLocal = FVector::ZeroVector;
-						Node.MaxRaiseCm = 8.0f;
-						Node.MaxDropCm = 12.0f;
-						Node.NaturalFrequencyHz = 1.2f;
-						Node.DampingRatio = 0.5f;
-					}));
-			}
-
-			const FCreatedTemplateNode TireNode = AddConfiguredTemplateNode<FAircraftTireConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftTireConfig"),
-				NodeIndex++,
-				[](FAircraftTireConfigNode& Node)
-				{
-					Node.bReplaceAllTires = true;
-					Node.TireName = SharedTireName;
-					Node.bUseAutoNominalLoad = true;
+						FAircraftMotorEntry Entry;
+						Entry.Name = *FString::Printf(TEXT("Motor%d"), i + 1);
+						Entry.bEnabled = true;
+						Entry.MinRpm = 0.f;
+						Entry.IdleRpm = 1500.f;
+						Entry.MaxRpm = 12000.f;
+						Entry.SpinUpTimeSeconds = 0.06f;
+						Entry.SpinDownTimeSeconds = 0.10f;
+						Entry.CommandExponent = 2.f;
+						Entry.MaxCommandSlewPerSecond = 8.f;
+						Node.Motors.Add(Entry);
+					}
 				});
 
-			TArray<FCreatedTemplateNode> WheelNodes;
-			WheelNodes.Reserve(UE_ARRAY_COUNT(DefaultWheelTemplates));
-			for (int32 TemplateIndex = 0; TemplateIndex < UE_ARRAY_COUNT(DefaultWheelTemplates); ++TemplateIndex)
-			{
-				const FDefaultWheelTemplate& WheelTemplate = DefaultWheelTemplates[TemplateIndex];
-				WheelNodes.Add(AddConfiguredTemplateNode<FAircraftWheelConfigNode>(
-					DataflowAsset,
-					WheelTemplate.WheelNodeName,
-					NodeIndex++,
-					[TemplateIndex, &WheelTemplate](FAircraftWheelConfigNode& Node)
+			/* ---------- 5. Propellers 节点（4 个默认旋翼） ---------- */
+			TArray<FQuadXEntry> QuadXEntriesCopy(QuadXEntries, UE_ARRAY_COUNT(QuadXEntries));
+			const FCreatedTemplateNode PropellerNode = AddConfiguredTemplateNode<FAircraftPropellerConfigNode>(
+				DataflowAsset,
+				TEXT("AircraftPropellerConfig"),
+				NodeIndex++,
+				[QuadXEntriesCopy](FAircraftPropellerConfigNode& Node)
+				{
+					Node.Propellers.Reset();
+					Node.Propellers.Reserve(QuadXEntriesCopy.Num());
+					for (int32 i = 0; i < QuadXEntriesCopy.Num(); ++i)
 					{
-						Node.bReplaceAllWheels = (TemplateIndex == 0);
-						Node.WheelName = WheelTemplate.WheelName;
-						Node.BoneName = WheelTemplate.BoneName;
-						Node.SuspensionName = WheelTemplate.SuspensionName;
-						Node.AxleName = WheelTemplate.AxleName;
-						Node.SteeringName = WheelTemplate.SteeringName;
-						Node.BrakeName = WheelTemplate.BrakeName;
-						Node.TireName = SharedTireName;
-						Node.RadiusCm = 35.0f;
-						Node.WidthCm = 25.0f;
-						Node.MassKg = 20.0f;
-					}));
-			}
-
-			const FCreatedTemplateNode ThrottleInputNode = AddConfiguredTemplateNode<FAircraftThrottleInputConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftThrottleInputConfig"),
-				NodeIndex++,
-				[](FAircraftThrottleInputConfigNode& Node)
-				{
-					Node.RiseRate = 6.0f;
-					Node.FallRate = 8.0f;
-					Node.bUseRiseRateCurve = false;
-					Node.bUseFallRateCurve = false;
+						const FQuadXEntry& E = QuadXEntriesCopy[i];
+						FAircraftPropellerEntry Entry;
+						Entry.Name = E.RotorName;
+						Entry.MotorName = *FString::Printf(TEXT("Motor%d"), i + 1);
+						Entry.SocketName = NAME_None;
+						Entry.bUseSocketTransform = false;
+						Entry.PositionLocalCm = E.Position;
+						Entry.RotationLocalEulerDeg = FVector3f::ZeroVector;
+						Entry.ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
+						Entry.SpinDirection = E.SpinDirection;
+						Entry.RadiusCm = 12.f;
+						Entry.MaxThrustForce = 9.f;
+						Entry.ThrustCoefficient = 1.f;
+						Entry.ReactionTorqueCoefficient = 0.03f;
+						Entry.Efficiency = 1.f;
+						Entry.ControlAuthorityScale = 1.f;
+						Node.Propellers.Add(Entry);
+					}
 				});
 
-			const FCreatedTemplateNode SteeringInputNode = AddConfiguredTemplateNode<FAircraftSteeringInputConfigNode>(
+			/* ---------- 6. Battery 节点 ---------- */
+			const FCreatedTemplateNode BatteryNode = AddConfiguredTemplateNode<FAircraftBatteryConfigNode>(
 				DataflowAsset,
-				TEXT("AircraftSteeringInputConfig"),
+				TEXT("AircraftBatteryConfig"),
 				NodeIndex++,
-				[](FAircraftSteeringInputConfigNode& Node)
+				[](FAircraftBatteryConfigNode& Node)
 				{
-					Node.RiseRate = 8.0f;
-					Node.FallRate = 10.0f;
-					Node.bUseRiseRateCurve = false;
-					Node.bUseFallRateCurve = false;
+					Node.CapacityMilliAmpHour = 2200.f;
+					Node.NominalVoltageV = 14.8f;
+					Node.MinVoltageV = 13.2f;
+					Node.MaxDischargeC = 75.f;
+					Node.InternalResistanceOhm = 0.012f;
 				});
 
-			const FCreatedTemplateNode BrakeInputNode = AddConfiguredTemplateNode<FAircraftBrakeInputConfigNode>(
+			/* ---------- 7. PID 节点 ---------- */
+			const FCreatedTemplateNode PidNode = AddConfiguredTemplateNode<FAircraftPIDConfigNode>(
 				DataflowAsset,
-				TEXT("AircraftBrakeInputConfig"),
+				TEXT("AircraftPIDConfig"),
 				NodeIndex++,
-				[](FAircraftBrakeInputConfigNode& Node)
+				[](FAircraftPIDConfigNode& Node)
 				{
-					Node.RiseRate = 12.0f;
-					Node.FallRate = 12.0f;
-					Node.bUseRiseRateCurve = false;
-					Node.bUseFallRateCurve = false;
+					// 默认值已在节点结构体中给出（位置/速度/角度/角速率四级 + 高度通道 + 限幅 + 分配阻尼）。
+					// 模板节点不需要覆盖默认值。
+					(void)Node;
 				});
 
-			const FCreatedTemplateNode HandbrakeInputNode = AddConfiguredTemplateNode<FAircraftHandbrakeInputConfigNode>(
+			/* ---------- 8. GameFeel 节点 ---------- */
+			const FCreatedTemplateNode GameFeelNode = AddConfiguredTemplateNode<FAircraftGameFeelNode>(
 				DataflowAsset,
-				TEXT("AircraftHandbrakeInputConfig"),
+				TEXT("AircraftGameFeel"),
 				NodeIndex++,
-				[](FAircraftHandbrakeInputConfigNode& Node)
+				[](FAircraftGameFeelNode& Node)
 				{
-					Node.RiseRate = 20.0f;
-					Node.FallRate = 20.0f;
-					Node.bUseRiseRateCurve = false;
-					Node.bUseFallRateCurve = false;
+					Node.RcExpoRoll = 0.3f;
+					Node.RcExpoPitch = 0.3f;
+					Node.RcExpoYaw = 0.2f;
+					Node.RcExpoThrottle = 0.f;
+					Node.InputDeadzone = 0.05f;
+					Node.HoverCollectiveCommand = 0.5f;
+					Node.StickResponseTimeSeconds = 0.04f;
+					Node.CameraShakeScale = 0.f;
 				});
 
+			/* ---------- 9. Terminal 节点 ---------- */
 			const FCreatedTemplateNode TerminalNode = AddConfiguredTemplateNode<FAircraftAssetTerminalNode>(
 				DataflowAsset,
 				TEXT("AircraftAssetTerminal"),
@@ -510,39 +390,17 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.AircraftAsset = nullptr;
 				});
 
+			/* ---------- 串联 9 个节点（Collection passthrough 链） ---------- */
 			TArray<UDataflowEdNode*> NodeChain;
-			NodeChain.Reserve(
-				12 +
-				SuspensionNodes.Num() +
-				1 +
-				WheelNodes.Num() +
-				4 +
-				1);
+			NodeChain.Reserve(9);
 			NodeChain.Add(SourceNode.EdNode);
 			NodeChain.Add(SolverNode.EdNode);
-			NodeChain.Add(ChassisNode.EdNode);
-			NodeChain.Add(EngineNode.EdNode);
-			NodeChain.Add(ClutchNode.EdNode);
-			NodeChain.Add(GearboxNode.EdNode);
-			NodeChain.Add(DifferentialNode.EdNode);
-			NodeChain.Add(FrontAxleNode.EdNode);
-			NodeChain.Add(RearAxleNode.EdNode);
-			NodeChain.Add(SteeringNode.EdNode);
-			NodeChain.Add(ServiceBrakeNode.EdNode);
-			NodeChain.Add(HandbrakeNode.EdNode);
-			for (const FCreatedTemplateNode& Node : SuspensionNodes)
-			{
-				NodeChain.Add(Node.EdNode);
-			}
-			NodeChain.Add(TireNode.EdNode);
-			for (const FCreatedTemplateNode& Node : WheelNodes)
-			{
-				NodeChain.Add(Node.EdNode);
-			}
-			NodeChain.Add(ThrottleInputNode.EdNode);
-			NodeChain.Add(SteeringInputNode.EdNode);
-			NodeChain.Add(BrakeInputNode.EdNode);
-			NodeChain.Add(HandbrakeInputNode.EdNode);
+			NodeChain.Add(FrameNode.EdNode);
+			NodeChain.Add(MotorNode.EdNode);
+			NodeChain.Add(PropellerNode.EdNode);
+			NodeChain.Add(BatteryNode.EdNode);
+			NodeChain.Add(PidNode.EdNode);
+			NodeChain.Add(GameFeelNode.EdNode);
 			NodeChain.Add(TerminalNode.EdNode);
 
 			for (int32 ChainIndex = 0; ChainIndex + 1 < NodeChain.Num(); ++ChainIndex)
@@ -553,7 +411,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					TEXT("Collection"),
 					NodeChain[ChainIndex + 1],
 					TEXT("Collection"));
-			}*/
+			}
 		}
 	
 	}

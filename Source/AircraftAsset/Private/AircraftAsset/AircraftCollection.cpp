@@ -1,100 +1,113 @@
+// 对齐 ChaosClothAsset/Private/ChaosClothAsset/ClothCollection.cpp
+//
+// 多旋翼 schema 实际定义。所有 Group / Attribute 名常量在 Private 命名空间内集中管理，
+// 与 Public 头里的 Get* 一一对应。
+
 #include "AircraftAsset/AircraftCollection.h"
 
 namespace UE::AircraftLab::AircraftAsset
 {
 	namespace Private
 	{
+		/* Group names */
 		const FName ImportGroup(TEXT("Import"));
 		const FName SolverGroup(TEXT("Solver"));
-		const FName ChassisGroup(TEXT("Chassis"));
-		const FName AxlesGroup(TEXT("Axles"));
-		const FName WheelsGroup(TEXT("Wheels"));
-		const FName PowertrainGroup(TEXT("Powertrain"));
-		const FName TiresGroup(TEXT("Tires"));
-		const FName SuspensionsGroup(TEXT("Suspensions"));
-		const FName SteeringGroup(TEXT("Steering"));
-		const FName BrakesGroup(TEXT("Brakes"));
+		const FName FrameGroup(TEXT("Frame"));
+		const FName MotorsGroup(TEXT("Motors"));
+		const FName PropellersGroup(TEXT("Propellers"));
+		const FName BatteryGroup(TEXT("Battery"));
+		const FName FlightControllerGroup(TEXT("FlightController"));
+		const FName GameFeelGroup(TEXT("GameFeel"));
 
-		const FName PhysicsAssetSoftObjectPathName(TEXT("PhysicsAssetSoftObjectPathName"));
+		/* Import attributes */
 		const FName SkeletalMeshSoftObjectPathName(TEXT("SkeletalMeshSoftObjectPathName"));
+		const FName PhysicsAssetSoftObjectPathName(TEXT("PhysicsAssetSoftObjectPathName"));
 
+		/* Solver attributes */
 		const FName MaxSolverSubsteps(TEXT("MaxSolverSubsteps"));
 
-		const FName RootBone(TEXT("RootBone"));
-		const FName MassKg(TEXT("MassKg"));
-		const FName DragCoefficient(TEXT("DragCoefficient"));
-		const FName CenterOfMassOffset(TEXT("CenterOfMassOffset"));
-		const FName InertiaTensorScale(TEXT("InertiaTensorScale"));
+		/* Frame attributes */
+		const FName FrameRootBone(TEXT("RootBone"));
+		const FName FrameType(TEXT("FrameType"));
+		const FName FrameMassKg(TEXT("MassKg"));
+		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
+		const FName FrameInertiaDiagonalKgCmSq(TEXT("InertiaDiagonalKgCmSq"));
+		const FName FrameLinearDragPerAxis(TEXT("LinearDragPerAxis"));
+		const FName FrameAngularDragPerAxis(TEXT("AngularDragPerAxis"));
+		const FName FrameWindVelocityCmPerSec(TEXT("WindVelocityCmPerSec"));
+		const FName FrameGroundEffectStartHeightCm(TEXT("GroundEffectStartHeightCm"));
+		const FName FrameGroundEffectStrength(TEXT("GroundEffectStrength"));
 
-		const FName AxleNameAttr(TEXT("AxleName"));
-		const FName IsSteeringAxle(TEXT("IsSteeringAxle"));
-		const FName IsDrivenAxle(TEXT("IsDrivenAxle"));
+		/* Motors attributes */
+		const FName MotorName(TEXT("Name"));
+		const FName MotorEnabled(TEXT("Enabled"));
+		const FName MotorMinRpm(TEXT("MinRpm"));
+		const FName MotorIdleRpm(TEXT("IdleRpm"));
+		const FName MotorMaxRpm(TEXT("MaxRpm"));
+		const FName MotorSpinUpTimeSeconds(TEXT("SpinUpTimeSeconds"));
+		const FName MotorSpinDownTimeSeconds(TEXT("SpinDownTimeSeconds"));
+		const FName MotorCommandExponent(TEXT("CommandExponent"));
+		const FName MotorMaxCommandSlewPerSecond(TEXT("MaxCommandSlewPerSecond"));
 
-		const FName WheelNameAttr(TEXT("WheelName"));
-		const FName BoneName(TEXT("BoneName"));
-		const FName SuspensionNameAttr(TEXT("SuspensionName"));
-		const FName WheelAxleNameAttr(TEXT("AxleName"));
-		const FName SteeringNameAttr(TEXT("SteeringName"));
-		const FName BrakeNameAttr(TEXT("BrakeName"));
-		const FName TireNameAttr(TEXT("TireName"));
-		const FName RadiusCm(TEXT("RadiusCm"));
-		const FName WidthCm(TEXT("WidthCm"));
-		const FName WheelMassKg(TEXT("MassKg"));
+		/* Propellers attributes */
+		const FName PropellerName(TEXT("Name"));
+		const FName PropellerMotorName(TEXT("MotorName"));
+		const FName PropellerSocketName(TEXT("SocketName"));
+		const FName PropellerUseSocketTransform(TEXT("UseSocketTransform"));
+		const FName PropellerPositionLocalCm(TEXT("PositionLocalCm"));
+		const FName PropellerRotationLocalEulerDeg(TEXT("RotationLocalEulerDeg"));
+		const FName PropellerThrustAxisLocal(TEXT("ThrustAxisLocal"));
+		const FName PropellerSpinDirection(TEXT("SpinDirection"));
+		const FName PropellerRadiusCm(TEXT("RadiusCm"));
+		const FName PropellerMaxThrustForce(TEXT("MaxThrustForce"));
+		const FName PropellerThrustCoefficient(TEXT("ThrustCoefficient"));
+		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
+		const FName PropellerEfficiency(TEXT("Efficiency"));
+		const FName PropellerControlAuthorityScale(TEXT("ControlAuthorityScale"));
 
-		const FName EngineFullThrottleTorqueCurve(TEXT("EngineFullThrottleTorqueCurve"));
-		const FName EngineZeroThrottleTorqueCurve(TEXT("EngineZeroThrottleTorqueCurve"));
-		const FName EngineIdleRPM(TEXT("EngineIdleRPM"));
-		const FName EngineMaxRPM(TEXT("EngineMaxRPM"));
-		const FName EngineInertia(TEXT("EngineInertia"));
-		const FName GearboxForwardRatios(TEXT("GearboxForwardRatios"));
-		const FName GearboxReverseRatios(TEXT("GearboxReverseRatios"));
-		const FName GearboxFinalDriveRatio(TEXT("GearboxFinalDriveRatio"));
-		const FName GearboxShiftUpRPM(TEXT("GearboxShiftUpRPM"));
-		const FName GearboxShiftDownRPM(TEXT("GearboxShiftDownRPM"));
-		const FName GearboxAutoReverse(TEXT("GearboxAutoReverse"));
-		const FName DifferentialFrontRearSplit(TEXT("DifferentialFrontRearSplit"));
-		const FName DifferentialDriveFrontAxle(TEXT("DifferentialDriveFrontAxle"));
-		const FName DifferentialDriveRearAxle(TEXT("DifferentialDriveRearAxle"));
+		/* Battery attributes */
+		const FName BatteryCapacityMilliAmpHour(TEXT("CapacityMilliAmpHour"));
+		const FName BatteryNominalVoltageV(TEXT("NominalVoltageV"));
+		const FName BatteryMinVoltageV(TEXT("MinVoltageV"));
+		const FName BatteryMaxDischargeC(TEXT("MaxDischargeC"));
+		const FName BatteryInternalResistanceOhm(TEXT("InternalResistanceOhm"));
 
-		const FName TireNameAttr2(TEXT("TireName"));
-		const FName UseAutoNominalLoad(TEXT("UseAutoNominalLoad"));
-		const FName NominalLoadN(TEXT("NominalLoadN"));
-		const FName LongitudinalPeakFrictionScale(TEXT("LongitudinalPeakFrictionScale"));
-		const FName LongitudinalLoadSensitivity(TEXT("LongitudinalLoadSensitivity"));
-		const FName LongitudinalShapeFactor(TEXT("LongitudinalShapeFactor"));
-		const FName LongitudinalStiffnessFactor(TEXT("LongitudinalStiffnessFactor"));
-		const FName LongitudinalCurvatureFactor(TEXT("LongitudinalCurvatureFactor"));
-		const FName LateralPeakFrictionScale(TEXT("LateralPeakFrictionScale"));
-		const FName LateralLoadSensitivity(TEXT("LateralLoadSensitivity"));
-		const FName LateralShapeFactor(TEXT("LateralShapeFactor"));
-		const FName LateralStiffnessFactor(TEXT("LateralStiffnessFactor"));
-		const FName LateralCurvatureFactor(TEXT("LateralCurvatureFactor"));
-		const FName CombinedLongitudinalShapeFactor(TEXT("CombinedLongitudinalShapeFactor"));
-		const FName CombinedLongitudinalStiffnessFactor(TEXT("CombinedLongitudinalStiffnessFactor"));
-		const FName CombinedLongitudinalCurvatureFactor(TEXT("CombinedLongitudinalCurvatureFactor"));
-		const FName CombinedLateralShapeFactor(TEXT("CombinedLateralShapeFactor"));
-		const FName CombinedLateralStiffnessFactor(TEXT("CombinedLateralStiffnessFactor"));
-		const FName CombinedLateralCurvatureFactor(TEXT("CombinedLateralCurvatureFactor"));
-		const FName MinSlipSpeedCmPerSec(TEXT("MinSlipSpeedCmPerSec"));
-		const FName RollingResistanceCoefficient(TEXT("RollingResistanceCoefficient"));
-		const FName WheelViscousDampingNmPerRadPerSec(TEXT("WheelViscousDampingNmPerRadPerSec"));
+		/* FlightController attributes */
+		const FName FcPositionKp(TEXT("PositionKp"));
+		const FName FcPositionKi(TEXT("PositionKi"));
+		const FName FcPositionKd(TEXT("PositionKd"));
+		const FName FcVelocityKp(TEXT("VelocityKp"));
+		const FName FcVelocityKi(TEXT("VelocityKi"));
+		const FName FcVelocityKd(TEXT("VelocityKd"));
+		const FName FcAngleKp(TEXT("AngleKp"));
+		const FName FcAngleKi(TEXT("AngleKi"));
+		const FName FcAngleKd(TEXT("AngleKd"));
+		const FName FcRateKp(TEXT("RateKp"));
+		const FName FcRateKi(TEXT("RateKi"));
+		const FName FcRateKd(TEXT("RateKd"));
+		const FName FcAltitudeKp(TEXT("AltitudeKp"));
+		const FName FcAltitudeKi(TEXT("AltitudeKi"));
+		const FName FcAltitudeKd(TEXT("AltitudeKd"));
+		const FName FcVerticalVelocityKp(TEXT("VerticalVelocityKp"));
+		const FName FcVerticalVelocityKi(TEXT("VerticalVelocityKi"));
+		const FName FcVerticalVelocityKd(TEXT("VerticalVelocityKd"));
+		const FName FcMaxTiltAngleDegrees(TEXT("MaxTiltAngleDegrees"));
+		const FName FcMaxYawRateDegreesPerSec(TEXT("MaxYawRateDegreesPerSec"));
+		const FName FcMaxClimbRateCmPerSec(TEXT("MaxClimbRateCmPerSec"));
+		const FName FcMaxDescentRateCmPerSec(TEXT("MaxDescentRateCmPerSec"));
+		const FName FcMaxHorizontalSpeedCmPerSec(TEXT("MaxHorizontalSpeedCmPerSec"));
+		const FName FcDerivativeCutoffHz(TEXT("DerivativeCutoffHz"));
+		const FName FcAllocationDamping(TEXT("AllocationDamping"));
 
-		const FName SuspensionNameAttr2(TEXT("SuspensionName"));
-		const FName TopMountLocal(TEXT("TopMountLocal"));
-		const FName LowerBallJointLocal(TEXT("LowerBallJointLocal"));
-		const FName MaxRaiseCm(TEXT("MaxRaiseCm"));
-		const FName MaxDropCm(TEXT("MaxDropCm"));
-		const FName NaturalFrequencyHz(TEXT("NaturalFrequencyHz"));
-		const FName DampingRatio(TEXT("DampingRatio"));
-
-		const FName SteeringNameAttr2(TEXT("SteeringName"));
-		const FName MaxSteerAngleDeg(TEXT("MaxSteerAngleDeg"));
-		const FName AckermannRatio(TEXT("AckermannRatio"));
-
-		const FName BrakeNameAttr2(TEXT("BrakeName"));
-		const FName WheelNamesAttr(TEXT("WheelNames"));
-		const FName MaxTorqueNm(TEXT("MaxTorqueNm"));
-		const FName IsHandbrake(TEXT("IsHandbrake"));
+		/* GameFeel attributes */
+		const FName GameFeelRcExpoRoll(TEXT("RcExpoRoll"));
+		const FName GameFeelRcExpoPitch(TEXT("RcExpoPitch"));
+		const FName GameFeelRcExpoYaw(TEXT("RcExpoYaw"));
+		const FName GameFeelRcExpoThrottle(TEXT("RcExpoThrottle"));
+		const FName GameFeelInputDeadzone(TEXT("InputDeadzone"));
+		const FName GameFeelHoverCollectiveCommand(TEXT("HoverCollectiveCommand"));
+		const FName GameFeelStickResponseTimeSeconds(TEXT("StickResponseTimeSeconds"));
+		const FName GameFeelCameraShakeScale(TEXT("CameraShakeScale"));
 	}
 
 	FConstAircraftCollection::FConstAircraftCollection(const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection)
@@ -107,8 +120,8 @@ namespace UE::AircraftLab::AircraftAsset
 	{
 		return
 			ManagedArrayCollection->HasGroup(Private::ImportGroup) &&
-			PhysicsAssetSoftObjectPathName &&
 			SkeletalMeshSoftObjectPathName &&
+			PhysicsAssetSoftObjectPathName &&
 			ManagedArrayCollection->NumElements(Private::ImportGroup) > 0;
 	}
 
@@ -119,428 +132,279 @@ namespace UE::AircraftLab::AircraftAsset
 
 	void FConstAircraftCollection::UpdateArrays()
 	{
-		// Import group
-		PhysicsAssetSoftObjectPathName =
-			ManagedArrayCollection->FindAttributeTyped<FSoftObjectPath>(
-				Private::PhysicsAssetSoftObjectPathName,
-				Private::ImportGroup);
-
-		SkeletalMeshSoftObjectPathName =
-			ManagedArrayCollection->FindAttributeTyped<FSoftObjectPath>(
-				Private::SkeletalMeshSoftObjectPathName,
-				Private::ImportGroup);
-
-		// Solver group
-		MaxSolverSubsteps =
-			ManagedArrayCollection->FindAttributeTyped<int32>(
-				Private::MaxSolverSubsteps,
-				Private::SolverGroup);
-
-		// Chassis group
-		ChassisRootBone =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::RootBone,
-				Private::ChassisGroup);
-
-		ChassisMassKg =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::MassKg,
-				Private::ChassisGroup);
-
-		ChassisDragCoefficient =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::DragCoefficient,
-				Private::ChassisGroup);
-
-		ChassisCenterOfMassOffset =
-			ManagedArrayCollection->FindAttributeTyped<FVector3f>(
-				Private::CenterOfMassOffset,
-				Private::ChassisGroup);
-
-		ChassisInertiaTensorScale =
-			ManagedArrayCollection->FindAttributeTyped<FVector3f>(
-				Private::InertiaTensorScale,
-				Private::ChassisGroup);
-
-		// Axles group
-		AxleName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::AxleNameAttr,
-				Private::AxlesGroup);
-
-		AxleIsSteeringAxle =
-			ManagedArrayCollection->FindAttributeTyped<bool>(
-				Private::IsSteeringAxle,
-				Private::AxlesGroup);
-
-		AxleIsDrivenAxle =
-			ManagedArrayCollection->FindAttributeTyped<bool>(
-				Private::IsDrivenAxle,
-				Private::AxlesGroup);
-
-		// Wheels group
-		WheelName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::WheelNameAttr,
-				Private::WheelsGroup);
-
-		WheelBoneName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::BoneName,
-				Private::WheelsGroup);
-
-		WheelSuspensionName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::SuspensionNameAttr,
-				Private::WheelsGroup);
-
-		WheelAxleName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::WheelAxleNameAttr,
-				Private::WheelsGroup);
-
-		WheelSteeringName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::SteeringNameAttr,
-				Private::WheelsGroup);
-
-		WheelBrakeName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::BrakeNameAttr,
-				Private::WheelsGroup);
-
-		WheelTireName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::TireNameAttr,
-				Private::WheelsGroup);
-
-		WheelRadiusCm =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::RadiusCm,
-				Private::WheelsGroup);
-
-		WheelWidthCm =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::WidthCm,
-				Private::WheelsGroup);
-
-		WheelMassKg =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::WheelMassKg,
-				Private::WheelsGroup);
-
-		// Powertrain group
-		PowertrainEngineFullThrottleTorqueCurve =
-			ManagedArrayCollection->FindAttributeTyped<FString>(
-				Private::EngineFullThrottleTorqueCurve,
-				Private::PowertrainGroup);
-
-		PowertrainEngineZeroThrottleTorqueCurve =
-			ManagedArrayCollection->FindAttributeTyped<FString>(
-				Private::EngineZeroThrottleTorqueCurve,
-				Private::PowertrainGroup);
-
-		PowertrainEngineIdleRPM =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::EngineIdleRPM,
-				Private::PowertrainGroup);
-
-		PowertrainEngineMaxRPM =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::EngineMaxRPM,
-				Private::PowertrainGroup);
-
-		PowertrainEngineInertia =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::EngineInertia,
-				Private::PowertrainGroup);
-
-		PowertrainGearboxForwardRatios =
-			ManagedArrayCollection->FindAttributeTyped<FString>(
-				Private::GearboxForwardRatios,
-				Private::PowertrainGroup);
-
-		PowertrainGearboxReverseRatios =
-			ManagedArrayCollection->FindAttributeTyped<FString>(
-				Private::GearboxReverseRatios,
-				Private::PowertrainGroup);
-
-		PowertrainGearboxFinalDriveRatio =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::GearboxFinalDriveRatio,
-				Private::PowertrainGroup);
-
-		PowertrainGearboxShiftUpRPM =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::GearboxShiftUpRPM,
-				Private::PowertrainGroup);
-
-		PowertrainGearboxShiftDownRPM =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::GearboxShiftDownRPM,
-				Private::PowertrainGroup);
-
-		PowertrainGearboxAutoReverse =
-			ManagedArrayCollection->FindAttributeTyped<bool>(
-				Private::GearboxAutoReverse,
-				Private::PowertrainGroup);
-
-		PowertrainDifferentialFrontRearSplit =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::DifferentialFrontRearSplit,
-				Private::PowertrainGroup);
-
-		PowertrainDifferentialDriveFrontAxle =
-			ManagedArrayCollection->FindAttributeTyped<bool>(
-				Private::DifferentialDriveFrontAxle,
-				Private::PowertrainGroup);
-
-		PowertrainDifferentialDriveRearAxle =
-			ManagedArrayCollection->FindAttributeTyped<bool>(
-				Private::DifferentialDriveRearAxle,
-				Private::PowertrainGroup);
-
-		// Tires group
-		TireName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::TireNameAttr2,
-				Private::TiresGroup);
-
-		TireUseAutoNominalLoad =
-			ManagedArrayCollection->FindAttributeTyped<bool>(
-				Private::UseAutoNominalLoad,
-				Private::TiresGroup);
-
-		TireNominalLoadN =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::NominalLoadN,
-				Private::TiresGroup);
-
-		TireLongitudinalPeakFrictionScale =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LongitudinalPeakFrictionScale,
-				Private::TiresGroup);
-
-		TireLongitudinalLoadSensitivity =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LongitudinalLoadSensitivity,
-				Private::TiresGroup);
-
-		TireLongitudinalShapeFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LongitudinalShapeFactor,
-				Private::TiresGroup);
-
-		TireLongitudinalStiffnessFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LongitudinalStiffnessFactor,
-				Private::TiresGroup);
-
-		TireLongitudinalCurvatureFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LongitudinalCurvatureFactor,
-				Private::TiresGroup);
-
-		TireLateralPeakFrictionScale =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LateralPeakFrictionScale,
-				Private::TiresGroup);
-
-		TireLateralLoadSensitivity =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LateralLoadSensitivity,
-				Private::TiresGroup);
-
-		TireLateralShapeFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LateralShapeFactor,
-				Private::TiresGroup);
-
-		TireLateralStiffnessFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LateralStiffnessFactor,
-				Private::TiresGroup);
-
-		TireLateralCurvatureFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::LateralCurvatureFactor,
-				Private::TiresGroup);
-
-		TireCombinedLongitudinalShapeFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::CombinedLongitudinalShapeFactor,
-				Private::TiresGroup);
-
-		TireCombinedLongitudinalStiffnessFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::CombinedLongitudinalStiffnessFactor,
-				Private::TiresGroup);
-
-		TireCombinedLongitudinalCurvatureFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::CombinedLongitudinalCurvatureFactor,
-				Private::TiresGroup);
-
-		TireCombinedLateralShapeFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::CombinedLateralShapeFactor,
-				Private::TiresGroup);
-
-		TireCombinedLateralStiffnessFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::CombinedLateralStiffnessFactor,
-				Private::TiresGroup);
-
-		TireCombinedLateralCurvatureFactor =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::CombinedLateralCurvatureFactor,
-				Private::TiresGroup);
-
-		TireMinSlipSpeedCmPerSec =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::MinSlipSpeedCmPerSec,
-				Private::TiresGroup);
-
-		TireRollingResistanceCoefficient =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::RollingResistanceCoefficient,
-				Private::TiresGroup);
-
-		TireWheelViscousDampingNmPerRadPerSec =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::WheelViscousDampingNmPerRadPerSec,
-				Private::TiresGroup);
-
-		// Suspensions group
-		SuspensionName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::SuspensionNameAttr2,
-				Private::SuspensionsGroup);
-
-		SuspensionTopMountLocal =
-			ManagedArrayCollection->FindAttributeTyped<FVector3f>(
-				Private::TopMountLocal,
-				Private::SuspensionsGroup);
-
-		SuspensionLowerBallJointLocal =
-			ManagedArrayCollection->FindAttributeTyped<FVector3f>(
-				Private::LowerBallJointLocal,
-				Private::SuspensionsGroup);
-
-		SuspensionMaxRaiseCm =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::MaxRaiseCm,
-				Private::SuspensionsGroup);
-
-		SuspensionMaxDropCm =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::MaxDropCm,
-				Private::SuspensionsGroup);
-
-		SuspensionNaturalFrequencyHz =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::NaturalFrequencyHz,
-				Private::SuspensionsGroup);
-
-		SuspensionDampingRatio =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::DampingRatio,
-				Private::SuspensionsGroup);
-
-		// Steering group
-		SteeringName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::SteeringNameAttr2,
-				Private::SteeringGroup);
-
-		SteeringMaxSteerAngleDeg =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::MaxSteerAngleDeg,
-				Private::SteeringGroup);
-
-		SteeringAckermannRatio =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::AckermannRatio,
-				Private::SteeringGroup);
-
-		// Brakes group
-		BrakeName =
-			ManagedArrayCollection->FindAttributeTyped<FName>(
-				Private::BrakeNameAttr2,
-				Private::BrakesGroup);
-
-		BrakeWheelNames =
-			ManagedArrayCollection->FindAttributeTyped<FString>(
-				Private::WheelNamesAttr,
-				Private::BrakesGroup);
-
-		BrakeMaxTorqueNm =
-			ManagedArrayCollection->FindAttributeTyped<float>(
-				Private::MaxTorqueNm,
-				Private::BrakesGroup);
-
-		BrakeIsHandbrake =
-			ManagedArrayCollection->FindAttributeTyped<bool>(
-				Private::IsHandbrake,
-				Private::BrakesGroup);
+		const FManagedArrayCollection& Collection = *ManagedArrayCollection;
+
+		/* Import */
+		SkeletalMeshSoftObjectPathName = Collection.FindAttributeTyped<FSoftObjectPath>(Private::SkeletalMeshSoftObjectPathName, Private::ImportGroup);
+		PhysicsAssetSoftObjectPathName = Collection.FindAttributeTyped<FSoftObjectPath>(Private::PhysicsAssetSoftObjectPathName, Private::ImportGroup);
+
+		/* Solver */
+		MaxSolverSubsteps = Collection.FindAttributeTyped<int32>(Private::MaxSolverSubsteps, Private::SolverGroup);
+
+		/* Frame */
+		FrameRootBone = Collection.FindAttributeTyped<FName>(Private::FrameRootBone, Private::FrameGroup);
+		FrameType = Collection.FindAttributeTyped<uint8>(Private::FrameType, Private::FrameGroup);
+		FrameMassKg = Collection.FindAttributeTyped<float>(Private::FrameMassKg, Private::FrameGroup);
+		FrameCenterOfMassOffsetCm = Collection.FindAttributeTyped<FVector3f>(Private::FrameCenterOfMassOffsetCm, Private::FrameGroup);
+		FrameInertiaDiagonalKgCmSq = Collection.FindAttributeTyped<FVector3f>(Private::FrameInertiaDiagonalKgCmSq, Private::FrameGroup);
+		FrameLinearDragPerAxis = Collection.FindAttributeTyped<FVector3f>(Private::FrameLinearDragPerAxis, Private::FrameGroup);
+		FrameAngularDragPerAxis = Collection.FindAttributeTyped<FVector3f>(Private::FrameAngularDragPerAxis, Private::FrameGroup);
+		FrameWindVelocityCmPerSec = Collection.FindAttributeTyped<FVector3f>(Private::FrameWindVelocityCmPerSec, Private::FrameGroup);
+		FrameGroundEffectStartHeightCm = Collection.FindAttributeTyped<float>(Private::FrameGroundEffectStartHeightCm, Private::FrameGroup);
+		FrameGroundEffectStrength = Collection.FindAttributeTyped<float>(Private::FrameGroundEffectStrength, Private::FrameGroup);
+
+		/* Motors */
+		MotorName = Collection.FindAttributeTyped<FName>(Private::MotorName, Private::MotorsGroup);
+		MotorEnabled = Collection.FindAttributeTyped<bool>(Private::MotorEnabled, Private::MotorsGroup);
+		MotorMinRpm = Collection.FindAttributeTyped<float>(Private::MotorMinRpm, Private::MotorsGroup);
+		MotorIdleRpm = Collection.FindAttributeTyped<float>(Private::MotorIdleRpm, Private::MotorsGroup);
+		MotorMaxRpm = Collection.FindAttributeTyped<float>(Private::MotorMaxRpm, Private::MotorsGroup);
+		MotorSpinUpTimeSeconds = Collection.FindAttributeTyped<float>(Private::MotorSpinUpTimeSeconds, Private::MotorsGroup);
+		MotorSpinDownTimeSeconds = Collection.FindAttributeTyped<float>(Private::MotorSpinDownTimeSeconds, Private::MotorsGroup);
+		MotorCommandExponent = Collection.FindAttributeTyped<float>(Private::MotorCommandExponent, Private::MotorsGroup);
+		MotorMaxCommandSlewPerSecond = Collection.FindAttributeTyped<float>(Private::MotorMaxCommandSlewPerSecond, Private::MotorsGroup);
+
+		/* Propellers */
+		PropellerName = Collection.FindAttributeTyped<FName>(Private::PropellerName, Private::PropellersGroup);
+		PropellerMotorName = Collection.FindAttributeTyped<FName>(Private::PropellerMotorName, Private::PropellersGroup);
+		PropellerSocketName = Collection.FindAttributeTyped<FName>(Private::PropellerSocketName, Private::PropellersGroup);
+		PropellerUseSocketTransform = Collection.FindAttributeTyped<bool>(Private::PropellerUseSocketTransform, Private::PropellersGroup);
+		PropellerPositionLocalCm = Collection.FindAttributeTyped<FVector3f>(Private::PropellerPositionLocalCm, Private::PropellersGroup);
+		PropellerRotationLocalEulerDeg = Collection.FindAttributeTyped<FVector3f>(Private::PropellerRotationLocalEulerDeg, Private::PropellersGroup);
+		PropellerThrustAxisLocal = Collection.FindAttributeTyped<FVector3f>(Private::PropellerThrustAxisLocal, Private::PropellersGroup);
+		PropellerSpinDirection = Collection.FindAttributeTyped<uint8>(Private::PropellerSpinDirection, Private::PropellersGroup);
+		PropellerRadiusCm = Collection.FindAttributeTyped<float>(Private::PropellerRadiusCm, Private::PropellersGroup);
+		PropellerMaxThrustForce = Collection.FindAttributeTyped<float>(Private::PropellerMaxThrustForce, Private::PropellersGroup);
+		PropellerThrustCoefficient = Collection.FindAttributeTyped<float>(Private::PropellerThrustCoefficient, Private::PropellersGroup);
+		PropellerReactionTorqueCoefficient = Collection.FindAttributeTyped<float>(Private::PropellerReactionTorqueCoefficient, Private::PropellersGroup);
+		PropellerEfficiency = Collection.FindAttributeTyped<float>(Private::PropellerEfficiency, Private::PropellersGroup);
+		PropellerControlAuthorityScale = Collection.FindAttributeTyped<float>(Private::PropellerControlAuthorityScale, Private::PropellersGroup);
+
+		/* Battery */
+		BatteryCapacityMilliAmpHour = Collection.FindAttributeTyped<float>(Private::BatteryCapacityMilliAmpHour, Private::BatteryGroup);
+		BatteryNominalVoltageV = Collection.FindAttributeTyped<float>(Private::BatteryNominalVoltageV, Private::BatteryGroup);
+		BatteryMinVoltageV = Collection.FindAttributeTyped<float>(Private::BatteryMinVoltageV, Private::BatteryGroup);
+		BatteryMaxDischargeC = Collection.FindAttributeTyped<float>(Private::BatteryMaxDischargeC, Private::BatteryGroup);
+		BatteryInternalResistanceOhm = Collection.FindAttributeTyped<float>(Private::BatteryInternalResistanceOhm, Private::BatteryGroup);
+
+		/* FlightController */
+		FcPositionKp = Collection.FindAttributeTyped<FVector3f>(Private::FcPositionKp, Private::FlightControllerGroup);
+		FcPositionKi = Collection.FindAttributeTyped<FVector3f>(Private::FcPositionKi, Private::FlightControllerGroup);
+		FcPositionKd = Collection.FindAttributeTyped<FVector3f>(Private::FcPositionKd, Private::FlightControllerGroup);
+		FcVelocityKp = Collection.FindAttributeTyped<FVector3f>(Private::FcVelocityKp, Private::FlightControllerGroup);
+		FcVelocityKi = Collection.FindAttributeTyped<FVector3f>(Private::FcVelocityKi, Private::FlightControllerGroup);
+		FcVelocityKd = Collection.FindAttributeTyped<FVector3f>(Private::FcVelocityKd, Private::FlightControllerGroup);
+		FcAngleKp = Collection.FindAttributeTyped<FVector3f>(Private::FcAngleKp, Private::FlightControllerGroup);
+		FcAngleKi = Collection.FindAttributeTyped<FVector3f>(Private::FcAngleKi, Private::FlightControllerGroup);
+		FcAngleKd = Collection.FindAttributeTyped<FVector3f>(Private::FcAngleKd, Private::FlightControllerGroup);
+		FcRateKp = Collection.FindAttributeTyped<FVector3f>(Private::FcRateKp, Private::FlightControllerGroup);
+		FcRateKi = Collection.FindAttributeTyped<FVector3f>(Private::FcRateKi, Private::FlightControllerGroup);
+		FcRateKd = Collection.FindAttributeTyped<FVector3f>(Private::FcRateKd, Private::FlightControllerGroup);
+		FcAltitudeKp = Collection.FindAttributeTyped<float>(Private::FcAltitudeKp, Private::FlightControllerGroup);
+		FcAltitudeKi = Collection.FindAttributeTyped<float>(Private::FcAltitudeKi, Private::FlightControllerGroup);
+		FcAltitudeKd = Collection.FindAttributeTyped<float>(Private::FcAltitudeKd, Private::FlightControllerGroup);
+		FcVerticalVelocityKp = Collection.FindAttributeTyped<float>(Private::FcVerticalVelocityKp, Private::FlightControllerGroup);
+		FcVerticalVelocityKi = Collection.FindAttributeTyped<float>(Private::FcVerticalVelocityKi, Private::FlightControllerGroup);
+		FcVerticalVelocityKd = Collection.FindAttributeTyped<float>(Private::FcVerticalVelocityKd, Private::FlightControllerGroup);
+		FcMaxTiltAngleDegrees = Collection.FindAttributeTyped<float>(Private::FcMaxTiltAngleDegrees, Private::FlightControllerGroup);
+		FcMaxYawRateDegreesPerSec = Collection.FindAttributeTyped<float>(Private::FcMaxYawRateDegreesPerSec, Private::FlightControllerGroup);
+		FcMaxClimbRateCmPerSec = Collection.FindAttributeTyped<float>(Private::FcMaxClimbRateCmPerSec, Private::FlightControllerGroup);
+		FcMaxDescentRateCmPerSec = Collection.FindAttributeTyped<float>(Private::FcMaxDescentRateCmPerSec, Private::FlightControllerGroup);
+		FcMaxHorizontalSpeedCmPerSec = Collection.FindAttributeTyped<float>(Private::FcMaxHorizontalSpeedCmPerSec, Private::FlightControllerGroup);
+		FcDerivativeCutoffHz = Collection.FindAttributeTyped<float>(Private::FcDerivativeCutoffHz, Private::FlightControllerGroup);
+		FcAllocationDamping = Collection.FindAttributeTyped<float>(Private::FcAllocationDamping, Private::FlightControllerGroup);
+
+		/* GameFeel */
+		GameFeelRcExpoRoll = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoRoll, Private::GameFeelGroup);
+		GameFeelRcExpoPitch = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoPitch, Private::GameFeelGroup);
+		GameFeelRcExpoYaw = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoYaw, Private::GameFeelGroup);
+		GameFeelRcExpoThrottle = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoThrottle, Private::GameFeelGroup);
+		GameFeelInputDeadzone = Collection.FindAttributeTyped<float>(Private::GameFeelInputDeadzone, Private::GameFeelGroup);
+		GameFeelHoverCollectiveCommand = Collection.FindAttributeTyped<float>(Private::GameFeelHoverCollectiveCommand, Private::GameFeelGroup);
+		GameFeelStickResponseTimeSeconds = Collection.FindAttributeTyped<float>(Private::GameFeelStickResponseTimeSeconds, Private::GameFeelGroup);
+		GameFeelCameraShakeScale = Collection.FindAttributeTyped<float>(Private::GameFeelCameraShakeScale, Private::GameFeelGroup);
 	}
 
 	FAircraftCollection::FAircraftCollection(const TSharedRef<FManagedArrayCollection>& InManagedArrayCollection)
-		: FConstAircraftCollection(StaticCastSharedRef<const FManagedArrayCollection>(InManagedArrayCollection))
+		: FConstAircraftCollection(InManagedArrayCollection)
 	{
 	}
 
 	void FAircraftCollection::DefineSchema()
 	{
+		FManagedArrayCollection& Collection = *GetManagedArrayCollection();
+
+		auto AddOrFindGroup = [&Collection](const FName& Group)
+		{
+			if (!Collection.HasGroup(Group))
+			{
+				Collection.AddGroup(Group);
+			}
+		};
+
+		auto AddAttribute = [&Collection](const FName& Group, const FName& Attribute, auto Sample) -> void
+		{
+			using AttributeType = decltype(Sample);
+			if (!Collection.HasAttribute(Attribute, Group))
+			{
+				Collection.AddAttribute<AttributeType>(Attribute, Group);
+			}
+		};
+
+		auto EnsureSingleElement = [&Collection](const FName& Group)
+		{
+			if (Collection.NumElements(Group) == 0)
+			{
+				Collection.AddElements(1, Group);
+			}
+		};
+
+		/* Import */
+		AddOrFindGroup(Private::ImportGroup);
+		AddAttribute(Private::ImportGroup, Private::SkeletalMeshSoftObjectPathName, FSoftObjectPath());
+		AddAttribute(Private::ImportGroup, Private::PhysicsAssetSoftObjectPathName, FSoftObjectPath());
+		EnsureSingleElement(Private::ImportGroup);
+
+		/* Solver */
+		AddOrFindGroup(Private::SolverGroup);
+		AddAttribute(Private::SolverGroup, Private::MaxSolverSubsteps, int32(0));
+		EnsureSingleElement(Private::SolverGroup);
+
+		/* Frame */
+		AddOrFindGroup(Private::FrameGroup);
+		AddAttribute(Private::FrameGroup, Private::FrameRootBone, FName());
+		AddAttribute(Private::FrameGroup, Private::FrameType, uint8(0));
+		AddAttribute(Private::FrameGroup, Private::FrameMassKg, float(0));
+		AddAttribute(Private::FrameGroup, Private::FrameCenterOfMassOffsetCm, FVector3f::ZeroVector);
+		AddAttribute(Private::FrameGroup, Private::FrameInertiaDiagonalKgCmSq, FVector3f::ZeroVector);
+		AddAttribute(Private::FrameGroup, Private::FrameLinearDragPerAxis, FVector3f::ZeroVector);
+		AddAttribute(Private::FrameGroup, Private::FrameAngularDragPerAxis, FVector3f::ZeroVector);
+		AddAttribute(Private::FrameGroup, Private::FrameWindVelocityCmPerSec, FVector3f::ZeroVector);
+		AddAttribute(Private::FrameGroup, Private::FrameGroundEffectStartHeightCm, float(0));
+		AddAttribute(Private::FrameGroup, Private::FrameGroundEffectStrength, float(0));
+		EnsureSingleElement(Private::FrameGroup);
+
+		/* Motors */
+		AddOrFindGroup(Private::MotorsGroup);
+		AddAttribute(Private::MotorsGroup, Private::MotorName, FName());
+		AddAttribute(Private::MotorsGroup, Private::MotorEnabled, bool(true));
+		AddAttribute(Private::MotorsGroup, Private::MotorMinRpm, float(0));
+		AddAttribute(Private::MotorsGroup, Private::MotorIdleRpm, float(0));
+		AddAttribute(Private::MotorsGroup, Private::MotorMaxRpm, float(0));
+		AddAttribute(Private::MotorsGroup, Private::MotorSpinUpTimeSeconds, float(0));
+		AddAttribute(Private::MotorsGroup, Private::MotorSpinDownTimeSeconds, float(0));
+		AddAttribute(Private::MotorsGroup, Private::MotorCommandExponent, float(2.f));
+		AddAttribute(Private::MotorsGroup, Private::MotorMaxCommandSlewPerSecond, float(0));
+
+		/* Propellers */
+		AddOrFindGroup(Private::PropellersGroup);
+		AddAttribute(Private::PropellersGroup, Private::PropellerName, FName());
+		AddAttribute(Private::PropellersGroup, Private::PropellerMotorName, FName());
+		AddAttribute(Private::PropellersGroup, Private::PropellerSocketName, FName());
+		AddAttribute(Private::PropellersGroup, Private::PropellerUseSocketTransform, bool(true));
+		AddAttribute(Private::PropellersGroup, Private::PropellerPositionLocalCm, FVector3f::ZeroVector);
+		AddAttribute(Private::PropellersGroup, Private::PropellerRotationLocalEulerDeg, FVector3f::ZeroVector);
+		AddAttribute(Private::PropellersGroup, Private::PropellerThrustAxisLocal, FVector3f(0.f, 0.f, 1.f));
+		AddAttribute(Private::PropellersGroup, Private::PropellerSpinDirection, uint8(0));
+		AddAttribute(Private::PropellersGroup, Private::PropellerRadiusCm, float(0));
+		AddAttribute(Private::PropellersGroup, Private::PropellerMaxThrustForce, float(0));
+		AddAttribute(Private::PropellersGroup, Private::PropellerThrustCoefficient, float(0));
+		AddAttribute(Private::PropellersGroup, Private::PropellerReactionTorqueCoefficient, float(0));
+		AddAttribute(Private::PropellersGroup, Private::PropellerEfficiency, float(1));
+		AddAttribute(Private::PropellersGroup, Private::PropellerControlAuthorityScale, float(1));
+
+		/* Battery */
+		AddOrFindGroup(Private::BatteryGroup);
+		AddAttribute(Private::BatteryGroup, Private::BatteryCapacityMilliAmpHour, float(0));
+		AddAttribute(Private::BatteryGroup, Private::BatteryNominalVoltageV, float(0));
+		AddAttribute(Private::BatteryGroup, Private::BatteryMinVoltageV, float(0));
+		AddAttribute(Private::BatteryGroup, Private::BatteryMaxDischargeC, float(0));
+		AddAttribute(Private::BatteryGroup, Private::BatteryInternalResistanceOhm, float(0));
+		EnsureSingleElement(Private::BatteryGroup);
+
+		/* FlightController */
+		AddOrFindGroup(Private::FlightControllerGroup);
+		AddAttribute(Private::FlightControllerGroup, Private::FcPositionKp, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcPositionKi, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcPositionKd, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKp, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKi, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKd, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcAngleKp, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcAngleKi, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcAngleKd, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcRateKp, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcRateKi, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcRateKd, FVector3f::ZeroVector);
+		AddAttribute(Private::FlightControllerGroup, Private::FcAltitudeKp, float(0));
+		AddAttribute(Private::FlightControllerGroup, Private::FcAltitudeKi, float(0));
+		AddAttribute(Private::FlightControllerGroup, Private::FcAltitudeKd, float(0));
+		AddAttribute(Private::FlightControllerGroup, Private::FcVerticalVelocityKp, float(0));
+		AddAttribute(Private::FlightControllerGroup, Private::FcVerticalVelocityKi, float(0));
+		AddAttribute(Private::FlightControllerGroup, Private::FcVerticalVelocityKd, float(0));
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxTiltAngleDegrees, float(35));
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxYawRateDegreesPerSec, float(180));
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxClimbRateCmPerSec, float(400));
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxDescentRateCmPerSec, float(250));
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxHorizontalSpeedCmPerSec, float(1200));
+		AddAttribute(Private::FlightControllerGroup, Private::FcDerivativeCutoffHz, float(0));
+		AddAttribute(Private::FlightControllerGroup, Private::FcAllocationDamping, float(1e-3f));
+		EnsureSingleElement(Private::FlightControllerGroup);
+
+		/* GameFeel */
+		AddOrFindGroup(Private::GameFeelGroup);
+		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoRoll, float(0));
+		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoPitch, float(0));
+		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoYaw, float(0));
+		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoThrottle, float(0));
+		AddAttribute(Private::GameFeelGroup, Private::GameFeelInputDeadzone, float(0));
+		AddAttribute(Private::GameFeelGroup, Private::GameFeelHoverCollectiveCommand, float(0.5f));
+		AddAttribute(Private::GameFeelGroup, Private::GameFeelStickResponseTimeSeconds, float(0));
+		AddAttribute(Private::GameFeelGroup, Private::GameFeelCameraShakeScale, float(0));
+		EnsureSingleElement(Private::GameFeelGroup);
+
 		EnsureImportSchema();
+		UpdateArrays();
 	}
 
-	void FAircraftCollection::SetPhysicsAssetSoftObjectPathName(const FSoftObjectPath& PathName)
+	void FAircraftCollection::EnsureImportSchema()
 	{
-		EnsureImportSchema();
-		check(GetPhysicsAssetSoftObjectPathName());
-		(*GetPhysicsAssetSoftObjectPathName())[0] = PathName;
+		FManagedArrayCollection& Collection = *GetManagedArrayCollection();
+		if (!Collection.HasGroup(Private::ImportGroup))
+		{
+			Collection.AddGroup(Private::ImportGroup);
+		}
+		if (!Collection.HasAttribute(Private::SkeletalMeshSoftObjectPathName, Private::ImportGroup))
+		{
+			Collection.AddAttribute<FSoftObjectPath>(Private::SkeletalMeshSoftObjectPathName, Private::ImportGroup);
+		}
+		if (!Collection.HasAttribute(Private::PhysicsAssetSoftObjectPathName, Private::ImportGroup))
+		{
+			Collection.AddAttribute<FSoftObjectPath>(Private::PhysicsAssetSoftObjectPathName, Private::ImportGroup);
+		}
+		if (Collection.NumElements(Private::ImportGroup) == 0)
+		{
+			Collection.AddElements(1, Private::ImportGroup);
+		}
 	}
 
 	void FAircraftCollection::SetSkeletalMeshSoftObjectPathName(const FSoftObjectPath& PathName)
 	{
 		EnsureImportSchema();
-		check(GetSkeletalMeshSoftObjectPathName());
-		(*GetSkeletalMeshSoftObjectPathName())[0] = PathName;
+		UpdateArrays();
+		if (TManagedArray<FSoftObjectPath>* Array = GetSkeletalMeshSoftObjectPathName(); Array && Array->Num() > 0)
+		{
+			(*Array)[0] = PathName;
+		}
 	}
 
-	void FAircraftCollection::EnsureImportSchema()
+	void FAircraftCollection::SetPhysicsAssetSoftObjectPathName(const FSoftObjectPath& PathName)
 	{
-		TSharedRef<FManagedArrayCollection> MutableCollection = GetManagedArrayCollection();
-
-		if (!MutableCollection->HasGroup(Private::ImportGroup))
-		{
-			MutableCollection->AddGroup(Private::ImportGroup);
-		}
-
-		if (!MutableCollection->HasAttribute(
-			Private::PhysicsAssetSoftObjectPathName,
-			Private::ImportGroup))
-		{
-			MutableCollection->AddAttribute<FSoftObjectPath>(
-				Private::PhysicsAssetSoftObjectPathName,
-				Private::ImportGroup);
-		}
-
-		if (!MutableCollection->HasAttribute(
-			Private::SkeletalMeshSoftObjectPathName,
-			Private::ImportGroup))
-		{
-			MutableCollection->AddAttribute<FSoftObjectPath>(
-				Private::SkeletalMeshSoftObjectPathName,
-				Private::ImportGroup);
-		}
-
-		if (MutableCollection->NumElements(Private::ImportGroup) == 0)
-		{
-			MutableCollection->AddElements(1, Private::ImportGroup);
-		}
-
+		EnsureImportSchema();
 		UpdateArrays();
+		if (TManagedArray<FSoftObjectPath>* Array = GetPhysicsAssetSoftObjectPathName(); Array && Array->Num() > 0)
+		{
+			(*Array)[0] = PathName;
+		}
 	}
 }

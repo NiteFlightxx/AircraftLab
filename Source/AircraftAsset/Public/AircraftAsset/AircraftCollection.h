@@ -1,3 +1,21 @@
+// 对齐 ChaosClothAsset/Public/ChaosClothAsset/ClothCollection.h
+//
+// 多旋翼资产的 schema 容器。FConstAircraftCollection / FAircraftCollection 是 ManagedArrayCollection
+// 的强类型只读/可写包装，按"Group → Attribute → ManagedArray<T>"三层结构暴露所有 schema 字段。
+//
+// schema 全景（多旋翼版，与 Phase 2 计划完全一致）：
+//
+//   Group              | 元素数量          | 内容
+//   -------------------+-------------------+--------------------------------------------------
+//   Import             | 1                 | 骨骼网格 / 物理资产软引用
+//   Solver             | 1                 | 求解器最大子步数
+//   Frame              | 1                 | 机架类型 + 质量惯性 + 气动 + 风场 + 地面效应
+//   Motors             | N（电机数）       | 电机一阶滞后参数 + 怠速/最大转速
+//   Propellers         | N（与电机对齐）   | 旋翼位置/方向/旋向 + 推力/反扭矩系数
+//   Battery            | 1                 | 容量、电压、放电倍率、内阻
+//   FlightController   | 1                 | 串级 PID 12 通道增益 + 限幅 + 控制器配置
+//   GameFeel           | 1                 | RC 曲线、死区、手感倾角与悬停油门
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -6,6 +24,12 @@
 
 namespace UE::AircraftLab::AircraftAsset
 {
+	/**
+	 * 多旋翼 ManagedArrayCollection 的只读强类型包装。
+	 *
+	 * 与 ChaosClothAsset 的 FClothCollection 一一对应：每个组属性都缓存到一个 const TManagedArray<T>*，
+	 * 调用方通过 GetXxx() 直接拿到行向量。
+	 */
 	class AIRCRAFTASSET_API FConstAircraftCollection
 	{
 	public:
@@ -15,110 +39,112 @@ namespace UE::AircraftLab::AircraftAsset
 		int32 GetNumElements(const FName& GroupName) const;
 
 		template<typename T>
-	static TConstArrayView<T> GetElements(const TManagedArray<T>* Array)
-	{
-		return Array ? TConstArrayView<T>(Array->GetData(), Array->Num()) : TConstArrayView<T>();
-	}
+		static TConstArrayView<T> GetElements(const TManagedArray<T>* Array)
+		{
+			return Array ? TConstArrayView<T>(Array->GetData(), Array->Num()) : TConstArrayView<T>();
+		}
 
 		template<typename T>
-	static void CopyArrayViewData(TConstArrayView<T> Source, TManagedArray<T>* Destination)
-	{
-		if (Destination && Source.Num() == Destination->Num())
+		static void CopyArrayViewData(TConstArrayView<T> Source, TManagedArray<T>* Destination)
 		{
-			FMemory::Memcpy(Destination->GetData(), Source.GetData(), Source.Num() * sizeof(T));
+			if (Destination && Source.Num() == Destination->Num())
+			{
+				FMemory::Memcpy(Destination->GetData(), Source.GetData(), Source.Num() * sizeof(T));
+			}
 		}
-	}
 
-		// Import group
-		const TManagedArray<FSoftObjectPath>* GetPhysicsAssetSoftObjectPathName() const { return PhysicsAssetSoftObjectPathName; }
+		/* ------------------------- Import group (1 element) ------------------------- */
 		const TManagedArray<FSoftObjectPath>* GetSkeletalMeshSoftObjectPathName() const { return SkeletalMeshSoftObjectPathName; }
+		const TManagedArray<FSoftObjectPath>* GetPhysicsAssetSoftObjectPathName() const { return PhysicsAssetSoftObjectPathName; }
 
-		// Solver group
+		/* ------------------------- Solver group (1 element) ------------------------- */
 		const TManagedArray<int32>* GetMaxSolverSubsteps() const { return MaxSolverSubsteps; }
 
-		// Chassis group
-		const TManagedArray<FName>* GetChassisRootBone() const { return ChassisRootBone; }
-		const TManagedArray<float>* GetChassisMassKg() const { return ChassisMassKg; }
-		const TManagedArray<float>* GetChassisDragCoefficient() const { return ChassisDragCoefficient; }
-		const TManagedArray<FVector3f>* GetChassisCenterOfMassOffset() const { return ChassisCenterOfMassOffset; }
-		const TManagedArray<FVector3f>* GetChassisInertiaTensorScale() const { return ChassisInertiaTensorScale; }
+		/* ------------------------- Frame group (1 element) ------------------------- */
+		const TManagedArray<FName>* GetFrameRootBone() const { return FrameRootBone; }
+		const TManagedArray<uint8>* GetFrameType() const { return FrameType; }
+		const TManagedArray<float>* GetFrameMassKg() const { return FrameMassKg; }
+		const TManagedArray<FVector3f>* GetFrameCenterOfMassOffsetCm() const { return FrameCenterOfMassOffsetCm; }
+		const TManagedArray<FVector3f>* GetFrameInertiaDiagonalKgCmSq() const { return FrameInertiaDiagonalKgCmSq; }
+		const TManagedArray<FVector3f>* GetFrameLinearDragPerAxis() const { return FrameLinearDragPerAxis; }
+		const TManagedArray<FVector3f>* GetFrameAngularDragPerAxis() const { return FrameAngularDragPerAxis; }
+		const TManagedArray<FVector3f>* GetFrameWindVelocityCmPerSec() const { return FrameWindVelocityCmPerSec; }
+		const TManagedArray<float>* GetFrameGroundEffectStartHeightCm() const { return FrameGroundEffectStartHeightCm; }
+		const TManagedArray<float>* GetFrameGroundEffectStrength() const { return FrameGroundEffectStrength; }
 
-		// Axles group
-		const TManagedArray<FName>* GetAxleName() const { return AxleName; }
-		const TManagedArray<bool>* GetAxleIsSteeringAxle() const { return AxleIsSteeringAxle; }
-		const TManagedArray<bool>* GetAxleIsDrivenAxle() const { return AxleIsDrivenAxle; }
+		/* ------------------------- Motors group (N elements) ------------------------- */
+		const TManagedArray<FName>* GetMotorName() const { return MotorName; }
+		const TManagedArray<bool>* GetMotorEnabled() const { return MotorEnabled; }
+		const TManagedArray<float>* GetMotorMinRpm() const { return MotorMinRpm; }
+		const TManagedArray<float>* GetMotorIdleRpm() const { return MotorIdleRpm; }
+		const TManagedArray<float>* GetMotorMaxRpm() const { return MotorMaxRpm; }
+		const TManagedArray<float>* GetMotorSpinUpTimeSeconds() const { return MotorSpinUpTimeSeconds; }
+		const TManagedArray<float>* GetMotorSpinDownTimeSeconds() const { return MotorSpinDownTimeSeconds; }
+		const TManagedArray<float>* GetMotorCommandExponent() const { return MotorCommandExponent; }
+		const TManagedArray<float>* GetMotorMaxCommandSlewPerSecond() const { return MotorMaxCommandSlewPerSecond; }
 
-		// Wheels group
-		const TManagedArray<FName>* GetWheelName() const { return WheelName; }
-		const TManagedArray<FName>* GetWheelBoneName() const { return WheelBoneName; }
-		const TManagedArray<FName>* GetWheelSuspensionName() const { return WheelSuspensionName; }
-		const TManagedArray<FName>* GetWheelAxleName() const { return WheelAxleName; }
-		const TManagedArray<FName>* GetWheelSteeringName() const { return WheelSteeringName; }
-		const TManagedArray<FName>* GetWheelBrakeName() const { return WheelBrakeName; }
-		const TManagedArray<FName>* GetWheelTireName() const { return WheelTireName; }
-		const TManagedArray<float>* GetWheelRadiusCm() const { return WheelRadiusCm; }
-		const TManagedArray<float>* GetWheelWidthCm() const { return WheelWidthCm; }
-		const TManagedArray<float>* GetWheelMassKg() const { return WheelMassKg; }
+		/* ------------------------- Propellers group (N elements) ------------------------- */
+		const TManagedArray<FName>* GetPropellerName() const { return PropellerName; }
+		const TManagedArray<FName>* GetPropellerMotorName() const { return PropellerMotorName; }
+		const TManagedArray<FName>* GetPropellerSocketName() const { return PropellerSocketName; }
+		const TManagedArray<bool>* GetPropellerUseSocketTransform() const { return PropellerUseSocketTransform; }
+		const TManagedArray<FVector3f>* GetPropellerPositionLocalCm() const { return PropellerPositionLocalCm; }
+		const TManagedArray<FVector3f>* GetPropellerRotationLocalEulerDeg() const { return PropellerRotationLocalEulerDeg; }
+		const TManagedArray<FVector3f>* GetPropellerThrustAxisLocal() const { return PropellerThrustAxisLocal; }
+		const TManagedArray<uint8>* GetPropellerSpinDirection() const { return PropellerSpinDirection; }
+		const TManagedArray<float>* GetPropellerRadiusCm() const { return PropellerRadiusCm; }
+		const TManagedArray<float>* GetPropellerMaxThrustForce() const { return PropellerMaxThrustForce; }
+		const TManagedArray<float>* GetPropellerThrustCoefficient() const { return PropellerThrustCoefficient; }
+		const TManagedArray<float>* GetPropellerReactionTorqueCoefficient() const { return PropellerReactionTorqueCoefficient; }
+		const TManagedArray<float>* GetPropellerEfficiency() const { return PropellerEfficiency; }
+		const TManagedArray<float>* GetPropellerControlAuthorityScale() const { return PropellerControlAuthorityScale; }
 
-		// Powertrain group
-		const TManagedArray<FString>* GetPowertrainEngineFullThrottleTorqueCurve() const { return PowertrainEngineFullThrottleTorqueCurve; }
-		const TManagedArray<FString>* GetPowertrainEngineZeroThrottleTorqueCurve() const { return PowertrainEngineZeroThrottleTorqueCurve; }
-		const TManagedArray<float>* GetPowertrainEngineIdleRPM() const { return PowertrainEngineIdleRPM; }
-		const TManagedArray<float>* GetPowertrainEngineMaxRPM() const { return PowertrainEngineMaxRPM; }
-		const TManagedArray<float>* GetPowertrainEngineInertia() const { return PowertrainEngineInertia; }
-		const TManagedArray<FString>* GetPowertrainGearboxForwardRatios() const { return PowertrainGearboxForwardRatios; }
-		const TManagedArray<FString>* GetPowertrainGearboxReverseRatios() const { return PowertrainGearboxReverseRatios; }
-		const TManagedArray<float>* GetPowertrainGearboxFinalDriveRatio() const { return PowertrainGearboxFinalDriveRatio; }
-		const TManagedArray<float>* GetPowertrainGearboxShiftUpRPM() const { return PowertrainGearboxShiftUpRPM; }
-		const TManagedArray<float>* GetPowertrainGearboxShiftDownRPM() const { return PowertrainGearboxShiftDownRPM; }
-		const TManagedArray<bool>* GetPowertrainGearboxAutoReverse() const { return PowertrainGearboxAutoReverse; }
-		const TManagedArray<float>* GetPowertrainDifferentialFrontRearSplit() const { return PowertrainDifferentialFrontRearSplit; }
-		const TManagedArray<bool>* GetPowertrainDifferentialDriveFrontAxle() const { return PowertrainDifferentialDriveFrontAxle; }
-		const TManagedArray<bool>* GetPowertrainDifferentialDriveRearAxle() const { return PowertrainDifferentialDriveRearAxle; }
+		/* ------------------------- Battery group (1 element) ------------------------- */
+		const TManagedArray<float>* GetBatteryCapacityMilliAmpHour() const { return BatteryCapacityMilliAmpHour; }
+		const TManagedArray<float>* GetBatteryNominalVoltageV() const { return BatteryNominalVoltageV; }
+		const TManagedArray<float>* GetBatteryMinVoltageV() const { return BatteryMinVoltageV; }
+		const TManagedArray<float>* GetBatteryMaxDischargeC() const { return BatteryMaxDischargeC; }
+		const TManagedArray<float>* GetBatteryInternalResistanceOhm() const { return BatteryInternalResistanceOhm; }
 
-		// Tires group
-		const TManagedArray<FName>* GetTireName() const { return TireName; }
-		const TManagedArray<bool>* GetTireUseAutoNominalLoad() const { return TireUseAutoNominalLoad; }
-		const TManagedArray<float>* GetTireNominalLoadN() const { return TireNominalLoadN; }
-		const TManagedArray<float>* GetTireLongitudinalPeakFrictionScale() const { return TireLongitudinalPeakFrictionScale; }
-		const TManagedArray<float>* GetTireLongitudinalLoadSensitivity() const { return TireLongitudinalLoadSensitivity; }
-		const TManagedArray<float>* GetTireLongitudinalShapeFactor() const { return TireLongitudinalShapeFactor; }
-		const TManagedArray<float>* GetTireLongitudinalStiffnessFactor() const { return TireLongitudinalStiffnessFactor; }
-		const TManagedArray<float>* GetTireLongitudinalCurvatureFactor() const { return TireLongitudinalCurvatureFactor; }
-		const TManagedArray<float>* GetTireLateralPeakFrictionScale() const { return TireLateralPeakFrictionScale; }
-		const TManagedArray<float>* GetTireLateralLoadSensitivity() const { return TireLateralLoadSensitivity; }
-		const TManagedArray<float>* GetTireLateralShapeFactor() const { return TireLateralShapeFactor; }
-		const TManagedArray<float>* GetTireLateralStiffnessFactor() const { return TireLateralStiffnessFactor; }
-		const TManagedArray<float>* GetTireLateralCurvatureFactor() const { return TireLateralCurvatureFactor; }
-		const TManagedArray<float>* GetTireCombinedLongitudinalShapeFactor() const { return TireCombinedLongitudinalShapeFactor; }
-		const TManagedArray<float>* GetTireCombinedLongitudinalStiffnessFactor() const { return TireCombinedLongitudinalStiffnessFactor; }
-		const TManagedArray<float>* GetTireCombinedLongitudinalCurvatureFactor() const { return TireCombinedLongitudinalCurvatureFactor; }
-		const TManagedArray<float>* GetTireCombinedLateralShapeFactor() const { return TireCombinedLateralShapeFactor; }
-		const TManagedArray<float>* GetTireCombinedLateralStiffnessFactor() const { return TireCombinedLateralStiffnessFactor; }
-		const TManagedArray<float>* GetTireCombinedLateralCurvatureFactor() const { return TireCombinedLateralCurvatureFactor; }
-		const TManagedArray<float>* GetTireMinSlipSpeedCmPerSec() const { return TireMinSlipSpeedCmPerSec; }
-		const TManagedArray<float>* GetTireRollingResistanceCoefficient() const { return TireRollingResistanceCoefficient; }
-		const TManagedArray<float>* GetTireWheelViscousDampingNmPerRadPerSec() const { return TireWheelViscousDampingNmPerRadPerSec; }
+		/* ------------------------- FlightController group (1 element) ------------------------- */
+		// 串级 PID（Position→Velocity→Angle→Rate）。每个 FVector3f 编码一个三轴增益（X/Y/Z 或 Roll/Pitch/Yaw）。
+		const TManagedArray<FVector3f>* GetFcPositionKp() const { return FcPositionKp; }
+		const TManagedArray<FVector3f>* GetFcPositionKi() const { return FcPositionKi; }
+		const TManagedArray<FVector3f>* GetFcPositionKd() const { return FcPositionKd; }
+		const TManagedArray<FVector3f>* GetFcVelocityKp() const { return FcVelocityKp; }
+		const TManagedArray<FVector3f>* GetFcVelocityKi() const { return FcVelocityKi; }
+		const TManagedArray<FVector3f>* GetFcVelocityKd() const { return FcVelocityKd; }
+		const TManagedArray<FVector3f>* GetFcAngleKp() const { return FcAngleKp; }
+		const TManagedArray<FVector3f>* GetFcAngleKi() const { return FcAngleKi; }
+		const TManagedArray<FVector3f>* GetFcAngleKd() const { return FcAngleKd; }
+		const TManagedArray<FVector3f>* GetFcRateKp() const { return FcRateKp; }
+		const TManagedArray<FVector3f>* GetFcRateKi() const { return FcRateKi; }
+		const TManagedArray<FVector3f>* GetFcRateKd() const { return FcRateKd; }
 
-		// Suspensions group
-		const TManagedArray<FName>* GetSuspensionName() const { return SuspensionName; }
-		const TManagedArray<FVector3f>* GetSuspensionTopMountLocal() const { return SuspensionTopMountLocal; }
-		const TManagedArray<FVector3f>* GetSuspensionLowerBallJointLocal() const { return SuspensionLowerBallJointLocal; }
-		const TManagedArray<float>* GetSuspensionMaxRaiseCm() const { return SuspensionMaxRaiseCm; }
-		const TManagedArray<float>* GetSuspensionMaxDropCm() const { return SuspensionMaxDropCm; }
-		const TManagedArray<float>* GetSuspensionNaturalFrequencyHz() const { return SuspensionNaturalFrequencyHz; }
-		const TManagedArray<float>* GetSuspensionDampingRatio() const { return SuspensionDampingRatio; }
+		const TManagedArray<float>* GetFcAltitudeKp() const { return FcAltitudeKp; }
+		const TManagedArray<float>* GetFcAltitudeKi() const { return FcAltitudeKi; }
+		const TManagedArray<float>* GetFcAltitudeKd() const { return FcAltitudeKd; }
+		const TManagedArray<float>* GetFcVerticalVelocityKp() const { return FcVerticalVelocityKp; }
+		const TManagedArray<float>* GetFcVerticalVelocityKi() const { return FcVerticalVelocityKi; }
+		const TManagedArray<float>* GetFcVerticalVelocityKd() const { return FcVerticalVelocityKd; }
 
-		// Steering group
-		const TManagedArray<FName>* GetSteeringName() const { return SteeringName; }
-		const TManagedArray<float>* GetSteeringMaxSteerAngleDeg() const { return SteeringMaxSteerAngleDeg; }
-		const TManagedArray<float>* GetSteeringAckermannRatio() const { return SteeringAckermannRatio; }
+		const TManagedArray<float>* GetFcMaxTiltAngleDegrees() const { return FcMaxTiltAngleDegrees; }
+		const TManagedArray<float>* GetFcMaxYawRateDegreesPerSec() const { return FcMaxYawRateDegreesPerSec; }
+		const TManagedArray<float>* GetFcMaxClimbRateCmPerSec() const { return FcMaxClimbRateCmPerSec; }
+		const TManagedArray<float>* GetFcMaxDescentRateCmPerSec() const { return FcMaxDescentRateCmPerSec; }
+		const TManagedArray<float>* GetFcMaxHorizontalSpeedCmPerSec() const { return FcMaxHorizontalSpeedCmPerSec; }
+		const TManagedArray<float>* GetFcDerivativeCutoffHz() const { return FcDerivativeCutoffHz; }
+		const TManagedArray<float>* GetFcAllocationDamping() const { return FcAllocationDamping; }
 
-		// Brakes group
-		const TManagedArray<FName>* GetBrakeName() const { return BrakeName; }
-		const TManagedArray<FString>* GetBrakeWheelNames() const { return BrakeWheelNames; }
-		const TManagedArray<float>* GetBrakeMaxTorqueNm() const { return BrakeMaxTorqueNm; }
-		const TManagedArray<bool>* GetBrakeIsHandbrake() const { return BrakeIsHandbrake; }
+		/* ------------------------- GameFeel group (1 element) ------------------------- */
+		const TManagedArray<float>* GetGameFeelRcExpoRoll() const { return GameFeelRcExpoRoll; }
+		const TManagedArray<float>* GetGameFeelRcExpoPitch() const { return GameFeelRcExpoPitch; }
+		const TManagedArray<float>* GetGameFeelRcExpoYaw() const { return GameFeelRcExpoYaw; }
+		const TManagedArray<float>* GetGameFeelRcExpoThrottle() const { return GameFeelRcExpoThrottle; }
+		const TManagedArray<float>* GetGameFeelInputDeadzone() const { return GameFeelInputDeadzone; }
+		const TManagedArray<float>* GetGameFeelHoverCollectiveCommand() const { return GameFeelHoverCollectiveCommand; }
+		const TManagedArray<float>* GetGameFeelStickResponseTimeSeconds() const { return GameFeelStickResponseTimeSeconds; }
+		const TManagedArray<float>* GetGameFeelCameraShakeScale() const { return GameFeelCameraShakeScale; }
 
 		const FManagedArrayCollection& GetCollection() const { return *ManagedArrayCollection; }
 		TSharedRef<const FManagedArrayCollection> GetManagedArrayCollection() const { return ManagedArrayCollection; }
@@ -128,98 +154,105 @@ namespace UE::AircraftLab::AircraftAsset
 
 		TSharedRef<const FManagedArrayCollection> ManagedArrayCollection;
 
-		// Import group
-		const TManagedArray<FSoftObjectPath>* PhysicsAssetSoftObjectPathName = nullptr;
+		/* Import */
 		const TManagedArray<FSoftObjectPath>* SkeletalMeshSoftObjectPathName = nullptr;
+		const TManagedArray<FSoftObjectPath>* PhysicsAssetSoftObjectPathName = nullptr;
 
-		// Solver group
+		/* Solver */
 		const TManagedArray<int32>* MaxSolverSubsteps = nullptr;
 
-		// Chassis group
-		const TManagedArray<FName>* ChassisRootBone = nullptr;
-		const TManagedArray<float>* ChassisMassKg = nullptr;
-		const TManagedArray<float>* ChassisDragCoefficient = nullptr;
-		const TManagedArray<FVector3f>* ChassisCenterOfMassOffset = nullptr;
-		const TManagedArray<FVector3f>* ChassisInertiaTensorScale = nullptr;
+		/* Frame */
+		const TManagedArray<FName>* FrameRootBone = nullptr;
+		const TManagedArray<uint8>* FrameType = nullptr;
+		const TManagedArray<float>* FrameMassKg = nullptr;
+		const TManagedArray<FVector3f>* FrameCenterOfMassOffsetCm = nullptr;
+		const TManagedArray<FVector3f>* FrameInertiaDiagonalKgCmSq = nullptr;
+		const TManagedArray<FVector3f>* FrameLinearDragPerAxis = nullptr;
+		const TManagedArray<FVector3f>* FrameAngularDragPerAxis = nullptr;
+		const TManagedArray<FVector3f>* FrameWindVelocityCmPerSec = nullptr;
+		const TManagedArray<float>* FrameGroundEffectStartHeightCm = nullptr;
+		const TManagedArray<float>* FrameGroundEffectStrength = nullptr;
 
-		// Axles group
-		const TManagedArray<FName>* AxleName = nullptr;
-		const TManagedArray<bool>* AxleIsSteeringAxle = nullptr;
-		const TManagedArray<bool>* AxleIsDrivenAxle = nullptr;
+		/* Motors */
+		const TManagedArray<FName>* MotorName = nullptr;
+		const TManagedArray<bool>* MotorEnabled = nullptr;
+		const TManagedArray<float>* MotorMinRpm = nullptr;
+		const TManagedArray<float>* MotorIdleRpm = nullptr;
+		const TManagedArray<float>* MotorMaxRpm = nullptr;
+		const TManagedArray<float>* MotorSpinUpTimeSeconds = nullptr;
+		const TManagedArray<float>* MotorSpinDownTimeSeconds = nullptr;
+		const TManagedArray<float>* MotorCommandExponent = nullptr;
+		const TManagedArray<float>* MotorMaxCommandSlewPerSecond = nullptr;
 
-		// Wheels group
-		const TManagedArray<FName>* WheelName = nullptr;
-		const TManagedArray<FName>* WheelBoneName = nullptr;
-		const TManagedArray<FName>* WheelSuspensionName = nullptr;
-		const TManagedArray<FName>* WheelAxleName = nullptr;
-		const TManagedArray<FName>* WheelSteeringName = nullptr;
-		const TManagedArray<FName>* WheelBrakeName = nullptr;
-		const TManagedArray<FName>* WheelTireName = nullptr;
-		const TManagedArray<float>* WheelRadiusCm = nullptr;
-		const TManagedArray<float>* WheelWidthCm = nullptr;
-		const TManagedArray<float>* WheelMassKg = nullptr;
+		/* Propellers */
+		const TManagedArray<FName>* PropellerName = nullptr;
+		const TManagedArray<FName>* PropellerMotorName = nullptr;
+		const TManagedArray<FName>* PropellerSocketName = nullptr;
+		const TManagedArray<bool>* PropellerUseSocketTransform = nullptr;
+		const TManagedArray<FVector3f>* PropellerPositionLocalCm = nullptr;
+		const TManagedArray<FVector3f>* PropellerRotationLocalEulerDeg = nullptr;
+		const TManagedArray<FVector3f>* PropellerThrustAxisLocal = nullptr;
+		const TManagedArray<uint8>* PropellerSpinDirection = nullptr;
+		const TManagedArray<float>* PropellerRadiusCm = nullptr;
+		const TManagedArray<float>* PropellerMaxThrustForce = nullptr;
+		const TManagedArray<float>* PropellerThrustCoefficient = nullptr;
+		const TManagedArray<float>* PropellerReactionTorqueCoefficient = nullptr;
+		const TManagedArray<float>* PropellerEfficiency = nullptr;
+		const TManagedArray<float>* PropellerControlAuthorityScale = nullptr;
 
-		// Powertrain group
-		const TManagedArray<FString>* PowertrainEngineFullThrottleTorqueCurve = nullptr;
-		const TManagedArray<FString>* PowertrainEngineZeroThrottleTorqueCurve = nullptr;
-		const TManagedArray<float>* PowertrainEngineIdleRPM = nullptr;
-		const TManagedArray<float>* PowertrainEngineMaxRPM = nullptr;
-		const TManagedArray<float>* PowertrainEngineInertia = nullptr;
-		const TManagedArray<FString>* PowertrainGearboxForwardRatios = nullptr;
-		const TManagedArray<FString>* PowertrainGearboxReverseRatios = nullptr;
-		const TManagedArray<float>* PowertrainGearboxFinalDriveRatio = nullptr;
-		const TManagedArray<float>* PowertrainGearboxShiftUpRPM = nullptr;
-		const TManagedArray<float>* PowertrainGearboxShiftDownRPM = nullptr;
-		const TManagedArray<bool>* PowertrainGearboxAutoReverse = nullptr;
-		const TManagedArray<float>* PowertrainDifferentialFrontRearSplit = nullptr;
-		const TManagedArray<bool>* PowertrainDifferentialDriveFrontAxle = nullptr;
-		const TManagedArray<bool>* PowertrainDifferentialDriveRearAxle = nullptr;
+		/* Battery */
+		const TManagedArray<float>* BatteryCapacityMilliAmpHour = nullptr;
+		const TManagedArray<float>* BatteryNominalVoltageV = nullptr;
+		const TManagedArray<float>* BatteryMinVoltageV = nullptr;
+		const TManagedArray<float>* BatteryMaxDischargeC = nullptr;
+		const TManagedArray<float>* BatteryInternalResistanceOhm = nullptr;
 
-		// Tires group
-		const TManagedArray<FName>* TireName = nullptr;
-		const TManagedArray<bool>* TireUseAutoNominalLoad = nullptr;
-		const TManagedArray<float>* TireNominalLoadN = nullptr;
-		const TManagedArray<float>* TireLongitudinalPeakFrictionScale = nullptr;
-		const TManagedArray<float>* TireLongitudinalLoadSensitivity = nullptr;
-		const TManagedArray<float>* TireLongitudinalShapeFactor = nullptr;
-		const TManagedArray<float>* TireLongitudinalStiffnessFactor = nullptr;
-		const TManagedArray<float>* TireLongitudinalCurvatureFactor = nullptr;
-		const TManagedArray<float>* TireLateralPeakFrictionScale = nullptr;
-		const TManagedArray<float>* TireLateralLoadSensitivity = nullptr;
-		const TManagedArray<float>* TireLateralShapeFactor = nullptr;
-		const TManagedArray<float>* TireLateralStiffnessFactor = nullptr;
-		const TManagedArray<float>* TireLateralCurvatureFactor = nullptr;
-		const TManagedArray<float>* TireCombinedLongitudinalShapeFactor = nullptr;
-		const TManagedArray<float>* TireCombinedLongitudinalStiffnessFactor = nullptr;
-		const TManagedArray<float>* TireCombinedLongitudinalCurvatureFactor = nullptr;
-		const TManagedArray<float>* TireCombinedLateralShapeFactor = nullptr;
-		const TManagedArray<float>* TireCombinedLateralStiffnessFactor = nullptr;
-		const TManagedArray<float>* TireCombinedLateralCurvatureFactor = nullptr;
-		const TManagedArray<float>* TireMinSlipSpeedCmPerSec = nullptr;
-		const TManagedArray<float>* TireRollingResistanceCoefficient = nullptr;
-		const TManagedArray<float>* TireWheelViscousDampingNmPerRadPerSec = nullptr;
+		/* FlightController */
+		const TManagedArray<FVector3f>* FcPositionKp = nullptr;
+		const TManagedArray<FVector3f>* FcPositionKi = nullptr;
+		const TManagedArray<FVector3f>* FcPositionKd = nullptr;
+		const TManagedArray<FVector3f>* FcVelocityKp = nullptr;
+		const TManagedArray<FVector3f>* FcVelocityKi = nullptr;
+		const TManagedArray<FVector3f>* FcVelocityKd = nullptr;
+		const TManagedArray<FVector3f>* FcAngleKp = nullptr;
+		const TManagedArray<FVector3f>* FcAngleKi = nullptr;
+		const TManagedArray<FVector3f>* FcAngleKd = nullptr;
+		const TManagedArray<FVector3f>* FcRateKp = nullptr;
+		const TManagedArray<FVector3f>* FcRateKi = nullptr;
+		const TManagedArray<FVector3f>* FcRateKd = nullptr;
 
-		// Suspensions group
-		const TManagedArray<FName>* SuspensionName = nullptr;
-		const TManagedArray<FVector3f>* SuspensionTopMountLocal = nullptr;
-		const TManagedArray<FVector3f>* SuspensionLowerBallJointLocal = nullptr;
-		const TManagedArray<float>* SuspensionMaxRaiseCm = nullptr;
-		const TManagedArray<float>* SuspensionMaxDropCm = nullptr;
-		const TManagedArray<float>* SuspensionNaturalFrequencyHz = nullptr;
-		const TManagedArray<float>* SuspensionDampingRatio = nullptr;
+		const TManagedArray<float>* FcAltitudeKp = nullptr;
+		const TManagedArray<float>* FcAltitudeKi = nullptr;
+		const TManagedArray<float>* FcAltitudeKd = nullptr;
+		const TManagedArray<float>* FcVerticalVelocityKp = nullptr;
+		const TManagedArray<float>* FcVerticalVelocityKi = nullptr;
+		const TManagedArray<float>* FcVerticalVelocityKd = nullptr;
 
-		// Steering group
-		const TManagedArray<FName>* SteeringName = nullptr;
-		const TManagedArray<float>* SteeringMaxSteerAngleDeg = nullptr;
-		const TManagedArray<float>* SteeringAckermannRatio = nullptr;
+		const TManagedArray<float>* FcMaxTiltAngleDegrees = nullptr;
+		const TManagedArray<float>* FcMaxYawRateDegreesPerSec = nullptr;
+		const TManagedArray<float>* FcMaxClimbRateCmPerSec = nullptr;
+		const TManagedArray<float>* FcMaxDescentRateCmPerSec = nullptr;
+		const TManagedArray<float>* FcMaxHorizontalSpeedCmPerSec = nullptr;
+		const TManagedArray<float>* FcDerivativeCutoffHz = nullptr;
+		const TManagedArray<float>* FcAllocationDamping = nullptr;
 
-		// Brakes group
-		const TManagedArray<FName>* BrakeName = nullptr;
-		const TManagedArray<FString>* BrakeWheelNames = nullptr;
-		const TManagedArray<float>* BrakeMaxTorqueNm = nullptr;
-		const TManagedArray<bool>* BrakeIsHandbrake = nullptr;
+		/* GameFeel */
+		const TManagedArray<float>* GameFeelRcExpoRoll = nullptr;
+		const TManagedArray<float>* GameFeelRcExpoPitch = nullptr;
+		const TManagedArray<float>* GameFeelRcExpoYaw = nullptr;
+		const TManagedArray<float>* GameFeelRcExpoThrottle = nullptr;
+		const TManagedArray<float>* GameFeelInputDeadzone = nullptr;
+		const TManagedArray<float>* GameFeelHoverCollectiveCommand = nullptr;
+		const TManagedArray<float>* GameFeelStickResponseTimeSeconds = nullptr;
+		const TManagedArray<float>* GameFeelCameraShakeScale = nullptr;
 	};
 
+	/**
+	 * 多旋翼 ManagedArrayCollection 的可写强类型包装。
+	 *
+	 * 与 ChaosClothAsset 的 FCollectionClothFacade 写入侧一致：通过 DefineSchema() 一次性建立全部 Group/Attribute；
+	 * Set 方法仅暴露 Import 组（外部最常用），其他组通过 Mutable Facade 的 GetXxx() ArrayView 直接 in-place 写入。
+	 */
 	class AIRCRAFTASSET_API FAircraftCollection final : public FConstAircraftCollection
 	{
 	public:
@@ -231,315 +264,115 @@ namespace UE::AircraftLab::AircraftAsset
 			return Array ? TArrayView<T>(Array->GetData(), Array->Num()) : TArrayView<T>();
 		}
 
+		/**
+		 * 一次性写入全部多旋翼 schema：建立 Group + Attribute，并对单元素组（Import / Solver / Frame /
+		 * Battery / FlightController / GameFeel）AddElements(1)，对多元素组（Motors / Propellers）保持 0
+		 * 等待节点写入。
+		 */
 		void DefineSchema();
 
-		// Import group non-const getters
-		TManagedArray<FSoftObjectPath>* GetPhysicsAssetSoftObjectPathName()
-		{
-			return const_cast<TManagedArray<FSoftObjectPath>*>(FConstAircraftCollection::GetPhysicsAssetSoftObjectPathName());
-		}
+		/** 元素数量变化后，需要重新拉取每个属性的 TManagedArray<T>* 缓存。 */
+		using FConstAircraftCollection::UpdateArrays;
+
+		/* ------------------------- Mutable getters ------------------------- */
 		TManagedArray<FSoftObjectPath>* GetSkeletalMeshSoftObjectPathName()
 		{
 			return const_cast<TManagedArray<FSoftObjectPath>*>(FConstAircraftCollection::GetSkeletalMeshSoftObjectPathName());
 		}
+		TManagedArray<FSoftObjectPath>* GetPhysicsAssetSoftObjectPathName()
+		{
+			return const_cast<TManagedArray<FSoftObjectPath>*>(FConstAircraftCollection::GetPhysicsAssetSoftObjectPathName());
+		}
 
-		// Solver group non-const getters
 		TManagedArray<int32>* GetMaxSolverSubsteps()
 		{
 			return const_cast<TManagedArray<int32>*>(FConstAircraftCollection::GetMaxSolverSubsteps());
 		}
 
-		// Chassis group non-const getters
-		TManagedArray<FName>* GetChassisRootBone()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetChassisRootBone());
-		}
-		TManagedArray<float>* GetChassisMassKg()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetChassisMassKg());
-		}
-		TManagedArray<float>* GetChassisDragCoefficient()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetChassisDragCoefficient());
-		}
-		TManagedArray<FVector3f>* GetChassisCenterOfMassOffset()
-		{
-			return const_cast<TManagedArray<FVector3f>*>(FConstAircraftCollection::GetChassisCenterOfMassOffset());
-		}
-		TManagedArray<FVector3f>* GetChassisInertiaTensorScale()
-		{
-			return const_cast<TManagedArray<FVector3f>*>(FConstAircraftCollection::GetChassisInertiaTensorScale());
-		}
+#define UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(Type, Name) \
+		TManagedArray<Type>* Get##Name() { return const_cast<TManagedArray<Type>*>(FConstAircraftCollection::Get##Name()); }
 
-		// Axles group non-const getters
-		TManagedArray<FName>* GetAxleName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetAxleName());
-		}
-		TManagedArray<bool>* GetAxleIsSteeringAxle()
-		{
-			return const_cast<TManagedArray<bool>*>(FConstAircraftCollection::GetAxleIsSteeringAxle());
-		}
-		TManagedArray<bool>* GetAxleIsDrivenAxle()
-		{
-			return const_cast<TManagedArray<bool>*>(FConstAircraftCollection::GetAxleIsDrivenAxle());
-		}
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, FrameRootBone)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(uint8, FrameType)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FrameMassKg)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameCenterOfMassOffsetCm)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameInertiaDiagonalKgCmSq)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameLinearDragPerAxis)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameAngularDragPerAxis)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameWindVelocityCmPerSec)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FrameGroundEffectStartHeightCm)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FrameGroundEffectStrength)
 
-		// Wheels group non-const getters
-		TManagedArray<FName>* GetWheelName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetWheelName());
-		}
-		TManagedArray<FName>* GetWheelBoneName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetWheelBoneName());
-		}
-		TManagedArray<FName>* GetWheelSuspensionName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetWheelSuspensionName());
-		}
-		TManagedArray<FName>* GetWheelAxleName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetWheelAxleName());
-		}
-		TManagedArray<FName>* GetWheelSteeringName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetWheelSteeringName());
-		}
-		TManagedArray<FName>* GetWheelBrakeName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetWheelBrakeName());
-		}
-		TManagedArray<FName>* GetWheelTireName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetWheelTireName());
-		}
-		TManagedArray<float>* GetWheelRadiusCm()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetWheelRadiusCm());
-		}
-		TManagedArray<float>* GetWheelWidthCm()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetWheelWidthCm());
-		}
-		TManagedArray<float>* GetWheelMassKg()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetWheelMassKg());
-		}
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, MotorName)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(bool, MotorEnabled)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorMinRpm)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorIdleRpm)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorMaxRpm)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorSpinUpTimeSeconds)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorSpinDownTimeSeconds)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorCommandExponent)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorMaxCommandSlewPerSecond)
 
-		// Powertrain group non-const getters
-		TManagedArray<FString>* GetPowertrainEngineFullThrottleTorqueCurve()
-		{
-			return const_cast<TManagedArray<FString>*>(FConstAircraftCollection::GetPowertrainEngineFullThrottleTorqueCurve());
-		}
-		TManagedArray<FString>* GetPowertrainEngineZeroThrottleTorqueCurve()
-		{
-			return const_cast<TManagedArray<FString>*>(FConstAircraftCollection::GetPowertrainEngineZeroThrottleTorqueCurve());
-		}
-		TManagedArray<float>* GetPowertrainEngineIdleRPM()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetPowertrainEngineIdleRPM());
-		}
-		TManagedArray<float>* GetPowertrainEngineMaxRPM()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetPowertrainEngineMaxRPM());
-		}
-		TManagedArray<float>* GetPowertrainEngineInertia()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetPowertrainEngineInertia());
-		}
-		TManagedArray<FString>* GetPowertrainGearboxForwardRatios()
-		{
-			return const_cast<TManagedArray<FString>*>(FConstAircraftCollection::GetPowertrainGearboxForwardRatios());
-		}
-		TManagedArray<FString>* GetPowertrainGearboxReverseRatios()
-		{
-			return const_cast<TManagedArray<FString>*>(FConstAircraftCollection::GetPowertrainGearboxReverseRatios());
-		}
-		TManagedArray<float>* GetPowertrainGearboxFinalDriveRatio()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetPowertrainGearboxFinalDriveRatio());
-		}
-		TManagedArray<float>* GetPowertrainGearboxShiftUpRPM()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetPowertrainGearboxShiftUpRPM());
-		}
-		TManagedArray<float>* GetPowertrainGearboxShiftDownRPM()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetPowertrainGearboxShiftDownRPM());
-		}
-		TManagedArray<bool>* GetPowertrainGearboxAutoReverse()
-		{
-			return const_cast<TManagedArray<bool>*>(FConstAircraftCollection::GetPowertrainGearboxAutoReverse());
-		}
-		TManagedArray<float>* GetPowertrainDifferentialFrontRearSplit()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetPowertrainDifferentialFrontRearSplit());
-		}
-		TManagedArray<bool>* GetPowertrainDifferentialDriveFrontAxle()
-		{
-			return const_cast<TManagedArray<bool>*>(FConstAircraftCollection::GetPowertrainDifferentialDriveFrontAxle());
-		}
-		TManagedArray<bool>* GetPowertrainDifferentialDriveRearAxle()
-		{
-			return const_cast<TManagedArray<bool>*>(FConstAircraftCollection::GetPowertrainDifferentialDriveRearAxle());
-		}
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, PropellerName)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, PropellerMotorName)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, PropellerSocketName)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(bool, PropellerUseSocketTransform)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, PropellerPositionLocalCm)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, PropellerRotationLocalEulerDeg)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, PropellerThrustAxisLocal)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(uint8, PropellerSpinDirection)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerRadiusCm)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerMaxThrustForce)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerThrustCoefficient)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerReactionTorqueCoefficient)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerEfficiency)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerControlAuthorityScale)
 
-		// Tires group non-const getters
-		TManagedArray<FName>* GetTireName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetTireName());
-		}
-		TManagedArray<bool>* GetTireUseAutoNominalLoad()
-		{
-			return const_cast<TManagedArray<bool>*>(FConstAircraftCollection::GetTireUseAutoNominalLoad());
-		}
-		TManagedArray<float>* GetTireNominalLoadN()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireNominalLoadN());
-		}
-		TManagedArray<float>* GetTireLongitudinalPeakFrictionScale()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLongitudinalPeakFrictionScale());
-		}
-		TManagedArray<float>* GetTireLongitudinalLoadSensitivity()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLongitudinalLoadSensitivity());
-		}
-		TManagedArray<float>* GetTireLongitudinalShapeFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLongitudinalShapeFactor());
-		}
-		TManagedArray<float>* GetTireLongitudinalStiffnessFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLongitudinalStiffnessFactor());
-		}
-		TManagedArray<float>* GetTireLongitudinalCurvatureFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLongitudinalCurvatureFactor());
-		}
-		TManagedArray<float>* GetTireLateralPeakFrictionScale()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLateralPeakFrictionScale());
-		}
-		TManagedArray<float>* GetTireLateralLoadSensitivity()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLateralLoadSensitivity());
-		}
-		TManagedArray<float>* GetTireLateralShapeFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLateralShapeFactor());
-		}
-		TManagedArray<float>* GetTireLateralStiffnessFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLateralStiffnessFactor());
-		}
-		TManagedArray<float>* GetTireLateralCurvatureFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireLateralCurvatureFactor());
-		}
-		TManagedArray<float>* GetTireCombinedLongitudinalShapeFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireCombinedLongitudinalShapeFactor());
-		}
-		TManagedArray<float>* GetTireCombinedLongitudinalStiffnessFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireCombinedLongitudinalStiffnessFactor());
-		}
-		TManagedArray<float>* GetTireCombinedLongitudinalCurvatureFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireCombinedLongitudinalCurvatureFactor());
-		}
-		TManagedArray<float>* GetTireCombinedLateralShapeFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireCombinedLateralShapeFactor());
-		}
-		TManagedArray<float>* GetTireCombinedLateralStiffnessFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireCombinedLateralStiffnessFactor());
-		}
-		TManagedArray<float>* GetTireCombinedLateralCurvatureFactor()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireCombinedLateralCurvatureFactor());
-		}
-		TManagedArray<float>* GetTireMinSlipSpeedCmPerSec()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireMinSlipSpeedCmPerSec());
-		}
-		TManagedArray<float>* GetTireRollingResistanceCoefficient()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireRollingResistanceCoefficient());
-		}
-		TManagedArray<float>* GetTireWheelViscousDampingNmPerRadPerSec()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetTireWheelViscousDampingNmPerRadPerSec());
-		}
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryCapacityMilliAmpHour)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryNominalVoltageV)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryMinVoltageV)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryMaxDischargeC)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryInternalResistanceOhm)
 
-		// Suspensions group non-const getters
-		TManagedArray<FName>* GetSuspensionName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetSuspensionName());
-		}
-		TManagedArray<FVector3f>* GetSuspensionTopMountLocal()
-		{
-			return const_cast<TManagedArray<FVector3f>*>(FConstAircraftCollection::GetSuspensionTopMountLocal());
-		}
-		TManagedArray<FVector3f>* GetSuspensionLowerBallJointLocal()
-		{
-			return const_cast<TManagedArray<FVector3f>*>(FConstAircraftCollection::GetSuspensionLowerBallJointLocal());
-		}
-		TManagedArray<float>* GetSuspensionMaxRaiseCm()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetSuspensionMaxRaiseCm());
-		}
-		TManagedArray<float>* GetSuspensionMaxDropCm()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetSuspensionMaxDropCm());
-		}
-		TManagedArray<float>* GetSuspensionNaturalFrequencyHz()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetSuspensionNaturalFrequencyHz());
-		}
-		TManagedArray<float>* GetSuspensionDampingRatio()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetSuspensionDampingRatio());
-		}
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcPositionKp)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcPositionKi)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcPositionKd)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcVelocityKp)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcVelocityKi)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcVelocityKd)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcAngleKp)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcAngleKi)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcAngleKd)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcRateKp)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcRateKi)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcRateKd)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcAltitudeKp)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcAltitudeKi)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcAltitudeKd)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcVerticalVelocityKp)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcVerticalVelocityKi)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcVerticalVelocityKd)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcMaxTiltAngleDegrees)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcMaxYawRateDegreesPerSec)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcMaxClimbRateCmPerSec)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcMaxDescentRateCmPerSec)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcMaxHorizontalSpeedCmPerSec)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcDerivativeCutoffHz)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcAllocationDamping)
 
-		// Steering group non-const getters
-		TManagedArray<FName>* GetSteeringName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetSteeringName());
-		}
-		TManagedArray<float>* GetSteeringMaxSteerAngleDeg()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetSteeringMaxSteerAngleDeg());
-		}
-		TManagedArray<float>* GetSteeringAckermannRatio()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetSteeringAckermannRatio());
-		}
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoRoll)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoPitch)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoYaw)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoThrottle)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelInputDeadzone)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelHoverCollectiveCommand)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelStickResponseTimeSeconds)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelCameraShakeScale)
 
-		// Brakes group non-const getters
-		TManagedArray<FName>* GetBrakeName()
-		{
-			return const_cast<TManagedArray<FName>*>(FConstAircraftCollection::GetBrakeName());
-		}
-		TManagedArray<FString>* GetBrakeWheelNames()
-		{
-			return const_cast<TManagedArray<FString>*>(FConstAircraftCollection::GetBrakeWheelNames());
-		}
-		TManagedArray<float>* GetBrakeMaxTorqueNm()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetBrakeMaxTorqueNm());
-		}
-		TManagedArray<bool>* GetBrakeIsHandbrake()
-		{
-			return const_cast<TManagedArray<bool>*>(FConstAircraftCollection::GetBrakeIsHandbrake());
-		}
+#undef UE_AIRCRAFT_DEFINE_MUTABLE_GETTER
 
-		// Set methods
-		void SetPhysicsAssetSoftObjectPathName(const FSoftObjectPath& PathName);
 		void SetSkeletalMeshSoftObjectPathName(const FSoftObjectPath& PathName);
+		void SetPhysicsAssetSoftObjectPathName(const FSoftObjectPath& PathName);
 
 		TSharedRef<FManagedArrayCollection> GetManagedArrayCollection() const
 		{

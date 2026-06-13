@@ -14,7 +14,6 @@ public class Aircraft : ModuleRules
             {
                 "Core",
                 "CoreUObject",
-                "AircraftRuntimeCommon",
                 "AircraftRuntimeInterface"
             }
         );

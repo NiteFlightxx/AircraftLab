@@ -1,4 +1,3 @@
-
 using UnrealBuildTool;
 
 public class AircraftAssetEditorTools : ModuleRules
@@ -12,35 +11,24 @@ public class AircraftAssetEditorTools : ModuleRules
             {
                 "Core",
                 "CoreUObject",
-                "Engine"
+                "Engine",
+                "Chaos",
+                "InteractiveToolsFramework",
+                "AircraftAsset",
+                "AircraftAssetEngine"
             }
         );
 
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
-                "DataflowCore",
-                "DataflowEditor",
-                "DataflowEngine",
+                "EditorInteractiveToolsFramework",
+                "InputCore",
                 "Slate",
                 "SlateCore",
-                "UnrealEd",
-                
-                "Aircraft",
-                "AircraftAsset",
-                "AircraftAssetDataflowNodes",
-                "AircraftAssetEngine",
-                "AircraftAssetTools",
-                "AircraftRuntimeCommon",
-                "AircraftRuntimeInterface",
-               
+                "ToolMenus",
+                "UnrealEd"
             }
         );
-
-        PublicIncludePathModuleNames.AddRange(new string[]
-        {
-   
-        });
-
     }
 }

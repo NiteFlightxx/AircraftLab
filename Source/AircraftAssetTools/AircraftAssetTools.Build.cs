@@ -9,9 +9,6 @@ public class AircraftAssetTools : ModuleRules
         PublicDependencyModuleNames.AddRange(
             new string[]
             {
-                "AnimGraph",
-                "AnimGraphRuntime",
-                "BlueprintGraph",
                 "Core",
                 "CoreUObject",
                 "Engine",
@@ -23,12 +20,10 @@ public class AircraftAssetTools : ModuleRules
             new string[]
             {
                 "DataflowEngine",
-                "Kismet",
                 "Slate",
                 "SlateCore",
                 "UnrealEd",
-                "AircraftAsset",
-                "AircraftRuntimeCommon"
+                "AircraftAsset"
             }
         );
     }
