@@ -143,19 +143,19 @@ constexpr int32 WrenchAxisCount = 4;
 constexpr double AuthorityEpsilon = 1.0e-6;
 constexpr double CommandTolerance = 1.0e-4;
 
-double GetRotorMaxPhysicalThrust(const FDroneRotorDefinition& RotorDefinition, float RotorEffectiveness = 1.0f)
+double GetRotorMaxPhysicalThrust(const FDroneRotorDefinition& RotorDefinition)
 {
-	return RotorDefinition.GetEffectiveMaxThrust() * FMath::Max(RotorDefinition.ThrustCoefficient, 0.0f) * FMath::Clamp(static_cast<double>(RotorEffectiveness), 0.0, 1.0);
+	return RotorDefinition.GetEffectiveMaxThrust() * FMath::Max(RotorDefinition.ThrustCoefficient, 0.0f);
 }
 
-double GetRotorMaxAllocatedThrust(const FDroneRotorDefinition& RotorDefinition, float RotorEffectiveness = 1.0f)
+double GetRotorMaxAllocatedThrust(const FDroneRotorDefinition& RotorDefinition)
 {
-	return GetRotorMaxPhysicalThrust(RotorDefinition, RotorEffectiveness) * FMath::Clamp(RotorDefinition.ControlAuthorityScale, 0.0f, 1.0f);
+	return GetRotorMaxPhysicalThrust(RotorDefinition) * FMath::Clamp(RotorDefinition.ControlAuthorityScale, 0.0f, 1.0f);
 }
 
-float ConvertThrustToCommand(const FDroneRotorDefinition& RotorDefinition, double TargetThrust, float RotorEffectiveness = 1.0f)
+float ConvertThrustToCommand(const FDroneRotorDefinition& RotorDefinition, double TargetThrust)
 {
-	const double MaxPhysicalThrust = GetRotorMaxPhysicalThrust(RotorDefinition, RotorEffectiveness);
+	const double MaxPhysicalThrust = GetRotorMaxPhysicalThrust(RotorDefinition);
 	if (TargetThrust <= AuthorityEpsilon || MaxPhysicalThrust <= AuthorityEpsilon)
 	{
 		return 0.0f;
@@ -449,103 +449,6 @@ void UFlightControllerComponent::SetControllerEnabled(bool bNewEnabled)
 	{
 		StopAllRotors(true);
 	}
-}
-
-bool UFlightControllerComponent::SetRotorEffectivenessByIndex(int32 RotorIndex, float Effectiveness)
-{
-	if (!Airscrews.IsValidIndex(RotorIndex))
-	{
-		UE_LOG(LogFlightController, Warning, TEXT("[SetRotorEffectiveness] Invalid rotor index %d (count=%d)"), RotorIndex, Airscrews.Num());
-		return false;
-	}
-
-	UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
-	if (!Airscrew)
-	{
-		return false;
-	}
-
-	const float ClampedEffectiveness = FMath::Clamp(Effectiveness, 0.0f, 1.0f);
-	const float PreviousEffectiveness = Airscrew->GetRotorEffectiveness();
-	if (FMath::IsNearlyEqual(PreviousEffectiveness, ClampedEffectiveness))
-	{
-		return true;
-	}
-
-	Airscrew->SetRotorEffectiveness(ClampedEffectiveness);
-	bHasLoggedRotorLayout = false;
-	UE_LOG(LogFlightController, Log, TEXT("[SetRotorEffectiveness] Rotor[%d] %s effectiveness: %.0f%% -> %.0f%%"),
-		RotorIndex, *Airscrew->GetRotorDefinition().RotorName.ToString(),
-		PreviousEffectiveness * 100.0f, ClampedEffectiveness * 100.0f);
-	return true;
-}
-
-bool UFlightControllerComponent::SetRotorEffectivenessByName(FName RotorName, float Effectiveness)
-{
-	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
-	{
-		UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
-		if (!Airscrew)
-		{
-			continue;
-		}
-
-		const FDroneRotorDefinition& RotorDef = Airscrew->GetRotorDefinition();
-		if (RotorDef.RotorName == RotorName || Airscrew->GetFName() == RotorName)
-		{
-			return SetRotorEffectivenessByIndex(RotorIndex, Effectiveness);
-		}
-	}
-
-	UE_LOG(LogFlightController, Warning, TEXT("[SetRotorEffectiveness] Rotor name %s not found"), *RotorName.ToString());
-	return false;
-}
-
-bool UFlightControllerComponent::FailRotorByIndex(int32 RotorIndex)
-{
-	return SetRotorEffectivenessByIndex(RotorIndex, 0.0f);
-}
-
-bool UFlightControllerComponent::FailRotorByName(FName RotorName)
-{
-	return SetRotorEffectivenessByName(RotorName, 0.0f);
-}
-
-bool UFlightControllerComponent::RestoreRotorByIndex(int32 RotorIndex)
-{
-	return SetRotorEffectivenessByIndex(RotorIndex, 1.0f);
-}
-
-bool UFlightControllerComponent::RestoreRotorByName(FName RotorName)
-{
-	return SetRotorEffectivenessByName(RotorName, 1.0f);
-}
-
-void UFlightControllerComponent::RestoreAllRotors()
-{
-	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
-	{
-		UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
-		if (Airscrew && Airscrew->GetRotorEffectiveness() < 1.0f)
-		{
-			Airscrew->SetRotorEffectiveness(1.0f);
-		}
-	}
-
-	bHasLoggedRotorLayout = false;
-}
-
-int32 UFlightControllerComponent::GetDegradedRotorCount() const
-{
-	int32 Count = 0;
-	for (const UAirscrewComponent* Airscrew : Airscrews)
-	{
-		if (Airscrew && Airscrew->GetRotorEffectiveness() < 1.0f)
-		{
-			++Count;
-		}
-	}
-	return Count;
 }
 
 /**
@@ -896,8 +799,7 @@ void UFlightControllerComponent::StopAllRotors(bool bResetController)
 		}
 
 		Airscrew->SetNormalizedCommand(0.0f);
-		// 传入小量 DeltaTime 使旋翼按时间常数自然衰减，而非瞬间归零
-		Airscrew->UpdateRotorState(0.001f);
+		Airscrew->UpdateRotorState(0.0f);
 		ControlOutput.RotorCommands[RotorIndex] = FlightControllerAllocation::MakeRotorCommand(Airscrew);
 	}
 }
@@ -1335,15 +1237,12 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew || !Airscrew->IsRotorEnabled())
 		{
-			// 故障(效能=0)或禁用的旋翼：雅可比列保留为全零（J = [C1 C2 0 C4]），
-			// 不参与控制权计算，分配结果自然为零
 			continue;
 		}
 
-		const float Effectiveness = Airscrew->GetRotorEffectiveness();
 		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
-		const FVector4 PhysicalColumn = BuildJacobianColumn(Airscrew, LocalPosition, Effectiveness);
-		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition(), Effectiveness);
+		const FVector4 PhysicalColumn = BuildJacobianColumn(Airscrew, LocalPosition);
+		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
 		const double ColumnMagnitude = FMath::Abs(PhysicalColumn[0])
 			+ FMath::Abs(PhysicalColumn[1])
 			+ FMath::Abs(PhysicalColumn[2])
@@ -1432,16 +1331,7 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 		DesiredWrench[3] * RowScale[3]);
 
 	TArray<double> AllocatedThrustFractions;
-	TArray<double> RotorEffectivenessCache;
 	AllocatedThrustFractions.SetNumZeroed(NumRotors);
-	RotorEffectivenessCache.SetNumZeroed(NumRotors);
-
-	// 缓存各旋翼效能，供后续命令转换使用
-	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
-	{
-		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
-		RotorEffectivenessCache[RotorIndex] = Airscrew ? static_cast<double>(Airscrew->GetRotorEffectiveness()) : 0.0;
-	}
 
 	TArray<bool> SolvedRotors;
 	SolvedRotors.SetNumZeroed(NumRotors);
@@ -1549,7 +1439,7 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 			: 0.0;
 		const double TargetThrust = AllocatedFraction * MaxAllocatedThrusts[RotorIndex];
 		const float NormalizedCommand = FreeRotors[RotorIndex]
-			? FlightControllerAllocation::ConvertThrustToCommand(Airscrew->GetRotorDefinition(), TargetThrust, static_cast<float>(RotorEffectivenessCache[RotorIndex]))
+			? FlightControllerAllocation::ConvertThrustToCommand(Airscrew->GetRotorDefinition(), TargetThrust)
 			: 0.0f;
 
 		Airscrew->SetNormalizedCommand(NormalizedCommand);
@@ -1763,10 +1653,10 @@ FVector UFlightControllerComponent::GetRotorThrustAxisBody(const UAirscrewCompon
 	return ThrustAxisBody.IsNearlyZero() ? FVector::UpVector : ThrustAxisBody.GetSafeNormal();
 }
 
-FVector4 UFlightControllerComponent::BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm, float Effectiveness) const
+FVector4 UFlightControllerComponent::BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm) const
 {
 	const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
-	const float MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition, Effectiveness);
+	const float MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition);
 	const FVector ThrustAxisBody = GetRotorThrustAxisBody(Airscrew);
 	const FVector ForceAtMax = ThrustAxisBody * MaxAllocatedThrust;
 	const FVector MomentArmMeters = LocalPositionFromCenterOfMassCm * 0.01f;
@@ -1800,8 +1690,7 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 
 		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
 		const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
-		const float Effectiveness = Airscrew->GetRotorEffectiveness();
-		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition, Effectiveness);
+		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition);
 		const FVector ThrustAxisBody = GetRotorThrustAxisBody(Airscrew);
 		const FName RotorName = RotorDefinition.RotorName.IsNone()
 			? Airscrew->GetFName()
@@ -1810,7 +1699,7 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 		UE_LOG(
 			LogFlightController,
 			Log,
-			TEXT("[RotorLayout] [%d] %s ArmCm=(%.1f, %.1f, %.1f) AxisBody=(%.2f, %.2f, %.2f) Spin=%s Jac=(Fz %.2f Roll %.2f Pitch %.2f Yaw %.2f) Scale=%.2f Eff=%.0f%% MaxRpm=%.0f IdleRpm=%.0f MaxThrust=%.1f AllocThrust=%.1f"),
+			TEXT("[RotorLayout] [%d] %s ArmCm=(%.1f, %.1f, %.1f) AxisBody=(%.2f, %.2f, %.2f) Spin=%s Jac=(Fz %.2f Roll %.2f Pitch %.2f Yaw %.2f) Scale=%.2f MaxRpm=%.0f IdleRpm=%.0f MaxThrust=%.1f AllocThrust=%.1f"),
 			RotorIndex,
 			*RotorName.ToString(),
 			LocalPosition.X,
@@ -1825,11 +1714,10 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 			JacobianCol[2],
 			JacobianCol[3],
 			RotorDefinition.ControlAuthorityScale,
-			Effectiveness * 100.0f,
 			RotorDefinition.Motor.MaxRpm,
 			RotorDefinition.Motor.IdleRpm,
-			FlightControllerAllocation::GetRotorMaxPhysicalThrust(RotorDefinition, Effectiveness),
-			FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition, Effectiveness));
+			FlightControllerAllocation::GetRotorMaxPhysicalThrust(RotorDefinition),
+			FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition));
 	}
 
 	bHasLoggedRotorLayout = true;
@@ -1949,7 +1837,7 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 		}
 
 		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
-		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition, Airscrew->GetRotorEffectiveness());
+		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition);
 
 		if (LocalPosition.Y > UE_SMALL_NUMBER)
 		{
