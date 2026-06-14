@@ -4,6 +4,7 @@
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftAssetEditorCommands.h"
+#include "AircraftAsset/AircraftAssetEditorStyle.h"
 #include "AircraftAsset/AircraftAssetThumbnailRenderer.h"
 #include "AircraftAsset/AircraftComponent.h"
 
@@ -47,6 +48,12 @@ namespace UE::AircraftDataflowEditor
 void FAircraftAssetEditorModule::StartupModule()
 {
 	FBaseCharacterFXEditorModule::StartupModule();
+
+	// 主动触发自家 SlateStyle 注册（与 ChaosCloth 模块入口模式一致）。这必须在
+	// FAircraftAssetEditorCommands::Register() 之前调用，因为命令构造函数会通过
+	// FAircraftAssetEditorStyle::GetStyleSetName() 拿 StyleSet 名字。
+	FAircraftAssetEditorStyle::Get();
+
 	FAircraftAssetEditorCommands::Register();
 
 	AircraftAssetComponentBroker = MakeShared<UE::AircraftDataflowEditor::FAircraftAssetComponentBroker>();

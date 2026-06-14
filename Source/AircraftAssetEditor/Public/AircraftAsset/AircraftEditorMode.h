@@ -36,4 +36,10 @@ protected:
 
 private:
 	FAircraftAssetEditorPreviewScene* PreviewScene = nullptr;
+
+	// 对齐 ChaosClothAssetEditorMode：Soft/Hard reset 不立刻 reset，而是写 flag，由 ModeTick
+	// 在合适时机消费。HardReset 通过 FComponentReregisterContext 让组件整体重注册；SoftReset
+	// 调用 Component->SoftResetSimulation()。
+	bool bShouldResetSimulation = false;
+	bool bHardReset = false;
 };

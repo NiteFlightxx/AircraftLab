@@ -174,6 +174,21 @@ private:
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
 	TObjectPtr<UAircraftAssetBase> Asset;
 
+	/**
+	 * 仿真总开关（对齐 ChaosClothComponent::bEnableSimulation）：
+	 *   false   ─►  IsSimulationEnabled() 始终返回 false，组件 AsyncPhysicsTickComponent 直接 short-circuit；
+	 *   true    ─►  仅当 SimulationProxy 已构造时才认为"实际开"。
+	 */
+	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Simulation")
+	uint8 bEnableSimulation : 1;
+
+	/**
+	 * 临时挂起开关（对齐 ChaosClothComponent::bSuspendSimulation）：
+	 *   true 会让 IsSimulationSuspended() = true，物理子步直接跳过控制环路（电机继续按一阶滞后衰减）。
+	 */
+	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Simulation")
+	uint8 bSuspendSimulation : 1;
+
 	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Debug")
 	bool bDrawCenterOfMassDebug = false;
 

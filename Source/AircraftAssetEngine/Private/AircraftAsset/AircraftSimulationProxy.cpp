@@ -17,7 +17,11 @@
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
+#include "Chaos/ChaosEngineInterface.h"
+#include "Chaos/PhysicsObject.h"
+#include "PBDRigidsSolver.h"
 #include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 
 // 注意：这个 Private 头里的 FAircraftRotorRuntimeState / FAircraftControlInputs / FAircraftSimFrame
 // 仅在 .cpp 层使用，不暴露给其他模块。
@@ -510,13 +514,38 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 
 	/* ----------------------------------------------------------------------
 	 * 3) 读取当前刚体状态（PT 上对自己 Body 的访问是安全的）
-	 * ---------------------------------------------------------------------- */
-	const FTransform WorldXform = Body->GetUnrealWorldTransform_AssumesLocked();
+	 *
+	 * 关键：必须从 Chaos 物理粒子句柄直接读取（X/R/V/W），而不能调用 BodyInstance 上的
+	 * GetUnrealWorldTransform_AssumesLocked / GetUnrealWorldVelocity_AssumesLocked /
+	 * GetUnrealWorldAngularVelocityInRadians_AssumesLocked。
+	 *
+	 * 原因：BodyInstance 上的这些 helper 内部走 FChaosEngineInterface ⇒ ParticleProxy 的
+	 * **GameThread API**（TThreadingMode::DoubleBuffered 的 Read 路径），其 VerifyContext()
+	 * 会强制 ensure(IsInGameThreadContext())，物理子步线程调用立刻断言。
+	 *
+	 * 物理子步线程（OnPreSimulate_Internal 路径）正确的做法是直接 GetPhysicsThreadAPI()
+	 * 拿 PT 端的 Read API，再读 X/R/V/W：单位是世界 cm + 弧度/秒。
+	 *
+	 * 注意：W 在 Chaos 里默认是世界系角速度（弧度/秒）。
+	 * --------------------------------------------------------------------- */
+	FTransform WorldXform = FTransform::Identity;
+	FVector LinearVelCmPerSec = FVector::ZeroVector;
+	FVector AngularVelWorldRadPerSec = FVector::ZeroVector;
+
+	if (FPhysicsActorHandle const Proxy = Body->GetPhysicsActorHandle())
+	{
+		// 直接走物理线程 API，避免触发 GameThreadContext 断言。
+		Chaos::FRigidBodyHandle_Internal* const Handle = Proxy->GetPhysicsThreadAPI();
+		if (Handle)
+		{
+			WorldXform = FTransform(Handle->R(), Handle->X());
+			LinearVelCmPerSec = Handle->V();
+			AngularVelWorldRadPerSec = Handle->W();
+		}
+	}
+
 	const FQuat WorldQuat = WorldXform.GetRotation();
 	const FVector WorldPosCm = WorldXform.GetLocation();
-	const FVector LinearVelCmPerSec = Body->GetUnrealWorldVelocity_AssumesLocked();
-	// GetUnrealWorldAngularVelocityInRadians_AssumesLocked 返回弧度/秒（世界系）。
-	const FVector AngularVelWorldRadPerSec = Body->GetUnrealWorldAngularVelocityInRadians_AssumesLocked();
 	const FVector AngularVelBodyRadPerSec = WorldQuat.UnrotateVector(AngularVelWorldRadPerSec);
 
 	const FRotator AttitudeDeg = WorldQuat.Rotator();
@@ -652,6 +681,11 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 	FVector TotalForce = FVector::ZeroVector;
 	FVector TotalTorqueBody = FVector::ZeroVector;
 
+	// 拿到 ActorHandle，用于 6) 中物理线程力/扭矩注入。在物理子步上必须走
+	// FChaosEngineInterface::Add*_AssumesLocked(handle, ..., bIsInternal=true) 路径，
+	// 不能用 BodyInstance::AddForce/AddTorque（那些 helper 内部走 GameThreadAPI，触发断言）。
+	const FPhysicsActorHandle ActorHandle = Body->GetPhysicsActorHandle();
+
 	for (int32 i = 0; i < SimulationModel->Rotors.Num(); ++i)
 	{
 		const FDroneRotorDefinition& Rotor = SimulationModel->Rotors[i];
@@ -669,12 +703,16 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 		const FVector WorldAxis = WorldQuat.RotateVector(LocalAxis);
 
 		const FVector ForceN = WorldAxis * State.LastThrustForce;
-		Body->AddForceAtPosition(ForceN * 100.f, WorldPos, /*bAllowSubstepping=*/false); // UE 力单位是 cm·kg/s²
+		FChaosEngineInterface::AddForceAtPosition_AssumesLocked(
+			ActorHandle, ForceN * 100.f, WorldPos,
+			/*bAllowSubstepping=*/false, /*bIsLocalForce=*/false, /*bIsInternal=*/true);
 
 		// 反扭矩沿推力轴反向 SpinSign
 		const float SpinSign = Rotor.GetSpinDirectionSign();
 		const FVector ReactionTorqueWorld = WorldAxis * (-SpinSign) * State.LastReactionTorque * 10000.f; // N·m → kg·cm²/s²
-		Body->AddTorqueInRadians(ReactionTorqueWorld, /*bAllowSubstepping=*/false);
+		FChaosEngineInterface::AddTorque_AssumesLocked(
+			ActorHandle, ReactionTorqueWorld,
+			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
 
 		TotalForce += ForceN;
 		TotalTorqueBody += FVector::CrossProduct(LocalPosCm * 0.01, LocalAxis * State.LastThrustForce)
@@ -689,14 +727,18 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 			SimulationModel->Aero.LinearDragPerAxis.Y * LinearVelBodyMps.Y,
 			SimulationModel->Aero.LinearDragPerAxis.Z * LinearVelBodyMps.Z);
 		const FVector LinearDragForceWorld = WorldQuat.RotateVector(LinearDragForceBody);
-		Body->AddForce(LinearDragForceWorld * 100.f, /*bAllowSubstepping=*/false, /*bAccelChange=*/false);
+		FChaosEngineInterface::AddForce_AssumesLocked(
+			ActorHandle, LinearDragForceWorld * 100.f,
+			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
 
 		const FVector AngularDragTorqueBody = -FVector(
 			SimulationModel->Aero.AngularDragPerAxis.X * AngularVelBodyRadPerSec.X,
 			SimulationModel->Aero.AngularDragPerAxis.Y * AngularVelBodyRadPerSec.Y,
 			SimulationModel->Aero.AngularDragPerAxis.Z * AngularVelBodyRadPerSec.Z);
 		const FVector AngularDragTorqueWorld = WorldQuat.RotateVector(AngularDragTorqueBody);
-		Body->AddTorqueInRadians(AngularDragTorqueWorld * 10000.f, /*bAllowSubstepping=*/false);
+		FChaosEngineInterface::AddTorque_AssumesLocked(
+			ActorHandle, AngularDragTorqueWorld * 10000.f,
+			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
 	}
 
 	/* ----------------------------------------------------------------------

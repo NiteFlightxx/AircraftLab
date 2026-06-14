@@ -11,6 +11,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsEngine/PhysicsAsset.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
 
 #include "AircraftAsset/AircraftSimulationModel.h"
@@ -19,14 +20,16 @@
 
 UAircraftComponent::UAircraftComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
+	, bEnableSimulation(true)
+	, bSuspendSimulation(false)
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 
 	// AsyncPhysicsTickComponent 在物理子步上调用，DeltaTime 即子步长（恒定高频，~60~120Hz）。
 	// 这是飞控所有 PID 与电机一阶滞后所需的恒定步长 Δt。
-	//bAsyncPhysicsTickEnabled = true;
-
+	
+	SetAsyncPhysicsTickEnabled(true);
 	bUseAttachParentBound = false;
 }
 
@@ -146,13 +149,63 @@ void UAircraftComponent::GetEstimatedState(FDroneEstimatedState& OutState) const
 
 /* ============================ Simulation ============================ */
 
-void UAircraftComponent::SetEnableSimulation(bool /*bEnable*/) {}
-bool UAircraftComponent::IsSimulationEnabled() const { return AircraftSimulationProxy.IsValid(); }
-void UAircraftComponent::SuspendSimulation() {}
-void UAircraftComponent::ResumeSimulation() {}
-bool UAircraftComponent::IsSimulationSuspended() const { return false; }
-void UAircraftComponent::SoftResetSimulation() {}
-void UAircraftComponent::HardResetSimulation() {}
+/* ============================ Simulation ============================ */
+//
+// 对齐 ChaosClothComponent 的 6 个 Simulation API：
+//   * SetEnableSimulation(b) / IsSimulationEnabled():
+//     总开关 + 实际开关（要求 SimulationProxy 存在）。等价于 ChaosClothComponent 的
+//         bEnableSimulation && ClothSimulationProxy.IsValid()。
+//   * SuspendSimulation() / ResumeSimulation() / IsSimulationSuspended():
+//     临时挂起；与 SetEnableSimulation 解耦。等价于 ChaosClothComponent 的
+//         bSuspendSimulation || !IsSimulationEnabled()。
+//   * SoftReset / HardReset:
+//     与 ChaosClothAssetEditorMode 中的 bShouldResetSimulation/bHardReset 风格一致——
+//     这里 Component 层只重置 SimulationProxy 内部状态；EditorMode 层包一层 flag 让
+//     ModeTick 在合适时机触发整组件重新注册（HardReset）。
+
+void UAircraftComponent::SetEnableSimulation(bool bEnable)
+{
+	bEnableSimulation = bEnable;
+}
+
+bool UAircraftComponent::IsSimulationEnabled() const
+{
+	return bEnableSimulation && AircraftSimulationProxy.IsValid();
+}
+
+void UAircraftComponent::SuspendSimulation()
+{
+	bSuspendSimulation = true;
+}
+
+void UAircraftComponent::ResumeSimulation()
+{
+	bSuspendSimulation = false;
+}
+
+bool UAircraftComponent::IsSimulationSuspended() const
+{
+	return bSuspendSimulation || !IsSimulationEnabled();
+}
+
+void UAircraftComponent::SoftResetSimulation()
+{
+	// 软重置：只让 SimulationProxy 重新读取当前 SimulationModel + 归零 PID/Rotor 状态，
+	// 但保留组件注册状态、SkeletalMesh 资源、ChassisBodyInstance 不动。
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->PostConstructor();
+	}
+}
+
+void UAircraftComponent::HardResetSimulation()
+{
+	// 硬重置：销毁并重建 SimulationProxy（连同 PID 状态、电机一阶滞后状态全部清零），
+	// 并强制刷新组件资产同步（SkeletalMesh / PhysicsAsset / SimulationModel）。
+	ResetSimulationProxy();
+	BuildSimulationProxy();
+	RefreshAssetState();
+}
 
 const FAircraftSimulationModel* UAircraftComponent::GetPrimarySimulationModel() const
 {
@@ -198,8 +251,11 @@ bool UAircraftComponent::CanEditChange(const FProperty* InProperty) const
 
 void UAircraftComponent::OnRegister()
 {
-	Super::OnRegister();
+	// 先绑定 SkeletalMesh / PhysicsAsset，再调用 Super::OnRegister() —— 因为
+	// USkeletalMeshComponent::OnRegister 会触发 InitAnim 与 AllocateTransformData，需要看到合法的
+	// SkeletalMesh 才能正确初始化 BoneSpaceTransforms。
 	SyncSkeletalMeshComponentFromAsset();
+	Super::OnRegister();
 }
 
 void UAircraftComponent::OnUnregister()
@@ -237,6 +293,15 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 void UAircraftComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTime)
 {
 	Super::AsyncPhysicsTickComponent(DeltaTime, SimTime);
+
+	// Stop/Pause 路径：完全对齐 ChaosClothComponent::OnTickComponent 的语义。
+	//   * IsSimulationSuspended() 为 true 时（包含 bSuspendSimulation 或 bEnableSimulation==false 任一）
+	//     直接跳过物理子步控制环路；电机不再加力，飞机会平滑下落（这是 Pause 的预期行为）。
+	//   * IsSimulationEnabled() 为 false 时（Stop 状态）也走这条路径短路。
+	if (IsSimulationSuspended() || !IsSimulationEnabled())
+	{
+		return;
+	}
 
 	if (AircraftSimulationProxy.IsValid())
 	{
@@ -379,13 +444,41 @@ void UAircraftComponent::DrawSimulationDebug() const
 
 void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 {
+	// 重要：UAircraftAssetBase 不是真正的 USkeletalMesh；它只是 USkinnedAsset 的抽象派生，用于
+	// 承载多旋翼 schema。组件继承自 USkeletalMeshComponent，引擎会在 OnRegister/InitAnim 路径上
+	// 调用 GetSkeletalMeshAsset()->GetRefSkeleton()，并要求其返回真实的骨骼。所以这里必须把
+	// 资产内部引用的 USkeletalMesh* 抽出来，调用 SetSkeletalMesh() 喂给组件——而不是把
+	// UAircraftAsset 自身当作 SkinnedAsset 喂进去（那会导致空 RefSkeleton 与 0 长 BoneSpaceTransforms）。
+
 	if (!Asset)
 	{
-		SetSkinnedAsset(nullptr);
+		SetSkeletalMesh(nullptr);
 		return;
 	}
 
-	SetSkinnedAsset(Asset);
+	// 通过资产暴露的 GetSkeleton() / GetPhysicsAsset() 与 SimulationModel 的 SkeletalMesh 字段拿到
+	// 实际渲染骨骼网格。优先用 SimulationModel 中的（资产 Build 后的最新值）；否则在编辑器路径上
+	// fall back 到 PreviewSceneSkeletalMesh。
+	USkeletalMesh* MeshToBind = nullptr;
+	if (const FAircraftSimulationModel* const Model = GetPrimarySimulationModel())
+	{
+		MeshToBind = Model->SkeletalMesh;
+	}
+
+#if WITH_EDITORONLY_DATA
+	if (!MeshToBind)
+	{
+		MeshToBind = Asset->GetPreviewSceneSkeletalMesh();
+	}
+#endif
+
+	SetSkeletalMesh(MeshToBind);
+
+	// PhysicsAsset：组件物理需要 UPhysicsAsset 才能工作（用作 chassis 的 Chaos 刚体配置）。
+	if (UPhysicsAsset* const Pa = Asset->GetPhysicsAsset())
+	{
+		SetPhysicsAsset(Pa);
+	}
 }
 
 FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance() const

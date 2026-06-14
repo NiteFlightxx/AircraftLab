@@ -120,6 +120,12 @@ private:
 	TSharedPtr<UE::Dataflow::FEngineContext> DataflowContext;
 	UE::Dataflow::FTimestamp LastDataflowNodeTimestamp = UE::Dataflow::FTimestamp::Invalid;
 
+	/** 自动 vs 手动 图求值模式（对齐 FDataflowEditorToolkit::EvaluationMode 枚举的二元简化版本） */
+	bool bAutomaticGraphEvaluation = true;
+
+	/** Evaluate Graph 下拉子菜单（含 Automatic / Manual 切换），由 ComboButton 弹出 */
+	TSharedRef<SWidget> GenerateEvaluationOptionsMenu();
+
 	DECLARE_MULTICAST_DELEGATE(FTickCommands)
 	FTickCommands TickCommands;
 };

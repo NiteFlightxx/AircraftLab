@@ -1,15 +1,20 @@
 #include "AircraftAsset/AircraftAssetEditorCommands.h"
 
-#include "Styling/AppStyle.h"
+#include "AircraftAsset/AircraftAssetEditorStyle.h"
 
 #define LOCTEXT_NAMESPACE "AircraftAssetEditorCommands"
 
 FAircraftAssetEditorCommands::FAircraftAssetEditorCommands()
 	: TCommands<FAircraftAssetEditorCommands>(
+		// 命令上下文名，必须与 FAircraftAssetEditorStyle 的图标 key 前缀完全一致
+		// （即 "AircraftAssetEditor.SoftResetSimulation" 中的 "AircraftAssetEditor"）。
 		TEXT("AircraftAssetEditor"),
 		LOCTEXT("ContextDescription", "Aircraft Asset Editor"),
 		NAME_None,
-		FAppStyle::GetAppStyleSetName())
+		// 关键：StyleSetName 指向我们自家 StyleSet 的 GetStyleSetName()，让 FCommandInfo::GetIcon()
+		// 能从 FAircraftAssetEditorStyle 中查到 brush；这是按钮在 SetShowInToolbarTopLevel(true)
+		// 模式下能渲染图标的必要前提。
+		FAircraftAssetEditorStyle::GetStyleSetName())
 {
 }
 

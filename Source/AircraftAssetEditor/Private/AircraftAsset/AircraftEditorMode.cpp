@@ -7,6 +7,7 @@
 #include "AircraftAsset/AircraftMotorPlacementTool.h"
 #include "AircraftAsset/AircraftPidTuningTool.h"
 #include "AircraftAsset/AircraftThrustVectorOrientationTool.h"
+#include "ComponentReregisterContext.h"
 #include "ContextObjectStore.h"
 #include "InteractiveToolManager.h"
 
@@ -48,51 +49,57 @@ void UAircraftAssetEditorMode::SetPreviewScene(FAircraftAssetEditorPreviewScene*
 
 void UAircraftAssetEditorMode::SoftResetSimulation()
 {
-	if (PreviewScene)
-	{
-	//	PreviewScene->SoftResetSimulation();
-	}
+	// 对齐 ChaosClothAssetEditorMode::SoftResetSimulation：写 flag 而不立刻执行，
+	// 由下一次 ModeTick 消费。
+	bShouldResetSimulation = true;
+	bHardReset = false;
 }
 
 void UAircraftAssetEditorMode::HardResetSimulation()
 {
-	if (PreviewScene)
-	{
-	//	PreviewScene->HardResetSimulation();
-	}
+	bShouldResetSimulation = true;
+	bHardReset = true;
 }
 
 void UAircraftAssetEditorMode::SuspendSimulation()
 {
-	if (PreviewScene)
+	if (PreviewScene && PreviewScene->GetAircraftComponent())
 	{
-	//	PreviewScene->SuspendSimulation();
+		PreviewScene->GetAircraftComponent()->SuspendSimulation();
 	}
 }
 
 void UAircraftAssetEditorMode::ResumeSimulation()
 {
-	if (PreviewScene)
+	if (PreviewScene && PreviewScene->GetAircraftComponent())
 	{
-		//PreviewScene->ResumeSimulation();
+		PreviewScene->GetAircraftComponent()->ResumeSimulation();
 	}
 }
 
 bool UAircraftAssetEditorMode::IsSimulationSuspended() const
 {
+	if (PreviewScene && PreviewScene->GetAircraftComponent())
+	{
+		return PreviewScene->GetAircraftComponent()->IsSimulationSuspended();
+	}
 	return false;
 }
 
 void UAircraftAssetEditorMode::SetEnableSimulation(bool bEnable)
 {
-	if (PreviewScene)
+	if (PreviewScene && PreviewScene->GetAircraftComponent())
 	{
-	//	PreviewScene->SetEnableSimulation(bEnable);
+		PreviewScene->GetAircraftComponent()->SetEnableSimulation(bEnable);
 	}
 }
 
 bool UAircraftAssetEditorMode::IsSimulationEnabled() const
 {
+	if (PreviewScene && PreviewScene->GetAircraftComponent())
+	{
+		return PreviewScene->GetAircraftComponent()->IsSimulationEnabled();
+	}
 	return false;
 }
 
@@ -103,6 +110,26 @@ void UAircraftAssetEditorMode::ModeTick(float DeltaTime)
 	if (PreviewScene && PreviewScene->GetWorld())
 	{
 		PreviewScene->GetWorld()->Tick(ELevelTick::LEVELTICK_All, DeltaTime);
+	}
+
+	// 对齐 ChaosClothAssetEditorMode::ModeTick：在合适时机消费 reset flag。
+	if (bShouldResetSimulation && PreviewScene)
+	{
+		if (UAircraftComponent* const AircraftComponent = PreviewScene->GetAircraftComponent())
+		{
+			if (bHardReset)
+			{
+				// 整组件重新注册（销毁物理状态 / SimulationProxy / 渲染状态后再重建），
+				// 等价 ChaosClothAssetEditorMode 中的 const FComponentReregisterContext Context(...)。
+				const FComponentReregisterContext ReregisterContext(AircraftComponent);
+			}
+			else
+			{
+				AircraftComponent->SoftResetSimulation();
+			}
+		}
+		bShouldResetSimulation = false;
+		bHardReset = false;
 	}
 }
 

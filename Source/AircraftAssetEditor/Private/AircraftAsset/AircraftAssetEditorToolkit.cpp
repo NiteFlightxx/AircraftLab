@@ -13,6 +13,8 @@
 #include "Misc/ScopedSlowTask.h"
 #include "PropertyEditorModule.h"
 #include "SAdvancedPreviewDetailsTab.h"
+#include "Styling/AppStyle.h"
+#include "ToolMenus.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 #include "AircraftAsset/AircraftAsset.h"
@@ -49,6 +51,10 @@ public:
 		Arguments._GraphEvents = InArgs._GraphEvents;
 		Arguments._DetailsView = InArgs._DetailsView;
 		Arguments._EvaluateGraph = InArgs._EvaluateGraph;
+		// 关键：与 ChaosCloth 的 SClothAssetDataflowGraphEditor::Construct 第 75 行一致——
+		// 强制让 Dataflow 图始终可编辑。SDataflowGraphEditor 默认的 _IsEditable 会根据
+		// "是否处于嵌入/锁定状态"返回 false，导致打开后整个图变只读，不能加节点也不能连线。
+		Arguments._IsEditable = []()->bool { return true; };
 		SDataflowGraphEditor::Construct(Arguments, InAssetOwner);
 	}
 
@@ -241,6 +247,15 @@ void FAircraftAssetEditorToolkit::RegisterTabSpawners(const TSharedRef<FTabManag
 	InTabManager->RegisterTabSpawner(SimulationVisualizationTabId, FOnSpawnTab::CreateSP(this, &FAircraftAssetEditorToolkit::SpawnTab_SimulationVisualization))
 		.SetDisplayName(LOCTEXT("SimulationVisualizationTab", "Simulation Visualization"))
 		.SetGroup(EditorMenuCategory.ToSharedRef());
+
+	// 父类（FBaseCharacterFXEditorToolkit / FBaseAssetToolkit）已经为 ViewportTabID 注册了一个
+	// "Viewport" 的 spawner。我们对齐 ChaosCloth 风格把 DisplayName 改为 "Simulation Viewport"，
+	// 通过 unregister + 重新注册覆盖原来的实现。
+	InTabManager->UnregisterTabSpawner(ViewportTabID);
+	InTabManager->RegisterTabSpawner(ViewportTabID, FOnSpawnTab::CreateSP(this, &FAircraftAssetEditorToolkit::SpawnTab_Viewport))
+		.SetDisplayName(LOCTEXT("AircraftSimulationViewportTab", "Simulation Viewport"))
+		.SetGroup(EditorMenuCategory.ToSharedRef())
+		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.Tabs.Viewports"));
 }
 
 void FAircraftAssetEditorToolkit::UnregisterTabSpawners(const TSharedRef<FTabManager>& InTabManager)
@@ -409,6 +424,176 @@ void FAircraftAssetEditorToolkit::PostInitAssetEditor()
 
 				AircraftEditor->UpdateTerminalContents(LastDataflowNodeTimestamp);
 			}
+		}
+	}
+
+	// 把 FDataflowEditorCommands 中的 Evaluate / Start / Stop / Step / Reset Simulation
+	// 等命令注入到资产编辑器顶部工具栏的 "DataflowTools" 区段——完全对齐 FDataflowEditorToolkit
+	// 内部的 AddEvaluationWidget + AddDataflowActionWidget 行为（因为 FDataflowEditorToolkit 是
+	// final 不能继承，所以我们手动复刻它的注入逻辑）。
+	//
+	// 每条命令的 ExecuteAction 都映射到 *我们自家* 的 UAircraftAssetEditorMode → UAircraftComponent
+	// 接口（IsSimulationEnabled / SoftResetSimulation / SetEnableSimulation 等）。
+	{
+		auto GetEdMode = [this]() -> UAircraftAssetEditorMode*
+		{
+			return Cast<UAircraftAssetEditorMode>(EditorModeManager->GetActiveScriptableMode(
+				UAircraftAssetEditorMode::EM_AircraftAssetEditorModeId));
+		};
+
+		// EvaluateGraph：对齐 FDataflowEditorToolkit::EvaluateGraph
+		ToolkitCommands->MapAction(FDataflowEditorCommands::Get().EvaluateGraph,
+			FExecuteAction::CreateLambda([this]()
+			{
+				if (UAircraftDataflowEditor* const AircraftEditor = Cast<UAircraftDataflowEditor>(OwningAssetEditor))
+				{
+					AircraftEditor->UpdateTerminalContents(LastDataflowNodeTimestamp);
+				}
+			}),
+			FCanExecuteAction());
+
+		// 对齐 FDataflowEditorToolkit::AddEvaluationWidget 的两条 Mode 切换命令。
+		// 它们是 ToggleButton，由 FIsActionChecked 决定哪一项当前是被选中状态。
+		// 注意我们 Toolkit 中暂没存 EvaluationMode，先把它做到 PreviewScene 旁的 Toolkit 成员上，
+		// 否则 Auto/Manual 切换没地方落库。这里先用一个 Toolkit 私有变量表达。
+		ToolkitCommands->MapAction(FDataflowEditorCommands::Get().EvaluateGraphAutomatic,
+			FExecuteAction::CreateLambda([this]() { bAutomaticGraphEvaluation = true; }),
+			FCanExecuteAction(),
+			FIsActionChecked::CreateLambda([this]() { return bAutomaticGraphEvaluation; }));
+
+		ToolkitCommands->MapAction(FDataflowEditorCommands::Get().EvaluateGraphManual,
+			FExecuteAction::CreateLambda([this]() { bAutomaticGraphEvaluation = false; }),
+			FCanExecuteAction(),
+			FIsActionChecked::CreateLambda([this]() { return !bAutomaticGraphEvaluation; }));
+
+		// StartSimulation: 对齐 FDataflowEditorToolkit::StartDataflowSimulation
+		ToolkitCommands->MapAction(FDataflowEditorCommands::Get().StartSimulation,
+			FExecuteAction::CreateLambda([GetEdMode]()
+			{
+				if (UAircraftAssetEditorMode* const Mode = GetEdMode()) { Mode->SetEnableSimulation(true); }
+			}),
+			FCanExecuteAction::CreateLambda([GetEdMode]() -> bool
+			{
+				const UAircraftAssetEditorMode* const Mode = GetEdMode();
+				return Mode && !Mode->IsSimulationEnabled();
+			}));
+
+		// StopSimulation
+		ToolkitCommands->MapAction(FDataflowEditorCommands::Get().StopSimulation,
+			FExecuteAction::CreateLambda([GetEdMode]()
+			{
+				if (UAircraftAssetEditorMode* const Mode = GetEdMode()) { Mode->SetEnableSimulation(false); }
+			}),
+			FCanExecuteAction::CreateLambda([GetEdMode]() -> bool
+			{
+				const UAircraftAssetEditorMode* const Mode = GetEdMode();
+				return Mode && Mode->IsSimulationEnabled();
+			}));
+
+		// StepSimulation：硬重置一次（让 SimulationProxy 走一帧）。我们没有真正的 step-mode，
+		// 暂时映射为 SoftReset 让用户能 "重新初始化一帧"。
+		ToolkitCommands->MapAction(FDataflowEditorCommands::Get().StepSimulation,
+			FExecuteAction::CreateLambda([GetEdMode]()
+			{
+				if (UAircraftAssetEditorMode* const Mode = GetEdMode()) { Mode->SoftResetSimulation(); }
+			}),
+			FCanExecuteAction());
+
+		// ResetSimulation：HardReset
+		ToolkitCommands->MapAction(FDataflowEditorCommands::Get().ResetSimulation,
+			FExecuteAction::CreateLambda([GetEdMode]()
+			{
+				if (UAircraftAssetEditorMode* const Mode = GetEdMode()) { Mode->HardResetSimulation(); }
+			}),
+			FCanExecuteAction());
+
+		// ToggleSimulation：bEnableSimulation 切换（用于 Toolbar 上的 Toggle Highlight 状态）
+		ToolkitCommands->MapAction(FDataflowEditorCommands::Get().ToggleSimulation,
+			FExecuteAction::CreateLambda([GetEdMode]()
+			{
+				if (UAircraftAssetEditorMode* const Mode = GetEdMode())
+				{
+					Mode->SetEnableSimulation(!Mode->IsSimulationEnabled());
+				}
+			}),
+			FCanExecuteAction(),
+			FIsActionChecked::CreateLambda([GetEdMode]() -> bool
+			{
+				const UAircraftAssetEditorMode* const Mode = GetEdMode();
+				return Mode && Mode->IsSimulationEnabled();
+			}));
+
+		// 把这 6 个按钮添加到资产编辑器顶部工具栏的 DataflowTools 区段，
+		// 完全对齐 FDataflowEditorToolkit::PostInitAssetEditor 第 911-919 行的注入位置。
+		FName ParentToolbarName;
+		const FName ToolBarName = GetToolMenuToolbarName(ParentToolbarName);
+		if (UToolMenu* const AssetToolbar = UToolMenus::Get()->ExtendMenu(ToolBarName))
+		{
+			FToolMenuSection& Section = AssetToolbar->FindOrAddSection("DataflowTools");
+
+			// 1) Evaluate Graph 主按钮（左半），由我们 Toolkit 的 EvaluateGraph 触发
+			Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				FDataflowEditorCommands::Get().EvaluateGraph,
+				TAttribute<FText>(),
+				TAttribute<FText>(),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "BlueprintEditor.CompileStatus.Background")));
+
+			// 1b) Evaluate Graph 下拉菜单（右半），让用户选择 Automatic / Manual。
+			// 完全对齐 FDataflowEditorToolkit::AddEvaluationWidget 第 1118-1135 行 InitComboButton 写法。
+			TWeakPtr<FAircraftAssetEditorToolkit> WeakSelf = SharedThis(this);
+			FToolMenuEntry EvaluationOptions = FToolMenuEntry::InitComboButton(
+				"AircraftEvaluationOptions",
+				FUIAction(),
+				FOnGetContent::CreateLambda([WeakSelf]() -> TSharedRef<SWidget>
+				{
+					if (TSharedPtr<FAircraftAssetEditorToolkit> Self = WeakSelf.Pin())
+					{
+						return Self->GenerateEvaluationOptionsMenu();
+					}
+					return SNullWidget::NullWidget;
+				}),
+				LOCTEXT("AircraftEvaluationOptions", "Options"),
+				LOCTEXT("AircraftEvaluationOptions_ToolbarTooltip", "Options to customize how the Dataflow Graph evaluates"),
+				TAttribute<FSlateIcon>(),
+				true);
+			EvaluationOptions.StyleNameOverride = "SlimToolBar";
+			Section.AddEntry(EvaluationOptions);
+
+			// 2) Start Simulation —— 标准 Play 图标 + BackplateLeftPlay 风格
+			FToolMenuEntry PlayEntry = FToolMenuEntry::InitToolBarButton(
+				FDataflowEditorCommands::Get().StartSimulation,
+				TAttribute<FText>(),
+				TAttribute<FText>(),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "PlayWorld.PlayInViewport"));
+			PlayEntry.StyleNameOverride = FName("Toolbar.BackplateLeftPlay");
+			Section.AddEntry(PlayEntry);
+
+			// 3) Step Simulation
+			FToolMenuEntry StepEntry = FToolMenuEntry::InitToolBarButton(
+				FDataflowEditorCommands::Get().StepSimulation,
+				TAttribute<FText>(),
+				TAttribute<FText>(),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "PlayWorld.SingleFrameAdvance.Small"));
+			StepEntry.StyleNameOverride = FName("Toolbar.BackplateCenter");
+			Section.AddEntry(StepEntry);
+
+			// 4) Stop Simulation
+			FToolMenuEntry StopEntry = FToolMenuEntry::InitToolBarButton(
+				FDataflowEditorCommands::Get().StopSimulation,
+				TAttribute<FText>(),
+				TAttribute<FText>(),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "PlayWorld.StopPlaySession.Small"));
+			StopEntry.StyleNameOverride = FName("Toolbar.BackplateCenterStop");
+			Section.AddEntry(StopEntry);
+
+			// 5) Reset Simulation
+			FToolMenuEntry ResetEntry = FToolMenuEntry::InitToolBarButton(
+				FDataflowEditorCommands::Get().ResetSimulation,
+				TAttribute<FText>(),
+				TAttribute<FText>(),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"));
+			ResetEntry.StyleNameOverride = FName("Toolbar.BackplateRight");
+			Section.AddEntry(ResetEntry);
 		}
 	}
 }
@@ -597,6 +782,20 @@ void FAircraftAssetEditorToolkit::InitDetailsViewPanel()
 	{
 		PreviewSceneDockTab->SetContent(AdvancedPreviewSettingsWidget.ToSharedRef());
 	}
+}
+
+TSharedRef<SWidget> FAircraftAssetEditorToolkit::GenerateEvaluationOptionsMenu()
+{
+	// 完全对齐 FDataflowEditorToolkit::GenerateEvaluationOptionsMenu 第 1184-1197 行：
+	//     MenuBuilder.AddMenuEntry(EvaluateGraphAutomatic);
+	//     MenuBuilder.AddMenuEntry(EvaluateGraphManual);
+	// 这里只放这两条；ClearGraphCache / TogglePerfData / ToggleAsyncEvaluation 我们暂不实现。
+	FMenuBuilder MenuBuilder(true, GetToolkitCommands());
+	MenuBuilder.BeginSection(TEXT("AircraftEvaluationModeSection"));
+	MenuBuilder.AddMenuEntry(FDataflowEditorCommands::Get().EvaluateGraphAutomatic);
+	MenuBuilder.AddMenuEntry(FDataflowEditorCommands::Get().EvaluateGraphManual);
+	MenuBuilder.EndSection();
+	return MenuBuilder.MakeWidget();
 }
 
 void FAircraftAssetEditorToolkit::OnFinishedChangingAssetProperties(const FPropertyChangedEvent& PropertyChangedEvent)
