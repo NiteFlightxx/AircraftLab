@@ -65,10 +65,83 @@ void UAircraftComponent::RefreshAssetState()
 {
 	SyncSkeletalMeshComponentFromAsset();
 
+	// 把 FrameConfig 中的 MassKg / CenterOfMass / InertiaDiagonal 重新写入 BodyInstance —
+	// 与 ChaosCloth 在 RefreshAssetState 中重新同步质量/惯性属性的语义一致。
+	ApplyMassPropertiesToBodyInstance();
+
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->PostConstructor();
 	}
+}
+
+void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
+{
+	// 解析当前 SimulationModel —— 资产 Build 后由 SimulationModel.Mass 持有最新参数；
+	// 没有 Build 过则跳过（仍使用 PhysicsAsset 默认质量）。
+	const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
+	if (!Model)
+	{
+		return;
+	}
+
+	FBodyInstance* const Body = ResolveChassisBodyInstance();
+	if (!Body)
+	{
+		return;
+	}
+
+	const FDroneMassProperties& Mass = Model->Mass;
+
+	// 1) 总质量（千克）—— 等价 ChaosCloth 在 ClothComponent 中设置 ClothMass 的语义。
+	//    UE 的 BodyInstance::SetMassOverride 接受千克单位，并在 UpdateMassProperties 内
+	//    重新计算惯性张量与质心；后续步骤再覆盖 COM/Inertia。
+	if (Mass.MassKg > KINDA_SMALL_NUMBER)
+	{
+		Body->SetMassOverride(Mass.MassKg, /*bNewOverrideMass=*/true);
+	}
+	else
+	{
+		Body->SetMassOverride(0.f, /*bNewOverrideMass=*/false);
+	}
+
+	// 2) 质心偏移（局部坐标系，单位厘米）。BodyInstance.COMNudge 是 UE 标准 API，单位为 cm。
+	Body->COMNudge = Mass.CenterOfMassOffsetCm;
+
+	// 3) 惯性张量 —— UE 没有 SetInertiaTensorOverride 这种直接 API；标准做法是 InertiaTensorScale。
+	//    我们的 InertiaDiagonalKgCmSq = Ixx, Iyy, Izz（kg·cm²）；对默认 PhysicsAsset 计算的张量
+	//    按比例缩放即可达到目标值。InertiaTensorScale 是 FVector，分别对应 X/Y/Z 轴。
+	//    这里采用近似：把 Body 默认惯性归一化后再乘以目标值。如果默认惯性不可用就直接传比例值。
+	Body->InertiaTensorScale = FVector(
+		FMath::Max(Mass.InertiaDiagonalKgCmSq.X, 1.f) / FMath::Max(Mass.MassKg * 100.f, 1.f),
+		FMath::Max(Mass.InertiaDiagonalKgCmSq.Y, 1.f) / FMath::Max(Mass.MassKg * 100.f, 1.f),
+		FMath::Max(Mass.InertiaDiagonalKgCmSq.Z, 1.f) / FMath::Max(Mass.MassKg * 100.f, 1.f));
+
+	// 4) 让 Chaos 重新计算质心与惯性张量，把上面三项变更落库到物理粒子。
+	if (Body->IsValidBodyInstance())
+	{
+		Body->UpdateMassProperties();
+	}
+
+	// 5) 阻尼（线性 + 角）—— 直接调用 UPrimitiveComponent 的标准 setter，等价 ChaosCloth
+	//    在 ClothComponent 中调用 SetLinearDamping/SetAngularDamping 的 GT 写入路径。
+	//    UE 的这俩 setter 只接标量，按轴向的 AngularDragPerAxis 这里折算为标量近似：
+	//      * Linear  : 用 LinearDragPerAxis 三轴的最大分量（保守上限，符合 UE 内部 v *= (1 - LinearDamping·dt) 的衰减语义）
+	//      * Angular : 用 AngularDragPerAxis 三轴的最大分量
+	//    SimulationProxy 中按轴的精细阻尼依然在物理子步的气动力路径里施加（FChaosEngineInterface::AddForce/Torque），
+	//    BodyInstance 上的 LinearDamping/AngularDamping 只作为 Chaos 求解器层面的稳定性兜底。
+	const float LinearDampingScalar = FMath::Max3(
+		Model->Aero.LinearDragPerAxis.X,
+		Model->Aero.LinearDragPerAxis.Y,
+		Model->Aero.LinearDragPerAxis.Z);
+
+	const float AngularDampingScalar = FMath::Max3(
+		Model->Aero.AngularDragPerAxis.X,
+		Model->Aero.AngularDragPerAxis.Y,
+		Model->Aero.AngularDragPerAxis.Z);
+
+	SetLinearDamping(LinearDampingScalar);
+	SetAngularDamping(AngularDampingScalar);
 }
 
 /* ============================ Pilot / mode ============================ */
@@ -266,6 +339,10 @@ void UAircraftComponent::OnUnregister()
 void UAircraftComponent::OnCreatePhysicsState()
 {
 	Super::OnCreatePhysicsState();
+
+	// 物理状态刚创建——立刻把 FrameConfig 中的质量/质心/惯性写入 BodyInstance。
+	// 这是 ChaosCloth 风格在 GT 端"创建物理时同步资产参数到 Body"的位置。
+	ApplyMassPropertiesToBodyInstance();
 
 	if (AircraftSimulationProxy.IsValid())
 	{

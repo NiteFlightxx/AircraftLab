@@ -171,6 +171,25 @@ private:
 	void SyncSkeletalMeshComponentFromAsset();
 	FBodyInstance* ResolveChassisBodyInstance() const;
 
+	/**
+	 * 把 SimulationModel.Mass / SimulationModel.Aero（FrameConfig 中的质量/质心/惯性/阻尼参数）
+	 * 写入底盘 BodyInstance + Component（GT 标准 setter 路径）：
+	 *   * MassKg                → BodyInstance->SetMassOverride(true) + UpdateMassProperties()
+	 *   * CenterOfMassOffsetCm  → BodyInstance->COMNudge（局部 cm 偏移）+ UpdateMassProperties()
+	 *   * InertiaDiagonalKgCmSq → BodyInstance->InertiaTensorScale（按默认惯性归一化后再缩放）
+	 *   * LinearDragPerAxis     → UPrimitiveComponent::SetLinearDamping(maxAxis)
+	 *   * AngularDragPerAxis    → UPrimitiveComponent::SetAngularDamping(maxAxis)
+	 *
+	 * 调用时机：
+	 *   1) OnCreatePhysicsState() 之后立即同步（首次进入物理）；
+	 *   2) RefreshAssetState() 中 HardReset / Build 后再同步一次（资产参数被改动时）。
+	 *
+	 * 这是 ChaosCloth 风格——FChaosClothComponent 不在 SimulationProxy 里改 Body 状态，
+	 * 而是在 GT 端通过 BodyInstance / UPrimitiveComponent 的标准 setter 写入参数；
+	 * SimulationProxy 只负责物理子步上的力/扭矩注入与状态读取。
+	 */
+	void ApplyMassPropertiesToBodyInstance();
+
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
 	TObjectPtr<UAircraftAssetBase> Asset;
 
