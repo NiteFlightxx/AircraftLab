@@ -39,6 +39,23 @@ void UAirscrewComponent::SetNormalizedCommand(float InNormalizedCommand)
 	TargetNormalizedCommand = FMath::Clamp(InNormalizedCommand, 0.0f, 1.0f);
 }
 
+void UAirscrewComponent::ForceStopRotor()
+{
+	bForceStopped = true;
+	TargetNormalizedCommand = 0.0f;
+	CurrentNormalizedCommand = 0.0f;
+	CurrentRpm = 0.0f;
+	CurrentThrustForce = 0.0f;
+	CurrentThrustVectorWorld = FVector::ZeroVector;
+	CurrentReactionTorqueMagnitude = 0.0f;
+	CurrentReactionTorqueVectorWorld = FVector::ZeroVector;
+}
+
+void UAirscrewComponent::ClearForceStop()
+{
+	bForceStopped = false;
+}
+
 void UAirscrewComponent::SetRotorEnabled(bool bNewEnabled)
 {
 	RotorDefinition.bEnabled = bNewEnabled;
@@ -103,6 +120,19 @@ void UAirscrewComponent::SyncDefinitionFromComponentTransform()
 void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& BodyTransform)
 {
 	if (DeltaTime <= UE_SMALL_NUMBER || !RotorDefinition.IsEnabled())
+	{
+		CurrentNormalizedCommand = 0.0f;
+		CurrentRpm = 0.0f;
+		CurrentThrustForce = 0.0f;
+		CurrentThrustVectorWorld = FVector::ZeroVector;
+		CurrentApplicationPointWorld = BodyTransform.TransformPosition(CachedRelativeLocationFromBody);
+		CurrentReactionTorqueMagnitude = 0.0f;
+		CurrentReactionTorqueVectorWorld = FVector::ZeroVector;
+		return;
+	}
+
+	// 强制停止状态：跳过电机模型，保持所有物理输出为零
+	if (bForceStopped)
 	{
 		CurrentNormalizedCommand = 0.0f;
 		CurrentRpm = 0.0f;
@@ -181,7 +211,7 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& Bod
  */
 void UAirscrewComponent::ApplyThrustForce_PhysicsThread(Chaos::FRigidBodyHandle_Internal* BodyHandle)
 {
-	if (!bApplyForce || !BodyHandle)
+	if (!bApplyForce || !BodyHandle || bForceStopped || CurrentThrustForce <= UE_SMALL_NUMBER)
 	{
 		return;
 	}

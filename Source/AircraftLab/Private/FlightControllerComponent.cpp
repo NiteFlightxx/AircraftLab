@@ -599,9 +599,6 @@ void UFlightControllerComponent::RebuildAllocationCache()
 	AllocationCache.MaxAllocatedThrusts.SetNumZeroed(NumRotors);
 	AllocationCache.FreeRotors.SetNumZeroed(NumRotors);
 	AllocationCache.NormalizedColumns.SetNumZeroed(NumRotors);
-	AllocationCache.CollectiveAuthority = 0.0;
-	FMemory::Memzero(AllocationCache.PositiveTorqueAuthority);
-	FMemory::Memzero(AllocationCache.NegativeTorqueAuthority);
 
 	// 同步 RotorHealthStates 数组大小
 	if (RotorHealthStates.Num() != NumRotors)
@@ -614,24 +611,29 @@ void UFlightControllerComponent::RebuildAllocationCache()
 	int32 HealthyCount = 0;
 	int32 FailedCount = 0;
 
+	// RowScale 必须基于原始（全健康）Jacobian 计算，不受 Effectiveness 影响。
+	// 否则 Effectiveness < 1 时 RowScale 缩小，导致所有旋翼推力一起下降。
+	double OriginalCollectiveAuthority = 0.0;
+	double OriginalPositiveTorqueAuthority[3] = {};
+	double OriginalNegativeTorqueAuthority[3] = {};
+
+	// 第一遍：用原始 Jacobian 计算 RowScale 和归一化列
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew || !Airscrew->IsRotorEnabled()) continue;
 
-		// 获取旋翼效能，乘以 Jacobian Column
 		const float Effectiveness = RotorHealthStates.IsValidIndex(RotorIndex)
 			? RotorHealthStates[RotorIndex].Effectiveness : 1.0f;
 
 		if (Effectiveness <= FlightControllerAllocation::AuthorityEpsilon)
 		{
-			// 完全失效的旋翼不参与控制分配
 			FailedCount++;
 			continue;
 		}
 
 		if (Effectiveness >= 1.0f) HealthyCount++;
-		else FailedCount++;  // 部分损坏也算失效
+		else FailedCount++;
 
 		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
 		const FVector4 PhysicalColumn = BuildJacobianColumn(Airscrew, LocalPosition);
@@ -642,40 +644,76 @@ void UFlightControllerComponent::RebuildAllocationCache()
 		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ColumnMagnitude <= FlightControllerAllocation::AuthorityEpsilon)
 			continue;
 
-		// 核心：Column_i × Effectiveness_i
+		// RowScale 和归一化列都使用原始（未缩放）的 PhysicalColumn
+		// Effectiveness 只影响 MaxAllocatedThrusts，限制旋翼最大推力能力
+		OriginalCollectiveAuthority += FMath::Max(PhysicalColumn[0], 0.0f);
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			const double AxisMoment = PhysicalColumn[Axis + 1];
+			if (AxisMoment >= 0.0f) OriginalPositiveTorqueAuthority[Axis] += AxisMoment;
+			else OriginalNegativeTorqueAuthority[Axis] -= AxisMoment;
+		}
+	}
+
+	AllocationCache.RowScale[0] = OriginalCollectiveAuthority;
+	AllocationCache.RowScale[1] = FlightControllerAllocation::GetBalancedAuthority(OriginalPositiveTorqueAuthority[0], OriginalNegativeTorqueAuthority[0]);
+	AllocationCache.RowScale[2] = FlightControllerAllocation::GetBalancedAuthority(OriginalPositiveTorqueAuthority[1], OriginalNegativeTorqueAuthority[1]);
+	AllocationCache.RowScale[3] = FlightControllerAllocation::GetBalancedAuthority(OriginalPositiveTorqueAuthority[2], OriginalNegativeTorqueAuthority[2]);
+
+	// 为 AuthorityInfo 计算有效 Authority（含 Effectiveness）
+	AllocationCache.CollectiveAuthority = 0.0;
+	FMemory::Memzero(AllocationCache.PositiveTorqueAuthority);
+	FMemory::Memzero(AllocationCache.NegativeTorqueAuthority);
+
+	// 第二遍：Jacoban 列保持原始，MaxAllocatedThrusts 乘以 Effectiveness
+	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+	{
+		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
+		if (!Airscrew || !Airscrew->IsRotorEnabled()) continue;
+
+		const float Effectiveness = RotorHealthStates.IsValidIndex(RotorIndex)
+			? RotorHealthStates[RotorIndex].Effectiveness : 1.0f;
+
+		if (Effectiveness <= FlightControllerAllocation::AuthorityEpsilon)
+			continue;
+
+		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
+		const FVector4 PhysicalColumn = BuildJacobianColumn(Airscrew, LocalPosition);
+		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
+		const double ColumnMagnitude = FMath::Abs(PhysicalColumn[0]) + FMath::Abs(PhysicalColumn[1])
+			+ FMath::Abs(PhysicalColumn[2]) + FMath::Abs(PhysicalColumn[3]);
+
+		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ColumnMagnitude <= FlightControllerAllocation::AuthorityEpsilon)
+			continue;
+
+		// Jacobian 列保持原始值，不缩放
+		AllocationCache.JacobianColumns[RotorIndex] = PhysicalColumn;
+		// MaxAllocatedThrusts 乘以 Effectiveness，限制旋翼最大推力能力
+		AllocationCache.MaxAllocatedThrusts[RotorIndex] = MaxAllocatedThrust * Effectiveness;
+		AllocationCache.FreeRotors[RotorIndex] = true;
+
+		// 有效 Authority（用于 AuthorityInfo 诊断）
 		const FVector4 EffectiveColumn(
 			PhysicalColumn[0] * Effectiveness,
 			PhysicalColumn[1] * Effectiveness,
 			PhysicalColumn[2] * Effectiveness,
 			PhysicalColumn[3] * Effectiveness);
-
-		AllocationCache.JacobianColumns[RotorIndex] = EffectiveColumn;
-		AllocationCache.MaxAllocatedThrusts[RotorIndex] = MaxAllocatedThrust * Effectiveness;
-		AllocationCache.FreeRotors[RotorIndex] = true;
 		AllocationCache.CollectiveAuthority += FMath::Max(EffectiveColumn[0], 0.0f);
-
 		for (int32 Axis = 0; Axis < 3; ++Axis)
 		{
 			const double AxisMoment = EffectiveColumn[Axis + 1];
 			if (AxisMoment >= 0.0f) AllocationCache.PositiveTorqueAuthority[Axis] += AxisMoment;
 			else AllocationCache.NegativeTorqueAuthority[Axis] -= AxisMoment;
 		}
-	}
 
-	AllocationCache.RowScale[0] = AllocationCache.CollectiveAuthority;
-	AllocationCache.RowScale[1] = FlightControllerAllocation::GetBalancedAuthority(AllocationCache.PositiveTorqueAuthority[0], AllocationCache.NegativeTorqueAuthority[0]);
-	AllocationCache.RowScale[2] = FlightControllerAllocation::GetBalancedAuthority(AllocationCache.PositiveTorqueAuthority[1], AllocationCache.NegativeTorqueAuthority[1]);
-	AllocationCache.RowScale[3] = FlightControllerAllocation::GetBalancedAuthority(AllocationCache.PositiveTorqueAuthority[2], AllocationCache.NegativeTorqueAuthority[2]);
-
-	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
-	{
-		if (!AllocationCache.FreeRotors[RotorIndex]) continue;
+		// 归一化列：原始 PhysicalColumn / 原始 RowScale
 		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 		{
 			AllocationCache.NormalizedColumns[RotorIndex][Axis] = AllocationCache.RowScale[Axis] > FlightControllerAllocation::AuthorityEpsilon
-				? AllocationCache.JacobianColumns[RotorIndex][Axis] / AllocationCache.RowScale[Axis] : 0.0f;
+				? PhysicalColumn[Axis] / AllocationCache.RowScale[Axis] : 0.0f;
 		}
 	}
+
 	AllocationCache.bIsValid = true;
 
 	// 更新控制能力评估（基于所有旋翼正常时的基准来归一化）
@@ -1311,6 +1349,8 @@ void UFlightControllerComponent::FailRotor(int32 RotorIndex)
 	if (!RotorHealthStates.IsValidIndex(RotorIndex)) return;
 	const float Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	RotorHealthStates[RotorIndex].MarkFailed(Timestamp);
+	if (Airscrews.IsValidIndex(RotorIndex) && Airscrews[RotorIndex])
+		Airscrews[RotorIndex]->ForceStopRotor();
 	bAllocatorDirty = true;
 	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor %d FAILED"), RotorIndex);
 }
@@ -1319,6 +1359,8 @@ void UFlightControllerComponent::RecoverRotor(int32 RotorIndex)
 {
 	if (!RotorHealthStates.IsValidIndex(RotorIndex)) return;
 	RotorHealthStates[RotorIndex].Recover();
+	if (Airscrews.IsValidIndex(RotorIndex) && Airscrews[RotorIndex])
+		Airscrews[RotorIndex]->ClearForceStop();
 	bAllocatorDirty = true;
 	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor %d RECOVERED"), RotorIndex);
 }
@@ -1330,23 +1372,22 @@ void UFlightControllerComponent::SetRotorEffectiveness(int32 RotorIndex, float E
 	FRotorHealthState& State = RotorHealthStates[RotorIndex];
 	State.Effectiveness = Effectiveness;
 
+	UAirscrewComponent* Airscrew = Airscrews.IsValidIndex(RotorIndex) ? Airscrews[RotorIndex] : nullptr;
+
 	if (Effectiveness <= FlightControllerAllocation::AuthorityEpsilon)
 	{
 		const float Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		State.bIsFailed = true;
 		State.FailureTimestamp = Timestamp;
 		State.FailureMode = ERotorFailureMode::CompleteFailure;
-	}
-	else if (Effectiveness < 1.0f)
-	{
-		State.bIsFailed = false;
-		State.FailureMode = ERotorFailureMode::PartialFailure;
+		if (Airscrew) Airscrew->ForceStopRotor();
 	}
 	else
 	{
 		State.bIsFailed = false;
-		State.FailureTimestamp = -1.0f;
-		State.FailureMode = ERotorFailureMode::Healthy;
+		State.FailureMode = Effectiveness < 1.0f ? ERotorFailureMode::PartialFailure : ERotorFailureMode::Healthy;
+		if (Effectiveness >= 1.0f) State.FailureTimestamp = -1.0f;
+		if (Airscrew) Airscrew->ClearForceStop();
 	}
 
 	bAllocatorDirty = true;
@@ -1361,6 +1402,8 @@ void UFlightControllerComponent::FailRotors(const TArray<int32>& RotorIndices)
 		if (RotorHealthStates.IsValidIndex(RotorIndex))
 		{
 			RotorHealthStates[RotorIndex].MarkFailed(Timestamp);
+			if (Airscrews.IsValidIndex(RotorIndex) && Airscrews[RotorIndex])
+				Airscrews[RotorIndex]->ForceStopRotor();
 			UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor %d FAILED (batch)"), RotorIndex);
 		}
 	}
@@ -1369,8 +1412,12 @@ void UFlightControllerComponent::FailRotors(const TArray<int32>& RotorIndices)
 
 void UFlightControllerComponent::RecoverAllRotors()
 {
-	for (auto& State : RotorHealthStates)
-		State.Recover();
+	for (int32 RotorIndex = 0; RotorIndex < RotorHealthStates.Num(); ++RotorIndex)
+	{
+		RotorHealthStates[RotorIndex].Recover();
+		if (Airscrews.IsValidIndex(RotorIndex) && Airscrews[RotorIndex])
+			Airscrews[RotorIndex]->ClearForceStop();
+	}
 	bAllocatorDirty = true;
 	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] ALL rotors RECOVERED"));
 }

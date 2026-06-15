@@ -39,6 +39,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Drone|Airscrew")
 	void SetForceApplicationEnabled(bool bNewEnabled);
 
+	/** 强制停止旋翼（立即归零所有物理输出，跳过电机模型延迟） */
+	void ForceStopRotor();
+
+	/** 清除强制停止状态（恢复正常电机模型响应） */
+	void ClearForceStop();
+
 	UFUNCTION(BlueprintCallable, Category = "Drone|Airscrew")
 	void SetDebugDrawEnabled(bool bNewEnabled);
 
@@ -178,4 +184,7 @@ protected:
 
 	/** 旋翼推力方向的局部单位向量（通常为Up/Z轴） */
 	FVector CachedThrustAxisLocal = FVector::UpVector;
+
+	/** 是否处于强制停止状态（故障时跳过电机模型，立即归零物理输出） */
+	bool bForceStopped = false;
 };
