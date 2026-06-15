@@ -21,7 +21,8 @@ public:
 	virtual void OnRegister() override;
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-
+	virtual void AsyncPhysicsTickComponent(float DeltaTime, float SimTime) override;
+	
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void RefreshReferences();
 
@@ -33,6 +34,22 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void SetFlightMode(EDroneFlightMode NewFlightMode);
+
+	/** 设置姿态控制模式（Manual/Acro/Angle），独立于高度保持等功能开关 */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	void SetAttitudeMode(EDroneAttitudeMode NewAttitudeMode);
+
+	/** 设置高度保持开关（可与任何姿态模式组合，如 Angle+AltHold） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	void SetAltitudeHoldEnabled(bool bEnabled);
+
+	/** 设置位置保持开关（自动启用高度保持和水平速度控制） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	void SetPositionHoldEnabled(bool bEnabled);
+
+	/** 设置水平速度控制开关 */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	void SetVelocityHoldEnabled(bool bEnabled);
 
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void SetControllerEnabled(bool bNewEnabled);
@@ -52,6 +69,18 @@ public:
 	
 	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
 	EDroneFlightMode GetActiveFlightMode() const { return ActiveFlightMode; }
+
+	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
+	EDroneAttitudeMode GetAttitudeMode() const { return AttitudeMode; }
+
+	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
+	bool IsAltitudeHoldEnabled() const { return bAltitudeHoldEnabled; }
+
+	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
+	bool IsPositionHoldEnabled() const { return bPositionHoldEnabled; }
+
+	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
+	bool IsVelocityHoldEnabled() const { return bVelocityHoldEnabled; }
 
 	const FDroneEstimatedState& GetEstimatedState() const { return EstimatedState; }
 	const FDroneControlOutput& GetControlOutput() const { return ControlOutput; }
@@ -161,6 +190,22 @@ protected:
 
 	UPROPERTY( BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	EDroneFlightMode ActiveFlightMode = EDroneFlightMode::Angle;
+
+	/** 姿态控制模式：决定摇杆如何映射到姿态目标（Manual/Acro/Angle） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
+	EDroneAttitudeMode AttitudeMode = EDroneAttitudeMode::Angle;
+
+	/** 高度保持开关：启用后飞控自动维持高度，油门杆控制垂直速度 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
+	bool bAltitudeHoldEnabled = false;
+
+	/** 位置保持开关：启用后锁定水平位置，自动启用高度保持和水平速度控制 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
+	bool bPositionHoldEnabled = false;
+
+	/** 水平速度控制开关：启用后摇杆映射为水平速度目标 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
+	bool bVelocityHoldEnabled = false;
 
 	UPROPERTY( BlueprintReadOnly, Category = "Drone|FlightController", meta = (AllowPrivateAccess = "true"))
 	FDroneEstimatedState EstimatedState;

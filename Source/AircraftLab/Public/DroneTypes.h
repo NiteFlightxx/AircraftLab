@@ -27,6 +27,22 @@ enum class EDroneArmState : uint8
 };
 
 /**
+ * 姿态控制模式枚举（决定摇杆如何映射到姿态目标）
+ */
+UENUM(BlueprintType)
+enum class EDroneAttitudeMode : uint8
+{
+	/** 完全手动：飞控不干预姿态，摇杆直接控制电机输出 */
+	Manual UMETA(DisplayName = "Manual"),
+
+	/** 角速率模式：摇杆控制机体角速度，松杆不会自动回平 */
+	Acro UMETA(DisplayName = "Acro"),
+
+	/** 角度模式：摇杆控制目标倾斜角度，松杆自动回平。最常用的稳定模式 */
+	Angle UMETA(DisplayName = "Angle")
+};
+
+/**
  * 无人机飞行模式枚举
  */
 UENUM(BlueprintType)

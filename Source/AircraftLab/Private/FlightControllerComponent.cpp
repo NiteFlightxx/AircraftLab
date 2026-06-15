@@ -310,6 +310,10 @@ void UFlightControllerComponent::BeginPlay()
 
 	RefreshReferences();
 	ActiveFlightMode = InitialFlightMode;
+
+	// 根据 InitialFlightMode 预设初始化姿态模式和功能开关
+	SetFlightMode(InitialFlightMode);
+
 	ArmState = bStartArmed ? EDroneArmState::Armed : EDroneArmState::Disarmed;
 	UpdateHomeState(true);
 	ResetControllerState();
@@ -371,6 +375,20 @@ void UFlightControllerComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		RunControlLoop(ControlStepSeconds, PilotInput);
 		ControlAccumulatorSeconds -= ControlStepSeconds;
 	}
+
+	// 力施加：每帧只调用一次（而非每控制子步一次），避免250Hz控制循环中力被重复累加
+	for (UAirscrewComponent* Airscrew : Airscrews)
+	{
+		if (Airscrew)
+		{
+			Airscrew->ApplyThrustForce();
+		}
+	}
+}
+
+void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTime)
+{
+	Super::AsyncPhysicsTickComponent(DeltaTime, SimTime);
 }
 
 /**
@@ -424,8 +442,8 @@ void UFlightControllerComponent::Disarm()
 }
 
 /**
- * @brief 设置飞行模式
- * @param NewFlightMode 新的飞行模式
+ * @brief 设置飞行模式（便捷预设，会同时设置姿态模式和功能开关的组合）
+ * @param NewFlightMode 飞行模式预设
  */
 void UFlightControllerComponent::SetFlightMode(EDroneFlightMode NewFlightMode)
 {
@@ -435,6 +453,128 @@ void UFlightControllerComponent::SetFlightMode(EDroneFlightMode NewFlightMode)
 	}
 
 	ActiveFlightMode = NewFlightMode;
+
+	// 根据预设模式设置姿态模式和功能开关的组合
+	switch (NewFlightMode)
+	{
+	case EDroneFlightMode::Manual:
+		AttitudeMode = EDroneAttitudeMode::Manual;
+		bAltitudeHoldEnabled = false;
+		bPositionHoldEnabled = false;
+		bVelocityHoldEnabled = false;
+		break;
+
+	case EDroneFlightMode::Acro:
+		AttitudeMode = EDroneAttitudeMode::Acro;
+		bAltitudeHoldEnabled = false;
+		bPositionHoldEnabled = false;
+		bVelocityHoldEnabled = false;
+		break;
+
+	case EDroneFlightMode::Angle:
+		AttitudeMode = EDroneAttitudeMode::Angle;
+		bAltitudeHoldEnabled = false;
+		bPositionHoldEnabled = false;
+		bVelocityHoldEnabled = false;
+		break;
+
+	case EDroneFlightMode::AltitudeHold:
+		AttitudeMode = EDroneAttitudeMode::Angle;
+		bAltitudeHoldEnabled = true;
+		bPositionHoldEnabled = false;
+		bVelocityHoldEnabled = false;
+		break;
+
+	case EDroneFlightMode::VelocityHold:
+		AttitudeMode = EDroneAttitudeMode::Angle;
+		bAltitudeHoldEnabled = true;
+		bPositionHoldEnabled = false;
+		bVelocityHoldEnabled = true;
+		break;
+
+	case EDroneFlightMode::PositionHold:
+		AttitudeMode = EDroneAttitudeMode::Angle;
+		bAltitudeHoldEnabled = true;
+		bPositionHoldEnabled = true;
+		bVelocityHoldEnabled = true;
+		break;
+
+	case EDroneFlightMode::Mission:
+	case EDroneFlightMode::ReturnToHome:
+	case EDroneFlightMode::AutoLand:
+		AttitudeMode = EDroneAttitudeMode::Angle;
+		bAltitudeHoldEnabled = true;
+		bPositionHoldEnabled = true;
+		bVelocityHoldEnabled = true;
+		break;
+	}
+
+	ResetControllerState();
+}
+
+void UFlightControllerComponent::SetAttitudeMode(EDroneAttitudeMode NewAttitudeMode)
+{
+	if (AttitudeMode == NewAttitudeMode)
+	{
+		return;
+	}
+
+	AttitudeMode = NewAttitudeMode;
+	ResetControllerState();
+}
+
+void UFlightControllerComponent::SetAltitudeHoldEnabled(bool bEnabled)
+{
+	if (bAltitudeHoldEnabled == bEnabled)
+	{
+		return;
+	}
+
+	bAltitudeHoldEnabled = bEnabled;
+
+	// 关闭高度保持时，同时关闭依赖它的位置保持
+	if (!bEnabled)
+	{
+		bPositionHoldEnabled = false;
+	}
+
+	ResetControllerState();
+}
+
+void UFlightControllerComponent::SetPositionHoldEnabled(bool bEnabled)
+{
+	if (bPositionHoldEnabled == bEnabled)
+	{
+		return;
+	}
+
+	bPositionHoldEnabled = bEnabled;
+
+	// 位置保持需要高度保持和速度控制
+	if (bEnabled)
+	{
+		bAltitudeHoldEnabled = true;
+		bVelocityHoldEnabled = true;
+	}
+
+	ResetControllerState();
+}
+
+void UFlightControllerComponent::SetVelocityHoldEnabled(bool bEnabled)
+{
+	if (bVelocityHoldEnabled == bEnabled)
+	{
+		return;
+	}
+
+	bVelocityHoldEnabled = bEnabled;
+
+	// 关闭速度控制时，同时关闭依赖它的位置保持
+	if (!bEnabled)
+	{
+		bPositionHoldEnabled = false;
+	}
+
 	ResetControllerState();
 }
 
@@ -667,8 +807,8 @@ void UFlightControllerComponent::UpdateHomeState(bool bForceResetHome)
  * 整个控制环路采用由外到内的级联结构，外环的输出作为内环的设定值：
  *
  *   ┌─────────────┐    ┌──────────────┐    ┌──────────────┐    ┌────────────┐
- *   │ 位置/速度环  │───>│  姿态角环    │───>│  角速度环    │───>│  混合器    │──> 电机
- *   │ (外环)       │    │ (中环)       │    │ (内环)       │    │ (分配器)   │
+ *   │ 位置/速度环   │───>│  姿态角环     │───> │  角速度环    │───> │  混合器     │──> 电机
+ *   │ (外环)       |    │ (中环)       │     │ (内环)       │    │ (分配器)    │
  *   └─────────────┘    └──────────────┘    └──────────────┘    └────────────┘
  *
  * 信号流：
@@ -729,7 +869,6 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 		}
 		
 		Airscrew->UpdateRotorState(DeltaSeconds);
-		Airscrew->ApplyThrustForce();
 
 		if (ControlOutput.RotorCommands.IsValidIndex(RotorIndex))
 		{
@@ -1130,7 +1269,7 @@ FVector UFlightControllerComponent::ComputeDesiredBodyRates(const FDronePilotInp
 	float DesiredRollRate = PilotInput.Roll * ControllerConfig.Limits.MaxRollRateDegreesPerSec;
 	float DesiredPitchRate = -PilotInput.Pitch * ControllerConfig.Limits.MaxPitchRateDegreesPerSec;
 
-	if (ActiveFlightMode != EDroneFlightMode::Acro && ActiveFlightMode != EDroneFlightMode::Manual)
+	if (AttitudeMode != EDroneAttitudeMode::Acro && AttitudeMode != EDroneAttitudeMode::Manual)
 	{
 		DesiredRollRate = AnglePidState.Roll.UpdateFromError(
 			RollError,
@@ -1990,14 +2129,13 @@ float UFlightControllerComponent::GetWorldGravityMagnitude() const
 }
 
 /**
- * @brief 检查当前是否使用高度保持模式
- * @return 是否使用高度保持模式
+ * @brief 检查当前是否使用高度保持
+ * 高度保持由 bAltitudeHoldEnabled 控制，或在 PositionHold/Mission/ReturnToHome/AutoLand 模式下隐含启用
  */
 bool UFlightControllerComponent::UsesAltitudeHoldMode() const
 {
-	return ActiveFlightMode == EDroneFlightMode::AltitudeHold
+	return bAltitudeHoldEnabled
 		|| ActiveFlightMode == EDroneFlightMode::PositionHold
-		|| ActiveFlightMode == EDroneFlightMode::VelocityHold
 		|| ActiveFlightMode == EDroneFlightMode::ReturnToHome
 		|| ActiveFlightMode == EDroneFlightMode::Mission
 		|| ActiveFlightMode == EDroneFlightMode::AutoLand;
@@ -2005,12 +2143,11 @@ bool UFlightControllerComponent::UsesAltitudeHoldMode() const
 
 /**
  * @brief 检查当前是否使用水平速度模式
- * @return 是否使用水平速度模式
  */
 bool UFlightControllerComponent::UsesHorizontalVelocityMode() const
 {
-	return ActiveFlightMode == EDroneFlightMode::VelocityHold
-		|| ActiveFlightMode == EDroneFlightMode::PositionHold
+	return bVelocityHoldEnabled
+		|| bPositionHoldEnabled
 		|| ActiveFlightMode == EDroneFlightMode::ReturnToHome
 		|| ActiveFlightMode == EDroneFlightMode::Mission
 		|| ActiveFlightMode == EDroneFlightMode::AutoLand;
@@ -2018,11 +2155,10 @@ bool UFlightControllerComponent::UsesHorizontalVelocityMode() const
 
 /**
  * @brief 检查当前是否使用位置保持模式
- * @return 是否使用位置保持模式
  */
 bool UFlightControllerComponent::UsesPositionHoldMode() const
 {
-	return ActiveFlightMode == EDroneFlightMode::PositionHold
+	return bPositionHoldEnabled
 		|| ActiveFlightMode == EDroneFlightMode::ReturnToHome
 		|| ActiveFlightMode == EDroneFlightMode::Mission
 		|| ActiveFlightMode == EDroneFlightMode::AutoLand;
@@ -2030,12 +2166,12 @@ bool UFlightControllerComponent::UsesPositionHoldMode() const
 
 /**
  * @brief 检查当前是否使用偏航保持模式
- * @return 是否使用偏航保持模式
+ * 非手动模式下默认启用偏航保持
  */
 bool UFlightControllerComponent::UsesYawHoldMode() const
 {
-	return ActiveFlightMode != EDroneFlightMode::Manual
-		&& ActiveFlightMode != EDroneFlightMode::Acro;
+	return AttitudeMode != EDroneAttitudeMode::Manual
+		&& AttitudeMode != EDroneAttitudeMode::Acro;
 }
 
 /**
