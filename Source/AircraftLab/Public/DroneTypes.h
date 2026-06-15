@@ -296,6 +296,13 @@ struct AIRCRAFTLAB_API FDroneControlTargets
 
 /**
  * 一阶低通滤波器配置
+ *
+ * 数学原理 - 一阶低通滤波器（First-order Low-pass Filter）：
+ * 传递函数：  H(s) = 1 / (τs + 1)，其中 τ = RC = 1/(2π·f_c)
+ * 连续域微分方程：  τ · dy/dt + y = x
+ * 离散化（前向欧拉）：  y[n] = y[n-1] + α · (x[n] - y[n-1])
+ *   其中 α = Δt / (τ + Δt) = Δt / (1/(2π·f_c) + Δt)
+ * 截止频率 f_c：信号幅度衰减到 -3dB（约0.707倍）的频率
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FDroneFirstOrderFilterConfig
@@ -330,7 +337,18 @@ struct AIRCRAFTLAB_API FDroneFirstOrderFilterState
 		bInitialized = false;
 	}
 
-	/** 更新滤波值 */
+	/**
+	 * 更新滤波值
+	 *
+	 * 数学公式 - 一阶低通滤波离散更新：
+	 *   Rc = 1/(2π·f_c)                   -- 时间常数（秒）
+	 *   α  = Δt/(Rc + Δt)                 -- 滤波系数（0～1）
+	 *   y  = y_prev + α·(x - y_prev)      -- 指数加权移动平均（EWMA）
+	 *
+	 * 等价于：y = (1-α)·y_prev + α·x
+	 * α越大（截止频率越高或Δt越大），滤波越弱，跟随越快。
+	 * 首次采样直接赋值，避免从0开始的收敛过程。
+	 */
 	float Update(float Input, float DeltaSeconds, const FDroneFirstOrderFilterConfig& Config)
 	{
 		if (!bInitialized)
@@ -346,8 +364,10 @@ struct AIRCRAFTLAB_API FDroneFirstOrderFilterState
 			return Value;
 		}
 
+		// α = Δt / (1/(2πf_c) + Δt)
 		const float Rc = 1.0f / (2.0f * PI * Config.CutoffFrequencyHz);
 		const float Alpha = DeltaSeconds / (Rc + DeltaSeconds);
+		// y[n] = y[n-1] + α·(x[n] - y[n-1])
 		Value += (Input - Value) * Alpha;
 		return Value;
 	}
@@ -355,6 +375,29 @@ struct AIRCRAFTLAB_API FDroneFirstOrderFilterState
 
 /**
  * PID 控制器参数
+ *
+ * 数学原理 - PID控制律（位置式 / Parallel Form）：
+ *   u(t) = Kp·e(t) + Ki·∫e(t)·dt + Kd·de(t)/dt + Kff·ff(t)
+ *
+ * 其中：
+ *   Kp - 比例增益：产生与当前误差成正比的输出，决定响应速度
+ *   Ki - 积分增益：累加历史误差以消除稳态误差（如重力、风偏等持续扰动）
+ *   Kd - 微分增益：根据误差变化率预测趋势，提供阻尼、抑制超调
+ *   Kff- 前馈增益：将期望值直接注入控制回路，提高跟踪性能
+ *
+ * 离散实现（后向差分）：
+ *   I[n] = I[n-1] + e[n]·Δt                      -- 积分项累加
+ *   D[n] = (e[n] - e[n-1]) / Δt                   -- 微分项（原始）
+ *   u[n] = Kp·e[n] + Ki·I[n] + Kd·D[n] + Kff·ff  -- 总输出
+ *
+ * 抗饱和（Anti-windup）：
+ *   IntegralLimit：积分项绝对值上限，防止长时间误差导致积分无限增大
+ *   OutputLimit：输出绝对值上限，clamp后若输出饱和则冻结积分累加
+ *   bFreezeIntegralWhenSaturated：输出饱和时回退积分，防止积分饱和延迟恢复
+ *
+ * 微分滤波：
+ *   DerivativeCutoffHz：微分项低通滤波截止频率
+ *   纯微分会放大高频噪声，通过一阶低通滤波器抑制噪声能量
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FDronePidGains
@@ -448,7 +491,19 @@ struct AIRCRAFTLAB_API FDronePidState
 		bHasPreviousMeasurement = false;
 	}
 
-	/** 基于误差更新（标准位置式 PID） */
+	/**
+	 * 基于误差更新（标准位置式 PID）
+	 *
+	 * 数学公式：
+	 *   I[n] = I[n-1] + e[n] · Δt                    -- 矩形积分法累加
+	 *   D[n] = (e[n] - e[n-1]) / Δt                   -- 后向差分
+	 *   D[n] = LowPassFilter(D[n], f_c)               -- 微分项低通滤波
+	 *   u[n] = Kp·e[n] + Ki·I[n] + Kd·D[n] + Kff·ff  -- PID输出
+	 *
+	 * 抗饱和（Conditional Integration / Clamping）：
+	 *   当 u 超出 OutputLimit 并被 clamp 时，回退本次积分累加（PreviousIntegral）
+	 *   防止积分项在输出已饱和时继续无意义累积
+	 */
 	float UpdateFromError(float Error, float DeltaSeconds, const FDronePidGains& Gains, float FeedForwardInput = 0.0f)
 	{
 		if (DeltaSeconds <= UE_SMALL_NUMBER)
@@ -456,6 +511,7 @@ struct AIRCRAFTLAB_API FDronePidState
 			return 0.0f;
 		}
 
+		// 积分项：I += e·Δt，限幅防止积分饱和
 		const float PreviousIntegral = Integral;
 		Integral += Error * DeltaSeconds;
 		if (Gains.IntegralLimit > 0.0f)
@@ -463,12 +519,14 @@ struct AIRCRAFTLAB_API FDronePidState
 			Integral = FMath::Clamp(Integral, -Gains.IntegralLimit, Gains.IntegralLimit);
 		}
 
+		// 微分项：de/dt → 低通滤波
 		const float RawDerivative = bHasPreviousError ? (Error - PreviousError) / DeltaSeconds : 0.0f;
 		const float Derivative = ApplyDerivativeFilter(RawDerivative, DeltaSeconds, Gains);
 
 		PreviousError = Error;
 		bHasPreviousError = true;
 
+		// u = Kp·e + Ki·I + Kd·D + Kff·ff
 		const float OutputUnclamped = Error * Gains.Kp + Integral * Gains.Ki + Derivative * Gains.Kd + FeedForwardInput * Gains.Kff;
 		float Output = OutputUnclamped;
 		if (Gains.OutputLimit > 0.0f)
@@ -476,6 +534,7 @@ struct AIRCRAFTLAB_API FDronePidState
 			Output = FMath::Clamp(Output, -Gains.OutputLimit, Gains.OutputLimit);
 		}
 
+		// 输出饱和时回退积分累加，防止积分饱和
 		if (Gains.bFreezeIntegralWhenSaturated && !FMath::IsNearlyEqual(Output, OutputUnclamped))
 		{
 			Integral = PreviousIntegral;
@@ -484,7 +543,24 @@ struct AIRCRAFTLAB_API FDronePidState
 		return Output;
 	}
 
-	/** 基于测量值更新（用于测量值滤波形式的 PID） */
+	/** 
+	 * 基于测量值更新（测量值微分形式的 PID，Derivative on Measurement）
+	 *
+	 * 与 UpdateFromError 的区别：
+	 *   微分项使用 -d(测量值)/dt 而非 d(误差)/dt
+	 *   目的：避免设定值突变（step change）导致的"微分冲击"（Derivative Kick）
+	 *
+	 * 数学公式：
+	 *   e[n] = SP[n] - PV[n]                           -- 误差 = 设定值 - 测量值
+	 *   I[n] = I[n-1] + e[n] · Δt                      -- 积分累加
+	 *   D[n] = -(PV[n] - PV[n-1]) / Δt                  -- 测量值微分（注意负号）
+	 *   D[n] = LowPassFilter(D[n], f_c)                 -- 微分滤波
+	 *   u[n] = Kp·e[n] + Ki·I[n] + Kd·D[n] + Kff·ff  -- 总输出
+	 *
+	 * 为什么 D = -d(PV)/dt 而非 d(e)/dt？
+	 *   假设 SP 从0突变到1，则 d(e)/dt = ∞（瞬时冲击），会导致输出尖峰。
+	 *   而 d(PV)/dt 由系统物理惯性限制，变化平滑，不会产生冲击。
+	 */
 	float UpdateFromMeasurement(float Setpoint, float Measurement, float DeltaSeconds, const FDronePidGains& Gains, float FeedForwardInput = 0.0f)
 	{
 		if (DeltaSeconds <= UE_SMALL_NUMBER)
@@ -492,7 +568,9 @@ struct AIRCRAFTLAB_API FDronePidState
 			return 0.0f;
 		}
 
+		// e = SP - PV
 		const float Error = Setpoint - Measurement;
+		// 积分项：I += e·Δt，限幅防饱和
 		const float PreviousIntegral = Integral;
 		Integral += Error * DeltaSeconds;
 		if (Gains.IntegralLimit > 0.0f)
@@ -500,6 +578,7 @@ struct AIRCRAFTLAB_API FDronePidState
 			Integral = FMath::Clamp(Integral, -Gains.IntegralLimit, Gains.IntegralLimit);
 		}
 
+		// 微分项（测量值形式）：D = -d(PV)/dt，注意负号避免设定值突变冲击
 		const float RawDerivative = bHasPreviousMeasurement ? -(Measurement - PreviousMeasurement) / DeltaSeconds : 0.0f;
 		const float Derivative = ApplyDerivativeFilter(RawDerivative, DeltaSeconds, Gains);
 
@@ -508,6 +587,7 @@ struct AIRCRAFTLAB_API FDronePidState
 		bHasPreviousError = true;
 		bHasPreviousMeasurement = true;
 
+		// u = Kp·e + Ki·I + Kd·D_filtered + Kff·ff
 		const float OutputUnclamped = Error * Gains.Kp + Integral * Gains.Ki + Derivative * Gains.Kd + FeedForwardInput * Gains.Kff;
 		float Output = OutputUnclamped;
 		if (Gains.OutputLimit > 0.0f)
@@ -515,6 +595,7 @@ struct AIRCRAFTLAB_API FDronePidState
 			Output = FMath::Clamp(Output, -Gains.OutputLimit, Gains.OutputLimit);
 		}
 
+		// 输出饱和时冻结积分，防止积分饱和
 		if (Gains.bFreezeIntegralWhenSaturated && !FMath::IsNearlyEqual(Output, OutputUnclamped))
 		{
 			Integral = PreviousIntegral;
@@ -524,6 +605,12 @@ struct AIRCRAFTLAB_API FDronePidState
 	}
 
 private:
+	/**
+	 * 微分项一阶低通滤波
+	 * 公式：D_filtered = D_filtered_prev + α·(D_raw - D_filtered_prev)
+	 *   α = Δt / (1/(2πf_c) + Δt)
+	 * 无滤波（f_c=0）或 Δt=0 时直接使用原始微分值
+	 */
 	float ApplyDerivativeFilter(float RawDerivative, float DeltaSeconds, const FDronePidGains& Gains)
 	{
 		if (Gains.DerivativeCutoffHz <= UE_SMALL_NUMBER || DeltaSeconds <= UE_SMALL_NUMBER)
@@ -532,8 +619,10 @@ private:
 			return FilteredDerivative;
 		}
 
+		// α = Δt / (1/(2πf_c) + Δt)
 		const float Rc = 1.0f / (2.0f * PI * Gains.DerivativeCutoffHz);
 		const float Alpha = DeltaSeconds / (Rc + DeltaSeconds);
+		// y[n] = y[n-1] + α·(x[n] - y[n-1])
 		FilteredDerivative += (RawDerivative - FilteredDerivative) * Alpha;
 		return FilteredDerivative;
 	}
@@ -804,6 +893,21 @@ struct AIRCRAFTLAB_API FDroneAerodynamicsConfig
 
 /**
  * 无刷电机模型配置（转速响应、怠速等）
+ *
+ * 物理原理 - 电机一阶响应模型：
+ * 电机转速对外部指令的响应近似为一阶惯性系统：
+ *   τ · dω/dt + ω = ω_target
+ *
+ * 其中 τ 为时间常数，SpinUpTimeSeconds / SpinDownTimeSeconds 控制加减速响应速度。
+ *
+ * 转速-推力关系（螺旋桨空气动力学）：
+ *   T ∝ ω²  （推力与转速平方成正比，基于动量理论）
+ *   CommandExponent = 2.0 意味着：
+ *     ω_target = ω_idle + (ω_max - ω_idle) × Command^2
+ *
+ * 指令平滑（Slew Rate Limiter）：
+ *   |dc/dt| ≤ MaxCommandSlewPerSecond
+ *   通过限制指令变化率防止指令突变导致的电机电流冲击。
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FDroneMotorModelConfig
@@ -841,6 +945,26 @@ struct AIRCRAFTLAB_API FDroneMotorModelConfig
 
 /**
  * 单个旋翼的定义（位置、方向、物理参数）
+ *
+ * 物理公式 - 螺旋桨推力与扭矩：
+ *
+ * 1. 推力公式（基于动量理论 / 叶素理论简化）：
+ *    T = T_max × (RPM / RPM_max)² × C_T × η
+ *   其中 T_max 为最大推力（牛顿），C_T 为推力系数，η 为效率
+ *
+ * 2. 反扭矩公式（螺旋桨旋转阻力）：
+ *    τ = k_τ × T
+ *    k_τ 为反扭矩系数（ReactionTorqueCoefficient），
+ *    扭矩方向与推力方向平行，符号由旋转方向决定
+ *
+ * 3. 旋转方向符号约定：
+ *    CW（顺时针）：direction_sign = -1
+ *    CCW（逆时针）：direction_sign = +1
+ *    多旋翼通过正反桨抵消全部反扭矩，同时利用差速产生偏航力矩
+ *
+ * 4. 控制分配（Control Allocation）：
+ *    ControlAuthorityScale 决定该旋翼在混合器中的控制权重
+ *    有效分配推力 = T_max × η × C_T × ControlAuthorityScale
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FDroneRotorDefinition
@@ -917,21 +1041,38 @@ struct AIRCRAFTLAB_API FDroneRotorDefinition
 		return !SocketName.IsNone();
 	}
 
+	/**
+	 * 获取归一化后的推力方向（机体局部坐标系）
+	 * 若未设置推力方向则默认向上（Z轴）
+	 */
 	FVector GetNormalizedThrustAxisLocal() const
 	{
 		return ThrustAxisLocal.IsNearlyZero() ? FVector::UpVector : ThrustAxisLocal.GetSafeNormal();
 	}
 
+	/**
+	 * 获取旋转方向符号
+	 * CW = -1（顺时针）, CCW = +1（逆时针）
+	 * 用于确定反扭矩方向
+	 */
 	float GetSpinDirectionSign() const
 	{
 		return SpinDirection == EDroneRotorSpinDirection::Clockwise ? -1.0f : 1.0f;
 	}
 
+	/**
+	 * 获取有效最大推力（牛顿）
+	 * T_eff_max = T_max × max(η, 0)
+	 */
 	float GetEffectiveMaxThrust() const
 	{
 		return MaxThrustForce * FMath::Max(Efficiency, 0.0f);
 	}
 
+	/**
+	 * 获取有效反扭矩系数
+	 * k_τ_eff = k_τ × max(η, 0)
+	 */
 	float GetEffectiveReactionTorqueCoefficient() const
 	{
 		return ReactionTorqueCoefficient * FMath::Max(Efficiency, 0.0f);

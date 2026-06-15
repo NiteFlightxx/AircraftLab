@@ -2,8 +2,6 @@
 
 #include "AircraftPawn.h"
 #include "AirscrewComponent.h"
-#include "Components/PrimitiveComponent.h"
-#include "Components/SkeletalMeshComponent.h"
 #include "DroneInputComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -141,19 +139,38 @@ const TCHAR* GetConsistencyLabel(bool bIsConsistent)
 
 namespace FlightControllerAllocation
 {
+/** 力矩/力空间维度：Thrust, Roll, Pitch, Yaw = 4 */
 constexpr int32 WrenchAxisCount = 4;
 constexpr double AuthorityEpsilon = 1.0e-6;
 constexpr double CommandTolerance = 1.0e-4;
 
+/**
+ * 获取旋翼的最大物理推力（考虑效率和推力系数）
+ * T_phys_max = T_max × η × C_T
+ */
 double GetRotorMaxPhysicalThrust(const FDroneRotorDefinition& RotorDefinition)
 {
 	return RotorDefinition.GetEffectiveMaxThrust() * FMath::Max(RotorDefinition.ThrustCoefficient, 0.0f);
 }
 
+/**
+ * 获取旋翼的最大分配推力（考虑控制权重）
+ * T_alloc_max = T_phys_max × ControlAuthorityScale
+ */
 double GetRotorMaxAllocatedThrust(const FDroneRotorDefinition& RotorDefinition)
 {
 	return GetRotorMaxPhysicalThrust(RotorDefinition) * FMath::Clamp(RotorDefinition.ControlAuthorityScale, 0.0f, 1.0f);
 }
+
+/**
+ * 将目标推力转换为归一化电机指令
+ *
+ * 逆推公式（基于 T = T_max × (ω/ω_max)² × C_T × η 反解 Command）：
+ *   ω_target = sqrt(T_target / T_phys_max) × ω_max
+ *   Command  = ((ω_target - ω_idle) / (ω_max - ω_idle)) ^ (1/exp)
+ *
+ * 物理约束：ω_target ∈ [0, ω_max], Command ∈ [0, 1]
+ */
 
 float ConvertThrustToCommand(const FDroneRotorDefinition& RotorDefinition, double TargetThrust)
 {
@@ -163,11 +180,15 @@ float ConvertThrustToCommand(const FDroneRotorDefinition& RotorDefinition, doubl
 		return 0.0f;
 	}
 
+	// T/T_max = (ω/ω_max)² → ω_target/ω_max = sqrt(T_target/T_max)
 	const double MaxRpm = FMath::Max(static_cast<double>(RotorDefinition.Motor.MaxRpm), 1.0);
 	const double IdleRpm = FMath::Clamp(static_cast<double>(RotorDefinition.Motor.IdleRpm), 0.0, MaxRpm);
 	const double TargetRpm = FMath::Sqrt(FMath::Clamp(TargetThrust / MaxPhysicalThrust, 0.0, 1.0)) * MaxRpm;
+	
+	// ShapedCommand = (ω_target - ω_idle) / (ω_max - ω_idle)
 	const double ShapedCommand = FMath::Clamp((TargetRpm - IdleRpm) / FMath::Max(MaxRpm - IdleRpm, static_cast<double>(UE_SMALL_NUMBER)), 0.0, 1.0);
 
+	// Command = ShapedCommand ^ (1/exp)，反推原始指令
 	return ShapedCommand <= AuthorityEpsilon
 		? 0.0f
 		: static_cast<float>(FMath::Pow(ShapedCommand, 1.0 / FMath::Max(static_cast<double>(RotorDefinition.Motor.CommandExponent), 0.01)));
@@ -183,8 +204,13 @@ double GetBalancedAuthority(double PositiveAuthority, double NegativeAuthority)
 	return FMath::Max(PositiveAuthority, NegativeAuthority);
 }
 
-bool SolveLinearSystem4(const double Matrix[WrenchAxisCount][WrenchAxisCount], const double Rhs[WrenchAxisCount], double OutSolution[WrenchAxisCount])
+/**
+ * 高斯-约旦消元法求解 4x4 线性系统 M·x = b
+ * 用于阻尼伪逆控制分配中求解 (J^T·J + λ²·I)·y = w
+ * 返回 false 表示矩阵奇异、无解
+ */
 {
+	// 构建增广矩阵 [M | b]
 	double Augmented[WrenchAxisCount][WrenchAxisCount + 1] = {};
 
 	for (int32 Row = 0; Row < WrenchAxisCount; ++Row)
@@ -359,9 +385,10 @@ void UFlightControllerComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	}
 
 	// 在游戏线程缓存重力值（物理线程中 GetWorld() 不安全）
-	CachedGravityMagnitudeCmPerSecSq = FMath::Max(GetWorldGravityMagnitude(), 1.0f);
-
-	UpdateEstimatedState(DeltaTime);
+	if (UWorld* World = GetWorld())
+	{
+		CachedGravityMagnitudeCmPerSecSq = FMath::Abs(World->GetGravityZ());
+	}
 
 	const FDronePilotInput PilotInput = DroneInput ? DroneInput->GetPilotInput() : FDronePilotInput();
 	UpdateRequestedModeAndArmState(PilotInput);
@@ -408,9 +435,6 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 	// 从物理线程更新估计状态（避免游戏线程 API 在物理线程崩溃）
 	UpdateEstimatedState_PhysicsThread(DeltaTime, SimTime, BodyHandle);
 
-	// 标记正在物理线程中运行（影响 GetRotorPositionFromCenterOfMassBodyCm 等函数的行为）
-	bInPhysicsTick = true;
-
 	// 在物理子步中运行控制循环
 	ControlAccumulatorSeconds = FMath::Min(ControlAccumulatorSeconds + DeltaTime, 0.25f);
 	const float ControlStepSeconds = 1.0f / FMath::Max(ControlLoopRateHz, 1.0f);
@@ -429,9 +453,6 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 			Airscrew->ApplyThrustForce_PhysicsThread(BodyHandle);
 		}
 	}
-
-	// 重置物理线程标记
-	bInPhysicsTick = false;
 }
 
 /**
@@ -761,57 +782,6 @@ void UFlightControllerComponent::InitializeDefaultControllerConfig()
 	ControllerConfig.Allocator.DampedPseudoInverseLambda = 0.05f;
 }
 
-/**
- * @brief 更新无人机状态估计
- *
- * 数学原理 - 状态估计与数值微分：
- * 1. 加速度通过一阶后向差分（数值微分）计算：
- *      a[k] = (v[k] - v[k-1]) / dt
- *    这是最简单的数值微分方法，等价于速度的一阶差商。
- *    缺点是会放大高频噪声，但在此处作为内环状态估计足够使用。
- *    更高级的实现可用低通滤波器或卡尔曼滤波器。
- *
- * 2. 完整状态向量 x = [p, v, a, θ, ω, α]：
- *    - p: 位置（世界坐标系，厘米）
- *    - v: 线速度（世界坐标系，厘米/秒）
- *    - a: 线加速度（世界坐标系，厘米/秒²）
- *    - θ: 姿态角（欧拉角 Roll/Pitch/Yaw，度）
- *    - ω: 角速度（机体坐标系，度/秒）
- *    - α: 角加速度（此处设为零，未做微分估计）
- *
- * 3. 角速度需要从世界坐标系转换到机体坐标系：
- *    ω_body = R^(-1) · ω_world
- *    其中 R 为机体的旋转矩阵。
- *
- * @param DeltaSeconds 时间增量
- */
-void UFlightControllerComponent::UpdateEstimatedState(float DeltaSeconds)
-{
-	if (!BodyPrimitive)
-	{
-		return;
-	}
-
-	const FVector CurrentVelocity = GetBodyLinearVelocityCmPerSec();
-	const FVector CurrentAcceleration = (bHasPreviousLinearVelocity && DeltaSeconds > UE_SMALL_NUMBER)
-		? (CurrentVelocity - PreviousLinearVelocityCmPerSec) / DeltaSeconds
-		: FVector::ZeroVector;
-
-	PreviousLinearVelocityCmPerSec = CurrentVelocity;
-	bHasPreviousLinearVelocity = true;
-
-	EstimatedState.State.TimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-	EstimatedState.State.PositionCm = BodyPrimitive->GetComponentLocation();
-	EstimatedState.State.VelocityCmPerSec = CurrentVelocity;
-	EstimatedState.State.AccelerationWorldCmPerSecSq = CurrentAcceleration;
-	EstimatedState.State.AttitudeDegrees = BodyPrimitive->GetComponentRotation();
-	EstimatedState.State.AngularVelocityBodyDegreesPerSec = GetBodyAngularVelocityDegreesPerSecond();
-	EstimatedState.State.AngularAccelerationBodyDegreesPerSecSq = FVector::ZeroVector;
-	EstimatedState.AltitudeReference = EDroneAltitudeReference::WorldZ;
-	EstimatedState.AttitudeConfidence = 1.0f;
-	EstimatedState.PositionConfidence = 1.0f;
-}
-
 void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaSeconds, float SimTime, Chaos::FRigidBodyHandle_Internal* BodyHandle)
 {
 	if (!BodyHandle)
@@ -830,7 +800,7 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 	CachedCenterOfMassWorld = BodyPos; // 物理线程中质心就是刚体位置
 	CachedLinearVelocityCmPerSec = BodyVel;
 
-	// 角速度：弧度→角度，世界→机体，并应用符号修正（与游戏线程 GetBodyAngularVelocityDegreesPerSecond 一致）
+	// 角速度：弧度→角度，世界→机体，并应用符号修正
 	const FVector AngVelWorldDeg = FMath::RadiansToDegrees(BodyAngVelRad);
 	const FVector AngVelBodyRaw = CachedBodyTransform.InverseTransformVectorNoScale(AngVelWorldDeg);
 	CachedAngularVelocityBodyDegPerSec = FVector(-AngVelBodyRaw.X, -AngVelBodyRaw.Y, AngVelBodyRaw.Z);
@@ -953,8 +923,7 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 			continue;
 		}
 		
-		// 物理线程中使用缓存的 Body 变换，游戏线程中传 nullptr 使用 GetComponentLocation
-		Airscrew->UpdateRotorState(DeltaSeconds, bInPhysicsTick ? &CachedBodyTransform : nullptr);
+		Airscrew->UpdateRotorState(DeltaSeconds, CachedBodyTransform);
 
 		if (ControlOutput.RotorCommands.IsValidIndex(RotorIndex))
 		{
@@ -1024,7 +993,7 @@ void UFlightControllerComponent::StopAllRotors(bool bResetController)
 		}
 
 		Airscrew->SetNormalizedCommand(0.0f);
-		Airscrew->UpdateRotorState(0.001f, bInPhysicsTick ? &CachedBodyTransform : nullptr);
+		Airscrew->UpdateRotorState(0.001f, CachedBodyTransform);
 		ControlOutput.RotorCommands[RotorIndex] = FlightControllerAllocation::MakeRotorCommand(Airscrew);
 	}
 }
@@ -1237,7 +1206,7 @@ FRotator UFlightControllerComponent::ComputeDesiredAttitude(const FDronePilotInp
 	}
 
 	const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(PilotInput, DeltaSeconds);
-	const float GravityMagnitude = bInPhysicsTick ? CachedGravityMagnitudeCmPerSecSq : FMath::Max(GetWorldGravityMagnitude(), 1.0f);
+	const float GravityMagnitude = CachedGravityMagnitudeCmPerSecSq;
 	const FRotator FlatYawRotation(0.0f, EstimatedState.State.AttitudeDegrees.Yaw, 0.0f);
 	const FVector ForwardFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::X);
 	const FVector RightFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::Y);
@@ -1432,7 +1401,27 @@ FVector UFlightControllerComponent::ApplyRatePid(const FVector& DesiredBodyRates
 }
 
 /**
- * @brief 基于力矩雅可比矩阵的阻尼伪逆控制分配
+ * 控制分配的核心是通过雅可比矩阵 J 将旋翼推力 u 映射到合力/合力矩 w：
+ *   w = J · u
+ *
+ * 其中 w = [F_z, τ_roll, τ_pitch, τ_yaw]^T 为4维力/力矩向量，
+ * u = [f_1, f_2, ..., f_n]^T 为各旋翼推力。
+ *
+ * 雅可比矩阵第 i 列（对应第 i 个旋翼）：
+ *   J[:, i] = [ n_i · e_z,                                    // 推力Z分量
+ *               -(r_i × (n_i · T_max_i)).x,                    // 绕X轴力矩（-Roll）
+ *               -(r_i × (n_i · T_max_i)).y,                    // 绕Y轴力矩（-Pitch）
+ *               (r_i × (n_i · T_max_i)).z + τ_reaction_i.z ]    // 绕Z轴力矩（Yaw含反扭矩）
+ *
+ * 其中：
+ *   n_i = 旋翼推力轴单位向量（机体坐标系）
+ *   r_i = 旋翼位置 - 质心（米，机体坐标系）
+ *   T_max_i = 最大分配推力（牛顿）
+ *   τ_reaction_i = T_max_i × k_τ × sign × n_i（反扭矩）
+ *
+ * 符号约定：
+ *   Roll 和 Pitch 力矩取负号，因为UE中正Roll向右、正Pitch向上，
+ * 而多旋翼中右侧旋翼升力产生负Roll力矩（向左滚转）
  */
 void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const FVector& AxisCommands)
 {
@@ -1858,16 +1847,8 @@ FVector UFlightControllerComponent::GetRotorPositionFromCenterOfMassBodyCm(const
 		return Airscrew->GetRelativeLocation();
 	}
 
-	// 物理线程中使用缓存的 Body 变换和旋翼局部位置
-	if (bInPhysicsTick)
-	{
-		const FVector RotorWorldPos = CachedBodyTransform.TransformPosition(Airscrew->GetRelativeLocationFromBody());
-		return CachedBodyTransform.InverseTransformVectorNoScale(RotorWorldPos - CachedCenterOfMassWorld);
-	}
-
-	const FTransform BodyTransform = BodyPrimitive->GetComponentTransform();
-	const FVector CenterOfMassWorld = BodyPrimitive->GetCenterOfMass();
-	return BodyTransform.InverseTransformVectorNoScale(Airscrew->GetComponentLocation() - CenterOfMassWorld);
+	const FVector RotorWorldPos = CachedBodyTransform.TransformPosition(Airscrew->GetRelativeLocationFromBody());
+	return CachedBodyTransform.InverseTransformVectorNoScale(RotorWorldPos - CachedCenterOfMassWorld);
 }
 
 FVector UFlightControllerComponent::GetRotorThrustAxisBody(const UAirscrewComponent* Airscrew) const
@@ -1877,33 +1858,50 @@ FVector UFlightControllerComponent::GetRotorThrustAxisBody(const UAirscrewCompon
 		return FVector::UpVector;
 	}
 
-	// 物理线程中使用缓存的 Body 变换和旋翼局部推力轴
-	if (bInPhysicsTick)
-	{
-		const FVector ThrustAxisBody = CachedBodyTransform.InverseTransformVectorNoScale(
-			Airscrew->GetThrustDirectionWorld_PhysicsThread(CachedBodyTransform));
-		return ThrustAxisBody.IsNearlyZero() ? FVector::UpVector : ThrustAxisBody.GetSafeNormal();
-	}
-
-	const FVector ThrustAxisWorld = Airscrew->GetThrustDirectionWorld();
-	const FVector ThrustAxisBody = BodyPrimitive
-		? BodyPrimitive->GetComponentTransform().InverseTransformVectorNoScale(ThrustAxisWorld)
-		: ThrustAxisWorld;
-
+	const FVector ThrustAxisBody = CachedBodyTransform.InverseTransformVectorNoScale(
+		CachedBodyTransform.TransformVectorNoScale(Airscrew->GetThrustAxisLocal()));
 	return ThrustAxisBody.IsNearlyZero() ? FVector::UpVector : ThrustAxisBody.GetSafeNormal();
 }
 
+/**
+ * 构建控制分配雅可比矩阵的一列
+ *
+ * 物理含义：单位推力下该旋翼对合力/力矩的贡献向量
+ *
+ * 雅可比列向量 = [F_z, -τ_x, -τ_y, τ_z]
+ *
+ * 其中：
+ *   F_z = T_max × n_z                -- 最大推力在Z轴（向上）的分量
+ *   τ   = r × F_max + τ_reaction     -- 总力矩 = 推力偏心矩 + 反扭矩
+ *     τ_x = r_y*F_z - r_z*F_y
+ *     τ_y = r_z*F_x - r_x*F_z
+ *     τ_z = r_x*F_y - r_y*F_x + k_τ*T_max*sign*n_z
+ *
+ * 注意：
+ *   Rolling/Pitch力矩取负号(-)，因为UE坐标约定与多旋翼控制约定相反
+ *   Roll: 正力矩绕+X轴（右倾），但右侧推力增加产生负X力矩
+ */
 FVector4 UFlightControllerComponent::BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm) const
 {
 	const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
 	const float MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition);
 	const FVector ThrustAxisBody = GetRotorThrustAxisBody(Airscrew);
+
+	// 最大推力向量（机体坐标系）
 	const FVector ForceAtMax = ThrustAxisBody * MaxAllocatedThrust;
+
+	// 力臂（厘米 → 米转换）
 	const FVector MomentArmMeters = LocalPositionFromCenterOfMassCm * 0.01f;
+
+	// 反扭矩向量（机体坐标系）: τ_reaction = T_max × k_τ_eff × sign × n_thrust
 	const FVector ReactionTorque = ThrustAxisBody
 		* (MaxAllocatedThrust * RotorDefinition.GetEffectiveReactionTorqueCoefficient() * RotorDefinition.GetSpinDirectionSign());
+
+	// 总力矩 = r × F + τ_reaction（叉积）
 	const FVector PhysicalTorque = FVector::CrossProduct(MomentArmMeters, ForceAtMax) + ReactionTorque;
 
+	// 返回 Jacobian 列: [F_z, -τ_x, -τ_y, τ_z]
+	// Roll/Pitch取负号：UE坐标系与多旋翼控制约定相反
 	return FVector4(ForceAtMax.Z, -PhysicalTorque.X, -PhysicalTorque.Y, PhysicalTorque.Z);
 }
 
@@ -2210,26 +2208,6 @@ float UFlightControllerComponent::MapCenteredThrottleToCollective(float Throttle
 }
 
 /**
- * @brief 获取世界重力加速度大小
- *
- * 物理原理：
- * UE中重力沿-Z方向，GetGravityZ()返回负值（如-980 cm/s²）。
- * 取绝对值得到重力加速度大小 g = |gravity_z|。
- * 默认值980 cm/s² = 9.8 m/s²，对应地球表面标准重力。
- *
- * @return 重力加速度大小（默认980 cm/s²）
- */
-float UFlightControllerComponent::GetWorldGravityMagnitude() const
-{
-	if (const UWorld* World = GetWorld())
-	{
-		return FMath::Abs(World->GetGravityZ());
-	}
-
-	return 980.0f;
-}
-
-/**
  * @brief 检查当前是否使用高度保持
  * 高度保持由 bAltitudeHoldEnabled 控制，或在 PositionHold/Mission/ReturnToHome/AutoLand 模式下隐含启用
  */
@@ -2314,68 +2292,4 @@ UDroneInputComponent* UFlightControllerComponent::ResolveDroneInput() const
 	return GetOwner() ? GetOwner()->FindComponentByClass<UDroneInputComponent>() : nullptr;
 }
 
-/**
- * @brief 获取机身角速度（度/秒）
- *
- * 数学原理 - 坐标系变换与符号约定：
- * 1. 物理引擎返回世界坐标系下的角速度 ω_world
- * 2. 转换到机体坐标系：ω_body = R^(-1) · ω_world
- *    其中 R 为机体的旋转矩阵，InverseTransformVectorNoScale 实现 R^(-1) 变换
- * 3. 符号修正：return (-ω_body.X, -ω_body.Y, ω_body.Z)
- *
- * 符号修正的物理原因：
- *   UE的物理引擎角速度与FRotator的Pitch/Roll约定存在符号差异。
- *   FRotator中：正Roll=右倾，正Pitch=抬头
- *   但物理引擎的机体角速度：正X旋转可能对应左倾（右手定则绕X轴）
- *   因此对Roll(X)和Pitch(Y)取负号，使角速度符号与FRotator姿态角变化方向一致。
- *   Yaw(Z)方向一致，无需取负。
- *
- * @return 机体坐标系下的角速度向量
- */
-FVector UFlightControllerComponent::GetBodyAngularVelocityDegreesPerSecond() const
-{
-	if (!BodyPrimitive)
-	{
-		return FVector::ZeroVector;
-	}
 
-	// 物理线程中使用缓存值（已在 UpdateEstimatedState_PhysicsThread 中计算）
-	if (bInPhysicsTick)
-	{
-		return CachedAngularVelocityBodyDegPerSec;
-	}
-
-	const FVector AngularVelocityWorld = BodyPrimitive->GetPhysicsAngularVelocityInDegrees();
-	const FVector AngularVelocityBody = BodyPrimitive->GetComponentTransform().InverseTransformVectorNoScale(AngularVelocityWorld);
-	return FVector(-AngularVelocityBody.X, -AngularVelocityBody.Y, AngularVelocityBody.Z);
-}
-
-/**
- * @brief 获取机身线速度（厘米/秒）
- *
- * 物理原理：
- * 两种速度获取方式：
- * 1. 物理模拟模式：GetPhysicsLinearVelocity() 返回刚体线速度（更准确）
- * 2. 非物理模式：GetComponentVelocity() 返回组件运动速度（插值/动画驱动）
- *
- * UE使用厘米为单位，速度单位为 cm/s。
- *
- * @return 世界坐标系下的线速度向量
- */
-FVector UFlightControllerComponent::GetBodyLinearVelocityCmPerSec() const
-{
-	if (!BodyPrimitive)
-	{
-		return FVector::ZeroVector;
-	}
-
-	// 物理线程中使用缓存值（已在 UpdateEstimatedState_PhysicsThread 中从 RigidBodyHandle 读取）
-	if (bInPhysicsTick)
-	{
-		return CachedLinearVelocityCmPerSec;
-	}
-
-	return BodyPrimitive->IsSimulatingPhysics()
-		? BodyPrimitive->GetPhysicsLinearVelocity()
-		: BodyPrimitive->GetComponentVelocity();
-}

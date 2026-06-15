@@ -4,17 +4,17 @@
 
 #define LOCTEXT_NAMESPACE "FAircraftLabModule"
 
+/** 模块启动：模块加载到内存后执行，用于初始化资源 */
 void FAircraftLabModule::StartupModule()
 {
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
 }
 
+/** 模块关闭：模块卸载前执行，用于清理资源 */
 void FAircraftLabModule::ShutdownModule()
 {
-	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
-	// we call this function before unloading the module.
 }
 
 #undef LOCTEXT_NAMESPACE
-	
+
+/** 注册模块到UE模块系统 */
 IMPLEMENT_MODULE(FAircraftLabModule, AircraftLab)
