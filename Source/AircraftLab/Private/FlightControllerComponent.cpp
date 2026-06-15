@@ -8,6 +8,8 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Math/RotationMatrix.h"
+#include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFlightController, Log, All);
 
@@ -296,7 +298,7 @@ UFlightControllerComponent::UFlightControllerComponent()
 void UFlightControllerComponent::OnRegister()
 {
 	Super::OnRegister();
-
+	SetAsyncPhysicsTickEnabled(true);
 	RefreshReferences();
 }
 
@@ -356,39 +358,80 @@ void UFlightControllerComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		RefreshReferences();
 	}
 
+	// 在游戏线程缓存重力值（物理线程中 GetWorld() 不安全）
+	CachedGravityMagnitudeCmPerSecSq = FMath::Max(GetWorldGravityMagnitude(), 1.0f);
+
 	UpdateEstimatedState(DeltaTime);
 
 	const FDronePilotInput PilotInput = DroneInput ? DroneInput->GetPilotInput() : FDronePilotInput();
 	UpdateRequestedModeAndArmState(PilotInput);
 
+	// 未解锁时在游戏线程停止旋翼
 	if (ArmState != EDroneArmState::Armed)
 	{
 		StopAllRotors(true);
-		return;
 	}
 
-	ControlAccumulatorSeconds = FMath::Min(ControlAccumulatorSeconds + DeltaTime, 0.25f);
-	const float ControlStepSeconds = 1.0f / FMath::Max(ControlLoopRateHz, 1.0f);
-
-	while (ControlAccumulatorSeconds + UE_SMALL_NUMBER >= ControlStepSeconds)
-	{
-		RunControlLoop(ControlStepSeconds, PilotInput);
-		ControlAccumulatorSeconds -= ControlStepSeconds;
-	}
-
-	// 力施加：每帧只调用一次（而非每控制子步一次），避免250Hz控制循环中力被重复累加
-	for (UAirscrewComponent* Airscrew : Airscrews)
-	{
-		if (Airscrew)
-		{
-			Airscrew->ApplyThrustForce();
-		}
-	}
+	// 缓存最新的飞行员输入，供 AsyncPhysicsTick 使用
+	CachedPilotInput = PilotInput;
 }
 
 void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTime)
 {
 	Super::AsyncPhysicsTickComponent(DeltaTime, SimTime);
+
+	if (DeltaTime <= UE_SMALL_NUMBER || !bControllerEnabled || ArmState != EDroneArmState::Armed)
+	{
+		return;
+	}
+
+	if (Airscrews.IsEmpty() || !BodyPrimitive)
+	{
+		return;
+	}
+
+	// 从物理线程获取 RigidBodyHandle
+	Chaos::FRigidBodyHandle_Internal* BodyHandle = nullptr;
+	if (FBodyInstance* BodyInstance = BodyPrimitive->GetBodyInstance())
+	{
+		if (auto* ActorHandle = BodyInstance->ActorHandle)
+		{
+			BodyHandle = ActorHandle->GetPhysicsThreadAPI();
+		}
+	}
+
+	if (!BodyHandle)
+	{
+		return;
+	}
+
+	// 从物理线程更新估计状态（避免游戏线程 API 在物理线程崩溃）
+	UpdateEstimatedState_PhysicsThread(DeltaTime, SimTime, BodyHandle);
+
+	// 标记正在物理线程中运行（影响 GetRotorPositionFromCenterOfMassBodyCm 等函数的行为）
+	bInPhysicsTick = true;
+
+	// 在物理子步中运行控制循环
+	ControlAccumulatorSeconds = FMath::Min(ControlAccumulatorSeconds + DeltaTime, 0.25f);
+	const float ControlStepSeconds = 1.0f / FMath::Max(ControlLoopRateHz, 1.0f);
+
+	while (ControlAccumulatorSeconds + UE_SMALL_NUMBER >= ControlStepSeconds)
+	{
+		RunControlLoop(ControlStepSeconds, CachedPilotInput);
+		ControlAccumulatorSeconds -= ControlStepSeconds;
+	}
+
+	// 通过 PhysicsHandle 施加力
+	for (UAirscrewComponent* Airscrew : Airscrews)
+	{
+		if (Airscrew)
+		{
+			Airscrew->ApplyThrustForce_PhysicsThread(BodyHandle);
+		}
+	}
+
+	// 重置物理线程标记
+	bInPhysicsTick = false;
 }
 
 /**
@@ -769,6 +812,48 @@ void UFlightControllerComponent::UpdateEstimatedState(float DeltaSeconds)
 	EstimatedState.PositionConfidence = 1.0f;
 }
 
+void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaSeconds, float SimTime, Chaos::FRigidBodyHandle_Internal* BodyHandle)
+{
+	if (!BodyHandle)
+	{
+		return;
+	}
+
+	// 从 RigidBodyHandle 读取物理线程的实时状态
+	const FVector BodyPos(BodyHandle->X());
+	const FQuat BodyQuat(BodyHandle->R());
+	const FVector BodyVel(BodyHandle->V());
+	const FVector BodyAngVelRad(BodyHandle->W()); // 弧度/秒
+
+	// 缓存变换和质心，供 GetRotorPositionFromCenterOfMassBodyCm 等使用
+	CachedBodyTransform = FTransform(BodyQuat, BodyPos);
+	CachedCenterOfMassWorld = BodyPos; // 物理线程中质心就是刚体位置
+	CachedLinearVelocityCmPerSec = BodyVel;
+
+	// 角速度：弧度→角度，世界→机体，并应用符号修正（与游戏线程 GetBodyAngularVelocityDegreesPerSecond 一致）
+	const FVector AngVelWorldDeg = FMath::RadiansToDegrees(BodyAngVelRad);
+	const FVector AngVelBodyRaw = CachedBodyTransform.InverseTransformVectorNoScale(AngVelWorldDeg);
+	CachedAngularVelocityBodyDegPerSec = FVector(-AngVelBodyRaw.X, -AngVelBodyRaw.Y, AngVelBodyRaw.Z);
+
+	const FVector CurrentAcceleration = (bHasPreviousLinearVelocity && DeltaSeconds > UE_SMALL_NUMBER)
+		? (CachedLinearVelocityCmPerSec - PreviousLinearVelocityCmPerSec) / DeltaSeconds
+		: FVector::ZeroVector;
+
+	PreviousLinearVelocityCmPerSec = CachedLinearVelocityCmPerSec;
+	bHasPreviousLinearVelocity = true;
+
+	EstimatedState.State.TimeSeconds = SimTime;
+	EstimatedState.State.PositionCm = BodyPos;
+	EstimatedState.State.VelocityCmPerSec = CachedLinearVelocityCmPerSec;
+	EstimatedState.State.AccelerationWorldCmPerSecSq = CurrentAcceleration;
+	EstimatedState.State.AttitudeDegrees = BodyQuat.Rotator();
+	EstimatedState.State.AngularVelocityBodyDegreesPerSec = CachedAngularVelocityBodyDegPerSec;
+	EstimatedState.State.AngularAccelerationBodyDegreesPerSecSq = FVector::ZeroVector;
+	EstimatedState.AltitudeReference = EDroneAltitudeReference::WorldZ;
+	EstimatedState.AttitudeConfidence = 1.0f;
+	EstimatedState.PositionConfidence = 1.0f;
+}
+
 /**
  * @brief 更新请求的飞行模式和解锁状态
  * @param PilotInput 飞行员输入
@@ -868,7 +953,8 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 			continue;
 		}
 		
-		Airscrew->UpdateRotorState(DeltaSeconds);
+		// 物理线程中使用缓存的 Body 变换，游戏线程中传 nullptr 使用 GetComponentLocation
+		Airscrew->UpdateRotorState(DeltaSeconds, bInPhysicsTick ? &CachedBodyTransform : nullptr);
 
 		if (ControlOutput.RotorCommands.IsValidIndex(RotorIndex))
 		{
@@ -938,7 +1024,7 @@ void UFlightControllerComponent::StopAllRotors(bool bResetController)
 		}
 
 		Airscrew->SetNormalizedCommand(0.0f);
-		Airscrew->UpdateRotorState(0.0f);
+		Airscrew->UpdateRotorState(0.001f, bInPhysicsTick ? &CachedBodyTransform : nullptr);
 		ControlOutput.RotorCommands[RotorIndex] = FlightControllerAllocation::MakeRotorCommand(Airscrew);
 	}
 }
@@ -1151,7 +1237,7 @@ FRotator UFlightControllerComponent::ComputeDesiredAttitude(const FDronePilotInp
 	}
 
 	const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(PilotInput, DeltaSeconds);
-	const float GravityMagnitude = FMath::Max(GetWorldGravityMagnitude(), 1.0f);
+	const float GravityMagnitude = bInPhysicsTick ? CachedGravityMagnitudeCmPerSecSq : FMath::Max(GetWorldGravityMagnitude(), 1.0f);
 	const FRotator FlatYawRotation(0.0f, EstimatedState.State.AttitudeDegrees.Yaw, 0.0f);
 	const FVector ForwardFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::X);
 	const FVector RightFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::Y);
@@ -1772,6 +1858,13 @@ FVector UFlightControllerComponent::GetRotorPositionFromCenterOfMassBodyCm(const
 		return Airscrew->GetRelativeLocation();
 	}
 
+	// 物理线程中使用缓存的 Body 变换和旋翼局部位置
+	if (bInPhysicsTick)
+	{
+		const FVector RotorWorldPos = CachedBodyTransform.TransformPosition(Airscrew->GetRelativeLocationFromBody());
+		return CachedBodyTransform.InverseTransformVectorNoScale(RotorWorldPos - CachedCenterOfMassWorld);
+	}
+
 	const FTransform BodyTransform = BodyPrimitive->GetComponentTransform();
 	const FVector CenterOfMassWorld = BodyPrimitive->GetCenterOfMass();
 	return BodyTransform.InverseTransformVectorNoScale(Airscrew->GetComponentLocation() - CenterOfMassWorld);
@@ -1782,6 +1875,14 @@ FVector UFlightControllerComponent::GetRotorThrustAxisBody(const UAirscrewCompon
 	if (!Airscrew)
 	{
 		return FVector::UpVector;
+	}
+
+	// 物理线程中使用缓存的 Body 变换和旋翼局部推力轴
+	if (bInPhysicsTick)
+	{
+		const FVector ThrustAxisBody = CachedBodyTransform.InverseTransformVectorNoScale(
+			Airscrew->GetThrustDirectionWorld_PhysicsThread(CachedBodyTransform));
+		return ThrustAxisBody.IsNearlyZero() ? FVector::UpVector : ThrustAxisBody.GetSafeNormal();
 	}
 
 	const FVector ThrustAxisWorld = Airscrew->GetThrustDirectionWorld();
@@ -2238,6 +2339,12 @@ FVector UFlightControllerComponent::GetBodyAngularVelocityDegreesPerSecond() con
 		return FVector::ZeroVector;
 	}
 
+	// 物理线程中使用缓存值（已在 UpdateEstimatedState_PhysicsThread 中计算）
+	if (bInPhysicsTick)
+	{
+		return CachedAngularVelocityBodyDegPerSec;
+	}
+
 	const FVector AngularVelocityWorld = BodyPrimitive->GetPhysicsAngularVelocityInDegrees();
 	const FVector AngularVelocityBody = BodyPrimitive->GetComponentTransform().InverseTransformVectorNoScale(AngularVelocityWorld);
 	return FVector(-AngularVelocityBody.X, -AngularVelocityBody.Y, AngularVelocityBody.Z);
@@ -2260,6 +2367,12 @@ FVector UFlightControllerComponent::GetBodyLinearVelocityCmPerSec() const
 	if (!BodyPrimitive)
 	{
 		return FVector::ZeroVector;
+	}
+
+	// 物理线程中使用缓存值（已在 UpdateEstimatedState_PhysicsThread 中从 RigidBodyHandle 读取）
+	if (bInPhysicsTick)
+	{
+		return CachedLinearVelocityCmPerSec;
 	}
 
 	return BodyPrimitive->IsSimulatingPhysics()

@@ -16,8 +16,6 @@ AAircraftPawn::AAircraftPawn()
 	BodyMesh->SetCollisionProfileName(UCollisionProfile::PhysicsActor_ProfileName);
 	BodyMesh->SetSimulatePhysics(true);
 	BodyMesh->SetEnableGravity(true);
-	BodyMesh->SetLinearDamping(0.6f);
-	BodyMesh->SetAngularDamping(1.5f);
 
 	DroneInput = CreateDefaultSubobject<UDroneInputComponent>(TEXT("DroneInput"));
 	FlightController = CreateDefaultSubobject<UFlightControllerComponent>(TEXT("FlightController"));

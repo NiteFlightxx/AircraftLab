@@ -6,6 +6,8 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 
 UAirscrewComponent::UAirscrewComponent()
 {
@@ -64,13 +66,26 @@ void UAirscrewComponent::SyncDefinitionFromComponentTransform()
 	RotorDefinition.PositionLocalCm = GetRelativeLocation();
 	RotorDefinition.RotationLocal = GetRelativeRotation();
 
+	// 缓存旋翼推力轴的局部方向（物理线程安全读取）
+	CachedThrustAxisLocal = RotorDefinition.GetNormalizedThrustAxisLocal();
+
+	// 缓存旋翼相对于 Body 的局部位置
+	if (const USceneComponent* TempAttachParent = GetAttachParent())
+	{
+		CachedRelativeLocationFromBody = TempAttachParent->GetComponentTransform().InverseTransformPosition(GetComponentLocation());
+	}
+	else
+	{
+		CachedRelativeLocationFromBody = GetRelativeLocation();
+	}
+
 	if (RotorDefinition.RotorName.IsNone())
 	{
 		RotorDefinition.RotorName = GetFName();
 	}
 }
 
-void UAirscrewComponent::UpdateRotorState(float DeltaTime)
+void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform* BodyTransform)
 {
 	if (DeltaTime <= UE_SMALL_NUMBER || !RotorDefinition.IsEnabled())
 	{
@@ -78,7 +93,9 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime)
 		CurrentRpm = 0.0f;
 		CurrentThrustForce = 0.0f;
 		CurrentThrustVectorWorld = FVector::ZeroVector;
-		CurrentApplicationPointWorld = GetComponentLocation();
+		CurrentApplicationPointWorld = BodyTransform
+			? BodyTransform->TransformPosition(CachedRelativeLocationFromBody)
+			: GetComponentLocation();
 		CurrentReactionTorqueMagnitude = 0.0f;
 		CurrentReactionTorqueVectorWorld = FVector::ZeroVector;
 		return;
@@ -109,10 +126,17 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime)
 	const float ThrustRatio = FMath::Clamp(CurrentRpm / MaxRpm, 0.0f, 1.0f);
 	CurrentThrustForce = RotorDefinition.GetEffectiveMaxThrust() * FMath::Square(ThrustRatio) * FMath::Max(RotorDefinition.ThrustCoefficient, 0.0f);
 
-	CurrentApplicationPointWorld = GetComponentLocation();
-	CurrentThrustVectorWorld = GetThrustDirectionWorld() * CurrentThrustForce;
+	CurrentApplicationPointWorld = BodyTransform
+		? BodyTransform->TransformPosition(CachedRelativeLocationFromBody)
+		: GetComponentLocation();
+
+	const FVector ThrustDirWorld = BodyTransform
+		? GetThrustDirectionWorld_PhysicsThread(*BodyTransform)
+		: GetThrustDirectionWorld();
+
+	CurrentThrustVectorWorld = ThrustDirWorld * CurrentThrustForce;
 	CurrentReactionTorqueMagnitude = CurrentThrustForce * FMath::Max(RotorDefinition.GetEffectiveReactionTorqueCoefficient(), 0.0f);
-	CurrentReactionTorqueVectorWorld = GetThrustDirectionWorld() * (CurrentReactionTorqueMagnitude * RotorDefinition.GetSpinDirectionSign());
+	CurrentReactionTorqueVectorWorld = ThrustDirWorld * (CurrentReactionTorqueMagnitude * RotorDefinition.GetSpinDirectionSign());
 }
 
 void UAirscrewComponent::ApplyThrustForce()
@@ -127,10 +151,30 @@ void UAirscrewComponent::ApplyThrustForce()
 	{
 		return;
 	}
-
+	
 	TargetPrimitive->AddForceAtLocation(CurrentThrustVectorWorld, CurrentApplicationPointWorld, TEXT("Root"));
 	TargetPrimitive->AddTorqueInRadians(CurrentReactionTorqueVectorWorld, TEXT("Root"));
 
+}
+
+void UAirscrewComponent::ApplyThrustForce_PhysicsThread(Chaos::FRigidBodyHandle_Internal* BodyHandle)
+{
+	if (!bApplyForce || !BodyHandle)
+	{
+		return;
+	}
+
+	// 推力（质心力）
+	BodyHandle->AddForce(CurrentThrustVectorWorld, false);
+
+	// 推力偏心力矩：r × F，其中 r 是从质心到推力作用点的世界空间向量
+	const FVector RigidBodyComWorldPos(BodyHandle->X());
+	const FVector ArmWorld = CurrentApplicationPointWorld - RigidBodyComWorldPos;
+	const FVector ThrustMoment = FVector::CrossProduct(ArmWorld, CurrentThrustVectorWorld);
+	BodyHandle->AddTorque(ThrustMoment, false);
+
+	// 反扭矩
+	BodyHandle->AddTorque(CurrentReactionTorqueVectorWorld, true);
 }
 
 void UAirscrewComponent::DrawDebugVisualization() const
@@ -194,6 +238,11 @@ UPrimitiveComponent* UAirscrewComponent::ResolveTargetPrimitive() const
 FVector UAirscrewComponent::GetThrustDirectionWorld() const
 {
 	return GetComponentTransform().TransformVectorNoScale(RotorDefinition.GetNormalizedThrustAxisLocal()).GetSafeNormal();
+}
+
+FVector UAirscrewComponent::GetThrustDirectionWorld_PhysicsThread(const FTransform& BodyTransform) const
+{
+	return BodyTransform.TransformVectorNoScale(CachedThrustAxisLocal).GetSafeNormal();
 }
 
 float UAirscrewComponent::GetEffectiveTargetCommand() const

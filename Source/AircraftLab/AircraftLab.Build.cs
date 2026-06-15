@@ -39,7 +39,8 @@ public class AircraftLab : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
-				// ... add private dependencies that you statically link with here ...	
+				"PhysicsCore",
+				"Chaos",
 			}
 			);
 		

@@ -7,6 +7,7 @@
 #include "AirscrewComponent.generated.h"
 
 class UPrimitiveComponent;
+namespace Chaos { class FRigidBodyHandle_Internal; }
 
 UCLASS(ClassGroup = (AircraftLab), meta = (BlueprintSpawnableComponent))
 class AIRCRAFTLAB_API UAirscrewComponent : public USceneComponent
@@ -61,14 +62,20 @@ public:
 
 public:
 	void SyncDefinitionFromComponentTransform();
-	void UpdateRotorState(float DeltaTime);
+	void UpdateRotorState(float DeltaTime, const FTransform* BodyTransform = nullptr);
 	void ApplyThrustForce();
+	void ApplyThrustForce_PhysicsThread(Chaos::FRigidBodyHandle_Internal* BodyHandle);
 	void DrawDebugVisualization() const;
 
 	UPrimitiveComponent* ResolveTargetPrimitive() const;
 	FVector GetThrustDirectionWorld() const;
+	FVector GetThrustDirectionWorld_PhysicsThread(const FTransform& BodyTransform) const;
 	float GetEffectiveTargetCommand() const;
 	float ComputeTargetRpm(float EffectiveCommand) const;
+
+	// 获取旋翼相对于 Body 的局部位置（游戏线程缓存，物理线程安全读取）
+	FVector GetRelativeLocationFromBody() const { return CachedRelativeLocationFromBody; }
+	FVector GetThrustAxisLocal() const { return CachedThrustAxisLocal; }
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Airscrew")
@@ -124,4 +131,8 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Airscrew", meta = (AllowPrivateAccess = "true"))
 	FVector CurrentReactionTorqueVectorWorld = FVector::ZeroVector;
+
+	// 游戏线程缓存的相对数据（物理线程安全读取）
+	FVector CachedRelativeLocationFromBody = FVector::ZeroVector;
+	FVector CachedThrustAxisLocal = FVector::UpVector;
 };

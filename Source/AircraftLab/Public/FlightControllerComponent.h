@@ -9,6 +9,7 @@
 class UAirscrewComponent;
 class UDroneInputComponent;
 class UPrimitiveComponent;
+namespace Chaos { class FRigidBodyHandle_Internal; }
 
 UCLASS(ClassGroup = (AircraftLab), meta = (BlueprintSpawnableComponent))
 class AIRCRAFTLAB_API UFlightControllerComponent : public UActorComponent
@@ -88,6 +89,7 @@ public:
 protected:
 	void InitializeDefaultControllerConfig();
 	void UpdateEstimatedState(float DeltaSeconds);
+	void UpdateEstimatedState_PhysicsThread(float DeltaSeconds, float SimTime, Chaos::FRigidBodyHandle_Internal* BodyHandle);
 	void UpdateRequestedModeAndArmState(const FDronePilotInput& PilotInput);
 	void UpdateHomeState(bool bForceResetHome = false);
 	void RunControlLoop(float DeltaSeconds, const FDronePilotInput& PilotInput);
@@ -254,6 +256,7 @@ private:
 	TArray<TObjectPtr<UAirscrewComponent>> Airscrews;
 
 	float ControlAccumulatorSeconds = 0.0f;
+	FDronePilotInput CachedPilotInput;
 	bool bPositionHoldInitialized = false;
 	bool bAltitudeHoldInitialized = false;
 	bool bYawHoldInitialized = false;
@@ -264,4 +267,12 @@ private:
 	FRotator PreviousDebugAttitudeDegrees = FRotator::ZeroRotator;
 	float PreviousDebugSampleTimeSeconds = 0.0f;
 	bool bHasPreviousDebugSample = false;
+
+	// 物理线程缓存（从 RigidBodyHandle 读取，供控制循环和力矩计算使用）
+	FTransform CachedBodyTransform = FTransform::Identity;
+	FVector CachedCenterOfMassWorld = FVector::ZeroVector;
+	FVector CachedAngularVelocityBodyDegPerSec = FVector::ZeroVector;
+	FVector CachedLinearVelocityCmPerSec = FVector::ZeroVector;
+	float CachedGravityMagnitudeCmPerSecSq = 980.0f;
+	bool bInPhysicsTick = false;
 };
