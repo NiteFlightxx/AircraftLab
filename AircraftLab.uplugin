@@ -11,73 +11,10 @@
 	"Installed": false,
 	"Modules": [
 		{
-			"Name": "AircraftRuntimeInterface",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "AircraftRuntimeCommon",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "Aircraft",
-			"Type": "Runtime",
-			"LoadingPhase": "PostConfigInit"
-		},
-		{
-			"Name": "AircraftEditor",
-			"Type": "Editor",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "AircraftAsset",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "AircraftAssetEngine",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "AircraftAssetEditor",
-			"Type": "Editor",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "AircraftAssetEditorTools",
-			"Type": "Editor",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "AircraftAssetDataflowNodes",
-			"Type": "Editor",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "AircraftAssetTools",
-			"Type": "UncookedOnly",
-			"LoadingPhase": "Default"
-		},
-		
-		
-		
-		
-		{
 			"Name": "AircraftLab",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
 		}
-		
-		
-		
-		
-	],
-	"Plugins": [
-		{
-			"Name": "Dataflow",
-			"Enabled": true
-		}
 	]
+
 }
