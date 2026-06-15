@@ -209,6 +209,7 @@ double GetBalancedAuthority(double PositiveAuthority, double NegativeAuthority)
  * 用于阻尼伪逆控制分配中求解 (J^T·J + λ²·I)·y = w
  * 返回 false 表示矩阵奇异、无解
  */
+bool SolveLinearSystem4(const double Matrix[WrenchAxisCount][WrenchAxisCount], const double Rhs[WrenchAxisCount], double OutSolution[WrenchAxisCount])
 {
 	// 构建增广矩阵 [M | b]
 	double Augmented[WrenchAxisCount][WrenchAxisCount + 1] = {};
