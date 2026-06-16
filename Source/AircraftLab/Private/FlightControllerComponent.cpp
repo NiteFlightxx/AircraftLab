@@ -400,46 +400,73 @@ void UFlightControllerComponent::UpdateModeCapabilities()
 
 void UFlightControllerComponent::InitializeDefaultControllerConfig()
 {
-	ControllerConfig.Limits.MaxTiltAngleDegrees = 35.0f;
-	ControllerConfig.Limits.MaxYawRateDegreesPerSec = 180.0f;
-	ControllerConfig.Limits.MaxRollRateDegreesPerSec = 360.0f;
-	ControllerConfig.Limits.MaxPitchRateDegreesPerSec = 360.0f;
-	ControllerConfig.Limits.MaxClimbRateCmPerSec = 400.0f;
-	ControllerConfig.Limits.MaxDescentRateCmPerSec = 250.0f;
-	ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec = 1200.0f;
-	ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq = 1200.0f;
-	ControllerConfig.Limits.MaxVerticalAccelerationCmPerSecSq = 1000.0f;
+	// ========================================================================
+	// 100kg 级无人机默认参数
+	// 惯性大 → 响应慢 → PID增益需降低，阻尼需增加
+	// ========================================================================
+
+	// 运动限制：100kg无人机不宜过快倾斜和移动
+	ControllerConfig.Limits.MaxTiltAngleDegrees = 25.0f;         // 35→25: 大惯性无人机倾斜过大会失控
+	ControllerConfig.Limits.MaxYawRateDegreesPerSec = 90.0f;     // 180→90: 偏航惯性大，降低角速率
+	ControllerConfig.Limits.MaxRollRateDegreesPerSec = 180.0f;   // 360→180: 滚转角速率降低
+	ControllerConfig.Limits.MaxPitchRateDegreesPerSec = 180.0f;  // 360→180: 俯仰角速率降低
+	ControllerConfig.Limits.MaxClimbRateCmPerSec = 300.0f;       // 400→300: 爬升速率降低
+	ControllerConfig.Limits.MaxDescentRateCmPerSec = 200.0f;     // 250→200: 下降速率降低
+	ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec = 800.0f;  // 1200→800: 水平最大速度降低
+	ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq = 600.0f; // 1200→600: 水平加速度大幅降低，防过冲
+	ControllerConfig.Limits.MaxVerticalAccelerationCmPerSecSq = 500.0f;   // 1000→500: 垂直加速度降低
 	ControllerConfig.Limits.MinCollectiveCommand = 0.0f;
 	ControllerConfig.Limits.HoverCollectiveCommand = 0.50f;
 	ControllerConfig.Limits.MaxCollectiveCommand = 1.0f;
 
-	ControllerConfig.Position.PositionGains.X = { 0.80f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
-	ControllerConfig.Position.PositionGains.Y = { 0.80f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
-	ControllerConfig.Position.PositionGains.Z = { 1.80f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
-	ControllerConfig.Position.VelocityGains.X = { 2.20f, 0.02f, 0.35f, 4000.0f, ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
-	ControllerConfig.Position.VelocityGains.Y = { 2.20f, 0.02f, 0.35f, 4000.0f, ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
-	ControllerConfig.Position.VelocityGains.Z = { 0.0018f, 0.00025f, 0.00060f, 2500.0f, 0.35f };
-	ControllerConfig.Position.VelocityGains.X.DerivativeCutoffHz = 20.0f;
-	ControllerConfig.Position.VelocityGains.Y.DerivativeCutoffHz = 20.0f;
-	ControllerConfig.Position.VelocityGains.Z.DerivativeCutoffHz = 15.0f;
+	// ========================================================================
+	// Position PID（外环：位置→期望速度）
+	// 100kg无人机：降低Kp防止过冲，增加Kd提供阻尼，使接近目标时自动减速
+	// ========================================================================
+	ControllerConfig.Position.PositionGains.X = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
+	ControllerConfig.Position.PositionGains.Y = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
+	ControllerConfig.Position.PositionGains.Z = { 1.20f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
 
-	ControllerConfig.Attitude.AngleGains.Roll = { 6.0f, 0.0f, 0.15f, 25.0f, ControllerConfig.Limits.MaxRollRateDegreesPerSec };
-	ControllerConfig.Attitude.AngleGains.Pitch = { 6.0f, 0.0f, 0.15f, 25.0f, ControllerConfig.Limits.MaxPitchRateDegreesPerSec };
-	ControllerConfig.Attitude.AngleGains.Yaw = { 4.0f, 0.0f, 0.08f, 30.0f, ControllerConfig.Limits.MaxYawRateDegreesPerSec };
-	ControllerConfig.Attitude.AngleGains.Roll.DerivativeCutoffHz = 18.0f;
-	ControllerConfig.Attitude.AngleGains.Pitch.DerivativeCutoffHz = 18.0f;
-	ControllerConfig.Attitude.AngleGains.Yaw.DerivativeCutoffHz = 12.0f;
+	// ========================================================================
+	// Velocity PID（内环：速度→期望加速度/倾斜角）
+	// 100kg无人机：降低Kp，增加Kd，低通滤波加强
+	// ========================================================================
+	ControllerConfig.Position.VelocityGains.X = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
+	ControllerConfig.Position.VelocityGains.Y = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
+	ControllerConfig.Position.VelocityGains.Z = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
+	ControllerConfig.Position.VelocityGains.X.DerivativeCutoffHz = 12.0f;  // 20→12: 加强微分滤波
+	ControllerConfig.Position.VelocityGains.Y.DerivativeCutoffHz = 12.0f;
+	ControllerConfig.Position.VelocityGains.Z.DerivativeCutoffHz = 10.0f;  // 15→10
 
-	ControllerConfig.Attitude.RateGains.Roll = { 0.0028f, 0.00035f, 0.00018f, 150.0f, 0.40f };
-	ControllerConfig.Attitude.RateGains.Pitch = { 0.0028f, 0.00035f, 0.00018f, 150.0f, 0.40f };
-	ControllerConfig.Attitude.RateGains.Yaw = { 0.0018f, 0.00020f, 0.00010f, 150.0f, 0.25f };
-	ControllerConfig.Attitude.RateGains.Roll.DerivativeCutoffHz = 25.0f;
-	ControllerConfig.Attitude.RateGains.Pitch.DerivativeCutoffHz = 25.0f;
-	ControllerConfig.Attitude.RateGains.Yaw.DerivativeCutoffHz = 20.0f;
+	// ========================================================================
+	// Angle PID（角度→期望角速率）
+	// 100kg无人机：降低Kp使倾斜更柔和
+	// ========================================================================
+	ControllerConfig.Attitude.AngleGains.Roll = { 4.5f, 0.0f, 0.20f, 20.0f, ControllerConfig.Limits.MaxRollRateDegreesPerSec };
+	ControllerConfig.Attitude.AngleGains.Pitch = { 4.5f, 0.0f, 0.20f, 20.0f, ControllerConfig.Limits.MaxPitchRateDegreesPerSec };
+	ControllerConfig.Attitude.AngleGains.Yaw = { 3.0f, 0.0f, 0.10f, 25.0f, ControllerConfig.Limits.MaxYawRateDegreesPerSec };
+	ControllerConfig.Attitude.AngleGains.Roll.DerivativeCutoffHz = 12.0f;  // 18→12
+	ControllerConfig.Attitude.AngleGains.Pitch.DerivativeCutoffHz = 12.0f;
+	ControllerConfig.Attitude.AngleGains.Yaw.DerivativeCutoffHz = 8.0f;   // 12→8
 
-	ControllerConfig.Altitude.AltitudeGains = { 1.80f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
-	ControllerConfig.Altitude.VerticalVelocityGains = { 0.0018f, 0.00025f, 0.00060f, 2500.0f, 0.35f };
-	ControllerConfig.Altitude.VerticalVelocityGains.DerivativeCutoffHz = 15.0f;
+	// ========================================================================
+	// Rate PID（角速率→控制分配力矩）
+	// 100kg无人机：惯性矩大，降低增益
+	// ========================================================================
+	ControllerConfig.Attitude.RateGains.Roll = { 0.0020f, 0.00025f, 0.00015f, 120.0f, 0.35f };
+	ControllerConfig.Attitude.RateGains.Pitch = { 0.0020f, 0.00025f, 0.00015f, 120.0f, 0.35f };
+	ControllerConfig.Attitude.RateGains.Yaw = { 0.0012f, 0.00015f, 0.00008f, 120.0f, 0.20f };
+	ControllerConfig.Attitude.RateGains.Roll.DerivativeCutoffHz = 18.0f;   // 25→18
+	ControllerConfig.Attitude.RateGains.Pitch.DerivativeCutoffHz = 18.0f;
+	ControllerConfig.Attitude.RateGains.Yaw.DerivativeCutoffHz = 15.0f;   // 20→15
+
+	// ========================================================================
+	// Altitude PID（高度控制）
+	// 100kg无人机：降低增益，增加阻尼
+	// ========================================================================
+	ControllerConfig.Altitude.AltitudeGains = { 1.20f, 0.0f, 0.20f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
+	ControllerConfig.Altitude.VerticalVelocityGains = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
+	ControllerConfig.Altitude.VerticalVelocityGains.DerivativeCutoffHz = 10.0f;
 	ControllerConfig.Allocator.DampedPseudoInverseLambda = 0.05f;
 }
 
