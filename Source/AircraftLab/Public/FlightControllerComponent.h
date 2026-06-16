@@ -616,14 +616,6 @@ public:
 	float GetHeldAltitude() const { return Runtime.HoldTargets.HeldAltitudeCm; }
 	float GetHeldYaw() const { return Runtime.HoldTargets.HeldYawDegrees; }
 
-	/**
-	 * 判断无人机是否到达位置保持目标点
-	 * @param AcceptanceRadius 可接受距离（厘米），默认100cm
-	 * @param bCheckVelocity 是否同时检查速度接近零，默认true
-	 * @return true表示已到达目标点
-	 */
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
-	bool HasReachedHeldPosition(float AcceptanceRadius = 100.0f, bool bCheckVelocity = true) const;
 
 protected:
 	/** 初始化默认控制器配置参数 */
