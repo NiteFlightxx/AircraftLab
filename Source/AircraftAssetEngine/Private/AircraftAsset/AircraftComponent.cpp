@@ -264,7 +264,7 @@ bool UAircraftComponent::IsSimulationSuspended() const
 void UAircraftComponent::SoftResetSimulation()
 {
 	// 软重置：只让 SimulationProxy 重新读取当前 SimulationModel + 归零 PID/Rotor 状态，
-	// 但保留组件注册状态、SkeletalMesh 资源、ChassisBodyInstance 不动。
+	// 但保留组件注册状态、SkeletalMesh 资源、AircraftBodyInstance 不动。
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->PostConstructor();

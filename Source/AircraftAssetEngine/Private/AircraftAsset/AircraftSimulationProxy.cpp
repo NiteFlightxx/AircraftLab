@@ -4,7 +4,7 @@
 //
 // 物理子步算法（每帧 AsyncPhysicsTickComponent 调用一次）：
 //   1. 取走 GT 写入的 PendingPilotInput / PendingTargets / 解锁请求
-//   2. 从 ChassisBodyInstance 读取当前刚体状态（位置、速度、姿态、角速度）
+//   2. 从 AircraftBodyInstance 读取当前刚体状态（位置、速度、姿态、角速度）
 //   3. 串级 PID（Position→Velocity→Angle→Rate）→ 期望力旋量 (F_z, τ_x, τ_y, τ_z)
 //   4. 阻尼伪逆控制分配：u = (BᵀB + λI)⁻¹ Bᵀ τ_des → 单旋翼归一化指令 u_i ∈ [0, 1]
 //   5. 电机一阶滞后动力学 → 实际转速 ω_i 与推力 F_i = kT_i · ω_i²、反扭矩 τ_drag,i = (kQ/kT)_i · F_i
@@ -470,7 +470,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 		}
 	}
 
-	FBodyInstance* Body = ChassisBodyInstance.load(std::memory_order_acquire);
+	FBodyInstance* Body = AircraftBodyInstance.load(std::memory_order_acquire);
 	if (!Body || !Body->IsInstanceSimulatingPhysics())
 	{
 		return;
@@ -757,12 +757,12 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 	}
 }
 
-void FAircraftSimulationProxy::SetChassisBodyInstance(FBodyInstance* BodyInstance)
+void FAircraftSimulationProxy::SetAircraftBodyInstance(FBodyInstance* BodyInstance)
 {
-	ChassisBodyInstance.store(BodyInstance, std::memory_order_release);
+	AircraftBodyInstance.store(BodyInstance, std::memory_order_release);
 }
 
-FBodyInstance* FAircraftSimulationProxy::GetChassisBodyInstance() const
+FBodyInstance* FAircraftSimulationProxy::GetAircraftBodyInstance() const
 {
-	return ChassisBodyInstance.load(std::memory_order_acquire);
+	return AircraftBodyInstance.load(std::memory_order_acquire);
 }

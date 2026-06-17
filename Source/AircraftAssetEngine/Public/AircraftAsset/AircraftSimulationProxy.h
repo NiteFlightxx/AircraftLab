@@ -538,8 +538,8 @@ public:
 	void TickPhysicsThread(float DeltaTime, float SimTime);
 	//~ End PhysicsThread API
 
-	void SetChassisBodyInstance(FBodyInstance* BodyInstance);
-	FBodyInstance* GetChassisBodyInstance() const;
+	void SetAircraftBodyInstance(FBodyInstance* BodyInstance);
+	FBodyInstance* GetAircraftBodyInstance() const;
 
 	const UAircraftComponent& GetAircraftComponent() const { return AircraftComponent; }
 
@@ -569,7 +569,7 @@ private:
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EDroneArmState::Disarmed) };
 	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EDroneFlightMode::Angle) };
 
-	std::atomic<FBodyInstance*> ChassisBodyInstance{ nullptr };
+	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
 	std::atomic<float> SimulationTime{ 0.f };
 
