@@ -49,6 +49,11 @@ void UAirscrewComponent::ForceStopRotor()
 	CurrentThrustVectorWorld = FVector::ZeroVector;
 	CurrentReactionTorqueMagnitude = 0.0f;
 	CurrentReactionTorqueVectorWorld = FVector::ZeroVector;
+	// 归零喷口角度
+	TargetNozzlePitchDeg = 0.0f;
+	TargetNozzleYawDeg = 0.0f;
+	CurrentNozzlePitchDeg = 0.0f;
+	CurrentNozzleYawDeg = 0.0f;
 }
 
 void UAirscrewComponent::ClearForceStop()
@@ -69,6 +74,28 @@ void UAirscrewComponent::SetForceApplicationEnabled(bool bNewEnabled)
 void UAirscrewComponent::SetDebugDrawEnabled(bool bNewEnabled)
 {
 	bDrawDebug = bNewEnabled;
+}
+
+void UAirscrewComponent::SetNozzleCommand(float PitchDeg, float YawDeg)
+{
+	if (!RotorDefinition.HasNozzle())
+	{
+		return;
+	}
+
+	const float MaxPitch = RotorDefinition.MaxNozzlePitchDeg;
+	const float MaxYaw = RotorDefinition.MaxNozzleYawDeg;
+	TargetNozzlePitchDeg = FMath::Clamp(PitchDeg, -MaxPitch, MaxPitch);
+	TargetNozzleYawDeg = FMath::Clamp(YawDeg, -MaxYaw, MaxYaw);
+}
+
+FVector UAirscrewComponent::GetCurrentThrustAxisBody() const
+{
+	if (!RotorDefinition.HasNozzle())
+	{
+		return CachedThrustAxisLocal;
+	}
+	return RotorDefinition.GetThrustAxisWithNozzle(CurrentNozzlePitchDeg, CurrentNozzleYawDeg);
 }
 
 void UAirscrewComponent::SyncDefinitionFromComponentTransform()
@@ -110,12 +137,21 @@ void UAirscrewComponent::SyncDefinitionFromComponentTransform()
  *    离散解：ω = lerp(ω_prev, ω_target, 1 - e^(-Δt/τ))
  *    SpinUpTimeSeconds 为加速时间常数τ_up，SpinDownTimeSeconds 为减速时间常数τ_down
  * 
- * 4. 推力计算（螺旋桨动量理论简化）：
+ * 4. 舵机动力学（仅矢量喷口旋翼）：
+ *    喷口角度以 MaxRate 限速趋近目标值
+ *    θ_cur = FInterpConstantTo(θ_cur, θ_target, Δt, MaxRate)
+ * 
+ * 5. 推力计算（螺旋桨动量理论简化）：
  *    T = T_max × (ω / ω_max)² × C_T × η
  * 
- * 5. 反扭矩计算：
+ * 6. 推力方向计算（考虑矢量喷口偏转）：
+ *    n_body = R_yaw(θ_y) × R_pitch(θ_p) × CachedThrustAxisLocal
+ *    n_world = BodyTransform × n_body
+ *    F = T × n_world
+ * 
+ * 7. 反扭矩计算：
  *    τ_reaction = T × k_τ_eff
- *    扭矩方向 = n_thrust × sign（CW=-1, CCW=+1）
+ *    扭矩方向 = n_thrust_world × sign（CW=-1, CCW=+1）
  */
 void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& BodyTransform)
 {
@@ -172,7 +208,41 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& Bod
 	const float ResponseAlpha = 1.0f - FMath::Exp(-DeltaTime / ResponseTime);
 	CurrentRpm = FMath::Lerp(CurrentRpm, TargetRpm, ResponseAlpha);
 
-	// 步骤4: 推力计算 T = T_max × (ω/ω_max)² × C_T × η
+	// 步骤4: 舵机动力学（仅当旋翼具有矢量喷口时执行）
+	// 喷口角以 MaxRate 限速趋近目标值，使用 FInterpConstantTo
+	if (RotorDefinition.HasNozzle())
+	{
+		const float MaxPitchRate = FMath::Max(RotorDefinition.MaxNozzlePitchRateDegPerSec, 0.0f);
+		const float MaxYawRate = FMath::Max(RotorDefinition.MaxNozzleYawRateDegPerSec, 0.0f);
+
+		if (MaxPitchRate > UE_SMALL_NUMBER)
+		{
+			CurrentNozzlePitchDeg = FMath::FInterpConstantTo(
+				CurrentNozzlePitchDeg, TargetNozzlePitchDeg, DeltaTime, MaxPitchRate);
+		}
+		else
+		{
+			CurrentNozzlePitchDeg = TargetNozzlePitchDeg;
+		}
+
+		if (MaxYawRate > UE_SMALL_NUMBER)
+		{
+			CurrentNozzleYawDeg = FMath::FInterpConstantTo(
+				CurrentNozzleYawDeg, TargetNozzleYawDeg, DeltaTime, MaxYawRate);
+		}
+		else
+		{
+			CurrentNozzleYawDeg = TargetNozzleYawDeg;
+		}
+	}
+	else
+	{
+		// 无喷口的旋翼：保持零角度
+		CurrentNozzlePitchDeg = 0.0f;
+		CurrentNozzleYawDeg = 0.0f;
+	}
+
+	// 步骤5: 推力计算 T = T_max × (ω/ω_max)² × C_T × η
 	const float MaxRpm = FMath::Max(RotorDefinition.Motor.MaxRpm, 1.0f);
 	const float ThrustRatio = FMath::Clamp(CurrentRpm / MaxRpm, 0.0f, 1.0f);
 	CurrentThrustForce = RotorDefinition.GetEffectiveMaxThrust() * FMath::Square(ThrustRatio) * FMath::Max(RotorDefinition.ThrustCoefficient, 0.0f);
@@ -180,10 +250,15 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& Bod
 	// 计算推力施加点的世界坐标
 	CurrentApplicationPointWorld = BodyTransform.TransformPosition(CachedRelativeLocationFromBody);
 
-	// 步骤5: 反扭矩计算
-	// τ_reaction = T × k_τ_eff，方向 = n_thrust × sign
-	const FVector ThrustDirWorld = BodyTransform.TransformVectorNoScale(CachedThrustAxisLocal).GetSafeNormal();
+	// 步骤6: 推力方向（考虑矢量喷口偏转）
+	// 推力方向 = BodyTransform × R_yaw(θ_y) × R_pitch(θ_p) × CachedThrustAxisLocal
+	// 反扭矩方向同步旋转
+	const FVector ThrustDirLocal = GetCurrentThrustAxisBody();
+	const FVector ThrustDirWorld = BodyTransform.TransformVectorNoScale(ThrustDirLocal).GetSafeNormal();
 	CurrentThrustVectorWorld = ThrustDirWorld * CurrentThrustForce;
+
+	// 步骤7: 反扭矩计算
+	// τ_reaction = T × k_τ_eff，方向 = n_thrust_world × sign
 	CurrentReactionTorqueMagnitude = CurrentThrustForce * FMath::Max(RotorDefinition.GetEffectiveReactionTorqueCoefficient(), 0.0f);
 	CurrentReactionTorqueVectorWorld = ThrustDirWorld * (CurrentReactionTorqueMagnitude * RotorDefinition.GetSpinDirectionSign());
 }
@@ -241,6 +316,15 @@ void UAirscrewComponent::DrawDebugVisualization() const
 	const bool bRotorActive = RotorDefinition.IsEnabled() && CurrentThrustForce > UE_SMALL_NUMBER;
 	const FColor DebugColor = (bRotorActive ? DebugEnabledColor : DebugDisabledColor).ToFColor(true);
 	const FVector Origin = GetComponentLocation();
+
+	// 绘制喷口旋转后的推力轴方向（黄色半透明箭头，仅当有喷口时）
+	if (RotorDefinition.HasNozzle())
+	{
+		const FVector NozzleAxisEnd = Origin + GetComponentTransform().TransformVectorNoScale(GetCurrentThrustAxisBody()).GetSafeNormal() * DebugAxisLength;
+		DrawDebugDirectionalArrow(GetWorld(), Origin, NozzleAxisEnd, 8.0f, FColor::Yellow, false, 0.0f, 0, 1.5f);
+	}
+
+	// 绘制原始推力轴方向（灰色细箭头）
 	const FVector AxisEnd = Origin + GetComponentTransform().TransformVectorNoScale(CachedThrustAxisLocal).GetSafeNormal() * DebugAxisLength;
 	const FVector ForceEnd = Origin + CurrentThrustVectorWorld * DebugForceScale;
 
@@ -251,14 +335,25 @@ void UAirscrewComponent::DrawDebugVisualization() const
 		return;
 	}
 
-	const FString DebugText = FString::Printf(
-		TEXT("%s\nCmd %.2f / %.2f\nRPM %.0f\nThrust %.1f\nYawT %.2f"),
-		*RotorDefinition.RotorName.ToString(),
-		CurrentNormalizedCommand,
-		TargetNormalizedCommand,
-		CurrentRpm,
-		CurrentThrustForce,
-		CurrentReactionTorqueMagnitude);
+	const FString DebugText = RotorDefinition.HasNozzle()
+		? FString::Printf(
+			TEXT("%s\nCmd %.2f / %.2f\nRPM %.0f\nThrust %.1f\nYawT %.2f\nNP %.1f / %.1f\nNY %.1f / %.1f"),
+			*RotorDefinition.RotorName.ToString(),
+			CurrentNormalizedCommand,
+			TargetNormalizedCommand,
+			CurrentRpm,
+			CurrentThrustForce,
+			CurrentReactionTorqueMagnitude,
+			CurrentNozzlePitchDeg, TargetNozzlePitchDeg,
+			CurrentNozzleYawDeg, TargetNozzleYawDeg)
+		: FString::Printf(
+			TEXT("%s\nCmd %.2f / %.2f\nRPM %.0f\nThrust %.1f\nYawT %.2f"),
+			*RotorDefinition.RotorName.ToString(),
+			CurrentNormalizedCommand,
+			TargetNormalizedCommand,
+			CurrentRpm,
+			CurrentThrustForce,
+			CurrentReactionTorqueMagnitude);
 
 	DrawDebugString(World, Origin + FVector(0.0f, 0.0f, DebugTextOffset), DebugText, nullptr, DebugColor, 0.0f, false);
 }

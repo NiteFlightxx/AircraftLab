@@ -27,53 +27,52 @@ enum class EDroneArmState : uint8
 };
 
 /**
- * 姿态控制模式枚举（决定摇杆如何映射到姿态目标）
- */
-UENUM(BlueprintType)
-enum class EDroneAttitudeMode : uint8
-{
-	/** 完全手动：飞控不干预姿态，摇杆直接控制电机输出 */
-	Manual UMETA(DisplayName = "Manual"),
-
-	/** 角速率模式：摇杆控制机体角速度，松杆不会自动回平 */
-	Acro UMETA(DisplayName = "Acro"),
-
-	/** 角度模式：摇杆控制目标倾斜角度，松杆自动回平。最常用的稳定模式 */
-	Angle UMETA(DisplayName = "Angle")
-};
-
-/**
- * 无人机飞行模式枚举
+ * 矢量无人机统一飞行模式枚举
+ *
+ * 统一飞控架构：所有模式共享 Force + Moment + 6DOF Allocation 管线，
+ * 仅改变约束和目标，不存在传统四轴模式与矢量模式两套逻辑。
+ *
+ * 控制优先级链：位置 > 力满足 > 姿态（姿态为可松弛约束）
  */
 UENUM(BlueprintType)
 enum class EDroneFlightMode : uint8
 {
-	/** 完全手动模式：飞控不干预姿态，摇杆直接控制电机输出（通常用于特技飞行）。 */
-	Manual UMETA(DisplayName = "Manual"),
-
-	/** 角速率模式（全手动）：摇杆控制机体角速度，松杆不会自动回平。 */
+	/** 特技模式：摇杆=角速率→力矩，无力控制路径。支持倒飞/侧飞。 */
 	Acro UMETA(DisplayName = "Acro"),
 
-	/** 角度模式：摇杆控制目标倾斜角度，松杆自动回平。最常用的稳定模式。 */
-	Angle UMETA(DisplayName = "Angle"),
+	/** 悬停模式：水平姿态优先，位置/速度PID出力。喷口产Fx/Fy，饱和时启用倾斜补偿。 */
+	Hover UMETA(DisplayName = "Hover"),
 
-	/** 定高模式：飞控自动维持当前高度，摇杆控制水平移动。 */
-	AltitudeHold UMETA(DisplayName = "Altitude Hold"),
+	/** 巡航模式：允许固定Pitch前飞，速度PID→力。 */
+	Cruise UMETA(DisplayName = "Cruise"),
 
-	/** 定点模式：同时锁定水平位置和高度（需GPS或视觉）。 */
-	PositionHold UMETA(DisplayName = "Position Hold"),
+	/** 瞄准模式：位置保持+LookAt目标。姿态由LookAt→HeldAttitude驱动。 */
+	LookAt UMETA(DisplayName = "LookAt"),
 
-	/** 定速模式：控制水平速度（例如以2m/s匀速飞行）。 */
-	VelocityHold UMETA(DisplayName = "Velocity Hold"),
+	/** 失效模式：根据剩余控制能力自动降级目标、放宽姿态约束。 */
+	Failure UMETA(DisplayName = "Failure")
+};
 
-	/** 任务模式：执行预设航点、航线或自动任务。 */
-	Mission UMETA(DisplayName = "Mission"),
+/**
+ * 瞄准模式枚举（决定姿态目标来源）
+ *
+ * 在统一矢量飞控中，姿态目标独立于位置控制。
+ * AimMode 决定 AttitudeController 的参考来源：
+ *   Default     → 机体水平（Hover）/允许固定Pitch（Cruise）
+ *   HeldAttitude→ 外部设定的四元数姿态目标（支持倒飞/侧飞/特技）
+ *   LookAt      → 从目标位置解算姿态，驱动 HeldAttitude
+ */
+UENUM(BlueprintType)
+enum class EDroneAimMode : uint8
+{
+	/** 默认模式：姿态由飞行模式隐含——Hover保持水平，Cruise允许固定Pitch */
+	Default UMETA(DisplayName = "Default"),
 
-	/** 自动返航模式：飞行器自动返回起飞点（或设置的Home点）。 */
-	ReturnToHome UMETA(DisplayName = "Return To Home"),
+	/** 姿态保持：使用显式四元数姿态目标，支持倒飞/特技/失效测试 */
+	HeldAttitude UMETA(DisplayName = "Held Attitude"),
 
-	/** 自动降落模式：垂直下降到地面并锁桨。 */
-	AutoLand UMETA(DisplayName = "Auto Land")
+	/** 目标跟踪：根据目标位置计算 Yaw+Pitch，驱动 HeldAttitude */
+	LookAt UMETA(DisplayName = "Look At")
 };
 
 /**
@@ -207,7 +206,10 @@ struct AIRCRAFTLAB_API FDroneVelocitySetpoint
 };
 
 /**
- * 姿态设定点（期望的欧拉角和总推力）
+ * 姿态设定点（支持欧拉角和四元数两种表示）
+ *
+ * 在矢量飞控架构中，姿态目标独立于位置控制，
+ * 由 AimMode 决定来源：Default / HeldAttitude / LookAt。
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FDroneAttitudeSetpoint
@@ -218,14 +220,31 @@ struct AIRCRAFTLAB_API FDroneAttitudeSetpoint
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
 	bool bEnabled = false;
 
-	/** 期望姿态（欧拉角，度） */
+	/** 期望姿态（欧拉角，度） — 向后兼容，内部优先使用四元数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
 	FRotator AttitudeDegrees = FRotator::ZeroRotator;
 
-	/** 期望总推力（0~1 归一化或实际牛顿值） */
+	/** 期望姿态（四元数） — 矢量飞控核心表示，支持倒飞/任意姿态 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	float CollectiveThrust = 0.0f;
-};
+	FQuat AttitudeQuat = FQuat::Identity;
+
+	/** 当前瞄准模式 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
+	EDroneAimMode AimMode = EDroneAimMode::Default;
+
+	/** LookAt 目标世界坐标（厘米）— 仅 LookAt 模式有效 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
+	FVector LookAtTargetCm = FVector::ZeroVector;
+
+	/** 到目标的距离（厘米）— 诊断用 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
+	float TargetDistanceCm = 0.0f;
+
+		/** 期望总推力（0~1 归一化或实际牛顿值）— 已弃用：6DOF力控制使用 Wrench.DesiredForceBodyN.Z */
+		UE_DEPRECATED(5.1, "Use Wrench.DesiredForceBodyN.Z in FDroneControlOutput instead")
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
+		float CollectiveThrust = 0.0f;
+	};
 
 /**
  * 角速率设定点（期望的机体角速率和总推力）
@@ -243,26 +262,38 @@ struct AIRCRAFTLAB_API FDroneRateSetpoint
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
 	FVector BodyRatesDegreesPerSec = FVector::ZeroVector;
 
-	/** 期望总推力 */
+	/** 期望总推力 — 已弃用：6DOF力控制使用 Wrench.DesiredForceBodyN.Z */
+	UE_DEPRECATED(5.1, "Use Wrench.DesiredForceBodyN.Z in FDroneControlOutput instead")
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
 	float CollectiveThrust = 0.0f;
 };
 
 /**
- * 力与力矩命令（期望的合力和合力矩）
+ * 6自由度力与力矩命令（统一矢量飞控架构）
+ *
+ * 替代原4DOF [CollectiveThrust, BodyTorque] 结构，
+ * 现在直接表达机体系下的期望力(Fx,Fy,Fz)和期望力矩(Mx,My,Mz)。
+ *
+ * 物理意义：
+ *   Fx — 机体前向力 (N)，正值=前推
+ *   Fy — 机体侧向力 (N)，正值=右推
+ *   Fz — 机体垂直力 (N)，正值=向上，包含mg补偿
+ *   Mx — 滚转力矩 (N·m)，正值=右滚
+ *   My — 俯仰力矩 (N·m)，正值=抬头
+ *   Mz — 偏航力矩 (N·m)，正值=顺时针
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FDroneWrenchCommand
 {
 	GENERATED_BODY()
 
-	/** 期望总推力（牛顿，通常沿机体Z轴） */
+	/** 期望机体力 (N) — [Fx Fy Fz] */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	float CollectiveThrust = 0.0f;
+	FVector DesiredForceBodyN = FVector::ZeroVector;
 
-	/** 期望机体力矩（牛顿·米） */
+	/** 期望机体力矩 (N·m) — [Mx My Mz] */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FVector BodyTorque = FVector::ZeroVector;
+	FVector DesiredMomentBodyNm = FVector::ZeroVector;
 };
 
 /**
@@ -274,8 +305,8 @@ struct AIRCRAFTLAB_API FDroneControlTargets
 	GENERATED_BODY()
 
 	/** 当前激活的飞行模式 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	EDroneFlightMode FlightMode = EDroneFlightMode::Angle;
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+		EDroneFlightMode FlightMode = EDroneFlightMode::Hover;
 
 	/** 位置设定点 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
@@ -736,9 +767,21 @@ struct AIRCRAFTLAB_API FDroneControlLimits
 {
 	GENERATED_BODY()
 
-	/** 最大倾斜角度（度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxTiltAngleDegrees = 35.0f;
+	/** 最大倾斜角度（度）——作为分配器的可松弛软约束，非硬约束 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxTiltAngleDegrees = 35.0f;
+
+	// ========================================================================
+	// 力限制（矢量飞控新增——替代纯倾角限制的力控制约束）
+	// ========================================================================
+
+	/** 单轴最大水平力 (N) — 限制 Fx/Fy 输出，防止位置控制器需求超出物理能力 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force", meta = (ClampMin = "0.0"))
+	float MaxHorizontalForceN = 15.0f;
+
+	/** 最大垂直力 (N) — 限制 Fz 输出上限（含重力补偿） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force", meta = (ClampMin = "0.0"))
+	float MaxVerticalForceN = 50.0f;
 
 	/** 最大偏航角速率（度/秒） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
@@ -772,17 +815,20 @@ struct AIRCRAFTLAB_API FDroneControlLimits
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
 	float MaxVerticalAccelerationCmPerSecSq = 1000.0f;
 
-	/** 最小总距指令（归一化） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float MinCollectiveCommand = 0.0f;
+		/** 最小总距指令（归一化）— 已弃用：6DOF力控制不再使用总距指令 */
+		UE_DEPRECATED(5.1, "Use HoverThrustN / MaxVerticalForceN in FDroneForceControllerConfig instead")
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float MinCollectiveCommand = 0.0f;
 
-	/** 悬停总距指令（归一化，无风情况维持高度的油门） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float HoverCollectiveCommand = 0.5f;
+		/** 悬停总距指令（归一化，无风情况维持高度的油门）— 已弃用：6DOF力控制不再使用总距指令 */
+		UE_DEPRECATED(5.1, "Use HoverThrustN in FDroneForceControllerConfig instead")
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float HoverCollectiveCommand = 0.5f;
 
-	/** 最大总距指令（归一化） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float MaxCollectiveCommand = 1.0f;
+		/** 最大总距指令（归一化）— 已弃用：6DOF力控制不再使用总距指令 */
+		UE_DEPRECATED(5.1, "Use MaxVerticalForceN in FDroneControlLimits instead")
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float MaxCollectiveCommand = 1.0f;
 };
 
 /**
@@ -807,37 +853,42 @@ struct AIRCRAFTLAB_API FDroneAttitudeControllerConfig
 };
 
 /**
- * 位置控制器配置（位置外环和速度内环 PID）
+ * 统一力控制器配置（矢量飞控架构核心）
+ *
+ * 替代原 FDronePositionControllerConfig + FDroneAltitudeControllerConfig。
+ * 统一输出 [Fx Fy Fz] 机体系力指令 (N)，不再输出倾角。
+ *
+ * 串级结构：
+ *   外环：位置PID → 期望速度
+ *   内环：速度PID → 期望加速度 → 期望力
+ *
+ * Z轴合并了原高度环和垂直速度环，统一输出 Fz (N)。
+ * Fz = m × (a_z_des + g)，包含重力补偿。
  */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDronePositionControllerConfig
+struct AIRCRAFTLAB_API FDroneForceControllerConfig
 {
 	GENERATED_BODY()
 
-	/** 位置外环 PID（产生期望速度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	/** 水平位置外环 PID（X/Y 产生期望水平速度） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force")
 	FDroneCartesianPidGains PositionGains;
 
-	/** 速度内环 PID（产生期望倾斜角度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	/** 水平速度内环 PID（X/Y 产生期望水平力 N） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force")
 	FDroneCartesianPidGains VelocityGains;
-};
 
-/**
- * 高度控制器配置（高度外环和垂直速度内环 PID）
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneAltitudeControllerConfig
-{
-	GENERATED_BODY()
-
-	/** 高度外环 PID（产生期望垂直速度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	/** 高度外环 PID（Z 产生期望垂直速度） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force")
 	FDronePidGains AltitudeGains = { 2.0f, 0.0f, 0.0f, 0.0f, 500.0f };
 
-	/** 垂直速度内环 PID（产生总距指令） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	/** 垂直速度内环 PID（Z 产生 Fz 偏移 N） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force")
 	FDronePidGains VerticalVelocityGains = { 3.0f, 0.5f, 0.1f, 400.0f, 1000.0f };
+
+	/** 悬停推力 (N)，= m × g。用于 Fz 重力补偿前馈 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force", meta = (ClampMin = "0.0"))
+	float HoverThrustN = 0.0f;
 };
 
 /**
@@ -1024,8 +1075,36 @@ struct AIRCRAFTLAB_API FDroneRotorDefinition
 	float Efficiency = 1.0f;
 
 	/** 控制分配可用推力缩放 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ControlAuthorityScale = 1.0f;
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float ControlAuthorityScale = 1.0f;
+
+	// ========================================================================
+	// 矢量喷口参数（Vector Nozzle）
+	// ========================================================================
+
+	/** 喷口俯仰偏转极限 (°)，0=固定旋翼（退化传统四轴） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0", ClampMax = "90.0"))
+	float MaxNozzlePitchDeg = 30.0f;
+
+	/** 喷口偏航偏转极限 (°)，0=仅单轴偏转 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0", ClampMax = "90.0"))
+	float MaxNozzleYawDeg = 30.0f;
+
+	/** 舵机俯仰最大速率 (°/s)——限制喷口动态响应 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0"))
+	float MaxNozzlePitchRateDegPerSec = 300.0f;
+
+	/** 舵机偏航最大速率 (°/s) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0"))
+	float MaxNozzleYawRateDegPerSec = 300.0f;
+
+	/** 喷口俯仰中位角 (°)——悬停时喷口朝向，0=沿机体Z轴 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle")
+	float NozzlePitchNeutralDeg = 0.0f;
+
+	/** 喷口偏航中位角 (°) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle")
+	float NozzleYawNeutralDeg = 0.0f;
 
 	/** 电机动态模型参数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
@@ -1069,14 +1148,47 @@ struct AIRCRAFTLAB_API FDroneRotorDefinition
 		return MaxThrustForce * FMath::Max(Efficiency, 0.0f);
 	}
 
-	/**
-	 * 获取有效反扭矩系数
-	 * k_τ_eff = k_τ × max(η, 0)
-	 */
-	float GetEffectiveReactionTorqueCoefficient() const
-	{
-		return ReactionTorqueCoefficient * FMath::Max(Efficiency, 0.0f);
-	}
+		/**
+		 * 获取有效反扭矩系数
+		 * k_τ_eff = k_τ × max(η, 0)
+		 */
+		float GetEffectiveReactionTorqueCoefficient() const
+		{
+			return ReactionTorqueCoefficient * FMath::Max(Efficiency, 0.0f);
+		}
+
+		/**
+		 * 判断旋翼是否具备矢量喷口能力
+		 * 当 MaxNozzlePitchDeg > 0 或 MaxNozzleYawDeg > 0 时为矢量旋翼
+		 */
+		bool HasNozzle() const
+		{
+			return MaxNozzlePitchDeg > UE_SMALL_NUMBER || MaxNozzleYawDeg > UE_SMALL_NUMBER;
+		}
+
+		/**
+		 * 计算给定喷口角度下的推力方向（机体坐标系）
+		 *
+		 * 物理模型：
+		 *   n = R_yaw(θ_y) × R_pitch(θ_p) × ThrustAxisLocal
+		 *
+		 * 先绕局部Y轴旋转NozzlePitch（俯仰），再绕局部Z轴旋转NozzleYaw（偏航）。
+		 * 这对应标准的 Tait-Bryan Y-Z 旋转顺序（先俯仰后偏航）。
+		 *
+		 * @param NozzlePitchDeg  喷口俯仰角 (°)，正值=前倾
+		 * @param NozzleYawDeg    喷口偏航角 (°)，正值=右偏
+		 * @return 推力方向单位向量（机体坐标系）
+		 */
+		FVector GetThrustAxisWithNozzle(float NozzlePitchDeg, float NozzleYawDeg) const
+		{
+			const FVector BaseAxis = GetNormalizedThrustAxisLocal();
+			// R_yaw × R_pitch × base
+			const FRotator PitchRot(NozzlePitchDeg, 0.0f, 0.0f);
+			const FRotator YawRot(0.0f, NozzleYawDeg, 0.0f);
+			const FQuat NozzleQuat = FQuat(YawRot) * FQuat(PitchRot);
+			FVector Result = NozzleQuat.RotateVector(BaseAxis);
+			return Result.IsNearlyZero() ? FVector::UpVector : Result.GetSafeNormal();
+		}
 };
 
 /**
@@ -1498,8 +1610,16 @@ struct AIRCRAFTLAB_API FDroneRotorCommand
 	float GeneratedThrust = 0.0f;
 
 	/** 产生的反扭矩（牛顿·米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator")
-	float GeneratedReactionTorque = 0.0f;
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator")
+		float GeneratedReactionTorque = 0.0f;
+
+	/** 喷口俯仰指令 (°) — 矢量飞控分配器输出 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator|Nozzle")
+	float NozzlePitchDeg = 0.0f;
+
+	/** 喷口偏航指令 (°) — 矢量飞控分配器输出 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator|Nozzle")
+	float NozzleYawDeg = 0.0f;
 };
 
 /**
@@ -1552,13 +1672,13 @@ struct AIRCRAFTLAB_API FDroneFailsafeConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe", meta = (ClampMin = "0.0"))
 	float GpsLossGracePeriodSeconds = 1.0f;
 
-	/** 信号丢失时是否自动降落 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe")
-	bool bAutoLandOnCommandLoss = true;
+	/** 信号丢失时是否切换到Failure模式（缓慢下降） */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe")
+		bool bAutoLandOnCommandLoss = true;
 
-	/** GPS 丢失时是否自动返航 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe")
-	bool bReturnHomeOnGpsLoss = false;
+		/** GPS 丢失时是否切换到Failure模式并尝试降落在Home点 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe")
+		bool bReturnHomeOnGpsLoss = false;
 
 	/** 低压返航阈值（总电压，伏特） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe", meta = (ClampMin = "0.0"))
@@ -1571,36 +1691,65 @@ struct AIRCRAFTLAB_API FDroneFailsafeConfig
 	/** 最大倾斜角超过此值时触发紧急停桨（度） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe", meta = (ClampMin = "0.0"))
 	float MaximumTiltBeforeEmergencyStopDegrees = 85.0f;
+
+	// ========================================================================
+	// 6DOF控制能力自动降级阈值
+	// ========================================================================
+	// 当 UpdateControlAuthorityInfo 计算的归一化 Authority 低于阈值时，
+	// 控制器自动切换到 Failure 模式，降级目标并放宽姿态约束。
+	// Authority ∈ [0, 1]，1 = 全健康，0 = 该轴完全不可控。
+
+	/** Fz（垂直力）Authority 低于此阈值 → 自动进入Failure模式。
+	 *  Fz 是悬停的关键轴——无法产生足够升力意味着必坠。
+	 *  默认 0.3：剩余 30% 升力能力时就开始降级。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe|Authority", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float FzAuthorityThreshold = 0.3f;
+
+	/** 姿态力矩（Roll+Pitch+Yaw）的最小对称Authority低于此阈值 → 进入Failure模式。
+	 *  取三轴平衡Authority的最小值。0.25 表示任一轴剩余 < 25% 即降级。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe|Authority", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MomentAuthorityThreshold = 0.25f;
+
+	/** Failure模式下的慢速下降率（厘米/秒）。
+	 *  替代旧 AutoLandDescentRateCmPerSec，仅影响Failure模式的高度跟踪。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe|Authority", meta = (ClampMin = "0.0"))
+	float FailureDescentRateCmPerSec = 50.0f;
+
+	/** Failure模式下位置控制增益缩放因子。
+	 *  Authority 越低，位置控制越柔和，避免震荡。
+	 *  实际增益 = 原始增益 × FMath::Clamp(MinAuthority, 0.1, 1.0) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Failsafe|Authority", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float FailureGainScaleFloor = 0.1f;
 };
 
 /**
  * 飞控整体配置（包含各子控制器参数）
  */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneFlightControllerConfig
-{
-	GENERATED_BODY()
+	struct AIRCRAFTLAB_API FDroneFlightControllerConfig
+	{
+		GENERATED_BODY()
 
-	/** 控制限幅 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneControlLimits Limits;
+		/** 控制限幅 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+		FDroneControlLimits Limits;
 
-	/** 姿态控制器参数（角度环+角速率环） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneAttitudeControllerConfig Attitude;
+		/** 姿态控制器参数（角度环+角速率环，输出力矩 N·m） */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+		FDroneAttitudeControllerConfig Attitude;
 
-	/** 位置控制器参数（位置环+速度环） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDronePositionControllerConfig Position;
+		/** 统一力控制器参数（位置+速度+高度+垂直速度，输出力 N） */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+		FDroneForceControllerConfig Force;
 
-	/** 高度控制器参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneAltitudeControllerConfig Altitude;
+		/** 控制分配器参数（6DOF QP） */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+		FDroneControlAllocationConfig Allocator;
 
-	/** 控制分配器参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneControlAllocationConfig Allocator;
-};
+		/** 故障保护与自动降级参数 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+		FDroneFailsafeConfig Failsafe;
+	};
 
 /**
  * 无人机总体配置（物理、传感器、控制器等全部参数）
@@ -1615,8 +1764,8 @@ struct AIRCRAFTLAB_API FDroneFlightConfig
 	EDroneFrameType FrameType = EDroneFrameType::QuadX;
 
 	/** 启动时的默认飞行模式 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	EDroneFlightMode StartupFlightMode = EDroneFlightMode::Angle;
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
+		EDroneFlightMode StartupFlightMode = EDroneFlightMode::Hover;
 
 	/** 控制循环频率（Hz） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config", meta = (ClampMin = "1.0"))
@@ -1654,9 +1803,10 @@ struct AIRCRAFTLAB_API FDroneFlightConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
 	FDroneFlightControllerConfig Controller;
 
-	/** 故障保护配置 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	FDroneFailsafeConfig Failsafe;
+		/** 故障保护配置 — 已弃用：使用 Controller.Failsafe 统一管理 */
+		UE_DEPRECATED(5.1, "Use Controller.Failsafe instead")
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
+		FDroneFailsafeConfig Failsafe;
 
 	/** 获取启用旋翼的数量 */
 	int32 GetEnabledRotorCount() const
@@ -1673,8 +1823,44 @@ struct AIRCRAFTLAB_API FDroneFlightConfig
 	}
 
 	/** 检查是否有有效的旋翼布局（至少4个启用的旋翼） */
-	bool HasValidRotorLayout() const
-	{
-		return GetEnabledRotorCount() >= 4;
-	}
+		bool HasValidRotorLayout() const
+		{
+			return GetEnabledRotorCount() >= 4;
+		}
+	};
+
+/**
+ * LookAt / 姿态瞄准调试信息
+ *
+ * 用于诊断瞄准模式下的姿态跟踪效果，
+ * 包括目标位置、距离、期望/当前姿态及误差。
+ */
+USTRUCT(BlueprintType)
+struct AIRCRAFTLAB_API FDroneLookAtDebugInfo
+{
+	GENERATED_BODY()
+
+	/** LookAt 目标世界坐标（厘米） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Debug|LookAt")
+	FVector TargetWorldCm = FVector::ZeroVector;
+
+	/** 到目标的距离（厘米） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Debug|LookAt")
+	float TargetDistanceCm = 0.0f;
+
+	/** 当前瞄准模式 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Debug|LookAt")
+	EDroneAimMode AimMode = EDroneAimMode::Default;
+
+	/** 当前姿态（四元数） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Debug|LookAt")
+	FQuat CurrentAttitude = FQuat::Identity;
+
+	/** 期望姿态（四元数，经优先级解析与速率限制后） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Debug|LookAt")
+	FQuat DesiredAttitude = FQuat::Identity;
+
+	/** 姿态误差（欧拉角，度） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Debug|LookAt")
+	FRotator AttitudeError = FRotator::ZeroRotator;
 };

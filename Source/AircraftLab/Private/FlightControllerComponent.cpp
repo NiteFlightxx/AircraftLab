@@ -61,23 +61,19 @@ const TCHAR* GetArmStateLabel(EDroneArmState ArmState)
 	}
 }
 
-const TCHAR* GetFlightModeLabel(EDroneFlightMode FlightMode)
-{
-	// 飞行模式枚举 → 可读字符串
-	switch (FlightMode)
+	const TCHAR* GetFlightModeLabel(EDroneFlightMode FlightMode)
 	{
-	case EDroneFlightMode::Manual: return TEXT("Manual");
-	case EDroneFlightMode::Acro: return TEXT("Acro");
-	case EDroneFlightMode::Angle: return TEXT("Angle");
-	case EDroneFlightMode::AltitudeHold: return TEXT("AltitudeHold");
-	case EDroneFlightMode::PositionHold: return TEXT("PositionHold");
-	case EDroneFlightMode::VelocityHold: return TEXT("VelocityHold");
-	case EDroneFlightMode::Mission: return TEXT("Mission");
-	case EDroneFlightMode::ReturnToHome: return TEXT("ReturnToHome");
-	case EDroneFlightMode::AutoLand: return TEXT("AutoLand");
-	default: return TEXT("Unknown");
+		// 飞行模式枚举 → 可读字符串（5值统一枚举）
+		switch (FlightMode)
+		{
+		case EDroneFlightMode::Acro: return TEXT("Acro");
+		case EDroneFlightMode::Hover: return TEXT("Hover");
+		case EDroneFlightMode::Cruise: return TEXT("Cruise");
+		case EDroneFlightMode::LookAt: return TEXT("LookAt");
+		case EDroneFlightMode::Failure: return TEXT("Failure");
+		default: return TEXT("Unknown");
+		}
 	}
-}
 
 const TCHAR* GetSpinDirectionLabel(EDroneRotorSpinDirection SpinDirection)
 {
@@ -127,8 +123,8 @@ const TCHAR* GetConsistencyLabel(bool bIsConsistent)
 //
 namespace FlightControllerAllocation
 {
-// Wrench 维度：4（总距 Fz、滚转力矩 τx、俯仰力矩 τy、偏航力矩 τz）
-constexpr int32 WrenchAxisCount = 4;
+// Wrench 维度：6（Fx Fy Fz Mx My Mz）
+constexpr int32 WrenchAxisCount = 6;
 
 // 判断某轴"无权限"的阈值。当 Authority < 此值时认为该轴不可控。
 constexpr double AuthorityEpsilon = 1.0e-6;
@@ -301,21 +297,85 @@ bool SolveLinearSystem4(const double Matrix[WrenchAxisCount][WrenchAxisCount], c
 }
 
 // ---------------------------------------------------------------------------
+// SolveLinearSystem6 — 6×6 线性方程组求解器（高斯-约旦消元 + 部分主元）
+// ---------------------------------------------------------------------------
+// 与 SolveLinearSystem4 完全相同的算法，维度从 4 扩展到 6。
+// 用于 6DOF 控制分配的法方程求解。
+// ---------------------------------------------------------------------------
+	bool SolveLinearSystem6(const double Matrix[WrenchAxisCount][WrenchAxisCount], const double Rhs[WrenchAxisCount], double OutSolution[WrenchAxisCount])
+	{
+		// 构造增广矩阵 [A | b]
+		double Augmented[WrenchAxisCount][WrenchAxisCount + 1] = {};
+		for (int32 Row = 0; Row < WrenchAxisCount; ++Row)
+		{
+			for (int32 Col = 0; Col < WrenchAxisCount; ++Col)
+				Augmented[Row][Col] = Matrix[Row][Col];
+			Augmented[Row][WrenchAxisCount] = Rhs[Row];
+		}
+
+		// 逐列消元
+		for (int32 PivotCol = 0; PivotCol < WrenchAxisCount; ++PivotCol)
+		{
+			// --- 部分主元选取 ---
+			int32 PivotRow = PivotCol;
+			double PivotAbs = FMath::Abs(Augmented[PivotRow][PivotCol]);
+			for (int32 Row = PivotCol + 1; Row < WrenchAxisCount; ++Row)
+			{
+				const double CandidateAbs = FMath::Abs(Augmented[Row][PivotCol]);
+				if (CandidateAbs > PivotAbs) { PivotAbs = CandidateAbs; PivotRow = Row; }
+			}
+
+			// 主元过小 → 矩阵接近奇异
+			if (PivotAbs <= UE_SMALL_NUMBER) return false;
+
+			// 交换行使主元就位
+			if (PivotRow != PivotCol)
+			{
+				for (int32 Col = PivotCol; Col <= WrenchAxisCount; ++Col)
+					Swap(Augmented[PivotCol][Col], Augmented[PivotRow][Col]);
+			}
+
+			// --- 主元归一化 ---
+			const double InvPivot = 1.0 / Augmented[PivotCol][PivotCol];
+			for (int32 Col = PivotCol; Col <= WrenchAxisCount; ++Col)
+				Augmented[PivotCol][Col] *= InvPivot;
+
+			// --- 消去其他行 ---
+			for (int32 Row = 0; Row < WrenchAxisCount; ++Row)
+			{
+				if (Row == PivotCol) continue;
+				const double Factor = Augmented[Row][PivotCol];
+				if (FMath::Abs(Factor) <= UE_SMALL_NUMBER) continue;
+				for (int32 Col = PivotCol; Col <= WrenchAxisCount; ++Col)
+					Augmented[Row][Col] -= Factor * Augmented[PivotCol][Col];
+			}
+		}
+
+		// 增广矩阵最后一列即为解
+		for (int32 Row = 0; Row < WrenchAxisCount; ++Row)
+			OutSolution[Row] = Augmented[Row][WrenchAxisCount];
+		return true;
+	}
+
+// ---------------------------------------------------------------------------
 // MakeRotorCommand — 从 Airscrew 当前状态构建旋翼指令快照
 // ---------------------------------------------------------------------------
-FDroneRotorCommand MakeRotorCommand(const UAirscrewComponent* Airscrew)
-{
-	FDroneRotorCommand RotorCommand;
-	if (!Airscrew) return RotorCommand;
+	FDroneRotorCommand MakeRotorCommand(const UAirscrewComponent* Airscrew)
+	{
+		FDroneRotorCommand RotorCommand;
+		if (!Airscrew) return RotorCommand;
 	const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
-	RotorCommand.RotorName = RotorDefinition.RotorName.IsNone() ? Airscrew->GetFName() : RotorDefinition.RotorName;
-	RotorCommand.NormalizedCommand = Airscrew->GetNormalizedCommand();
-	RotorCommand.TargetRpm = Airscrew->ComputeTargetRpm(Airscrew->GetEffectiveTargetCommand());
-	RotorCommand.CurrentRpm = Airscrew->GetCurrentRpm();
-	RotorCommand.GeneratedThrust = Airscrew->GetCurrentThrustForce();
-	// 反扭矩带符号：正值=CCW方向，负值=CW方向
-	RotorCommand.GeneratedReactionTorque = Airscrew->GetCurrentReactionTorqueMagnitude() * RotorDefinition.GetSpinDirectionSign();
-	return RotorCommand;
+		RotorCommand.RotorName = RotorDefinition.RotorName.IsNone() ? Airscrew->GetFName() : RotorDefinition.RotorName;
+		RotorCommand.NormalizedCommand = Airscrew->GetNormalizedCommand();
+		RotorCommand.TargetRpm = Airscrew->ComputeTargetRpm(Airscrew->GetEffectiveTargetCommand());
+		RotorCommand.CurrentRpm = Airscrew->GetCurrentRpm();
+		RotorCommand.GeneratedThrust = Airscrew->GetCurrentThrustForce();
+		// 反扭矩带符号：正值=CCW方向，负值=CW方向
+		RotorCommand.GeneratedReactionTorque = Airscrew->GetCurrentReactionTorqueMagnitude() * RotorDefinition.GetSpinDirectionSign();
+		// 矢量喷口角度快照
+		RotorCommand.NozzlePitchDeg = Airscrew->GetCurrentNozzlePitchDeg();
+		RotorCommand.NozzleYawDeg = Airscrew->GetCurrentNozzleYawDeg();
+		return RotorCommand;
 }
 }
 
@@ -474,17 +534,13 @@ void UFlightControllerComponent::Disarm()
 }
 
 // ---------------------------------------------------------------------------
-// SetFlightMode — 切换飞行模式
+// SetFlightMode — 切换飞行模式（5值枚举）
 // ---------------------------------------------------------------------------
 // 每种模式决定：
-//   1. 姿态模式（Manual/Acro/Angle）— 决定是否使用角度环
-//   2. 高度保持使能
-//   3. 位置保持使能
-//   4. 速度保持使能
-//
-// 模式层级：
-//   Manual < Acro < Angle < AltHold < VelHold < PosHold < Mission/RTH/AutoLand
-//   高层级自动包含低层级能力。
+//   1. 是否启用力控制器（位置/速度/高度PID → Fx Fy Fz）
+//   2. 是否自动水平（Hover默认姿态）
+//   3. 是否支持偏航保持
+//   4. 瞄准模式默认值
 // ---------------------------------------------------------------------------
 void UFlightControllerComponent::SetFlightMode(EDroneFlightMode NewFlightMode)
 {
@@ -493,42 +549,30 @@ void UFlightControllerComponent::SetFlightMode(EDroneFlightMode NewFlightMode)
 
 	switch (NewFlightMode)
 	{
-	case EDroneFlightMode::Manual:
-		// 纯手动：无自稳，摇杆直接映射到电机
-		Runtime.AttitudeMode = EDroneAttitudeMode::Manual;
-		Runtime.bAltitudeHoldEnabled = false; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = false;
-		break;
 	case EDroneFlightMode::Acro:
-		// 特技模式：角速率控制（无自动水平），适合筋斗/横滚
-		Runtime.AttitudeMode = EDroneAttitudeMode::Acro;
-		Runtime.bAltitudeHoldEnabled = false; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = false;
+		// 特技模式：无自稳，摇杆直出力/力矩，支持倒飞/侧飞
+		Runtime.bForceControlEnabled = false;
+		Runtime.ActiveAimMode = EDroneAimMode::HeldAttitude;
 		break;
-	case EDroneFlightMode::Angle:
-		// 角度模式：姿态角控制（自动水平），最常用的飞行模式
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
-		Runtime.bAltitudeHoldEnabled = false; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = false;
+	case EDroneFlightMode::Hover:
+		// 悬停模式：水平姿态优先，力控制器产 Fx/Fy/Fz
+		Runtime.bForceControlEnabled = true;
+		Runtime.ActiveAimMode = EDroneAimMode::Default;
 		break;
-	case EDroneFlightMode::AltitudeHold:
-		// 高度保持：在 Angle 基础上加气压计定高
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
-		Runtime.bAltitudeHoldEnabled = true; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = false;
+	case EDroneFlightMode::Cruise:
+		// 巡航模式：允许固定Pitch前飞，力控制器产 Fx/Fy/Fz
+		Runtime.bForceControlEnabled = true;
+		Runtime.ActiveAimMode = EDroneAimMode::Default;
 		break;
-	case EDroneFlightMode::VelocityHold:
-		// 速度保持：加 GPS 速度闭环
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
-		Runtime.bAltitudeHoldEnabled = true; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = true;
+	case EDroneFlightMode::LookAt:
+		// 瞄准模式：位置保持 + LookAt目标驱动姿态
+		Runtime.bForceControlEnabled = true;
+		Runtime.ActiveAimMode = EDroneAimMode::LookAt;
 		break;
-	case EDroneFlightMode::PositionHold:
-		// 位置保持：全功能定点悬停
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
-		Runtime.bAltitudeHoldEnabled = true; Runtime.bPositionHoldEnabled = true; Runtime.bVelocityHoldEnabled = true;
-		break;
-	case EDroneFlightMode::Mission:
-	case EDroneFlightMode::ReturnToHome:
-	case EDroneFlightMode::AutoLand:
-		// 自动模式：全功能 + 自动航点/返航/降落
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
-		Runtime.bAltitudeHoldEnabled = true; Runtime.bPositionHoldEnabled = true; Runtime.bVelocityHoldEnabled = true;
+	case EDroneFlightMode::Failure:
+		// 失效模式：根据剩余控制能力自动降级目标
+		Runtime.bForceControlEnabled = true;  // 尝试保持力控制
+		Runtime.ActiveAimMode = EDroneAimMode::Default;
 		break;
 	}
 
@@ -538,44 +582,88 @@ void UFlightControllerComponent::SetFlightMode(EDroneFlightMode NewFlightMode)
 }
 
 // ---------------------------------------------------------------------------
-// SetAttitudeMode / SetAltitudeHoldEnabled / SetPositionHoldEnabled / SetVelocityHoldEnabled
+// SetAimMode — 设置瞄准模式
 // ---------------------------------------------------------------------------
-// 这些接口允许在当前飞行模式下动态切换子功能（如 Angle 模式下手动开关高度保持）。
-// 注意依赖关系：位置保持 → 速度保持 → 高度保持（开高位自动开低位）。
+void UFlightControllerComponent::SetAimMode(EDroneAimMode NewAimMode)
+{
+	if (Runtime.ActiveAimMode == NewAimMode) return;
+	Runtime.ActiveAimMode = NewAimMode;
+
+	// 切换到HeldAttitude时，锁定当前姿态为目标
+	if (NewAimMode == EDroneAimMode::HeldAttitude)
+	{
+		Runtime.LookAtState.CurrentDesiredAttitude = FQuat(Runtime.EstimatedState.State.AttitudeDegrees);
+	}
+
+	// 切换到Default时，清除LookAt目标
+	if (NewAimMode == EDroneAimMode::Default)
+	{
+		Runtime.LookAtState.bTargetLocked = false;
+	}
+
+	UpdateModeCapabilities();
+	ResetControllerState();
+}
+
 // ---------------------------------------------------------------------------
-void UFlightControllerComponent::SetAttitudeMode(EDroneAttitudeMode NewAttitudeMode)
+// SetHeldAttitude / SetHeldAttitudeEuler — 设置保持姿态目标
+// ---------------------------------------------------------------------------
+void UFlightControllerComponent::SetHeldAttitude(const FQuat& AttitudeQuat)
 {
-	if (Runtime.AttitudeMode == NewAttitudeMode) return;
-	Runtime.AttitudeMode = NewAttitudeMode;
+	Runtime.ActiveAimMode = EDroneAimMode::HeldAttitude;
+	Runtime.LookAtState.CurrentDesiredAttitude = AttitudeQuat;
 	UpdateModeCapabilities();
-	ResetControllerState();
 }
 
-void UFlightControllerComponent::SetAltitudeHoldEnabled(bool bEnabled)
+void UFlightControllerComponent::SetHeldAttitudeEuler(float PitchDeg, float YawDeg, float RollDeg)
 {
-	if (Runtime.bAltitudeHoldEnabled == bEnabled) return;
-	Runtime.bAltitudeHoldEnabled = bEnabled;
-	if (!bEnabled) Runtime.bPositionHoldEnabled = false;   // 关高度 → 必然关位置
-	UpdateModeCapabilities();
-	ResetControllerState();
+	SetHeldAttitude(FQuat(FRotator(PitchDeg, YawDeg, RollDeg)));
 }
 
-void UFlightControllerComponent::SetPositionHoldEnabled(bool bEnabled)
+// ---------------------------------------------------------------------------
+// SetLookAtTarget / ClearLookAtTarget — LookAt目标管理
+// ---------------------------------------------------------------------------
+void UFlightControllerComponent::SetLookAtTarget(const FVector& TargetWorldCm, float TargetDistanceCm)
 {
-	if (Runtime.bPositionHoldEnabled == bEnabled) return;
-	Runtime.bPositionHoldEnabled = bEnabled;
-	if (bEnabled) { Runtime.bAltitudeHoldEnabled = true; Runtime.bVelocityHoldEnabled = true; }  // 开位置 → 自动开高度和速度
+	Runtime.ActiveAimMode = EDroneAimMode::LookAt;
+	Runtime.LookAtState.LookAtTargetCm = TargetWorldCm;
+	Runtime.LookAtState.TargetDistanceCm = TargetDistanceCm;
+	Runtime.LookAtState.bTargetLocked = true;
 	UpdateModeCapabilities();
-	ResetControllerState();
 }
 
-void UFlightControllerComponent::SetVelocityHoldEnabled(bool bEnabled)
+void UFlightControllerComponent::ClearLookAtTarget()
 {
-	if (Runtime.bVelocityHoldEnabled == bEnabled) return;
-	Runtime.bVelocityHoldEnabled = bEnabled;
-	if (!bEnabled) Runtime.bPositionHoldEnabled = false;   // 关速度 → 必然关位置
+	Runtime.ActiveAimMode = EDroneAimMode::Default;
+	Runtime.LookAtState.bTargetLocked = false;
+	Runtime.LookAtState.LookAtTargetCm = FVector::ZeroVector;
+	Runtime.LookAtState.TargetDistanceCm = 0.0f;
 	UpdateModeCapabilities();
-	ResetControllerState();
+}
+
+// ---------------------------------------------------------------------------
+// UpdateModeCapabilities — 根据当前模式+AimMode更新能力标志
+// ---------------------------------------------------------------------------
+void UFlightControllerComponent::UpdateModeCapabilities()
+{
+	const EDroneFlightMode Mode = Runtime.ActiveFlightMode;
+	const EDroneAimMode Aim = Runtime.ActiveAimMode;
+
+	// 力控制器可用性：Hover/Cruise/LookAt/Failure 都启用力路径
+	ModeCapabilities.CanUseForceControl = Runtime.bForceControlEnabled;
+
+	// 自动水平：Hover模式且AimMode=Default时保持水平
+	ModeCapabilities.CanAutoLevel = (Mode == EDroneFlightMode::Hover && Aim == EDroneAimMode::Default)
+		|| (Mode == EDroneFlightMode::Failure && Aim == EDroneAimMode::Default);
+
+	// 偏航保持：非Acro模式都支持
+	ModeCapabilities.CanHoldYaw = (Mode != EDroneFlightMode::Acro);
+
+	// 姿态保持：Acro/HeldAttitude/LookAt模式支持
+	ModeCapabilities.CanHoldAttitude = (Aim == EDroneAimMode::HeldAttitude || Aim == EDroneAimMode::LookAt);
+
+	// LookAt瞄准：仅LookAt模式
+	ModeCapabilities.CanLookAt = (Aim == EDroneAimMode::LookAt);
 }
 
 void UFlightControllerComponent::SetControllerEnabled(bool bNewEnabled)
@@ -610,100 +698,66 @@ void UFlightControllerComponent::SetHeldYaw(float YawDegrees)
 	PidStates.Angle.Yaw.Reset();
 }
 
-// ---------------------------------------------------------------------------
-// UpdateModeCapabilities — 根据当前模式更新能力标志
-// ---------------------------------------------------------------------------
-// 各 Compute* 函数读取这些标志来决定是否执行对应控制回路。
-// 标志设计的核心思想：高层模式隐含低层能力，但低层模式也可手动开启高层功能。
-// ---------------------------------------------------------------------------
-void UFlightControllerComponent::UpdateModeCapabilities()
-{
-	const EDroneFlightMode Mode = Runtime.ActiveFlightMode;
-	const EDroneAttitudeMode AttMode = Runtime.AttitudeMode;
-
-	// 偏航保持需要角度环参与（Manual/Acro 没有角度环，无法锁航向）
-	ModeCapabilities.CanHoldYaw = (AttMode != EDroneAttitudeMode::Manual && AttMode != EDroneAttitudeMode::Acro);
-
-	// 高度保持：手动开启 或 自动模式隐含
-	ModeCapabilities.CanHoldAltitude = Runtime.bAltitudeHoldEnabled
-		|| Mode == EDroneFlightMode::PositionHold || Mode == EDroneFlightMode::ReturnToHome
-		|| Mode == EDroneFlightMode::Mission || Mode == EDroneFlightMode::AutoLand;
-
-	// 速度控制：手动开启 或 自动模式隐含
-	ModeCapabilities.CanUseVelocityControl = Runtime.bVelocityHoldEnabled || Runtime.bPositionHoldEnabled
-		|| Mode == EDroneFlightMode::ReturnToHome || Mode == EDroneFlightMode::Mission || Mode == EDroneFlightMode::AutoLand;
-
-	// 位置控制：手动开启 或 自动模式隐含
-	ModeCapabilities.CanUsePositionControl = Runtime.bPositionHoldEnabled
-		|| Mode == EDroneFlightMode::ReturnToHome || Mode == EDroneFlightMode::Mission || Mode == EDroneFlightMode::AutoLand;
-
-	// 位置保持 = 位置控制能力
-	ModeCapabilities.CanHoldPosition = ModeCapabilities.CanUsePositionControl;
-
-	// 返航能力
-	ModeCapabilities.CanUseReturnHome = (Mode == EDroneFlightMode::ReturnToHome);
-}
+// 已移至 SetFlightMode / SetAimMode 内联
 
 // ---------------------------------------------------------------------------
-// InitializeDefaultControllerConfig — 100kg 级无人机默认 PID 参数
+// InitializeDefaultControllerConfig — 统一矢量飞控默认 PID 参数
 // ---------------------------------------------------------------------------
 // 调参原则：
 //   - 大惯性 → 低 Kp（防过冲）+ 高 Kd（增阻尼）+ 低截止频率（强滤波）
 //   - 内环带宽 > 外环带宽（保证串级稳定性）
-//     角速率环 ~18-25 Hz > 角度环 ~8-12 Hz > 速度环 ~10-12 Hz > 位置环 ~2-4 Hz
 //   - 积分项仅用于消除稳态误差，增益要小，必须有积分限幅
 // ---------------------------------------------------------------------------
 void UFlightControllerComponent::InitializeDefaultControllerConfig()
 {
 	// ========================================================================
 	// 运动限制（安全边界）
-	// 100kg 无人机倾斜过大会失控，需严格限制
 	// ========================================================================
-	ControllerConfig.Limits.MaxTiltAngleDegrees = 25.0f;         // 最大倾角（原35°，大惯性降至25°）
-	ControllerConfig.Limits.MaxYawRateDegreesPerSec = 90.0f;     // 最大偏航角速率（°/s）
-	ControllerConfig.Limits.MaxRollRateDegreesPerSec = 180.0f;   // 最大滚转角速率
-	ControllerConfig.Limits.MaxPitchRateDegreesPerSec = 180.0f;  // 最大俯仰角速率
-	ControllerConfig.Limits.MaxClimbRateCmPerSec = 300.0f;       // 最大爬升率（3 m/s）
-	ControllerConfig.Limits.MaxDescentRateCmPerSec = 200.0f;     // 最大下降率（2 m/s）
-	ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec = 800.0f;  // 最大水平速度（8 m/s）
-	ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq = 600.0f; // 最大水平加速度
-	ControllerConfig.Limits.MaxVerticalAccelerationCmPerSecSq = 500.0f;   // 最大垂直加速度
-	ControllerConfig.Limits.MinCollectiveCommand = 0.0f;        // 最小总距（0 = 零推力）
-	ControllerConfig.Limits.HoverCollectiveCommand = 0.50f;      // 悬停总距（悬停点）
-	ControllerConfig.Limits.MaxCollectiveCommand = 1.0f;        // 最大总距（满推力）
+	ControllerConfig.Limits.MaxTiltAngleDegrees = 25.0f;         // 最大倾角（软约束）
+	ControllerConfig.Limits.MaxHorizontalForceN = 15.0f;         // 最大水平力
+	ControllerConfig.Limits.MaxVerticalForceN = 50.0f;           // 最大垂直力
+	ControllerConfig.Limits.MaxYawRateDegreesPerSec = 90.0f;      // 最大偏航角速率
+	ControllerConfig.Limits.MaxRollRateDegreesPerSec = 360.0f;    // 最大滚转角速率
+	ControllerConfig.Limits.MaxPitchRateDegreesPerSec = 360.0f;  // 最大俯仰角速率
+	ControllerConfig.Limits.MaxClimbRateCmPerSec = 400.0f;        // 最大爬升率
+	ControllerConfig.Limits.MaxDescentRateCmPerSec = 250.0f;     // 最大下降率
+	ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec = 1200.0f; // 最大水平速度
+		ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq = 1200.0f;
+		ControllerConfig.Limits.MaxVerticalAccelerationCmPerSecSq = 1000.0f;
+		// 注：MinCollectiveCommand/HoverCollectiveCommand/MaxCollectiveCommand 已移除
+		// 等效语义由 HoverThrustN / MaxVerticalForceN 替代
 
 	// ========================================================================
-	// Position PID — 外环：位置误差 → 期望速度
-	// 公式：v_des = Kp·(pos_held − pos_current)
-	// 注意这是 P 控制器（Ki=0, Kd 提供速度阻尼）
-	// Kd 项 = Kd·d(error)/dt ≈ Kd·(−v_current)，等效于速度阻尼
-	// 输出限制 = MaxSpeed，确保期望速度不超物理极限
+	// 力控制器 — 统一位置/速度/高度 PID → [Fx Fy Fz] (N)
 	// ========================================================================
-	ControllerConfig.Position.PositionGains.X = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
-	ControllerConfig.Position.PositionGains.Y = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
-	// Z 轴位置 → 期望垂直速度（P 控制，Kd=0 因为速度内环已有微分）
-	ControllerConfig.Position.PositionGains.Z = { 1.20f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
+	// 外环：位置PID → 期望速度
+	//   X/Y: P控制 + Kd速度阻尼
+	//   Z:   P控制（高度误差 → 期望垂直速度）
+	ControllerConfig.Force.PositionGains.X = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
+	ControllerConfig.Force.PositionGains.Y = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
+	ControllerConfig.Force.PositionGains.Z = { 2.00f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
+
+	// 内环：速度PID → 期望力 (N)
+	//   X/Y: 输出直接是 Fx/Fy (N)
+	//   Z:   输出是 ΔFz (N)，加在 HoverThrustN 上
+	ControllerConfig.Force.VelocityGains.X = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalForceN };
+	ControllerConfig.Force.VelocityGains.Y = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalForceN };
+	ControllerConfig.Force.VelocityGains.Z = { 3.00f, 0.50f, 0.10f, 400.0f, ControllerConfig.Limits.MaxVerticalForceN };
+	ControllerConfig.Force.VelocityGains.X.DerivativeCutoffHz = 12.0f;
+	ControllerConfig.Force.VelocityGains.Y.DerivativeCutoffHz = 12.0f;
+	ControllerConfig.Force.VelocityGains.Z.DerivativeCutoffHz = 10.0f;
+
+	// Z轴用 Altitude/VerticalVelocity 子配置（向新结构过渡兼容）
+	ControllerConfig.Force.AltitudeGains = { 2.00f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
+	ControllerConfig.Force.VerticalVelocityGains = { 3.00f, 0.50f, 0.10f, 400.0f, ControllerConfig.Limits.MaxVerticalForceN };
+	ControllerConfig.Force.VerticalVelocityGains.DerivativeCutoffHz = 10.0f;
+	// 悬停推力由运行时根据机体质量自动计算：HoverThrustN = MassKg × g
+	ControllerConfig.Force.HoverThrustN = 0.0f;
 
 	// ========================================================================
-	// Velocity PID — 内环：速度误差 → 期望加速度
-	// 公式：a_des = Kp·(v_des − v_current) + Ki·∫(v_des − v)dt + Kd·d(v_des − v)/dt
-	// 输出限制 = MaxAcceleration（X/Y）或归一化总距偏移（Z，范围 [-0.3, 0.3]）
-	// Z 轴增益特别小是因为输出单位是归一化总距偏移（0.3 ≈ 30% 最大推力变化）
+	// 姿态控制器 — 角度环+角速率环 → [Mx My Mz] (N·m)
 	// ========================================================================
-	ControllerConfig.Position.VelocityGains.X = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
-	ControllerConfig.Position.VelocityGains.Y = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
-	ControllerConfig.Position.VelocityGains.Z = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
-	// 微分截止频率降低 → 更强滤波 → 减少角速率噪声引起的抖动
-	ControllerConfig.Position.VelocityGains.X.DerivativeCutoffHz = 12.0f;
-	ControllerConfig.Position.VelocityGains.Y.DerivativeCutoffHz = 12.0f;
-	ControllerConfig.Position.VelocityGains.Z.DerivativeCutoffHz = 10.0f;
-
-	// ========================================================================
-	// Angle PID — 外环：倾角误差 → 期望角速率
-	// 公式：ω_des = Kp·(θ_des − θ_current) + Kd·d(θ_error)/dt
-	// 输出限制 = MaxRate（与速率内环的输入范围匹配）
-	// 角度环用 UpdateFromError（导数对误差），因为设定值来自速度环，已是平滑信号
-	// ========================================================================
+	// 外环：角度PID → 期望角速率
 	ControllerConfig.Attitude.AngleGains.Roll = { 4.5f, 0.0f, 0.20f, 20.0f, ControllerConfig.Limits.MaxRollRateDegreesPerSec };
 	ControllerConfig.Attitude.AngleGains.Pitch = { 4.5f, 0.0f, 0.20f, 20.0f, ControllerConfig.Limits.MaxPitchRateDegreesPerSec };
 	ControllerConfig.Attitude.AngleGains.Yaw = { 3.0f, 0.0f, 0.10f, 25.0f, ControllerConfig.Limits.MaxYawRateDegreesPerSec };
@@ -711,14 +765,7 @@ void UFlightControllerComponent::InitializeDefaultControllerConfig()
 	ControllerConfig.Attitude.AngleGains.Pitch.DerivativeCutoffHz = 12.0f;
 	ControllerConfig.Attitude.AngleGains.Yaw.DerivativeCutoffHz = 8.0f;
 
-	// ========================================================================
-	// Rate PID — 内环：角速率误差 → 归一化力矩指令
-	// 公式：u = Kp·(ω_des − ω_current) + Ki·∫(ω_des − ω)dt + Kd·d(ω_des − ω)/dt
-	// 速率环用 UpdateFromMeasurement（导数对测量值），避免设定值阶跃时的 kick
-	// 输出限制 = 0.35（归一化，对应混合器中该轴最大权限的 35%）
-	// 增益极小是因为惯量大（I ~ 5000 kg·cm² = 0.5 kg·m²），所需力矩很大
-	// 但混合器的归一化使输出范围也是 [−1, 1]，所以增益已隐含了惯量缩放
-	// ========================================================================
+	// 内环：角速率PID → 归一化力矩指令
 	ControllerConfig.Attitude.RateGains.Roll = { 0.0020f, 0.00025f, 0.00015f, 120.0f, 0.35f };
 	ControllerConfig.Attitude.RateGains.Pitch = { 0.0020f, 0.00025f, 0.00015f, 120.0f, 0.35f };
 	ControllerConfig.Attitude.RateGains.Yaw = { 0.0012f, 0.00015f, 0.00008f, 120.0f, 0.20f };
@@ -727,22 +774,7 @@ void UFlightControllerComponent::InitializeDefaultControllerConfig()
 	ControllerConfig.Attitude.RateGains.Yaw.DerivativeCutoffHz = 15.0f;
 
 	// ========================================================================
-	// Altitude PID — 高度控制（与垂直通道并行）
-	// 外环：高度误差 → 期望垂直速度
-	//   v_z_des = Kp·(z_held − z_current) + Kd·d(z_error)/dt
-	// 内环：垂直速度误差 → 总距偏移
-	//   Δc = Kp·(v_z_des − v_z_current) + Ki·∫(v_z_des − v_z)dt + Kd·d(v_z_des − v_z)/dt
-	//   Collective = Clamp(HoverCollective + Δc, Min, Max)
-	// ========================================================================
-	ControllerConfig.Altitude.AltitudeGains = { 1.20f, 0.0f, 0.20f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
-	ControllerConfig.Altitude.VerticalVelocityGains = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
-	ControllerConfig.Altitude.VerticalVelocityGains.DerivativeCutoffHz = 10.0f;
-
-	// ========================================================================
-	// 控制分配参数
-	// λ = DampedPseudoInverseLambda — 阻尼系数
-	// 公式中的 λ² 项加在法矩阵对角线上，防止 J·J^T 接近奇异时解爆炸
-	// 默认 0.05：轻微正则化，几乎不影响正常工况，但在权限极低时防止数值爆炸
+	// 控制分配器参数
 	// ========================================================================
 	ControllerConfig.Allocator.DampedPseudoInverseLambda = 0.05f;
 }
@@ -773,7 +805,7 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 	const FVector BodyVel(BodyHandle->V());
 	const FVector BodyAngVelRad(BodyHandle->W());
 
-	// 缓存体变换（后续 BuildJacobianColumn 等函数使用）
+	// 缓存体变换（后续 BuildJacobianSubmatrix 等函数使用）
 	PhysicsCache.BodyTransform = FTransform(BodyQuat, BodyPos);
 	PhysicsCache.CenterOfMassWorld = BodyPos;
 	PhysicsCache.LinearVelocityCmPerSec = BodyVel;
@@ -836,29 +868,23 @@ void UFlightControllerComponent::UpdateHomeState(bool bForceResetHome)
 }
 
 // ---------------------------------------------------------------------------
-// RunControlLoop — 控制循环主入口（每 4ms 调用一次）
+// RunControlLoop — 统一6DOF矢量飞控主循环（每4ms调用一次）
 // ---------------------------------------------------------------------------
-// 串级 PID 执行顺序（从外到内）：
+// 新架构执行顺序（两条独立管线）：
 //
-//   ┌───────────────────────────────────────────┐
-//   │ 1. ComputeVerticalControl                  │  ← 高度/垂直速度 → 总距
-//   │    (并行垂直通道)                            │
-//   ├───────────────────────────────────────────┤
-//   │ 2. ComputeDesiredAttitude                  │  ← 位置/速度 → 期望倾角
-//   │    ├ ComputeDesiredHorizontalVelocity      │     (非速度模式: 摇杆直接映射)
-//   │    └ ComputeDesiredHorizontalAcceleration  │     (速度模式: PID → 倾角)
-//   ├───────────────────────────────────────────┤
-//   │ 3. ComputeDesiredYawRate                    │  ← 偏航保持
-//   ├───────────────────────────────────────────┤
-//   │ 4. ComputeDesiredBodyRates                  │  ← 倾角误差 → 期望角速率
-//   │    (Acro/Manual: 摇杆直接映射角速率)         │     (Angle: 角度PID)
-//   ├───────────────────────────────────────────┤
-//   │ 5. ComputeBodyTorqueCommand                │  ← 角速率误差 → 归一化力矩
-//   │    (最内环，带宽最高)                        │
-//   ├───────────────────────────────────────────┤
-//   │ 6. AllocateToRotors                        │  ← 4维指令 → N个旋翼推力
-//   │    (阻尼伪逆 + 主动集)                       │
-//   └───────────────────────────────────────────┘
+//   ┌─────────────────────────────────────────────────┐
+//   │ 力路径（位置/速度/高度 → 期望力）              │
+//   │ 1. ComputeDesiredForce → [Fx Fy Fz] (N)       │
+//   ├─────────────────────────────────────────────────┤
+//   │ 姿态路径（AimMode → 期望姿态 → 期望力矩）     │
+//   │ 2. ResolveDesiredAttitude → 更新 LookAtState   │
+//   │ 3. ComputeDesiredMoment → [Mx My Mz] (N·m)    │
+//   ├─────────────────────────────────────────────────┤
+//   │ 组合 + 分配                                    │
+//   │ 4. ComposeDesiredWrench → [Fx Fy Fz Mx My Mz]  │
+//   │ 5. AllocateToRotors → 各旋翼 T + NP + NY       │
+//   │ 6. 更新旋翼物理状态                            │
+//   └─────────────────────────────────────────────────┘
 // ---------------------------------------------------------------------------
 void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDronePilotInput& PilotInput)
 {
@@ -869,33 +895,20 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 	Runtime.ControlOutput = FDroneControlOutput();
 	Runtime.ControlOutput.Targets.FlightMode = Runtime.ActiveFlightMode;
 
-	// ---- 串级 PID 按固定顺序执行 ----
-	float DesiredVerticalVelocity = 0.0f;
-	// 步骤1: 垂直控制 — 高度保持/手动油门 → 总距指令 c ∈ [0,1]
-	const float CollectiveCommand = ComputeVerticalControl(PilotInput, DeltaSeconds, DesiredVerticalVelocity);
-	// 步骤2: 期望姿态角 — 位置/速度PID 或 手动映射 → (φ_des, θ_des, ψ̇_des)
-	const FRotator DesiredAttitude = ComputeDesiredAttitude(PilotInput, DeltaSeconds);
-	// 步骤3: 期望偏航角速率 — 偏航保持/手动 → ψ̇_des
-	const float DesiredYawRate = ComputeDesiredYawRate(PilotInput, DeltaSeconds);
-	// 步骤4: 期望机体角速率 — 角度环或直通 → (p_des, q_des, r_des)
-	const FVector DesiredBodyRates = ComputeDesiredBodyRates(PilotInput, DesiredAttitude, DesiredYawRate, DeltaSeconds);
-	// 步骤5: 归一化力矩指令 — 角速率环 → (u_roll, u_pitch, u_yaw) ∈ [-1,1]
-	const FVector AxisCommands = ComputeBodyTorqueCommand(DesiredBodyRates, DeltaSeconds);
+	// ---- 力路径：位置/速度/高度PID → [Fx Fy Fz] (N) ----
+	const FVector DesiredForce = ComputeDesiredForce(PilotInput, DeltaSeconds);
 
-	// 记录中间目标值（供诊断/蓝图使用）
-	Runtime.ControlOutput.Targets.Attitude.bEnabled = true;
-	Runtime.ControlOutput.Targets.Attitude.AttitudeDegrees = DesiredAttitude;
-	Runtime.ControlOutput.Targets.Attitude.CollectiveThrust = CollectiveCommand;
-	Runtime.ControlOutput.Targets.Rate.bEnabled = true;
-	Runtime.ControlOutput.Targets.Rate.BodyRatesDegreesPerSec = DesiredBodyRates;
-	Runtime.ControlOutput.Targets.Rate.CollectiveThrust = CollectiveCommand;
-	Runtime.ControlOutput.Targets.Velocity.bEnabled = true;
-	Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.Z = DesiredVerticalVelocity;
+	// ---- 姿态路径：AimMode → 期望姿态 → [Mx My Mz] (N·m) ----
+	ResolveDesiredAttitude(DeltaSeconds);
+	const FVector DesiredMoment = ComputeDesiredMoment(PilotInput, DeltaSeconds);
 
-	// 步骤6: 控制分配 — 将 [总距, 滚转, 俯仰, 偏航] 指令分配给 N 个旋翼
-	AllocateToRotors(CollectiveCommand, AxisCommands);
+	// ---- 组合6DOF Wrench ----
+	ComposeDesiredWrench(DesiredForce, DesiredMoment);
 
-	// 更新每个旋翼的物理状态（电机动力学模型 + 推力/反扭矩计算）
+	// ---- 控制分配：6DOF Wrench → 各旋翼 T + NP + NY ----
+	AllocateToRotors();
+
+	// ---- 更新旋翼物理状态 ----
 	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
 	{
 		UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
@@ -905,8 +918,9 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 			Runtime.ControlOutput.RotorCommands[RotorIndex] = FlightControllerAllocation::MakeRotorCommand(Airscrew);
 	}
 
-	MaybeEmitDebugLog(PilotInput, DeltaSeconds, CollectiveCommand, DesiredVerticalVelocity,
-		DesiredAttitude, DesiredYawRate, DesiredBodyRates, AxisCommands);
+	// ---- 调试日志 ----
+	MaybeEmitDebugLog(PilotInput, DeltaSeconds, DesiredForce,
+		Runtime.LookAtState.CurrentDesiredAttitude, DesiredMoment);
 }
 
 // ---------------------------------------------------------------------------
@@ -984,25 +998,23 @@ void UFlightControllerComponent::UpdateRotorCache()
 }
 
 // ---------------------------------------------------------------------------
-// RebuildAllocationCache — 重建控制分配的雅可比矩阵与归一化列
+// RebuildAllocationCache — 重建6DOF控制分配的雅可比矩阵与归一化列
 // ---------------------------------------------------------------------------
-// 两遍扫描设计：
+// 两遍扫描设计（延续旧架构，维度升级到6D）：
 //
-//   第一遍：计算 RowScale（行归一化因子）
+//   第一遍：计算 RowScale（行归一化因子）[6]
 //     RowScale 基于全健康（Effectiveness=1）的原始雅可比列计算。
 //     这样即使旋翼降效，归一化因子也不变，避免所有旋翼推力一起下降。
 //
 //   第二遍：填充缓存
-//     - JacobianColumns = 原始物理列（不受 Effectiveness 影响）
+//     - JacobianColumns = 原始物理列（不受 Effectiveness 影响），每旋翼3列
 //     - MaxAllocatedThrusts = 最大物理推力 × ControlAuthorityScale × Effectiveness
 //     - NormalizedColumns = PhysicalColumn / RowScale
-//
-// Effectiveness 仅影响 MaxAllocatedThrusts，不影响列几何——
-// 这保证混合器求解方向不变，只减少该旋翼的最大可用推力。
+//     - FreeControls = 3N 个布尔值（每旋翼 T, NP, NY）
 //
 // RowScale 含义：
-//   RowScale[0] = Σ max(Fz_i, 0)        — 总距轴总可用升力
-//   RowScale[k] = BalancedAuthority(Σ^+, Σ^-)  — 力矩轴对称权限
+//   RowScale[0..2] = Σ |Force_axis_i|  — 力轴总可用力
+//   RowScale[3..5] = BalancedAuthority(Σ^+, Σ^-)  — 力矩轴对称权限
 //     BalancedAuthority 取正负方向的较小值，代表"对称可操作范围"
 // ---------------------------------------------------------------------------
 void UFlightControllerComponent::RebuildAllocationCache()
@@ -1010,10 +1022,16 @@ void UFlightControllerComponent::RebuildAllocationCache()
 	if (Airscrews.IsEmpty()) { AllocationCache.Invalidate(); AuthorityInfo.Reset(); return; }
 
 	const int32 NumRotors = Airscrews.Num();
-	AllocationCache.JacobianColumns.SetNumZeroed(NumRotors);
+	const int32 NumControls = NumRotors * 3; // T, NP, NY per rotor
+	constexpr int32 WrenchDim = FlightControllerAllocation::WrenchAxisCount;
+
+	AllocationCache.JacobianColumns.SetNum(NumControls);
 	AllocationCache.MaxAllocatedThrusts.SetNumZeroed(NumRotors);
-	AllocationCache.FreeRotors.SetNumZeroed(NumRotors);
-	AllocationCache.NormalizedColumns.SetNumZeroed(NumRotors);
+	AllocationCache.FreeControls.SetNumZeroed(NumControls);
+	AllocationCache.NormalizedColumns.SetNum(NumControls);
+
+	for (auto& Col : AllocationCache.JacobianColumns) Col.SetNumZeroed(WrenchDim);
+	for (auto& Col : AllocationCache.NormalizedColumns) Col.SetNumZeroed(WrenchDim);
 
 	// 同步 RotorHealthStates 数组大小
 	if (RotorHealthStates.Num() != NumRotors)
@@ -1028,9 +1046,9 @@ void UFlightControllerComponent::RebuildAllocationCache()
 
 	// RowScale 必须基于原始（全健康）Jacobian 计算，不受 Effectiveness 影响。
 	// 否则 Effectiveness < 1 时 RowScale 缩小，导致所有旋翼推力一起下降。
-	double OriginalCollectiveAuthority = 0.0;
-	double OriginalPositiveTorqueAuthority[3] = {};
-	double OriginalNegativeTorqueAuthority[3] = {};
+	double OriginalForceAuthority[3] = {};
+	double OriginalPositiveMomentAuthority[3] = {};
+	double OriginalNegativeMomentAuthority[3] = {};
 
 	// ========== 第一遍：用原始 Jacobian 计算 RowScale ==========
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
@@ -1052,40 +1070,53 @@ void UFlightControllerComponent::RebuildAllocationCache()
 		else FailedCount++;
 
 		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
-		const FVector4 PhysicalColumn = BuildJacobianColumn(Airscrew, LocalPosition);
+
+		// 构建6DOF子矩阵
+		TArray<double> ThrustCol, NPCol, NYCol;
+		BuildJacobianSubmatrix(Airscrew, LocalPosition, ThrustCol, NPCol, NYCol);
+
 		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
-		const double ColumnMagnitude = FMath::Abs(PhysicalColumn[0]) + FMath::Abs(PhysicalColumn[1])
-			+ FMath::Abs(PhysicalColumn[2]) + FMath::Abs(PhysicalColumn[3]);
+
+		// 计算推力列的幅度（6D L1范数）
+		double ThrustColMag = 0.0;
+		for (int32 Row = 0; Row < WrenchDim; ++Row) ThrustColMag += FMath::Abs(ThrustCol[Row]);
 
 		// 跳过零推力或零贡献旋翼
-		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ColumnMagnitude <= FlightControllerAllocation::AuthorityEpsilon)
+		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ThrustColMag <= FlightControllerAllocation::AuthorityEpsilon)
 			continue;
 
 		// 累加原始（未缩放）权限 — RowScale 基于"全健康时能做什么"
-		// RowScale[0] = 总距：所有旋翼垂直力之和（仅正方向，因为推力向上）
-		OriginalCollectiveAuthority += FMath::Max(PhysicalColumn[0], 0.0f);
-		// RowScale[1..3] = 力矩：正/负方向分别累加
+		// 力轴 [0..2]：累加各力分量的绝对值（力可以双向，对于 Fz 主要正向）
 		for (int32 Axis = 0; Axis < 3; ++Axis)
 		{
-			const double AxisMoment = PhysicalColumn[Axis + 1];
-			if (AxisMoment >= 0.0f) OriginalPositiveTorqueAuthority[Axis] += AxisMoment;
-			else OriginalNegativeTorqueAuthority[Axis] -= AxisMoment;
+			OriginalForceAuthority[Axis] += FMath::Abs(ThrustCol[Axis]);
+		}
+		// 力矩轴 [3..5]：正/负方向分别累加
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			const double AxisMoment = ThrustCol[Axis + 3];
+			if (AxisMoment >= 0.0) OriginalPositiveMomentAuthority[Axis] += AxisMoment;
+			else OriginalNegativeMomentAuthority[Axis] -= AxisMoment;
 		}
 	}
 
-	// RowScale[0] = 原始总距权限
-	AllocationCache.RowScale[0] = OriginalCollectiveAuthority;
-	// RowScale[k] = 平衡权限 = min(正,负)，保证两个方向都有余量
-	AllocationCache.RowScale[1] = FlightControllerAllocation::GetBalancedAuthority(OriginalPositiveTorqueAuthority[0], OriginalNegativeTorqueAuthority[0]);
-	AllocationCache.RowScale[2] = FlightControllerAllocation::GetBalancedAuthority(OriginalPositiveTorqueAuthority[1], OriginalNegativeTorqueAuthority[1]);
-	AllocationCache.RowScale[3] = FlightControllerAllocation::GetBalancedAuthority(OriginalPositiveTorqueAuthority[2], OriginalNegativeTorqueAuthority[2]);
+	// RowScale[0..2] = 原始力轴权限（取绝对值累加，因力可以双向）
+	AllocationCache.RowScale[0] = OriginalForceAuthority[0];
+	AllocationCache.RowScale[1] = OriginalForceAuthority[1];
+	AllocationCache.RowScale[2] = OriginalForceAuthority[2];
+	// RowScale[3..5] = 平衡力矩权限 = min(正,负)，保证两个方向都有余量
+	AllocationCache.RowScale[3] = FlightControllerAllocation::GetBalancedAuthority(OriginalPositiveMomentAuthority[0], OriginalNegativeMomentAuthority[0]);
+	AllocationCache.RowScale[4] = FlightControllerAllocation::GetBalancedAuthority(OriginalPositiveMomentAuthority[1], OriginalNegativeMomentAuthority[1]);
+	AllocationCache.RowScale[5] = FlightControllerAllocation::GetBalancedAuthority(OriginalPositiveMomentAuthority[2], OriginalNegativeMomentAuthority[2]);
 
 	// 为 AuthorityInfo 计算有效 Authority（含 Effectiveness）
-	AllocationCache.CollectiveAuthority = 0.0;
-	FMemory::Memzero(AllocationCache.PositiveTorqueAuthority);
-	FMemory::Memzero(AllocationCache.NegativeTorqueAuthority);
+	AllocationCache.FxAuthority = 0.0;
+	AllocationCache.FyAuthority = 0.0;
+	AllocationCache.FzAuthority = 0.0;
+	FMemory::Memzero(AllocationCache.PositiveMomentAuthority);
+	FMemory::Memzero(AllocationCache.NegativeMomentAuthority);
 
-	// ========== 第二遍：填充 JacobianColumns、MaxAllocatedThrusts、NormalizedColumns ==========
+	// ========== 第二遍：填充 JacobianColumns、MaxAllocatedThrusts、NormalizedColumns、FreeControls ==========
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
@@ -1098,391 +1129,547 @@ void UFlightControllerComponent::RebuildAllocationCache()
 			continue;
 
 		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
-		const FVector4 PhysicalColumn = BuildJacobianColumn(Airscrew, LocalPosition);
-		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
-		const double ColumnMagnitude = FMath::Abs(PhysicalColumn[0]) + FMath::Abs(PhysicalColumn[1])
-			+ FMath::Abs(PhysicalColumn[2]) + FMath::Abs(PhysicalColumn[3]);
 
-		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ColumnMagnitude <= FlightControllerAllocation::AuthorityEpsilon)
+		// 构建6DOF子矩阵
+		TArray<double> ThrustCol, NPCol, NYCol;
+		BuildJacobianSubmatrix(Airscrew, LocalPosition, ThrustCol, NPCol, NYCol);
+
+		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
+
+		// 计算推力列的幅度
+		double ThrustColMag = 0.0;
+		for (int32 Row = 0; Row < WrenchDim; ++Row) ThrustColMag += FMath::Abs(ThrustCol[Row]);
+
+		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ThrustColMag <= FlightControllerAllocation::AuthorityEpsilon)
 			continue;
 
-		// 雅可比列保持原始物理值——列几何不变，混合器方向不变
-		AllocationCache.JacobianColumns[RotorIndex] = PhysicalColumn;
+		const int32 TIdx = RotorIndex * 3 + 0;
+		const int32 NPIdx = RotorIndex * 3 + 1;
+		const int32 NYIdx = RotorIndex * 3 + 2;
+
+		// 雅可比列保持原始物理值——列几何不变，分配器方向不变
+		AllocationCache.JacobianColumns[TIdx] = ThrustCol;
+		AllocationCache.JacobianColumns[NPIdx] = NPCol;
+		AllocationCache.JacobianColumns[NYIdx] = NYCol;
+
 		// Effectiveness 仅缩放最大可分配推力——失效旋翼推力上限降低
 		AllocationCache.MaxAllocatedThrusts[RotorIndex] = MaxAllocatedThrust * Effectiveness;
-		AllocationCache.FreeRotors[RotorIndex] = true;
+
+		// 自由控制标记
+		AllocationCache.FreeControls[TIdx] = true;
+		AllocationCache.FreeControls[NPIdx] = Airscrew->GetRotorDefinition().HasNozzle() && Effectiveness > 0.0f;
+		AllocationCache.FreeControls[NYIdx] = Airscrew->GetRotorDefinition().HasNozzle() && Effectiveness > 0.0f;
 
 		// 有效 Authority（乘以 Effectiveness 后的值，用于 AuthorityInfo 诊断）
-		const FVector4 EffectiveColumn(
-			PhysicalColumn[0] * Effectiveness,
-			PhysicalColumn[1] * Effectiveness,
-			PhysicalColumn[2] * Effectiveness,
-			PhysicalColumn[3] * Effectiveness);
-		AllocationCache.CollectiveAuthority += FMath::Max(EffectiveColumn[0], 0.0f);
+		const FDroneRotorDefinition& RotorDef = Airscrew->GetRotorDefinition();
+		const double EffFactor = static_cast<double>(Effectiveness);
+		// 力轴：累加有效推力列的绝对值
 		for (int32 Axis = 0; Axis < 3; ++Axis)
 		{
-			const double AxisMoment = EffectiveColumn[Axis + 1];
-			if (AxisMoment >= 0.0f) AllocationCache.PositiveTorqueAuthority[Axis] += AxisMoment;
-			else AllocationCache.NegativeTorqueAuthority[Axis] -= AxisMoment;
+			const double EffectiveForce = FMath::Abs(ThrustCol[Axis]) * EffFactor;
+			if (Axis == 0) AllocationCache.FxAuthority += EffectiveForce;
+			else if (Axis == 1) AllocationCache.FyAuthority += EffectiveForce;
+			else AllocationCache.FzAuthority += EffectiveForce;
+		}
+		// 力矩轴：正/负方向分别累加有效推力列
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			const double AxisMoment = ThrustCol[Axis + 3] * EffFactor;
+			if (AxisMoment >= 0.0) AllocationCache.PositiveMomentAuthority[Axis] += AxisMoment;
+			else AllocationCache.NegativeMomentAuthority[Axis] -= AxisMoment;
 		}
 
 		// 归一化列：PhysicalColumn / RowScale
 		// 使控制器输出的 [-1,1] 指令直接对应"该轴最大权限的百分比"
-		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
+		for (int32 Axis = 0; Axis < WrenchDim; ++Axis)
 		{
-			AllocationCache.NormalizedColumns[RotorIndex][Axis] = AllocationCache.RowScale[Axis] > FlightControllerAllocation::AuthorityEpsilon
-				? PhysicalColumn[Axis] / AllocationCache.RowScale[Axis] : 0.0f;
+			const double Scale = AllocationCache.RowScale[Axis];
+			AllocationCache.NormalizedColumns[TIdx][Axis] = Scale > FlightControllerAllocation::AuthorityEpsilon
+				? ThrustCol[Axis] / Scale : 0.0;
+			AllocationCache.NormalizedColumns[NPIdx][Axis] = Scale > FlightControllerAllocation::AuthorityEpsilon
+				? NPCol[Axis] / Scale : 0.0;
+			AllocationCache.NormalizedColumns[NYIdx][Axis] = Scale > FlightControllerAllocation::AuthorityEpsilon
+				? NYCol[Axis] / Scale : 0.0;
 		}
 	}
 
 	AllocationCache.bIsValid = true;
 
-	// 更新控制能力评估（基于全健康基准归一化）
-	UpdateControlAuthorityInfo();
+		// 更新控制能力评估（基于全健康基准归一化）
+		UpdateControlAuthorityInfo();
+
+		// 评估6轴控制能力并决定是否自动降级到Failure模式
+		EvaluateControlAuthority();
 
 	bAllocatorDirty = false;
 }
 
 // ---------------------------------------------------------------------------
-// ComputeVerticalControl — 垂直通道控制（高度/总距）
+// ComputeDesiredForce — 力路径核心：位置/速度/高度PID → [Fx Fy Fz] (N)
 // ---------------------------------------------------------------------------
-// 两条路径：
+// 三条子路径：
 //
-//   A) 无高度保持 (Manual/Acro/Angle):
-//      油门杆 → 直接映射垂直速度和总距
-//      v_z_des = map(Throttle ∈ [-1,1] → [-V_des, +V_climb])
-//      c = MapCenteredThrottleToCollective(Throttle)
-//        Throttle ≥ 0: c = Lerp(Hover, Max, Throttle)     — 中位=悬停
-//        Throttle < 0: c = Lerp(Hover, Min, -Throttle)    — 向下=减推
+//   X/Y 轴（水平力）：
+//     位置模式：位置PID → 期望速度 → 速度PID → 期望加速度 → 期望力
+//     手动模式（非力控制）：摇杆 → 期望速度 → 速度PID → 期望力
+//     Acro模式：摇杆直出Fx/Fy
 //
-//   B) 高度保持 (AltHold/PosHold/...):
-//      串级 PID：
-//        外环：z_err = z_held − z_current
-//              v_z_des = PID_alt(z_err)           — 限幅到 [−V_des, +V_climb]
-//        内环：v_z_err = v_z_des − v_z_current
-//              Δc = PID_vz(v_z_err)              — 用 UpdateFromMeasurement
-//              c = Clamp(Hover + Δc, Min, Max)
-//      油门杆在中位死区内 → 锁定 z_held
-//      油门杆超出死区   → 以爬升/下降率飞行，同时重新锚定 z_held
+//   Z 轴（垂直力）：
+//     力控制启用：
+//       高度PID → 期望垂直速度 → 垂直速度PID → ΔFz
+//       Fz = HoverThrustN + ΔFz（含重力补偿前馈）
+//     力控制未启用（Acro）：
+//       油门直出Fz
 //
-//   特殊模式：
-//     ReturnToHome: z_held = max(z_current, z_home + ClimbOffset)
-//     AutoLand:     v_z_des = −DescentRate（匀速下降）
+// 输出：DesiredForceBodyN ∈ R³（机体系）
 // ---------------------------------------------------------------------------
-float UFlightControllerComponent::ComputeVerticalControl(const FDronePilotInput& PilotInput, float DeltaSeconds, float& OutDesiredVerticalVelocity)
+FVector UFlightControllerComponent::ComputeDesiredForce(const FDronePilotInput& PilotInput, float DeltaSeconds)
 {
-	const float MinCollective = ControllerConfig.Limits.MinCollectiveCommand;
-	const float HoverCollective = ControllerConfig.Limits.HoverCollectiveCommand;
-	const float MaxCollective = ControllerConfig.Limits.MaxCollectiveCommand;
-	const float CurrentAltitude = Runtime.EstimatedState.State.PositionCm.Z;
-	const float CurrentVerticalVelocity = Runtime.EstimatedState.State.VelocityCmPerSec.Z;
+	const FVector CurrentPosition = Runtime.EstimatedState.State.PositionCm;
+	const FVector CurrentVelocity = Runtime.EstimatedState.State.VelocityCmPerSec;
+	const float CurrentAltitude = CurrentPosition.Z;
+	const float CurrentVerticalVelocity = CurrentVelocity.Z;
+	const float GravityCmPerSecSq = PhysicsCache.GravityMagnitudeCmPerSecSq;
 
-	if (!ModeCapabilities.CanHoldAltitude)
-	{
-		// ---- 路径 A：无高度保持 ----
-		// 重置 PID 状态，避免残留积分项
-		Runtime.HoldTargets.bAltitudeHoldInitialized = false;
-		PidStates.Altitude.Reset();
-		PidStates.VerticalVelocity.Reset();
-		// 油门杆 → 垂直速度（线性映射）
-		OutDesiredVerticalVelocity = FMath::GetMappedRangeValueClamped(
-			FVector2D(-1.0f, 1.0f),
-			FVector2D(-ControllerConfig.Limits.MaxDescentRateCmPerSec, ControllerConfig.Limits.MaxClimbRateCmPerSec),
-			PilotInput.Throttle);
-		// 油门杆 → 总距（悬停点为中心的线性映射）
-		return MapCenteredThrottleToCollective(PilotInput.Throttle);
-	}
+	// ========================================================================
+	// Z轴：垂直力（替代旧总距/高度管线）
+	// ========================================================================
+	float DesiredFz = 0.0f;
 
-	// ---- 路径 B：高度保持 ----
-	// 初始化锁定高度
-	if (!Runtime.HoldTargets.bAltitudeHoldInitialized)
+	if (ModeCapabilities.CanUseForceControl)
 	{
-		Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
-		Runtime.HoldTargets.bAltitudeHoldInitialized = true;
-		PidStates.Altitude.Reset();
-		PidStates.VerticalVelocity.Reset();
-	}
+		// ---- 力控制启用：高度PID + 垂直速度PID → ΔFz ----
 
-	// ReturnToHome: 爬升到归航高度以上
-	if (Runtime.ActiveFlightMode == EDroneFlightMode::ReturnToHome && Runtime.HomeState.bValid)
-		Runtime.HoldTargets.HeldAltitudeCm = FMath::Max(CurrentAltitude, Runtime.HomeState.PositionCm.Z + ReturnHomeClimbAltitudeOffsetCm);
-	// AutoLand: 跟随当前高度（持续下降）
-	else if (Runtime.ActiveFlightMode == EDroneFlightMode::AutoLand)
-		Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
+		// 初始化高度锁定
+		if (!Runtime.HoldTargets.bAltitudeHoldInitialized)
+		{
+			Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
+			Runtime.HoldTargets.bAltitudeHoldInitialized = true;
+			PidStates.Altitude.Reset();
+			PidStates.VerticalVelocity.Reset();
+		}
 
-	if (Runtime.ActiveFlightMode == EDroneFlightMode::AutoLand)
-	{
-		// 自动降落：固定下降率
-		OutDesiredVerticalVelocity = -AutoLandDescentRateCmPerSec;
-	}
-	else
-	{
-		// 油门杆在死区外 → 手动爬升/下降率，重新锚定高度
+			// Failure模式: 受控下降
+			if (Runtime.ActiveFlightMode == EDroneFlightMode::Failure)
+			{
+				// 失效模式下目标高度每帧递减（慢降），而非跟随当前高度
+				// 这样高度PID会产生一个恒定的下降率目标
+				const float FailureDescentRate = ControllerConfig.Failsafe.FailureDescentRateCmPerSec;
+				Runtime.HoldTargets.HeldAltitudeCm -= FailureDescentRate * DeltaSeconds;
+			}
+
+		// 油门杆在死区外 → 手动爬升/下降率
 		const float ThrottleMagnitude = FMath::Abs(PilotInput.Throttle);
+		float DesiredVerticalVelocity = 0.0f;
+
 		if (ThrottleMagnitude > VerticalHoldStickDeadband)
 		{
-			// 将死区外的输入线性映射到 [0,1]
 			const float NormalizedInput = (ThrottleMagnitude - VerticalHoldStickDeadband)
 				/ FMath::Max(1.0f - VerticalHoldStickDeadband, UE_SMALL_NUMBER);
 			const float SignedInput = NormalizedInput * FMath::Sign(PilotInput.Throttle);
-			// 根据方向选择最大速率
-			const float MaxVerticalRate = SignedInput >= 0.0f ? ControllerConfig.Limits.MaxClimbRateCmPerSec : ControllerConfig.Limits.MaxDescentRateCmPerSec;
-			OutDesiredVerticalVelocity = SignedInput * MaxVerticalRate;
-			// 重新锚定高度到当前位置（松手后将保持新高度）
+			const float MaxRate = SignedInput >= 0.0f
+				? ControllerConfig.Limits.MaxClimbRateCmPerSec
+				: ControllerConfig.Limits.MaxDescentRateCmPerSec;
+			DesiredVerticalVelocity = SignedInput * MaxRate;
+			// 重新锚定高度
 			Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
 			PidStates.Altitude.Reset();
 		}
 		else
 		{
-			// 油门杆在死区内 → 高度 PID 保持锁定高度
-			// PID_alt: v_z_des = Kp·(z_held − z) + Kd·d(z_error)/dt
-			// 使用 UpdateFromMeasurement（导数对测量值），避免高度设定值跳变时的 kick
-			OutDesiredVerticalVelocity = PidStates.Altitude.UpdateFromMeasurement(
-				Runtime.HoldTargets.HeldAltitudeCm, CurrentAltitude, DeltaSeconds, ControllerConfig.Altitude.AltitudeGains);
-			OutDesiredVerticalVelocity = FMath::Clamp(OutDesiredVerticalVelocity,
-				-ControllerConfig.Limits.MaxDescentRateCmPerSec, ControllerConfig.Limits.MaxClimbRateCmPerSec);
+			// 油门杆在死区内 → 高度PID锁定
+			DesiredVerticalVelocity = PidStates.Altitude.UpdateFromMeasurement(
+				Runtime.HoldTargets.HeldAltitudeCm, CurrentAltitude, DeltaSeconds,
+				ControllerConfig.Force.AltitudeGains);
+			DesiredVerticalVelocity = FMath::Clamp(DesiredVerticalVelocity,
+				-ControllerConfig.Limits.MaxDescentRateCmPerSec,
+				ControllerConfig.Limits.MaxClimbRateCmPerSec);
 		}
+
+		Runtime.ControlOutput.Targets.Velocity.bEnabled = true;
+		Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.Z = DesiredVerticalVelocity;
+
+		// 垂直速度内环 → ΔFz (N)
+		// ΔFz = PID_vz(v_z_des − v_z_cur)，输出单位 N
+		const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
+			DesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds,
+			ControllerConfig.Force.VerticalVelocityGains);
+
+		// Fz = HoverThrustN + ΔFz（重力补偿前馈）
+		const float HoverThrustN = ControllerConfig.Force.HoverThrustN;
+		DesiredFz = FMath::Clamp(HoverThrustN + CollectiveOffset,
+			0.0f, ControllerConfig.Limits.MaxVerticalForceN);
+	}
+	else
+	{
+		// ---- Acro模式：油门直出Fz ----
+		Runtime.HoldTargets.bAltitudeHoldInitialized = false;
+		PidStates.Altitude.Reset();
+		PidStates.VerticalVelocity.Reset();
+		DesiredFz = MapThrottleToVerticalForce(PilotInput.Throttle);
 	}
 
-	// ---- 垂直速度内环 ----
-	// PID_vz: Δc = Kp·(v_z_des − v_z) + Ki·∫(v_z_des − v_z)dt + Kd·d(v_z_des − v_z)/dt
-	// 输出 Δc 是总距偏移量，加在悬停点上
-	const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
-		OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds, ControllerConfig.Altitude.VerticalVelocityGains);
-	// 最终总距 = 悬停总距 + PID偏移，限制在 [Min, Max]
-	return FMath::Clamp(HoverCollective + CollectiveOffset, MinCollective, MaxCollective);
-}
+	// ========================================================================
+	// X/Y轴：水平力（替代旧倾斜角管线）
+	// ========================================================================
+	FVector2D DesiredForceXY = FVector2D::ZeroVector;
 
-// ---------------------------------------------------------------------------
-// ComputeDesiredAttitude — 计算期望姿态角
-// ---------------------------------------------------------------------------
-// 两条路径：
-//
-//   A) 非速度模式 (Manual/Acro/Angle/AltHold):
-//      摇杆直接映射倾角
-//      φ_des = stick_roll × θ_max
-//      θ_des = −stick_pitch × θ_max    （取负：前推杆=低头=负俯仰）
-//
-//   B) 速度/位置模式 (VelHold/PosHold/Mission/RTH/AutoLand):
-//      1) 计算期望水平加速度 a_des（见 ComputeDesiredHorizontalAcceleration）
-//      2) 投影到机体前/右方向
-//      3) 用悬停倾斜方程计算期望倾角：
-//
-//         无人机悬停时推力 T 与重力 mg 平衡。
-//         要产生水平加速度 a，需倾斜使推力分量提供 a：
-//
-//           T·sin(θ) = m·a      (水平分量)
-//           T·cos(θ) = m·g      (垂直分量)
-//
-//         相除得：
-//           tan(θ) = a / g
-//
-//         即：
-//           θ_pitch = −atan2(a_forward, g)
-//           φ_roll  =  atan2(a_right,  g)
-//
-//         小角度时 θ ≈ a/g，大角度需反正切精确求解。
-//         最后 clamp 到 MaxTiltAngle。
-// ---------------------------------------------------------------------------
-FRotator UFlightControllerComponent::ComputeDesiredAttitude(const FDronePilotInput& PilotInput, float DeltaSeconds)
-{
-	if (!ModeCapabilities.CanUseVelocityControl)
+	if (ModeCapabilities.CanUseForceControl)
 	{
-		// ---- 路径 A：摇杆直接映射 ----
+		// ---- 力控制启用：位置/速度PID → Fx/Fy (N) ----
+		const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(PilotInput, DeltaSeconds);
+		// F = m × a，但PID输出已经考虑了缩放，直接取XY分量作为力
+		DesiredForceXY = FVector2D(DesiredHorizontalAcceleration.X, DesiredHorizontalAcceleration.Y);
+
+		// 限幅：不超过最大水平力
+		const float MaxHF = ControllerConfig.Limits.MaxHorizontalForceN;
+		if (DesiredForceXY.SizeSquared() > FMath::Square(MaxHF))
+		{
+			DesiredForceXY = DesiredForceXY.GetSafeNormal() * MaxHF;
+		}
+	}
+	else
+	{
+		// ---- Acro模式：摇杆直出Fx/Fy ----
 		Runtime.HoldTargets.bPositionHoldInitialized = false;
 		PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();
 		PidStates.Velocity.X.Reset(); PidStates.Velocity.Y.Reset();
-		const float ManualRollDegrees = PilotInput.Roll * ControllerConfig.Limits.MaxTiltAngleDegrees;
-		const float ManualPitchDegrees = -PilotInput.Pitch * ControllerConfig.Limits.MaxTiltAngleDegrees;
-		return FRotator(ManualPitchDegrees, Runtime.EstimatedState.State.AttitudeDegrees.Yaw, ManualRollDegrees);
+
+		// 摇杆映射到水平力比例（Acro下力大小由用户决定）
+		const float MaxHF = ControllerConfig.Limits.MaxHorizontalForceN;
+		const FRotator FlatYawRotation(0.0f, Runtime.EstimatedState.State.AttitudeDegrees.Yaw, 0.0f);
+		const FVector ForwardFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::X);
+		const FVector RightFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::Y);
+		DesiredForceXY = FVector2D(
+			FVector::DotProduct(ForwardFlat * (-PilotInput.Pitch * MaxHF) + RightFlat * (PilotInput.Roll * MaxHF), FVector::ForwardVector)
+			+ FVector::DotProduct(ForwardFlat * (-PilotInput.Pitch * MaxHF) + RightFlat * (PilotInput.Roll * MaxHF), FVector::RightVector),
+			0.0f
+		);
+		// 简化：直接映射
+		const FVector RawForceXY = ForwardFlat * (-PilotInput.Pitch * MaxHF) + RightFlat * (PilotInput.Roll * MaxHF);
+		DesiredForceXY = FVector2D(RawForceXY.X, RawForceXY.Y);
 	}
 
-	// ---- 路径 B：速度/位置 PID → 悬停倾斜方程 ----
-	const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(PilotInput, DeltaSeconds);
-	const float GravityMagnitude = PhysicsCache.GravityMagnitudeCmPerSecSq;
+		// ---- Failure模式增益缩放 ----
+		// Authority越低，力输出越柔和，避免超出剩余控制能力导致震荡
+		if (Runtime.ActiveFlightMode == EDroneFlightMode::Failure)
+		{
+			const float MinForceAuthority = FMath::Min(AuthorityInfo.FxAuthority, AuthorityInfo.FyAuthority);
+			const float MinAuthority = FMath::Min(MinForceAuthority, AuthorityInfo.FzAuthority);
+			const float GainScale = FMath::Clamp(MinAuthority,
+				ControllerConfig.Failsafe.FailureGainScaleFloor, 1.0f);
+			DesiredForceXY *= GainScale;
+			// Fz不需要缩放——HoverThrustN前馈+ΔFz已经保证了升降权限
+		}
 
-	// 构造仅含航向的"平面旋转"——提取机体前/右方向的水平投影
-	const FRotator FlatYawRotation(0.0f, Runtime.EstimatedState.State.AttitudeDegrees.Yaw, 0.0f);
-	const FVector ForwardFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::X);
-	const FVector RightFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::Y);
+		// ---- 组合3D机体系力 ----
+	// X/Y在世界系水平面，需投影到机体系
+	// 注意：对于悬停等小倾角情况，世界系XY≈机体系XY
+	// 大角度时需用体变换，但Hover模式倾角受限，简化为直接用
+	const FVector DesiredForceWorld(DesiredForceXY.X, DesiredForceXY.Y, DesiredFz);
 
-	// 将期望加速度投影到机体前/右方向
-	const float ForwardAcceleration = FVector::DotProduct(DesiredHorizontalAcceleration, ForwardFlat);
-	const float RightAcceleration = FVector::DotProduct(DesiredHorizontalAcceleration, RightFlat);
+	// 将世界系力投影到机体系
+	const FVector DesiredForceBody = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(DesiredForceWorld);
 
-	// 悬停倾斜方程：tan(θ) = a/g
-	//   θ_pitch = −atan2(a_forward, g)  （取负：前加速=低头=负俯仰）
-	//   φ_roll  =  atan2(a_right,  g)
-	float DesiredPitchDegrees = -FMath::RadiansToDegrees(FMath::Atan2(ForwardAcceleration, GravityMagnitude));
-	float DesiredRollDegrees = FMath::RadiansToDegrees(FMath::Atan2(RightAcceleration, GravityMagnitude));
+	// 记录控制目标
+	Runtime.ControlOutput.Targets.Position.bEnabled = ModeCapabilities.CanUseForceControl;
+	if (ModeCapabilities.CanUseForceControl)
+	{
+		Runtime.ControlOutput.Targets.Position.PositionCm = FVector(
+			Runtime.HoldTargets.HeldPositionCm.X, Runtime.HoldTargets.HeldPositionCm.Y, Runtime.HoldTargets.HeldAltitudeCm);
+	}
 
-	// 限制最大倾角——超出此角度可能推力不足以抵消重力分量
-	DesiredRollDegrees = FMath::Clamp(DesiredRollDegrees, -ControllerConfig.Limits.MaxTiltAngleDegrees, ControllerConfig.Limits.MaxTiltAngleDegrees);
-	DesiredPitchDegrees = FMath::Clamp(DesiredPitchDegrees, -ControllerConfig.Limits.MaxTiltAngleDegrees, ControllerConfig.Limits.MaxTiltAngleDegrees);
-	return FRotator(DesiredPitchDegrees, Runtime.EstimatedState.State.AttitudeDegrees.Yaw, DesiredRollDegrees);
+	return DesiredForceBody;
 }
 
 // ---------------------------------------------------------------------------
-// ComputeDesiredYawRate — 计算期望偏航角速率
+// ResolveDesiredAttitude — 姿态路径：AimMode → 期望姿态
 // ---------------------------------------------------------------------------
-// 两条路径：
-//   A) 无偏航保持（Manual/Acro）：摇杆 → ψ̇_des = stick_yaw × ψ̇_max
-//   B) 偏航保持：摇杆在死区外 → 手动偏航率 + 重锁航向
-//                         死区内 → 偏航角 PID 锁定航向
-//                           ψ̇_des = PID_yaw(ψ_held − ψ_current)
+// 三种AimMode：
+//   Default     → Hover: 自动水平（欧拉角零Roll/Pitch）
+//                 Cruise: 允许固定Pitch
+//   HeldAttitude → 使用四元数目标（支持倒飞/任意姿态）
+//   LookAt      → 从目标位置解算 Yaw+Pitch，写入 HeldAttitude
 // ---------------------------------------------------------------------------
-float UFlightControllerComponent::ComputeDesiredYawRate(const FDronePilotInput& PilotInput, float DeltaSeconds)
+void UFlightControllerComponent::ResolveDesiredAttitude(float DeltaSeconds)
 {
-	// 手动偏航角速率
-	const float ManualYawRate = PilotInput.Yaw * ControllerConfig.Limits.MaxYawRateDegreesPerSec;
+	const FQuat CurrentAttitude = FQuat(Runtime.EstimatedState.State.AttitudeDegrees);
 
-	if (!ModeCapabilities.CanHoldYaw)
+	switch (Runtime.ActiveAimMode)
 	{
-		// 无偏航保持：直接输出手动速率
-		Runtime.HoldTargets.bYawHoldInitialized = false;
-		PidStates.Angle.Yaw.Reset();
-		return ManualYawRate;
+	case EDroneAimMode::Default:
+	{
+		if (Runtime.ActiveFlightMode == EDroneFlightMode::Cruise)
+		{
+			// 巡航：保持当前Yaw，允许固定Pitch，Roll=0
+			const float CurrentYaw = Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
+			Runtime.LookAtState.CurrentDesiredAttitude = FQuat(FRotator(0.0f, CurrentYaw, 0.0f));
+		}
+		else
+		{
+			// Hover/Failure：保持当前Yaw，完全水平
+			const float CurrentYaw = Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
+			Runtime.LookAtState.CurrentDesiredAttitude = FQuat(FRotator(0.0f, CurrentYaw, 0.0f));
+		}
+		break;
 	}
 
-	// 摇杆超出死区 → 手动偏航率，同时重新锁定航向
-	if (FMath::Abs(PilotInput.Yaw) > YawHoldStickDeadband)
+	case EDroneAimMode::HeldAttitude:
 	{
-		Runtime.HoldTargets.HeldYawDegrees = Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
-		Runtime.HoldTargets.bYawHoldInitialized = true;
-		PidStates.Angle.Yaw.Reset();
-		return ManualYawRate;
+		// 直接使用已设置的四元数目标（由SetHeldAttitude或LookAt驱动写入）
+		// CurrentDesiredAttitude 已在 SetHeldAttitude 中设置
+		break;
 	}
 
-	// 初始化锁定航向
-	if (!Runtime.HoldTargets.bYawHoldInitialized)
+	case EDroneAimMode::LookAt:
 	{
-		Runtime.HoldTargets.HeldYawDegrees = Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
-		Runtime.HoldTargets.bYawHoldInitialized = true;
-		PidStates.Angle.Yaw.Reset();
+		if (Runtime.LookAtState.bTargetLocked)
+		{
+			ComputeLookAtAttitude();
+		}
+		else
+		{
+			// 无目标时退回水平
+			const float CurrentYaw = Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
+			Runtime.LookAtState.CurrentDesiredAttitude = FQuat(FRotator(0.0f, CurrentYaw, 0.0f));
+		}
+		break;
 	}
-
-	// 偏航角 PID 锁定航向
-	// ψ_err = NormalizeAxis(ψ_held − ψ_current)  映射到 [−180, 180]
-	// ψ̇_des = PID_yaw(ψ_err) — 使用 UpdateFromError，因为角度环设定值是阶跃的（手动改目标时已 Reset）
-	const float YawError = FRotator::NormalizeAxis(Runtime.HoldTargets.HeldYawDegrees - Runtime.EstimatedState.State.AttitudeDegrees.Yaw);
-	const float DesiredYawRate = PidStates.Angle.Yaw.UpdateFromError(YawError, DeltaSeconds, ControllerConfig.Attitude.AngleGains.Yaw);
-	return FMath::Clamp(DesiredYawRate, -ControllerConfig.Limits.MaxYawRateDegreesPerSec, ControllerConfig.Limits.MaxYawRateDegreesPerSec);
+	}
 }
 
 // ---------------------------------------------------------------------------
-// ComputeDesiredBodyRates — 计算期望机体角速率
+// ComputeDesiredMoment — 姿态路径力矩输出：姿态PID → [Mx My Mz] (N·m)
 // ---------------------------------------------------------------------------
-// 两条路径：
-//   A) Acro/Manual：摇杆直接映射角速率，绕过角度环
-//      p_des = stick_roll × p_max
-//      q_des = −stick_pitch × q_max
-//
-//   B) Angle 模式：角度环将倾角误差转为期望角速率
-//      φ_err = NormalizeAxis(φ_des − φ_current)
-//      θ_err = NormalizeAxis(θ_des − θ_current)
-//      p_des = PID_angle_roll(φ_err)
-//      q_des = PID_angle_pitch(θ_err)
-//
-// 注意 Pitch 取负，因为"前推杆"= 正 Y = 期望"低头"= 负俯仰角速率
+// 串级结构：
+//   外环：姿态角误差 → 期望角速率（非Acro模式）
+//         Acro模式：摇杆直出角速率
+//   内环：角速率误差 → 归一化力矩指令 → 物理力矩 (N·m)
 // ---------------------------------------------------------------------------
-FVector UFlightControllerComponent::ComputeDesiredBodyRates(const FDronePilotInput& PilotInput, const FRotator& DesiredAttitude, float DesiredYawRate, float DeltaSeconds)
+FVector UFlightControllerComponent::ComputeDesiredMoment(const FDronePilotInput& PilotInput, float DeltaSeconds)
 {
 	const FRotator CurrentAttitude = Runtime.EstimatedState.State.AttitudeDegrees;
-	// 计算滚转/俯仰误差，NormalizeAxis 确保在 [−180, 180] 范围内
-	const float RollError = FRotator::NormalizeAxis(DesiredAttitude.Roll - CurrentAttitude.Roll);
-	const float PitchError = FRotator::NormalizeAxis(DesiredAttitude.Pitch - CurrentAttitude.Pitch);
+	const FVector CurrentBodyRates = Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec;
 
-	// Acro/Manual 模式的默认值：摇杆直通
-	float DesiredRollRate = PilotInput.Roll * ControllerConfig.Limits.MaxRollRateDegreesPerSec;
-	float DesiredPitchRate = -PilotInput.Pitch * ControllerConfig.Limits.MaxPitchRateDegreesPerSec;
+	// ---- 外环：期望角速率 ----
+	FVector DesiredBodyRates = FVector::ZeroVector;
 
-	// Angle 模式：角度环覆盖默认值
-	if (Runtime.AttitudeMode != EDroneAttitudeMode::Acro && Runtime.AttitudeMode != EDroneAttitudeMode::Manual)
+	if (Runtime.ActiveFlightMode == EDroneFlightMode::Acro)
 	{
-		// 角度环 PID：将角度误差转换为期望角速率
-		// p_des = Kp·φ_err + Kd·d(φ_err)/dt
-		// 使用 UpdateFromError，因为角度设定值来自速度环，已是平滑信号
-		DesiredRollRate = PidStates.Angle.Roll.UpdateFromError(RollError, DeltaSeconds, ControllerConfig.Attitude.AngleGains.Roll);
-		DesiredPitchRate = PidStates.Angle.Pitch.UpdateFromError(PitchError, DeltaSeconds, ControllerConfig.Attitude.AngleGains.Pitch);
+		// Acro模式：摇杆直出角速率，绕过角度环
+		DesiredBodyRates = FVector(
+			PilotInput.Roll * ControllerConfig.Limits.MaxRollRateDegreesPerSec,
+			-PilotInput.Pitch * ControllerConfig.Limits.MaxPitchRateDegreesPerSec,
+			PilotInput.Yaw * ControllerConfig.Limits.MaxYawRateDegreesPerSec);
+
+		// 偏航保持（Acro下也支持，通过角速率PID）
+		if (ModeCapabilities.CanHoldYaw && FMath::Abs(PilotInput.Yaw) <= YawHoldStickDeadband)
+		{
+			if (!Runtime.HoldTargets.bYawHoldInitialized)
+			{
+				Runtime.HoldTargets.HeldYawDegrees = CurrentAttitude.Yaw;
+				Runtime.HoldTargets.bYawHoldInitialized = true;
+				PidStates.Angle.Yaw.Reset();
+			}
+			const float YawError = FRotator::NormalizeAxis(Runtime.HoldTargets.HeldYawDegrees - CurrentAttitude.Yaw);
+			DesiredBodyRates.Z = PidStates.Angle.Yaw.UpdateFromError(YawError, DeltaSeconds,
+				ControllerConfig.Attitude.AngleGains.Yaw);
+			DesiredBodyRates.Z = FMath::Clamp(DesiredBodyRates.Z,
+				-ControllerConfig.Limits.MaxYawRateDegreesPerSec,
+				ControllerConfig.Limits.MaxYawRateDegreesPerSec);
+		}
+		else
+		{
+			Runtime.HoldTargets.bYawHoldInitialized = false;
+		}
+	}
+	else
+	{
+		// 非Acro模式：角度环将姿态误差转为期望角速率
+		const FQuat DesiredAttitudeQuat = Runtime.LookAtState.CurrentDesiredAttitude;
+		const FQuat CurrentAttitudeQuat = FQuat(CurrentAttitude);
+
+		// 计算姿态误差四元数：Q_err = Q_desired * Q_current^(-1)
+		const FQuat AttitudeErrorQuat = DesiredAttitudeQuat * CurrentAttitudeQuat.Inverse();
+
+		// 将四元数误差转为角速率误差向量
+		// 小角度近似：ω_err ≈ 2 × [Q_err.x, Q_err.y, Q_err.z] / Q_err.w
+		// 但用旋转向量更稳定：
+		FVector Axis;
+		float AngleRad;
+		AttitudeErrorQuat.ToAxisAndAngle(Axis, AngleRad);
+
+		// Axis是世界系方向，转到机体系
+		const FVector AxisBody = CurrentAttitudeQuat.Inverse().RotateVector(Axis);
+		const FVector AttitudeErrorDegPerSec = AxisBody * FMath::RadiansToDegrees(AngleRad);
+
+		// 角度环 PID → 期望角速率
+		DesiredBodyRates = FVector(
+			PidStates.Angle.Roll.UpdateFromError(AttitudeErrorDegPerSec.X, DeltaSeconds,
+				ControllerConfig.Attitude.AngleGains.Roll),
+			PidStates.Angle.Pitch.UpdateFromError(AttitudeErrorDegPerSec.Y, DeltaSeconds,
+				ControllerConfig.Attitude.AngleGains.Pitch),
+			PidStates.Angle.Yaw.UpdateFromError(AttitudeErrorDegPerSec.Z, DeltaSeconds,
+				ControllerConfig.Attitude.AngleGains.Yaw));
+
+		// 限幅角速率
+		DesiredBodyRates = FVector(
+			FMath::Clamp(DesiredBodyRates.X, -ControllerConfig.Limits.MaxRollRateDegreesPerSec, ControllerConfig.Limits.MaxRollRateDegreesPerSec),
+			FMath::Clamp(DesiredBodyRates.Y, -ControllerConfig.Limits.MaxPitchRateDegreesPerSec, ControllerConfig.Limits.MaxPitchRateDegreesPerSec),
+			FMath::Clamp(DesiredBodyRates.Z, -ControllerConfig.Limits.MaxYawRateDegreesPerSec, ControllerConfig.Limits.MaxYawRateDegreesPerSec));
+
+		// 偏航保持（非Acro模式下，摇杆超出死区时也支持手动偏航率）
+		if (FMath::Abs(PilotInput.Yaw) > YawHoldStickDeadband)
+		{
+			DesiredBodyRates.Z = PilotInput.Yaw * ControllerConfig.Limits.MaxYawRateDegreesPerSec;
+			Runtime.HoldTargets.HeldYawDegrees = CurrentAttitude.Yaw;
+			Runtime.HoldTargets.bYawHoldInitialized = true;
+			PidStates.Angle.Yaw.Reset();
+		}
+		else if (!Runtime.HoldTargets.bYawHoldInitialized)
+		{
+			Runtime.HoldTargets.HeldYawDegrees = CurrentAttitude.Yaw;
+			Runtime.HoldTargets.bYawHoldInitialized = true;
+		}
 	}
 
-	// 限幅到最大角速率
-	DesiredRollRate = FMath::Clamp(DesiredRollRate, -ControllerConfig.Limits.MaxRollRateDegreesPerSec, ControllerConfig.Limits.MaxRollRateDegreesPerSec);
-	DesiredPitchRate = FMath::Clamp(DesiredPitchRate, -ControllerConfig.Limits.MaxPitchRateDegreesPerSec, ControllerConfig.Limits.MaxPitchRateDegreesPerSec);
-	return FVector(DesiredRollRate, DesiredPitchRate, DesiredYawRate);
+	// ---- 内环：角速率PID → 归一化力矩指令 → 物理力矩 (N·m) ----
+	// 归一化力矩指令 u ∈ [-1, 1]
+	const FVector NormalizedTorqueCommand = FVector(
+		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRates.X, CurrentBodyRates.X, DeltaSeconds,
+			ControllerConfig.Attitude.RateGains.Roll),
+		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRates.Y, CurrentBodyRates.Y, DeltaSeconds,
+			ControllerConfig.Attitude.RateGains.Pitch),
+		PidStates.Rate.Yaw.UpdateFromMeasurement(DesiredBodyRates.Z, CurrentBodyRates.Z, DeltaSeconds,
+			ControllerConfig.Attitude.RateGains.Yaw));
+
+	// 记录角速率目标（供诊断使用）
+	Runtime.ControlOutput.Targets.Rate.bEnabled = true;
+	Runtime.ControlOutput.Targets.Rate.BodyRatesDegreesPerSec = DesiredBodyRates;
+
+	// 将归一化指令转换为物理力矩 (N·m)
+	// M_axis = u_axis × M_max_axis
+	// M_max 由 Jacobian RowScale 给出（该轴最大可用力矩）
+	const double* RowScale = AllocationCache.RowScale;
+	const float DesiredMomentX = static_cast<float>(FMath::Clamp(NormalizedTorqueCommand.X, -1.0f, 1.0f) * RowScale[3]);
+	const float DesiredMomentY = static_cast<float>(FMath::Clamp(NormalizedTorqueCommand.Y, -1.0f, 1.0f) * RowScale[4]);
+	const float DesiredMomentZ = static_cast<float>(FMath::Clamp(NormalizedTorqueCommand.Z, -1.0f, 1.0f) * RowScale[5]);
+
+	return FVector(DesiredMomentX, DesiredMomentY, DesiredMomentZ);
 }
 
 // ---------------------------------------------------------------------------
-// ComputeBodyTorqueCommand — 最内层角速率环
+// ComposeDesiredWrench — 组合6DOF期望Wrench
 // ---------------------------------------------------------------------------
-// 角速率 PID：将角速率误差转为归一化力矩指令
-//
-//   u_k = Kp·(ω_des_k − ω_current_k) + Ki·∫(ω_des_k − ω_current_k)dt + Kd·d(ω_des_k − ω_current_k)/dt
-//
-// 使用 UpdateFromMeasurement（导数对测量值），避免期望角速率阶跃时的 setpoint kick。
-// 输出范围 [-1, 1]（由 OutputLimit 保证），对应混合器中该轴最大权限的比例。
-// ---------------------------------------------------------------------------
-FVector UFlightControllerComponent::ComputeBodyTorqueCommand(const FVector& DesiredBodyRatesDegreesPerSec, float DeltaSeconds)
+void UFlightControllerComponent::ComposeDesiredWrench(const FVector& DesiredForce, const FVector& DesiredMoment)
 {
-	const FVector CurrentBodyRates = Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec;
-	return FVector(
-		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.X, CurrentBodyRates.X, DeltaSeconds, ControllerConfig.Attitude.RateGains.Roll),
-		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Y, CurrentBodyRates.Y, DeltaSeconds, ControllerConfig.Attitude.RateGains.Pitch),
-		PidStates.Rate.Yaw.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Z, CurrentBodyRates.Z, DeltaSeconds, ControllerConfig.Attitude.RateGains.Yaw));
+	Runtime.ControlOutput.Wrench.DesiredForceBodyN = DesiredForce;
+	Runtime.ControlOutput.Wrench.DesiredMomentBodyNm = DesiredMoment;
 }
 
 // ---------------------------------------------------------------------------
-// AllocateToRotors — 控制分配（混合器）主算法
+// ComputeLookAtAttitude — 从目标位置解算期望Yaw+Pitch
+// ---------------------------------------------------------------------------
+void UFlightControllerComponent::ComputeLookAtAttitude()
+{
+	const FVector CurrentPosition = Runtime.EstimatedState.State.PositionCm;
+	const FVector ToTarget = Runtime.LookAtState.LookAtTargetCm - CurrentPosition;
+	const float Distance = ToTarget.Size();
+
+	Runtime.LookAtState.TargetDistanceCm = Distance;
+
+	if (Distance < UE_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	// 计算期望Yaw：目标在机体系XY平面的方向
+	const FVector ToTargetWorld = ToTarget.GetSafeNormal();
+	const float DesiredYawRad = FMath::Atan2(ToTargetWorld.Y, ToTargetWorld.X);
+	const float DesiredYawDeg = FMath::RadiansToDegrees(DesiredYawRad);
+
+	// 计算期望Pitch：根据距离和高度差
+	const float HeightDiffCm = ToTarget.Z;
+	const float HorizontalDistCm = FVector2D(ToTarget.X, ToTarget.Y).Size();
+	const float DesiredPitchDeg = -FMath::RadiansToDegrees(FMath::Atan2(HeightDiffCm, HorizontalDistCm));
+
+	Runtime.LookAtState.LookAtYawDeg = DesiredYawDeg;
+	Runtime.LookAtState.LookAtPitchDeg = DesiredPitchDeg;
+
+	// 组合为四元数并写入HeldAttitude
+	Runtime.LookAtState.CurrentDesiredAttitude = FQuat(FRotator(DesiredPitchDeg, DesiredYawDeg, 0.0f));
+}
+
+// ---------------------------------------------------------------------------
+// AllocateToRotors — 6DOF 控制分配（混合器）主算法
 // ---------------------------------------------------------------------------
 // 核心数学：
 //
-//   问题：给定期望 wrench W ∈ R⁴，求推力分数 u ∈ [0,1]^N，使 J·u ≈ W
+//   问题：给定期望 wrench W ∈ R⁶ = [Fx Fy Fz Mx My Mz]^T，
+//         求控制向量 u ∈ R^{3N} = [T_i, NP_i, NY_i]_{i=1..N}，
+//         使 J·u ≈ W，同时满足：
+//           - 推力分数 T_i/T_max_i ∈ [0, 1]
+//           - 喷口角度 NP_i ∈ [-MaxNP_i, +MaxNP_i]
+//           - 喷口角度 NY_i ∈ [-MaxNY_i, +MaxNY_i]
 //
-//   阻尼伪逆公式：
-//     u = J^T · (J·J^T + λ²·I)^{-1} · W
+//   优先级链：Position(力) > Force Satisfaction > Attitude(力矩)
+//     → 力不可放松，力矩作为软约束可通过 λ_att 权重放松
 //
-//   迭代主动集算法处理 [0,1] 约束：
-//     1. 计算残差 = W − Σ(已锁定旋翼的贡献)
-//     2. 对自由旋翼构造法矩阵 N = J_free·J_free^T + λ²I（4×4）
-//     3. 解 N·y = residual（高斯消元）
-//     4. 计算候选推力分数 u_i = Σ_axis J_i[axis]·y[axis]（= J^T·y）
-//     5. 检查 [0,1] 约束，若违反量 > 容差 → 锁定最严重违反的旋翼到 0 或 1
+//   阻尼伪逆公式（6×6 法方程）：
+//     u = J^T · (J·J^T + Λ)^{-1} · W
+//     其中 Λ = diag(λ², λ², λ², λ_att², λ_att², λ_att²)
+//     λ = 力轴阻尼，λ_att = 姿态惩罚权重（越大→态度越严格）
+//
+//   迭代主动集算法处理箱约束：
+//     1. 计算残差 = W − Σ(已锁定控制的贡献)
+//     2. 对自由控制构造法矩阵 N = J_free·J_free^T + Λ（6×6）
+//     3. 解 N·y = residual（SolveLinearSystem6）
+//     4. 计算候选值 u_j = Σ J_j[row]·y[row]（= J^T·y）
+//     5. 检查箱约束，若违反量 > 容差 → 锁定最严重违反的控制
 //     6. 重复，直到无违反或达到最大迭代次数
 //
-//   物理直觉：当某桨已满推仍不够，系统知道"它尽力了"，固定其贡献，
-//   让剩余桨分担不足的部分——保证接近物理极限时仍能尽量接近期望 wrench。
+//   物理直觉：当某旋翼推力或喷口角度已饱和仍不够时，
+//   系统锁定其贡献，让剩余自由控制分担不足的部分。
+//   姿态轴通过 λ_att² 可以放松——当力轴与姿态轴冲突时，
+//   优先满足力（位置），姿态允许偏差。
 // ---------------------------------------------------------------------------
-void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const FVector& AxisCommands)
+void UFlightControllerComponent::AllocateToRotors()
 {
 	if (Airscrews.IsEmpty()) return;
 	const int32 NumRotors = Airscrews.Num();
+	const int32 NumControls = NumRotors * 3; // T_i, NP_i, NY_i per rotor
 
 	// 若缓存无效或旋翼配置变更，重建缓存
-	if (!AllocationCache.bIsValid || AllocationCache.JacobianColumns.Num() != NumRotors || bAllocatorDirty)
+	if (!AllocationCache.bIsValid || AllocationCache.JacobianColumns.Num() != NumControls || bAllocatorDirty)
 		RebuildAllocationCache();
 	if (!AllocationCache.bIsValid) return;
 
-	const TArray<FVector4>& NormalizedColumns = AllocationCache.NormalizedColumns;
+	const TArray<TArray<double>>& NormalizedColumns = AllocationCache.NormalizedColumns;
 	const TArray<double>& MaxAllocatedThrusts = AllocationCache.MaxAllocatedThrusts;
-	const TArray<bool>& FreeRotors = AllocationCache.FreeRotors;
+	const TArray<bool>& FreeControls = AllocationCache.FreeControls;
 	const double* RowScale = AllocationCache.RowScale;
 
 	Runtime.ControlOutput.RotorCommands.SetNum(NumRotors);
 
 	// ---- 构造期望 wrench 向量（归一化域）----
-	// W[0] = 总距指令 ∈ [0, 1]（推力只有正方向）
-	// W[k] = 力矩指令 ∈ [-1, 1]（力矩正负对称）
-	// 仅在该轴有有效权限时才接受指令，否则置零
-	double DesiredWrench[FlightControllerAllocation::WrenchAxisCount] = {};
-	DesiredWrench[0] = RowScale[0] > FlightControllerAllocation::AuthorityEpsilon ? FMath::Clamp(static_cast<double>(CollectiveCommand), 0.0, 1.0) : 0.0;
-	DesiredWrench[1] = RowScale[1] > FlightControllerAllocation::AuthorityEpsilon ? FMath::Clamp(AxisCommands.X, -1.0, 1.0) : 0.0;
-	DesiredWrench[2] = RowScale[2] > FlightControllerAllocation::AuthorityEpsilon ? FMath::Clamp(AxisCommands.Y, -1.0, 1.0) : 0.0;
-	DesiredWrench[3] = RowScale[3] > FlightControllerAllocation::AuthorityEpsilon ? FMath::Clamp(AxisCommands.Z, -1.0, 1.0) : 0.0;
+	// 力轴 [0..2]：物理力 / RowScale → 归一化值
+	// 力矩轴 [3..5]：物理力矩 / RowScale → 归一化值
+	const FVector& DesiredForceBody = Runtime.ControlOutput.Wrench.DesiredForceBodyN;
+	const FVector& DesiredMomentBody = Runtime.ControlOutput.Wrench.DesiredMomentBodyNm;
 
-	// 重建物理域的 wrench（归一化值 × RowScale = 实际力/力矩）
-	Runtime.ControlOutput.Wrench.CollectiveThrust = static_cast<float>(DesiredWrench[0] * RowScale[0]);
-	Runtime.ControlOutput.Wrench.BodyTorque = FVector(
-		DesiredWrench[1] * RowScale[1], DesiredWrench[2] * RowScale[2], DesiredWrench[3] * RowScale[3]);
+	double DesiredWrench[FlightControllerAllocation::WrenchAxisCount] = {};
+	// 力轴：归一化到 [-1, 1] 范围
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		DesiredWrench[Axis] = RowScale[Axis] > FlightControllerAllocation::AuthorityEpsilon
+			? FMath::Clamp(static_cast<double>(DesiredForceBody[Axis]) / RowScale[Axis], -1.0, 1.0) : 0.0;
+	}
+	// 力矩轴：归一化到 [-1, 1] 范围
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		DesiredWrench[Axis + 3] = RowScale[Axis + 3] > FlightControllerAllocation::AuthorityEpsilon
+			? FMath::Clamp(static_cast<double>(DesiredMomentBody[Axis]) / RowScale[Axis + 3], -1.0, 1.0) : 0.0;
+	}
 
 	// 重置诊断数据
 	AllocationDiagnostics.Reset();
@@ -1490,132 +1677,180 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 	for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 		AllocationDiagnostics.RemainingAuthority[Axis] = RowScale[Axis];
 
-	// 记录失效旋翼（已从自由列表中移除的）
+	// 记录失效旋翼
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
-		if (!FreeRotors[RotorIndex] && RotorHealthStates.IsValidIndex(RotorIndex) && RotorHealthStates[RotorIndex].bIsFailed)
+		if (RotorHealthStates.IsValidIndex(RotorIndex) && RotorHealthStates[RotorIndex].bIsFailed)
 			AllocationDiagnostics.FailedMotors.Add(RotorIndex);
 	}
 
 	// ---- 迭代主动集求解 ----
-	TArray<double> AllocatedThrustFractions;
-	AllocatedThrustFractions.SetNumZeroed(NumRotors);
-	TArray<bool> SolvedRotors;
-	SolvedRotors.SetNumZeroed(NumRotors);
+	// 控制向量：[T_0, NP_0, NY_0, T_1, NP_1, NY_1, ..., T_{N-1}, NP_{N-1}, NY_{N-1}]
+	// T_i ∈ [0, 1]（推力分数），NP_i ∈ [-1, 1]（归一化喷口俯仰），NY_i ∈ [-1, 1]（归一化喷口偏航）
+	TArray<double> AllocatedControlValues;
+	AllocatedControlValues.SetNumZeroed(NumControls);
+	TArray<bool> SolvedControls;
+	SolvedControls.SetNumZeroed(NumControls);
 
-	for (int32 Iteration = 0; Iteration < NumRotors; ++Iteration)
+	const int32 MaxIterations = NumControls; // 最多迭代 3N 次
+	for (int32 Iteration = 0; Iteration < MaxIterations; ++Iteration)
 	{
 		// --- 步骤1：计算残差 wrench ---
-		// residual = W_desired − Σ(已锁定旋翼的 NormalizedColumn × 已分配推力分数)
-		// 即：还差多少 wrench 没有被满足
 		double ResidualWrench[FlightControllerAllocation::WrenchAxisCount];
 		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 		{
 			ResidualWrench[Axis] = DesiredWrench[Axis];
-			for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+			for (int32 CtrlIdx = 0; CtrlIdx < NumControls; ++CtrlIdx)
 			{
-				if (SolvedRotors[RotorIndex])
-					ResidualWrench[Axis] -= NormalizedColumns[RotorIndex][Axis] * AllocatedThrustFractions[RotorIndex];
+				if (SolvedControls[CtrlIdx])
+					ResidualWrench[Axis] -= NormalizedColumns[CtrlIdx][Axis] * AllocatedControlValues[CtrlIdx];
 			}
 		}
 
-		// --- 步骤2：构造法矩阵 N = J_free·J_free^T + λ²I ---
-		// 这是阻尼伪逆 (J·J^T + λ²I)^{-1} 的法方程形式
-		// N[row][col] = Σ(自由旋翼 Column[row] × Column[col])  + λ² (对角线上)
+		// --- 步骤2：构造法矩阵 N = J_free·J_free^T + Λ ---
+		// Λ = diag(λ², λ², λ², λ_att², λ_att², λ_att²)
+		// 力轴用标准阻尼，力矩轴用姿态惩罚权重
 		double NormalMatrix[FlightControllerAllocation::WrenchAxisCount][FlightControllerAllocation::WrenchAxisCount] = {};
-		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+		for (int32 CtrlIdx = 0; CtrlIdx < NumControls; ++CtrlIdx)
 		{
-			if (!FreeRotors[RotorIndex] || SolvedRotors[RotorIndex]) continue;
-			const FVector4& Column = NormalizedColumns[RotorIndex];
+			if (!FreeControls[CtrlIdx] || SolvedControls[CtrlIdx]) continue;
+			const TArray<double>& Column = NormalizedColumns[CtrlIdx];
 			for (int32 Row = 0; Row < FlightControllerAllocation::WrenchAxisCount; ++Row)
 				for (int32 Col = 0; Col < FlightControllerAllocation::WrenchAxisCount; ++Col)
 					NormalMatrix[Row][Col] += Column[Row] * Column[Col];
 		}
 
-		// 添加阻尼项 λ²·I
-		// λ = DampedPseudoInverseLambda (默认 0.05)
-		// 阻尼使矩阵恒正定，保证可逆；λ 越大解越保守（偏零），越小越精确但可能数值爆炸
+		// 添加阻尼/惩罚对角项
 		const double Lambda = FMath::Max(static_cast<double>(ControllerConfig.Allocator.DampedPseudoInverseLambda), 0.0);
-		const double Damping = FMath::Square(Lambda);   // λ²
-		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
-			NormalMatrix[Axis][Axis] += Damping;
+		const double DampingForce = FMath::Square(Lambda);     // λ² 用于力轴
+
+		// 姿态惩罚权重：Failure模式下根据剩余姿态能力自动放宽
+		// 思路：姿态Authority越低→姿态越难保持→越应放宽惩罚→让分配器优先满足力轴
+		double EffectiveAttitudeWeight = FMath::Max(static_cast<double>(AttitudePenaltyWeight), 0.01);
+		if (Runtime.ActiveFlightMode == EDroneFlightMode::Failure)
+		{
+			const float MinMomentAuthority = FMath::Min3(
+				AuthorityInfo.RollAuthority, AuthorityInfo.PitchAuthority, AuthorityInfo.YawAuthority);
+			// 姿态能力低时缩放权重：Effective = Base × clamp(MinMoment, Floor, 1)
+			const float Scale = FMath::Clamp(MinMomentAuthority,
+				ControllerConfig.Failsafe.FailureGainScaleFloor, 1.0f);
+			EffectiveAttitudeWeight = FMath::Max(EffectiveAttitudeWeight * static_cast<double>(Scale), 0.01);
+		}
+		const double DampingMoment = FMath::Square(EffectiveAttitudeWeight); // λ_att² 用于力矩轴
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+			NormalMatrix[Axis][Axis] += DampingForce;
+		for (int32 Axis = 3; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
+			NormalMatrix[Axis][Axis] += DampingMoment;
 
 		// --- 步骤3：解法方程 N·y = residual ---
-		// y 是对偶空间中的解，后续通过 J^T·y 还原到旋翼推力分数
 		double DualSolution[FlightControllerAllocation::WrenchAxisCount] = {};
-		if (!FlightControllerAllocation::SolveLinearSystem4(NormalMatrix, ResidualWrench, DualSolution))
+		if (!FlightControllerAllocation::SolveLinearSystem6(NormalMatrix, ResidualWrench, DualSolution))
 			break;   // 矩阵奇异，放弃后续迭代
 
-		// --- 步骤4：计算候选推力分数 u_i = J^T · y ---
-		// u_i = Σ_axis Column_i[axis] × DualSolution[axis]
-		// 等价于 u = J^T · (J·J^T + λ²I)^{-1} · residual — 右阻尼伪逆
-		int32 ViolatingRotorIndex = INDEX_NONE;
+		// --- 步骤4：计算候选控制值 u_j = J^T · y ---
+		int32 ViolatingCtrlIdx = INDEX_NONE;
 		double LargestViolation = 0.0;
-		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+		for (int32 CtrlIdx = 0; CtrlIdx < NumControls; ++CtrlIdx)
 		{
-			if (!FreeRotors[RotorIndex] || SolvedRotors[RotorIndex]) continue;
-			const FVector4& Column = NormalizedColumns[RotorIndex];
+			if (!FreeControls[CtrlIdx] || SolvedControls[CtrlIdx]) continue;
+			const TArray<double>& Column = NormalizedColumns[CtrlIdx];
 			double Candidate = 0.0;
 			for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 				Candidate += Column[Axis] * DualSolution[Axis];
-			AllocatedThrustFractions[RotorIndex] = Candidate;
-			// 计算违反量：u < 0（低于下界）或 u > 1（超过上界）
-			const double Violation = Candidate < 0.0 ? -Candidate : FMath::Max(Candidate - 1.0, 0.0);
-			if (Violation > LargestViolation) { LargestViolation = Violation; ViolatingRotorIndex = RotorIndex; }
+			AllocatedControlValues[CtrlIdx] = Candidate;
+
+			// 判断箱约束违反
+			// CtrlIdx % 3 == 0: 推力分数 ∈ [0, 1]
+			// CtrlIdx % 3 == 1 或 2: 归一化喷口角 ∈ [-1, 1]
+			double Violation = 0.0;
+			const int32 CtrlType = CtrlIdx % 3;
+			if (CtrlType == 0) // 推力
+			{
+				Violation = Candidate < 0.0 ? -Candidate : FMath::Max(Candidate - 1.0, 0.0);
+			}
+			else // 喷口俯仰/偏航
+			{
+				Violation = FMath::Abs(Candidate) > 1.0 ? FMath::Abs(Candidate) - 1.0 : 0.0;
+			}
+			if (Violation > LargestViolation) { LargestViolation = Violation; ViolatingCtrlIdx = CtrlIdx; }
 		}
 
 		// --- 步骤5：检查收敛 ---
-		// 若最大违反量 ≤ 容差 → 所有约束满足，退出
-		if (LargestViolation <= FlightControllerAllocation::CommandTolerance || ViolatingRotorIndex == INDEX_NONE)
+		if (LargestViolation <= FlightControllerAllocation::CommandTolerance || ViolatingCtrlIdx == INDEX_NONE)
 			break;
 
-		// --- 步骤6：锁定最严重违反的旋翼 ---
-		// 推力 < 0 → 锁定到 0（不可能负推力）
-		// 推力 > 1 → 锁定到 1（已经最大推力）
-		AllocatedThrustFractions[ViolatingRotorIndex] = AllocatedThrustFractions[ViolatingRotorIndex] < 0.0 ? 0.0 : 1.0;
-		SolvedRotors[ViolatingRotorIndex] = true;
-		AllocationDiagnostics.SaturatedMotors.Add(ViolatingRotorIndex);
+		// --- 步骤6：锁定最严重违反的控制 ---
+		const int32 CtrlType = ViolatingCtrlIdx % 3;
+		if (CtrlType == 0) // 推力：锁定到 0 或 1
+		{
+			AllocatedControlValues[ViolatingCtrlIdx] = AllocatedControlValues[ViolatingCtrlIdx] < 0.0 ? 0.0 : 1.0;
+			// 记录饱和的旋翼
+			const int32 RotorIdx = ViolatingCtrlIdx / 3;
+			if (!AllocationDiagnostics.SaturatedMotors.Contains(RotorIdx))
+				AllocationDiagnostics.SaturatedMotors.Add(RotorIdx);
+		}
+		else // 喷口：锁定到 -1 或 +1
+		{
+			AllocatedControlValues[ViolatingCtrlIdx] = AllocatedControlValues[ViolatingCtrlIdx] < 0.0 ? -1.0 : 1.0;
+		}
+		SolvedControls[ViolatingCtrlIdx] = true;
 		AllocationDiagnostics.ActiveConstraints++;
 	}
 
 	// ---- 计算实际分配的 wrench 和残差 ----
-	// allocated = Σ(NormalizedColumn × clamp(fraction, 0, 1))
-	// residual = desired − allocated
 	for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 	{
 		double AllocatedAxisWrench = 0.0;
-		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+		for (int32 CtrlIdx = 0; CtrlIdx < NumControls; ++CtrlIdx)
 		{
-			if (FreeRotors[RotorIndex])
-			{
-				const double Fraction = FMath::Clamp(AllocatedThrustFractions[RotorIndex], 0.0, 1.0);
-				AllocatedAxisWrench += NormalizedColumns[RotorIndex][Axis] * Fraction;
-			}
+			if (!FreeControls[CtrlIdx]) continue;
+			// 推力 clamp [0,1]，喷口 clamp [-1,1]
+			const int32 CtrlType = CtrlIdx % 3;
+			double ClampedValue = AllocatedControlValues[CtrlIdx];
+			if (CtrlType == 0) ClampedValue = FMath::Clamp(ClampedValue, 0.0, 1.0);
+			else ClampedValue = FMath::Clamp(ClampedValue, -1.0, 1.0);
+			AllocatedAxisWrench += NormalizedColumns[CtrlIdx][Axis] * ClampedValue;
 		}
 		AllocationDiagnostics.AllocatedWrench[Axis] = AllocatedAxisWrench;
 		AllocationDiagnostics.AllocationResidual[Axis] = DesiredWrench[Axis] - AllocatedAxisWrench;
 	}
-	// 残差 L2 范数 ||residual||
+	// 残差 L2 范数
 	AllocationDiagnostics.ResidualMagnitude = 0.0;
 	for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 		AllocationDiagnostics.ResidualMagnitude += FMath::Square(AllocationDiagnostics.AllocationResidual[Axis]);
 	AllocationDiagnostics.ResidualMagnitude = FMath::Sqrt(AllocationDiagnostics.ResidualMagnitude);
 
-	// ---- 将推力分数转换为旋翼指令 ----
-	//   T_target = fraction × MaxAllocatedThrusts[i]
-	//   c = ConvertThrustToCommand(T_target) — 逆电机模型
+	// ---- 将控制值转换为旋翼指令 ----
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
 		UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew) continue;
-		// 自由旋翼：取 clamp 后的分数 × 最大可分配推力；非自由（已锁定/失效）：推力为 0
-		const double AllocatedFraction = FreeRotors[RotorIndex]
-			? FMath::Clamp(AllocatedThrustFractions[RotorIndex], 0.0, 1.0) : 0.0;
-		const double TargetThrust = AllocatedFraction * MaxAllocatedThrusts[RotorIndex];
-		// 通过逆电机模型将推力转为归一化指令 [0,1]
-		const float NormalizedCommand = FreeRotors[RotorIndex]
+
+		const int32 TIdx = RotorIndex * 3 + 0;
+		const int32 NPIdx = RotorIndex * 3 + 1;
+		const int32 NYIdx = RotorIndex * 3 + 2;
+
+		// 推力分数 → 归一化指令
+		const double ThrustFraction = FreeControls[TIdx]
+			? FMath::Clamp(AllocatedControlValues[TIdx], 0.0, 1.0) : 0.0;
+		const double TargetThrust = ThrustFraction * MaxAllocatedThrusts[RotorIndex];
+		const float NormalizedCommand = FreeControls[TIdx]
 			? FlightControllerAllocation::ConvertThrustToCommand(Airscrew->GetRotorDefinition(), TargetThrust) : 0.0f;
 		Airscrew->SetNormalizedCommand(NormalizedCommand);
+
+		// 喷口角度 → 喷口指令（度）
+		const FDroneRotorDefinition& RotorDef = Airscrew->GetRotorDefinition();
+		if (RotorDef.HasNozzle())
+		{
+			const float NPFraction = FreeControls[NPIdx]
+				? FMath::Clamp(static_cast<float>(AllocatedControlValues[NPIdx]), -1.0f, 1.0f) : 0.0f;
+			const float NYFraction = FreeControls[NYIdx]
+				? FMath::Clamp(static_cast<float>(AllocatedControlValues[NYIdx]), -1.0f, 1.0f) : 0.0f;
+			const float NozzlePitchDeg = NPFraction * RotorDef.MaxNozzlePitchDeg;
+			const float NozzleYawDeg = NYFraction * RotorDef.MaxNozzleYawDeg;
+			Airscrew->SetNozzleCommand(NozzlePitchDeg, NozzleYawDeg);
+		}
+
 		Runtime.ControlOutput.RotorCommands[RotorIndex] = FlightControllerAllocation::MakeRotorCommand(Airscrew);
 	}
 }
@@ -1641,7 +1876,7 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalVelocity(const FDron
 // ---------------------------------------------------------------------------
 // 串级结构（从外到内）：
 //
-//   位置环（仅 PositionHold/Mission/RTH/AutoLand）：
+//   位置环（力控制启用时）：
 //     v_des_x = PID_pos_x(x_held − x_current)
 //     v_des_y = PID_pos_y(y_held − y_current)
 //
@@ -1649,21 +1884,20 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalVelocity(const FDron
 //     a_des_x = PID_vel_x(v_des_x − v_current_x)
 //     a_des_y = PID_vel_y(v_des_y − v_current_y)
 //
-//   加速度限幅 → 送给悬停倾斜方程
+//   加速度限幅 → 送给力路径
 //
 // 位置保持的"锚定"逻辑：
 //   - 有摇杆输入时 → 重新锚定 HeldPosition 到当前位置（位置 PID 暂停）
 //   - 无摇杆输入时 → 位置 PID 将无人机拉回 HeldPosition
-//   - ReturnToHome → HeldPosition 设为 Home X/Y
 // ---------------------------------------------------------------------------
 FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const FDronePilotInput& PilotInput, float DeltaSeconds)
 {
 	const FVector CurrentPosition = Runtime.EstimatedState.State.PositionCm;
 	const FVector CurrentVelocity = Runtime.EstimatedState.State.VelocityCmPerSec;
 
-	if (!ModeCapabilities.CanUsePositionControl && !ModeCapabilities.CanUseVelocityControl)
+	if (!ModeCapabilities.CanUseForceControl)
 	{
-		// 无速度/位置控制能力时直接返回零加速度
+		// 无力控制能力时直接返回零加速度
 		PidStates.Velocity.X.Reset(); PidStates.Velocity.Y.Reset();
 		return FVector::ZeroVector;
 	}
@@ -1671,54 +1905,39 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const F
 	// 先计算摇杆对应的期望速度
 	FVector DesiredVelocity = ComputeDesiredHorizontalVelocity(PilotInput);
 
-	// ---- 位置环（如果可用）----
-	if (ModeCapabilities.CanUsePositionControl)
+	// ---- 位置环（力控制启用时总是可用）----
+	// 判断是否有手动水平摇杆指令
+	const bool bManualHorizontalCommand = FMath::Abs(PilotInput.Roll) > HorizontalHoldStickDeadband
+		|| FMath::Abs(PilotInput.Pitch) > HorizontalHoldStickDeadband;
+
+	if (!Runtime.HoldTargets.bPositionHoldInitialized)
 	{
-		// 判断是否有手动水平摇杆指令
-		const bool bManualHorizontalCommand = FMath::Abs(PilotInput.Roll) > HorizontalHoldStickDeadband
-			|| FMath::Abs(PilotInput.Pitch) > HorizontalHoldStickDeadband;
+		// 首次进入位置保持 → 锁定当前位置
+		Runtime.HoldTargets.HeldPositionCm = CurrentPosition;
+		Runtime.HoldTargets.bPositionHoldInitialized = true;
+		PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();
+	}
 
-		// ReturnToHome：将保持目标设为归航点
-		if (Runtime.ActiveFlightMode == EDroneFlightMode::ReturnToHome && Runtime.HomeState.bValid)
-		{
-			Runtime.HoldTargets.HeldPositionCm.X = Runtime.HomeState.PositionCm.X;
-			Runtime.HoldTargets.HeldPositionCm.Y = Runtime.HomeState.PositionCm.Y;
-			Runtime.HoldTargets.bPositionHoldInitialized = true;
-		}
-		else if (!Runtime.HoldTargets.bPositionHoldInitialized)
-		{
-			// 首次进入位置保持 → 锁定当前位置
-			Runtime.HoldTargets.HeldPositionCm = CurrentPosition;
-			Runtime.HoldTargets.bPositionHoldInitialized = true;
-			PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();
-		}
-
-		// 手动输入时 → 重新锚定保持点，让位置 PID 不与手动指令打架
-		if (bManualHorizontalCommand && Runtime.ActiveFlightMode != EDroneFlightMode::ReturnToHome && Runtime.ActiveFlightMode != EDroneFlightMode::AutoLand)
-		{
-			Runtime.HoldTargets.HeldPositionCm = CurrentPosition;
-			PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();
-		}
-		else
-		{
-			// 无手动输入 → 位置 PID 生成期望速度
-			//   v_des = PID_pos(pos_held − pos_current)
-			//   使用 UpdateFromMeasurement（导数对测量值），避免位置设定值跳变的 kick
-			DesiredVelocity = FVector(
-				PidStates.Position.X.UpdateFromMeasurement(Runtime.HoldTargets.HeldPositionCm.X, CurrentPosition.X, DeltaSeconds, ControllerConfig.Position.PositionGains.X),
-				PidStates.Position.Y.UpdateFromMeasurement(Runtime.HoldTargets.HeldPositionCm.Y, CurrentPosition.Y, DeltaSeconds, ControllerConfig.Position.PositionGains.Y),
-				0.0);
-		}
-
-		Runtime.ControlOutput.Targets.Position.bEnabled = true;
-		Runtime.ControlOutput.Targets.Position.PositionCm = FVector(
-			Runtime.HoldTargets.HeldPositionCm.X, Runtime.HoldTargets.HeldPositionCm.Y, Runtime.HoldTargets.HeldAltitudeCm);
+	// 手动输入时 → 重新锚定保持点，让位置 PID 不与手动指令打架
+	if (bManualHorizontalCommand)
+	{
+		Runtime.HoldTargets.HeldPositionCm = CurrentPosition;
+		PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();
 	}
 	else
 	{
-		Runtime.HoldTargets.bPositionHoldInitialized = false;
-		PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();
+		// 无手动输入 → 位置 PID 生成期望速度
+		//   v_des = PID_pos(pos_held − pos_current)
+		//   使用 UpdateFromMeasurement（导数对测量值），避免位置设定值跳变的 kick
+		DesiredVelocity = FVector(
+			PidStates.Position.X.UpdateFromMeasurement(Runtime.HoldTargets.HeldPositionCm.X, CurrentPosition.X, DeltaSeconds, ControllerConfig.Force.PositionGains.X),
+			PidStates.Position.Y.UpdateFromMeasurement(Runtime.HoldTargets.HeldPositionCm.Y, CurrentPosition.Y, DeltaSeconds, ControllerConfig.Force.PositionGains.Y),
+			0.0);
 	}
+
+	Runtime.ControlOutput.Targets.Position.bEnabled = true;
+	Runtime.ControlOutput.Targets.Position.PositionCm = FVector(
+		Runtime.HoldTargets.HeldPositionCm.X, Runtime.HoldTargets.HeldPositionCm.Y, Runtime.HoldTargets.HeldAltitudeCm);
 
 	// ---- 速度限幅 ----
 	DesiredVelocity.Z = 0.0f;
@@ -1739,9 +1958,9 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const F
 	//   使用 UpdateFromMeasurement（导数对测量值），避免速度设定值跳变的 kick
 	FVector DesiredAcceleration = FVector::ZeroVector;
 	DesiredAcceleration.X = PidStates.Velocity.X.UpdateFromMeasurement(
-		DesiredVelocity.X, CurrentVelocity.X, DeltaSeconds, ControllerConfig.Position.VelocityGains.X);
+		DesiredVelocity.X, CurrentVelocity.X, DeltaSeconds, ControllerConfig.Force.VelocityGains.X);
 	DesiredAcceleration.Y = PidStates.Velocity.Y.UpdateFromMeasurement(
-		DesiredVelocity.Y, CurrentVelocity.Y, DeltaSeconds, ControllerConfig.Position.VelocityGains.Y);
+		DesiredVelocity.Y, CurrentVelocity.Y, DeltaSeconds, ControllerConfig.Force.VelocityGains.Y);
 
 	// ---- 加速度限幅 ----
 	const float MaxHorizontalAcceleration = ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq;
@@ -1772,65 +1991,165 @@ FVector UFlightControllerComponent::GetRotorPositionFromCenterOfMassBodyCm(const
 }
 
 // ---------------------------------------------------------------------------
-// GetRotorThrustAxisBody — 获取旋翼推力轴在机体系下的方向（归一化）
+// GetRotorThrustAxisBody — 获取旋翼推力轴在机体系下的方向（归一化，含喷口偏转）
+// ---------------------------------------------------------------------------
+// 优先使用 Airscrew 当前喷口角度（含伺服动力学），
+// 无喷口的旋翼退回固定推力轴方向。
 // ---------------------------------------------------------------------------
 FVector UFlightControllerComponent::GetRotorThrustAxisBody(const UAirscrewComponent* Airscrew) const
 {
 	if (!Airscrew) return FVector::UpVector;
-	// 推力轴本地 → 世界 → 机体系
+
+	// 矢量喷口旋翼：使用当前喷口角度（已含伺服动力学）
+	if (Airscrew->GetRotorDefinition().HasNozzle())
+	{
+		const FVector ThrustAxisWithNozzle = Airscrew->GetCurrentThrustAxisBody();
+		const FVector ThrustAxisBody = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
+			PhysicsCache.BodyTransform.TransformVectorNoScale(ThrustAxisWithNozzle));
+		return ThrustAxisBody.IsNearlyZero() ? FVector::UpVector : ThrustAxisBody.GetSafeNormal();
+	}
+
+	// 固定推力轴旋翼：本地 → 世界 → 机体系
 	const FVector ThrustAxisBody = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
 		PhysicsCache.BodyTransform.TransformVectorNoScale(Airscrew->GetThrustAxisLocal()));
 	return ThrustAxisBody.IsNearlyZero() ? FVector::UpVector : ThrustAxisBody.GetSafeNormal();
 }
 
 // ---------------------------------------------------------------------------
-// BuildJacobianColumn — 构造单个旋翼的雅可比列（4×1 向量）
+// BuildJacobianSubmatrix — 构造单个旋翼的6DOF雅可比子矩阵（3列 × 6行）
 // ---------------------------------------------------------------------------
+// 每个旋翼 i 有 3 个控制输入：推力 T_i，喷口俯仰 NP_i，喷口偏航 NY_i
+// 雅可比子矩阵 = [J_T | J_NP | J_NY]，每列 6 维
+//
 // 物理模型：
 //
-//   每个旋翼 i 在最大推力时产生：
-//     力：F_i = ThrustAxisBody × T_max_alloc    （沿推力轴，大小 = 最大可分配推力）
-//     偏心力矩：τ_pos = r_i × F_i               （力臂 × 力 = 叉积）
-//     反扭矩：τ_react = ThrustAxisBody × (T_max_alloc × k_τ_eff × spin_sign)
+//   列0 — 推力列 J_T (6×1):
+//     推力方向 = GetThrustAxisWithNozzle(0, 0)（中立喷口位）
+//     力：F_i = ThrustAxisBody × T_max_alloc
+//     力矩：τ_pos = r_i × F_i  (力臂 × 推力)
+//           τ_react = ThrustAxisBody × (T_max_alloc × k_τ × spin_sign)
+//     J_T = [Fx, Fy, Fz, Mx, My, Mz]^T
 //
-//   雅可比列 = [Fz, −τx, −τy, τz]
-//     Fz  = 推力的 Z 分量（向上 = 正，对总距有贡献）
-//     τx  = 物理力矩的 X 分量（滚转力矩）
-//     τy  = 物理力矩的 Y 分量（俯仰力矩）
-//     τz  = 物理力矩的 Z 分量（偏航力矩，主要来自反扭矩）
+//   列1 — 喷口俯仰列 J_NP (6×1):
+//     ∂(Wrench)/∂(NP_i) 在 NP=0 处的解析偏导
+//     推力轴对 NP 的偏导 = R_yaw(0) × ∂R_pitch(NP)/∂NP × ThrustAxisLocal
+//                        = [0, 0, 1]× 的旋转向量
+//     实际实现：用 GetThrustAxisWithNozzle(ε, 0) 的一阶差分近似
+//     ∂F/∂NP = (∂ThrustAxis/∂NP) × T_i  (注意：T_i 取当前分配值)
+//     ∂τ_pos/∂NP = r_i × (∂F/∂NP)
+//     ∂τ_react/∂NP ≈ 0 (反扭矩对喷口角度的依赖可忽略)
 //
-//   符号约定：
-//     力矩列取负号（−τx, −τy），是因为 wrench 的力矩分量
-//     在代码中按 "反作用力矩" 约定处理（使混合器输出与物理力矩方向一致）
+//   列2 — 喷口偏航列 J_NY (6×1):
+//     同理，∂(Wrench)/∂(NY_i) 在 NY=0 处
 //
-//   单位注意：
-//     力臂 ×0.01 把 cm 转成 m，因为力矩 = N·m = (m) × (N)
+// 简化实现策略：
+//   对于无喷口的旋翼（MaxNozzlePitchDeg=0 且 MaxNozzleYawDeg=0），
+//   J_NP 和 J_NY 为零向量，分配器自动忽略。
+//
+//   使用一阶前向差分近似偏导：
+//     ∂ThrustAxis/∂NP ≈ [GetThrustAxisWithNozzle(ε, 0) - GetThrustAxisWithNozzle(0, 0)] / ε
+//     ∂ThrustAxis/∂NY ≈ [GetThrustAxisWithNozzle(0, ε) - GetThrustAxisWithNozzle(0, 0)] / ε
+//   其中 ε = 1° (数值微分步长)
+//
+// 单位注意：
+//   力：N，力臂 ×0.01 把 cm 转成 m（力矩 = N·m = m × N）
 // ---------------------------------------------------------------------------
-FVector4 UFlightControllerComponent::BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm) const
+void UFlightControllerComponent::BuildJacobianSubmatrix(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm,
+	TArray<double>& OutThrustCol, TArray<double>& OutNozzlePitchCol, TArray<double>& OutNozzleYawCol) const
 {
+	constexpr int32 WrenchDim = FlightControllerAllocation::WrenchAxisCount;
+	OutThrustCol.SetNumZeroed(WrenchDim);
+	OutNozzlePitchCol.SetNumZeroed(WrenchDim);
+	OutNozzleYawCol.SetNumZeroed(WrenchDim);
+
+	if (!Airscrew) return;
 	const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
-	// T_max_alloc = T_max_phys × ControlAuthorityScale（人为降额）
-	const float MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition);
-	// 推力轴方向（机体系，归一化）
-	const FVector ThrustAxisBody = GetRotorThrustAxisBody(Airscrew);
-	// 最大推力时的力向量
-	const FVector ForceAtMax = ThrustAxisBody * MaxAllocatedThrust;
-	// 力臂：cm → m（力矩 = N·m，所以需要米）
-	const FVector MomentArmMeters = LocalPositionFromCenterOfMassCm * 0.01f;
-	// 反扭矩：方向 = 推力轴 × (推力 × 反扭矩系数 × 旋转符号)
-	//   CW  → spin_sign = −1 → 反扭矩方向 = 推力轴 × (−1) = 沿轴负方向
-	//   CCW → spin_sign = +1 → 反扭矩方向 = 推力轴 × (+1) = 沿轴正方向
-	// 四旋翼标准布局：2CW + 2CCW 交替排列，使悬停时偏航反扭矩相互抵消
-	const FVector ReactionTorque = ThrustAxisBody
+	const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition);
+
+	if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon) return;
+
+	// 推力轴在中立喷口位置的方向（机体系，归一化）
+	const FVector ThrustAxisNeutral = GetRotorThrustAxisBody(Airscrew);
+
+	// ---- 列0: 推力列 J_T ----
+	// 力 = ThrustAxisBody × T_max_alloc
+	const FVector ForceAtMax = ThrustAxisNeutral * MaxAllocatedThrust;
+	// 力臂 cm → m
+	const FVector MomentArmMeters = LocalPositionFromCenterOfMassCm * 0.01;
+	// 反扭矩
+	const FVector ReactionTorque = ThrustAxisNeutral
 		* (MaxAllocatedThrust * RotorDefinition.GetEffectiveReactionTorqueCoefficient() * RotorDefinition.GetSpinDirectionSign());
-	// 总力矩 = 偏心力矩 + 反扭矩
+	// 总力矩
 	const FVector PhysicalTorque = FVector::CrossProduct(MomentArmMeters, ForceAtMax) + ReactionTorque;
-	// 构造雅可比列：[Fz, −τx, −τy, τz]
-	return FVector4(ForceAtMax.Z, -PhysicalTorque.X, -PhysicalTorque.Y, PhysicalTorque.Z);
+
+	// J_T = [Fx, Fy, Fz, Mx, My, Mz]^T
+	OutThrustCol[0] = ForceAtMax.X;
+	OutThrustCol[1] = ForceAtMax.Y;
+	OutThrustCol[2] = ForceAtMax.Z;
+	OutThrustCol[3] = PhysicalTorque.X;
+	OutThrustCol[4] = PhysicalTorque.Y;
+	OutThrustCol[5] = PhysicalTorque.Z;
+
+	// ---- 列1,2: 喷口偏导列 ----
+	if (!RotorDefinition.HasNozzle()) return;
+
+	// 数值微分步长 (°)
+	constexpr double EpsilonDeg = 1.0;
+
+	// 推力轴在 NP=+ε, NY=0 时的方向
+	const FVector ThrustAxisPEps = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
+		PhysicsCache.BodyTransform.TransformVectorNoScale(
+			RotorDefinition.GetThrustAxisWithNozzle(static_cast<float>(EpsilonDeg), 0.0f)));
+
+	// 推力轴在 NP=0, NY=+ε 时的方向
+	const FVector ThrustAxisYEps = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
+		PhysicsCache.BodyTransform.TransformVectorNoScale(
+			RotorDefinition.GetThrustAxisWithNozzle(0.0f, static_cast<float>(EpsilonDeg))));
+
+	// ∂ThrustAxis/∂NP ≈ (Axis(ε,0) − Axis(0,0)) / ε
+	const FVector DThrustAxisDNP = (ThrustAxisPEps - ThrustAxisNeutral) / EpsilonDeg;
+	// ∂ThrustAxis/∂NY ≈ (Axis(0,ε) − Axis(0,0)) / ε
+	const FVector DThrustAxisDNY = (ThrustAxisYEps - ThrustAxisNeutral) / EpsilonDeg;
+
+	// 将角度从度转弧度以获得正确的力矩对角度的偏导
+	// 实际上，这里的偏导单位是"力/度"，因为分配器在归一化域工作
+	// 推力缩放：假设 T_i 为当前推力分配值，这里用 T_max_alloc 代表最坏情况
+	const double ThrustScale = MaxAllocatedThrust; // N per normalized fraction
+
+	// ∂F/∂NP = DThrustAxisDNP × ThrustScale（力的变化率 per 度）
+	// 但归一化域中 NP 归一化到 [-1,1] 对应 [-MaxNP, +MaxNP]
+	// 所以需要 × MaxNozzlePitchDeg 得到"每归一化单位的力变化"
+	const double NPScale = static_cast<double>(RotorDefinition.MaxNozzlePitchDeg); // 度/归一化单位
+	const double NYScale = static_cast<double>(RotorDefinition.MaxNozzleYawDeg);    // 度/归一化单位
+
+	// ∂Force/∂(NP_normalized) = DThrustAxisDNP × ThrustScale × NPScale
+	const FVector DForceDNP = DThrustAxisDNP * ThrustScale * NPScale;
+	const FVector DForceDNY = DThrustAxisDNY * ThrustScale * NYScale;
+
+	// ∂τ_pos/∂(NP_normalized) = r × (∂Force/∂NP)
+	const FVector DTorqueDNP = FVector::CrossProduct(MomentArmMeters, DForceDNP);
+	const FVector DTorqueDNY = FVector::CrossProduct(MomentArmMeters, DForceDNY);
+	// 反扭矩对喷口角度的依赖可忽略（不变号）
+
+	// J_NP = [∂Fx/∂NP, ∂Fy/∂NP, ∂Fz/∂NP, ∂Mx/∂NP, ∂My/∂NP, ∂Mz/∂NP]^T
+	OutNozzlePitchCol[0] = DForceDNP.X;
+	OutNozzlePitchCol[1] = DForceDNP.Y;
+	OutNozzlePitchCol[2] = DForceDNP.Z;
+	OutNozzlePitchCol[3] = DTorqueDNP.X;
+	OutNozzlePitchCol[4] = DTorqueDNP.Y;
+	OutNozzlePitchCol[5] = DTorqueDNP.Z;
+
+	// J_NY = [∂Fx/∂NY, ∂Fy/∂NY, ∂Fz/∂NY, ∂Mx/∂NY, ∂My/∂NY, ∂Mz/∂NY]^T
+	OutNozzleYawCol[0] = DForceDNY.X;
+	OutNozzleYawCol[1] = DForceDNY.Y;
+	OutNozzleYawCol[2] = DForceDNY.Z;
+	OutNozzleYawCol[3] = DTorqueDNY.X;
+	OutNozzleYawCol[4] = DTorqueDNY.Y;
+	OutNozzleYawCol[5] = DTorqueDNY.Z;
 }
 
 // ---------------------------------------------------------------------------
-// LogRotorLayoutIfNeeded — 首次调试时打印旋翼布局
+// LogRotorLayoutIfNeeded — 首次调试时打印旋翼布局（6DOF版本）
 // ---------------------------------------------------------------------------
 void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 {
@@ -1839,39 +2158,51 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 	const FString OwnerName = GetOwner() ? GetOwner()->GetName() : TEXT("None");
 	UE_LOG(LogFlightController, Log, TEXT("[RotorLayout] Owner=%s Rotors=%d"), *OwnerName, Airscrews.Num());
 
-	for (int32 RotorIndex= 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
+	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
 	{
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew) continue;
 
 		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
 		const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
-		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition);
 		const FVector ThrustAxisBody = GetRotorThrustAxisBody(Airscrew);
 		const FName RotorName = RotorDefinition.RotorName.IsNone() ? Airscrew->GetFName() : RotorDefinition.RotorName;
 
+		// 构建6DOF子矩阵并记录关键信息
+		TArray<double> ThrustCol, NPCol, NYCol;
+		BuildJacobianSubmatrix(Airscrew, LocalPosition, ThrustCol, NPCol, NYCol);
+
 		UE_LOG(LogFlightController, Log,
-			TEXT("[RotorLayout] [%d] %s ArmCm=(%.1f, %.1f, %.1f) AxisBody=(%.2f, %.2f, %.2f) Spin=%s Jac=(Fz %.2f Roll %.2f Pitch %.2f Yaw %.2f) Scale=%.2f MaxRpm=%.0f IdleRpm=%.0f MaxThrust=%.1f AllocThrust=%.1f"),
+			TEXT("[RotorLayout] [%d] %s ArmCm=(%.1f, %.1f, %.1f) AxisBody=(%.2f, %.2f, %.2f) Spin=%s Nozzle(P=%.1f Y=%.1f) Jac_T=(Fx%.1f Fy%.1f Fz%.1f Mx%.3f My%.3f Mz%.3f) Scale=%.2f MaxThrust=%.1f AllocThrust=%.1f"),
 			RotorIndex, *RotorName.ToString(),
 			LocalPosition.X, LocalPosition.Y, LocalPosition.Z,
 			ThrustAxisBody.X, ThrustAxisBody.Y, ThrustAxisBody.Z,
 			FlightControllerDebug::GetSpinDirectionLabel(RotorDefinition.SpinDirection),
-			JacobianCol[0], JacobianCol[1], JacobianCol[2], JacobianCol[3],
+			RotorDefinition.MaxNozzlePitchDeg, RotorDefinition.MaxNozzleYawDeg,
+			ThrustCol[0], ThrustCol[1], ThrustCol[2], ThrustCol[3], ThrustCol[4], ThrustCol[5],
 			RotorDefinition.ControlAuthorityScale,
-			RotorDefinition.Motor.MaxRpm, RotorDefinition.Motor.IdleRpm,
 			FlightControllerAllocation::GetRotorMaxPhysicalThrust(RotorDefinition),
 			FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition));
+
+		if (RotorDefinition.HasNozzle())
+		{
+			UE_LOG(LogFlightController, Log,
+				TEXT("[RotorLayout]   [%d] NP_col=(Fx%.2f Fy%.2f Fz%.2f Mx%.4f My%.4f Mz%.4f) NY_col=(Fx%.2f Fy%.2f Fz%.2f Mx%.4f My%.4f Mz%.4f)"),
+				RotorIndex,
+				NPCol[0], NPCol[1], NPCol[2], NPCol[3], NPCol[4], NPCol[5],
+				NYCol[0], NYCol[1], NYCol[2], NYCol[3], NYCol[4], NYCol[5]);
+		}
 	}
 	DebugState.bHasLoggedRotorLayout = true;
 }
 
 // ---------------------------------------------------------------------------
-// MaybeEmitDebugLog — 定期输出控制状态诊断
+// MaybeEmitDebugLog — 定期输出6DOF矢量飞控控制状态诊断
 // ---------------------------------------------------------------------------
 void UFlightControllerComponent::MaybeEmitDebugLog(
-	const FDronePilotInput& PilotInput, float DeltaSeconds, float CollectiveCommand,
-	float DesiredVerticalVelocity, const FRotator& DesiredAttitude, float DesiredYawRate,
-	const FVector& DesiredBodyRates, const FVector& AxisCommands)
+	const FDronePilotInput& PilotInput, float DeltaSeconds,
+	const FVector& DesiredForce, const FQuat& DesiredAttitude,
+	const FVector& DesiredMoment)
 {
 	if (!bEnableDebugLog) return;
 	LogRotorLayoutIfNeeded();
@@ -1885,28 +2216,31 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 	const FRotator CurrentAttitude = Runtime.EstimatedState.State.AttitudeDegrees;
 	const FVector CurrentVelocity = Runtime.EstimatedState.State.VelocityCmPerSec;
 	const FVector CurrentBodyRates = Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec;
-	const float RollError = FRotator::NormalizeAxis(DesiredAttitude.Roll - CurrentAttitude.Roll);
-	const float PitchError = FRotator::NormalizeAxis(DesiredAttitude.Pitch - CurrentAttitude.Pitch);
-	const bool bYawHoldActive = ModeCapabilities.CanHoldYaw && FMath::Abs(PilotInput.Yaw) <= YawHoldStickDeadband;
-	const float YawError = bYawHoldActive
-		? FRotator::NormalizeAxis(Runtime.HoldTargets.HeldYawDegrees - CurrentAttitude.Yaw) : 0.0f;
+
+	// 姿态误差：使用四元数差分
+	const FQuat AttitudeErrorQuat = DesiredAttitude.Inverse() * FQuat(CurrentAttitude);
+	const FVector AttitudeErrorAxis = AttitudeErrorQuat.GetRotationAxis();
+	const float AttitudeErrorAngle = AttitudeErrorQuat.GetAngle(); // 弧度
+
+	// 欧拉角误差（用于日志可读性）
+	const FRotator DesiredAttitudeEuler = DesiredAttitude.Rotator();
+	const float RollError = FRotator::NormalizeAxis(DesiredAttitudeEuler.Roll - CurrentAttitude.Roll);
+	const float PitchError = FRotator::NormalizeAxis(DesiredAttitudeEuler.Pitch - CurrentAttitude.Pitch);
+	const float YawError = FRotator::NormalizeAxis(DesiredAttitudeEuler.Yaw - CurrentAttitude.Yaw);
 
 	UE_LOG(LogFlightController, Log,
-		TEXT("[Ctrl] t=%.2f Mode=%s Arm=%s Input[T %.2f R %.2f P %.2f Y %.2f] Alt[Z %.1f Held %.1f Vz %.1f DesVz %.1f Col %.3f] Att[P %.2f/%.2f E %.2f | Y %.2f Held %.2f E %.2f | R %.2f/%.2f E %.2f] Rate[R %.2f/%.2f I %.3f | P %.2f/%.2f I %.3f | Y %.2f/%.2f I %.3f] Axis[R %.3f P %.3f Y %.3f] VelXY=(%.1f, %.1f)"),
+		TEXT("[Ctrl] t=%.2f Mode=%s Aim=%s Arm=%s Input[T %.2f R %.2f P %.2f Y %.2f] "
+			"Force=(Fx %.2f Fy %.2f Fz %.2f) AttErr=(R %.2f P %.2f Y %.2f | QAngle %.1f°) "
+			"Moment=(Mx %.4f My %.4f Mz %.4f) VelXY=(%.1f, %.1f) Vz=%.1f"),
 		Runtime.EstimatedState.State.TimeSeconds,
 		FlightControllerDebug::GetFlightModeLabel(Runtime.ActiveFlightMode),
+		*UEnum::GetValueAsString(Runtime.ActiveAimMode),
 		FlightControllerDebug::GetArmStateLabel(Runtime.ArmState),
 		PilotInput.Throttle, PilotInput.Roll, PilotInput.Pitch, PilotInput.Yaw,
-		Runtime.EstimatedState.State.PositionCm.Z, Runtime.HoldTargets.HeldAltitudeCm,
-		CurrentVelocity.Z, DesiredVerticalVelocity, CollectiveCommand,
-		CurrentAttitude.Pitch, DesiredAttitude.Pitch, PitchError,
-		CurrentAttitude.Yaw, Runtime.HoldTargets.HeldYawDegrees, YawError,
-		CurrentAttitude.Roll, DesiredAttitude.Roll, RollError,
-		CurrentBodyRates.X, DesiredBodyRates.X, PidStates.Rate.Roll.Integral,
-		CurrentBodyRates.Y, DesiredBodyRates.Y, PidStates.Rate.Pitch.Integral,
-		CurrentBodyRates.Z, DesiredYawRate, PidStates.Rate.Yaw.Integral,
-		AxisCommands.X, AxisCommands.Y, AxisCommands.Z,
-		CurrentVelocity.X, CurrentVelocity.Y);
+		DesiredForce.X, DesiredForce.Y, DesiredForce.Z,
+		RollError, PitchError, YawError, FMath::RadiansToDegrees(AttitudeErrorAngle),
+		DesiredMoment.X, DesiredMoment.Y, DesiredMoment.Z,
+		CurrentVelocity.X, CurrentVelocity.Y, CurrentVelocity.Z);
 
 	if (Airscrews.IsEmpty())
 	{
@@ -1917,9 +2251,6 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 	}
 
 	FString RotorSummary;
-	float LeftCommandSum = 0.0f, RightCommandSum = 0.0f;
-	int32 LeftCommandCount = 0, RightCommandCount = 0;
-
 	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
 	{
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
@@ -1927,71 +2258,35 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 			? &Runtime.ControlOutput.RotorCommands[RotorIndex] : nullptr;
 		if (!Airscrew || !RotorCommand) continue;
 
-		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
-		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition);
-
-		// 按 Y 坐标分左右，用于符号一致性诊断
-		if (LocalPosition.Y > UE_SMALL_NUMBER) { RightCommandSum += RotorCommand->NormalizedCommand; ++RightCommandCount; }
-		else if (LocalPosition.Y < -UE_SMALL_NUMBER) { LeftCommandSum += RotorCommand->NormalizedCommand; ++LeftCommandCount; }
-
 		if (bLogRotorCommands)
 		{
 			RotorSummary += FString::Printf(
-				TEXT("[%d:%s Y=%+.1f JacRoll=%+.2f Cmd=%.3f Cur=%.3f Rpm=%.0f Thr=%.1f] "),
-				RotorIndex, *RotorCommand->RotorName.ToString(), LocalPosition.Y, JacobianCol[1],
-				RotorCommand->NormalizedCommand, Airscrew->GetCurrentCommand(),
-				RotorCommand->CurrentRpm, RotorCommand->GeneratedThrust);
+				TEXT("[%d:%s Cmd=%.3f Rpm=%.0f Thr=%.1f NP=%.1f NY=%.1f] "),
+				RotorIndex, *RotorCommand->RotorName.ToString(),
+				RotorCommand->NormalizedCommand, RotorCommand->CurrentRpm, RotorCommand->GeneratedThrust,
+				RotorCommand->NozzlePitchDeg, RotorCommand->NozzleYawDeg);
 		}
 	}
 
 	if (bLogRotorCommands && !RotorSummary.IsEmpty())
 		UE_LOG(LogFlightController, Log, TEXT("[Rotors] %s"), *RotorSummary);
 
-	// ---- 符号一致性诊断 ----
-	// 检查滚转通道从误差→角速率→力矩→混合器输出→左右差值的符号链是否一致
-	if (bLogSignDiagnostics)
-	{
-		const float SampleDeltaSeconds = DebugState.bHasPreviousSample
-			? FMath::Max(Runtime.EstimatedState.State.TimeSeconds - DebugState.PreviousSampleTimeSeconds, 0.0f) : 0.0f;
-		const float RollDeltaDegrees = DebugState.bHasPreviousSample
-			? FRotator::NormalizeAxis(CurrentAttitude.Roll - DebugState.PreviousAttitudeDegrees.Roll) : 0.0f;
-		const float LeftAverageCommand = LeftCommandCount > 0 ? LeftCommandSum / static_cast<float>(LeftCommandCount) : 0.0f;
-		const float RightAverageCommand = RightCommandCount > 0 ? RightCommandSum / static_cast<float>(RightCommandCount) : 0.0f;
-		const float RightMinusLeftCommand = RightAverageCommand - LeftAverageCommand;
+	// ---- 分配残差诊断 ----
+	UE_LOG(LogFlightController, Log,
+		TEXT("[Alloc] Residual=%.4f Saturated=%d Failed=%d Constraints=%d "
+			"Res=(Fx%.3f Fy%.3f Fz%.3f Mx%.4f My%.4f Mz%.4f)"),
+		AllocationDiagnostics.ResidualMagnitude,
+		AllocationDiagnostics.SaturatedMotors.Num(),
+		AllocationDiagnostics.FailedMotors.Num(),
+		AllocationDiagnostics.ActiveConstraints,
+		AllocationDiagnostics.AllocationResidual[0],
+		AllocationDiagnostics.AllocationResidual[1],
+		AllocationDiagnostics.AllocationResidual[2],
+		AllocationDiagnostics.AllocationResidual[3],
+		AllocationDiagnostics.AllocationResidual[4],
+		AllocationDiagnostics.AllocationResidual[5]);
 
-		// 各环节符号分桶
-		const int32 RollAngleDeltaSign = FlightControllerDebug::GetSignBucket(RollDeltaDegrees, 0.05f);
-		const int32 BodyRateXSign = FlightControllerDebug::GetSignBucket(CurrentBodyRates.X, 1.0f);
-		const int32 RollErrorSign = FlightControllerDebug::GetSignBucket(RollError, 0.1f);
-		const int32 DesiredRollRateSign = FlightControllerDebug::GetSignBucket(DesiredBodyRates.X, 0.5f);
-		const int32 AxisRollSign = FlightControllerDebug::GetSignBucket(AxisCommands.X, 0.005f);
-		const int32 RightMinusLeftSign = FlightControllerDebug::GetSignBucket(RightMinusLeftCommand, 0.01f);
-		// 期望：R-L 符号 = 轴指令符号取反（正滚转力矩 → 左高右低 → R-L < 0）
-		const int32 ExpectedRightMinusLeftSign = AxisRollSign == 0 ? 0 : -AxisRollSign;
-
-		// 一致性检查
-		const bool bRateVsAngleConsistent = !DebugState.bHasPreviousSample
-			|| RollAngleDeltaSign == 0 || BodyRateXSign == 0 || RollAngleDeltaSign == BodyRateXSign;
-		const bool bOuterLoopConsistent = RollErrorSign == 0 || DesiredRollRateSign == 0 || RollErrorSign == DesiredRollRateSign;
-		const bool bMixerResponseConsistent = AxisRollSign == 0 || RightMinusLeftSign == 0
-			|| RightMinusLeftSign == ExpectedRightMinusLeftSign;
-
-		UE_LOG(LogFlightController, Log,
-			TEXT("[SignDiag] Roll: dAngle=%s RateX=%s %s | Error=%s DesRate=%s %s | Axis=%s R-L=%s(exp %s) %s"),
-			FlightControllerDebug::GetSignLabel(RollAngleDeltaSign), FlightControllerDebug::GetSignLabel(BodyRateXSign),
-			FlightControllerDebug::GetConsistencyLabel(bRateVsAngleConsistent),
-			FlightControllerDebug::GetSignLabel(RollErrorSign), FlightControllerDebug::GetSignLabel(DesiredRollRateSign),
-			FlightControllerDebug::GetConsistencyLabel(bOuterLoopConsistent),
-			FlightControllerDebug::GetSignLabel(AxisRollSign), FlightControllerDebug::GetSignLabel(RightMinusLeftSign),
-			FlightControllerDebug::GetSignLabel(ExpectedRightMinusLeftSign),
-			FlightControllerDebug::GetConsistencyLabel(bMixerResponseConsistent));
-
-		DebugState.PreviousAttitudeDegrees = CurrentAttitude;
-		DebugState.PreviousSampleTimeSeconds = Runtime.EstimatedState.State.TimeSeconds;
-		DebugState.bHasPreviousSample = true;
-	}
-
-	// ---- 故障状态与控制能力调试 ----
+	// ---- 故障状态与6轴控制能力调试 ----
 	if (!RotorHealthStates.IsEmpty())
 	{
 		FString RotorStatus;
@@ -2006,33 +2301,39 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 				RotorStatus += FString::Printf(TEXT("[%d:OK] "), RotorIndex);
 		}
 		UE_LOG(LogFlightController, Log,
-			TEXT("[RotorHealth] %s | Authority: Col=%.0f%% Roll=%.0f%% Pitch=%.0f%% Yaw=%.0f%% | Residual=%.4f Failed=%d Saturated=%d"),
+			TEXT("[RotorHealth] %s | Authority: Fx=%.0f%% Fy=%.0f%% Fz=%.0f%% Roll=%.0f%% Pitch=%.0f%% Yaw=%.0f%% | Residual=%.4f %s"),
 			*RotorStatus,
-			AuthorityInfo.CollectiveAuthority * 100.0f, AuthorityInfo.RollAuthority * 100.0f,
-			AuthorityInfo.PitchAuthority * 100.0f, AuthorityInfo.YawAuthority * 100.0f,
+			AuthorityInfo.FxAuthority * 100.0f, AuthorityInfo.FyAuthority * 100.0f,
+			AuthorityInfo.FzAuthority * 100.0f,
+			AuthorityInfo.RollAuthority * 100.0f, AuthorityInfo.PitchAuthority * 100.0f,
+			AuthorityInfo.YawAuthority * 100.0f,
 			AllocationDiagnostics.ResidualMagnitude,
-			AllocationDiagnostics.FailedMotors.Num(), AllocationDiagnostics.SaturatedMotors.Num());
+			Runtime.ActiveFlightMode == EDroneFlightMode::Failure ? TEXT("[FAILURE-MODE]") : TEXT(""));
+
 	}
+
+	DebugState.PreviousAttitudeDegrees = CurrentAttitude;
+	DebugState.PreviousSampleTimeSeconds = Runtime.EstimatedState.State.TimeSeconds;
+	DebugState.bHasPreviousSample = true;
 }
 
 // ---------------------------------------------------------------------------
-// MapCenteredThrottleToCollective — 以悬停点为中心的油门映射
+// MapThrottleToVerticalForce — 油门 → 垂直力 (N) 映射
 // ---------------------------------------------------------------------------
-// 油门杆中位 = 悬停油门（0.5），这样飞手松手就悬停。
-//   Throttle ≥ 0: c = Lerp(Hover, Max, Throttle)    — 向上推 = 增大推力
-//   Throttle < 0: c = Lerp(Hover, Min, -Throttle)   — 向下拉 = 减小推力
+// Acro模式下的油门映射：以悬停点为中心，映射到 [0, MaxVerticalForce]
+//   Throttle ≥ 0: Fz = Lerp(HoverThrustN, MaxVerticalForce, Throttle)
+//   Throttle < 0: Fz = Lerp(HoverThrustN, 0, -Throttle)
 // ---------------------------------------------------------------------------
-float UFlightControllerComponent::MapCenteredThrottleToCollective(float ThrottleInput) const
+float UFlightControllerComponent::MapThrottleToVerticalForce(float ThrottleInput) const
 {
-	const float HoverCollective = ControllerConfig.Limits.HoverCollectiveCommand;
-	const float MinCollective = ControllerConfig.Limits.MinCollectiveCommand;
-	const float MaxCollective = ControllerConfig.Limits.MaxCollectiveCommand;
+	const float HoverThrustN = ControllerConfig.Force.HoverThrustN;
+	const float MaxVF = ControllerConfig.Limits.MaxVerticalForceN;
 	const float ClampedThrottle = FMath::Clamp(ThrottleInput, -1.0f, 1.0f);
 
 	if (ClampedThrottle >= 0.0f)
-		return FMath::Lerp(HoverCollective, MaxCollective, ClampedThrottle);
+		return FMath::Lerp(HoverThrustN, MaxVF, ClampedThrottle);
 	else
-		return FMath::Lerp(HoverCollective, MinCollective, -ClampedThrottle);
+		return FMath::Lerp(HoverThrustN, 0.0f, -ClampedThrottle);
 }
 
 // ---------------------------------------------------------------------------
@@ -2169,7 +2470,7 @@ void UFlightControllerComponent::RecoverAllRotors()
 }
 
 // ---------------------------------------------------------------------------
-// UpdateControlAuthorityInfo — 计算归一化的控制权限诊断
+// UpdateControlAuthorityInfo — 计算6轴归一化的控制权限诊断
 // ---------------------------------------------------------------------------
 // 对每个轴，计算：
 //   Authority_k = EffectiveAuthority_k / BaselineAuthority_k ∈ [0, 1]
@@ -2177,17 +2478,19 @@ void UFlightControllerComponent::RecoverAllRotors()
 // BaselineAuthority = 全健康时的权限（第一遍计算）
 // EffectiveAuthority = 含 Effectiveness 的权限（来自 AllocationCache 第二遍）
 //
+// 6轴：Fx Fy Fz Mx My Mz
 // 也统计健康/失效旋翼数量，供 UI 或失效保护逻辑使用。
 // ---------------------------------------------------------------------------
 void UFlightControllerComponent::UpdateControlAuthorityInfo()
 {
 	AuthorityInfo.Reset();
 	const int32 NumRotors = Airscrews.Num();
+	constexpr int32 WrenchDim = FlightControllerAllocation::WrenchAxisCount;
 
 	// ---- 计算全健康基准 ----
-	double BaselineCollectiveAuthority = 0.0;
-	double BaselinePositiveTorque[3] = {};
-	double BaselineNegativeTorque[3] = {};
+	double BaselineForceAuthority[3] = {};
+	double BaselinePositiveMoment[3] = {};
+	double BaselineNegativeMoment[3] = {};
 
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
@@ -2195,49 +2498,141 @@ void UFlightControllerComponent::UpdateControlAuthorityInfo()
 		if (!Airscrew || !Airscrew->IsRotorEnabled()) continue;
 
 		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
-		const FVector4 PhysicalColumn = BuildJacobianColumn(Airscrew, LocalPosition);
-		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
-		const double ColumnMagnitude = FMath::Abs(PhysicalColumn[0]) + FMath::Abs(PhysicalColumn[1])
-			+ FMath::Abs(PhysicalColumn[2]) + FMath::Abs(PhysicalColumn[3]);
 
-		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ColumnMagnitude <= FlightControllerAllocation::AuthorityEpsilon)
+		// 构建6DOF子矩阵（仅需要推力列做基准计算）
+		TArray<double> ThrustCol, NPCol, NYCol;
+		BuildJacobianSubmatrix(Airscrew, LocalPosition, ThrustCol, NPCol, NYCol);
+
+		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
+
+		// 计算推力列的6D L1范数
+		double ThrustColMag = 0.0;
+		for (int32 Row = 0; Row < WrenchDim; ++Row) ThrustColMag += FMath::Abs(ThrustCol[Row]);
+
+		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ThrustColMag <= FlightControllerAllocation::AuthorityEpsilon)
 			continue;
 
 		// 累加基准权限（Effectiveness = 1 的原始值）
-		BaselineCollectiveAuthority += FMath::Max(PhysicalColumn[0], 0.0f);
+		// 力轴 [0..2]：累加绝对值
 		for (int32 Axis = 0; Axis < 3; ++Axis)
 		{
-			const double AxisMoment = PhysicalColumn[Axis + 1];
-			if (AxisMoment >= 0.0f) BaselinePositiveTorque[Axis] += AxisMoment;
-			else BaselineNegativeTorque[Axis] -= AxisMoment;
+			BaselineForceAuthority[Axis] += FMath::Abs(ThrustCol[Axis]);
+		}
+		// 力矩轴 [3..5]：正/负方向分别累加
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			const double AxisMoment = ThrustCol[Axis + 3];
+			if (AxisMoment >= 0.0) BaselinePositiveMoment[Axis] += AxisMoment;
+			else BaselineNegativeMoment[Axis] -= AxisMoment;
 		}
 	}
 
-	// 基准平衡权限
-	const double BaselineRoll = FlightControllerAllocation::GetBalancedAuthority(BaselinePositiveTorque[0], BaselineNegativeTorque[0]);
-	const double BaselinePitch = FlightControllerAllocation::GetBalancedAuthority(BaselinePositiveTorque[1], BaselineNegativeTorque[1]);
-	const double BaselineYaw = FlightControllerAllocation::GetBalancedAuthority(BaselinePositiveTorque[2], BaselineNegativeTorque[2]);
+	// 基准平衡力矩权限
+	const double BaselineRoll = FlightControllerAllocation::GetBalancedAuthority(BaselinePositiveMoment[0], BaselineNegativeMoment[0]);
+	const double BaselinePitch = FlightControllerAllocation::GetBalancedAuthority(BaselinePositiveMoment[1], BaselineNegativeMoment[1]);
+	const double BaselineYaw = FlightControllerAllocation::GetBalancedAuthority(BaselinePositiveMoment[2], BaselineNegativeMoment[2]);
 
 	// ---- 计算当前有效权限（已含 Effectiveness，来自 AllocationCache）----
 	// 归一化：当前有效权限 / 基准权限 → [0, 1]
-	AuthorityInfo.CollectiveAuthority = BaselineCollectiveAuthority > FlightControllerAllocation::AuthorityEpsilon
-		? static_cast<float>(AllocationCache.CollectiveAuthority / BaselineCollectiveAuthority) : 0.0f;
+	AuthorityInfo.FxAuthority = BaselineForceAuthority[0] > FlightControllerAllocation::AuthorityEpsilon
+		? static_cast<float>(AllocationCache.FxAuthority / BaselineForceAuthority[0]) : 0.0f;
+	AuthorityInfo.FyAuthority = BaselineForceAuthority[1] > FlightControllerAllocation::AuthorityEpsilon
+		? static_cast<float>(AllocationCache.FyAuthority / BaselineForceAuthority[1]) : 0.0f;
+	AuthorityInfo.FzAuthority = BaselineForceAuthority[2] > FlightControllerAllocation::AuthorityEpsilon
+		? static_cast<float>(AllocationCache.FzAuthority / BaselineForceAuthority[2]) : 0.0f;
 	AuthorityInfo.RollAuthority = BaselineRoll > FlightControllerAllocation::AuthorityEpsilon
-		? static_cast<float>(FlightControllerAllocation::GetBalancedAuthority(AllocationCache.PositiveTorqueAuthority[0], AllocationCache.NegativeTorqueAuthority[0]) / BaselineRoll) : 0.0f;
+		? static_cast<float>(FlightControllerAllocation::GetBalancedAuthority(AllocationCache.PositiveMomentAuthority[0], AllocationCache.NegativeMomentAuthority[0]) / BaselineRoll) : 0.0f;
 	AuthorityInfo.PitchAuthority = BaselinePitch > FlightControllerAllocation::AuthorityEpsilon
-		? static_cast<float>(FlightControllerAllocation::GetBalancedAuthority(AllocationCache.PositiveTorqueAuthority[1], AllocationCache.NegativeTorqueAuthority[1]) / BaselinePitch) : 0.0f;
+		? static_cast<float>(FlightControllerAllocation::GetBalancedAuthority(AllocationCache.PositiveMomentAuthority[1], AllocationCache.NegativeMomentAuthority[1]) / BaselinePitch) : 0.0f;
 	AuthorityInfo.YawAuthority = BaselineYaw > FlightControllerAllocation::AuthorityEpsilon
-		? static_cast<float>(FlightControllerAllocation::GetBalancedAuthority(AllocationCache.PositiveTorqueAuthority[2], AllocationCache.NegativeTorqueAuthority[2]) / BaselineYaw) : 0.0f;
+		? static_cast<float>(FlightControllerAllocation::GetBalancedAuthority(AllocationCache.PositiveMomentAuthority[2], AllocationCache.NegativeMomentAuthority[2]) / BaselineYaw) : 0.0f;
 
-	// 统计健康/失效旋翼
-	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
-	{
-		if (RotorHealthStates.IsValidIndex(RotorIndex))
+		// 统计健康/失效旋翼
+		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 		{
-			if (RotorHealthStates[RotorIndex].IsHealthy())
-				AuthorityInfo.HealthyRotorCount++;
-			else
-				AuthorityInfo.FailedRotorCount++;
+			if (RotorHealthStates.IsValidIndex(RotorIndex))
+			{
+				if (RotorHealthStates[RotorIndex].IsHealthy())
+					AuthorityInfo.HealthyRotorCount++;
+				else
+					AuthorityInfo.FailedRotorCount++;
+			}
 		}
 	}
-}
+
+	// ---------------------------------------------------------------------------
+	// EvaluateControlAuthority — 评估6轴控制能力并决定是否自动降级
+	// ---------------------------------------------------------------------------
+	// 降级策略（优先级从高到低）：
+	//
+	//   1. Fz Authority < FzAuthorityThreshold
+	//      → 无法产生足够升力悬停，必坠。
+	//      → 进入 Failure 模式，降低 HoverThrustN 目标以实现受控慢降。
+	//
+	//   2. 任一姿态力矩轴 BalanceAuthority < MomentAuthorityThreshold
+	//      → 无法稳定姿态，倾斜会失控发散。
+	//      → 进入 Failure 模式，放宽姿态约束（降低 AttitudePenaltyWeight）。
+	//
+	//   3. 恢复条件：所有轴 Authority > Threshold + HysteresisMargin
+	//      → 避免降级/恢复来回跳变。滞回裕度 = Threshold × 0.15。
+	//      → 恢复到进入 Failure 之前的模式（记录在 LastPreFailureMode）。
+	//
+	// 注意：只在 RebuildAllocationCache 后调用（不在每帧控制循环中），
+	//       因为 Authority 只在旋翼配置/健康状态变化时才需要重新评估。
+	// ---------------------------------------------------------------------------
+	void UFlightControllerComponent::EvaluateControlAuthority()
+	{
+		const FDroneFailsafeConfig& FailsafeCfg = ControllerConfig.Failsafe;
+
+		const float FzThresh = FailsafeCfg.FzAuthorityThreshold;
+		const float MomentThresh = FailsafeCfg.MomentAuthorityThreshold;
+
+		// 最小力矩轴平衡Authority
+		const float MinMomentAuthority = FMath::Min3(
+			AuthorityInfo.RollAuthority,
+			AuthorityInfo.PitchAuthority,
+			AuthorityInfo.YawAuthority
+		);
+
+		// ---- 判断是否需要降级 ----
+		const bool bFzCritical = (AuthorityInfo.FzAuthority < FzThresh);
+		const bool bMomentCritical = (MinMomentAuthority < MomentThresh);
+		const bool bShouldDowngrade = bFzCritical || bMomentCritical;
+
+		// ---- 判断是否可以恢复 ----
+		// 滞回裕度防止模式来回跳变
+		constexpr float HysteresisRatio = 0.15f;  // 阈值的 15%
+		const float FzRecoverThresh = FzThresh * (1.0f + HysteresisRatio);
+		const float MomentRecoverThresh = MomentThresh * (1.0f + HysteresisRatio);
+		const bool bFzRecovered = (AuthorityInfo.FzAuthority >= FzRecoverThresh);
+		const bool bMomentRecovered = (MinMomentAuthority >= MomentRecoverThresh);
+		const bool bCanRecover = bFzRecovered && bMomentRecovered;
+
+		if (bShouldDowngrade && Runtime.ActiveFlightMode != EDroneFlightMode::Failure)
+		{
+			// 记录降级前的模式，恢复时使用
+			LastPreFailureMode = Runtime.ActiveFlightMode;
+
+			UE_LOG(LogFlightController, Warning,
+				TEXT("[Authority] AUTO-DOWNGRADE to Failure: Fz=%.2f (thresh=%.2f), MinMoment=%.2f (thresh=%.2f)"),
+				AuthorityInfo.FzAuthority, FzThresh,
+				MinMomentAuthority, MomentThresh);
+
+			SetFlightMode(EDroneFlightMode::Failure);
+		}
+		else if (!bShouldDowngrade && Runtime.ActiveFlightMode == EDroneFlightMode::Failure && bCanRecover)
+		{
+			// 恢复到降级前的模式
+			const EDroneFlightMode RecoverMode = (LastPreFailureMode != EDroneFlightMode::Failure)
+				? LastPreFailureMode : EDroneFlightMode::Hover;
+
+			UE_LOG(LogFlightController, Warning,
+				TEXT("[Authority] RECOVER from Failure → %s: Fz=%.2f (recover=%.2f), MinMoment=%.2f (recover=%.2f)"),
+				FlightControllerDebug::GetFlightModeLabel(RecoverMode),
+				AuthorityInfo.FzAuthority, FzRecoverThresh,
+				MinMomentAuthority, MomentRecoverThresh);
+
+			SetFlightMode(RecoverMode);
+			LastPreFailureMode = EDroneFlightMode::Hover;  // 重置
+		}
+	}

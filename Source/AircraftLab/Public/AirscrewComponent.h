@@ -9,14 +9,21 @@
 namespace Chaos { class FRigidBodyHandle_Internal; }
 
 /**
- * 螺旋桨/旋翼组件
+ * 矢量旋翼组件
  * 
- * 负责单个旋翼的物理模拟，包括：
+ * 负责单个矢量旋翼的物理模拟，包括：
  * 1. 电机转速一阶响应模拟
  * 2. 推力计算（基于转速平方关系 T ∝ ω²）
  * 3. 反扭矩计算（基于推力比例 τ = k_τ · T）
- * 4. 物理线程中向刚体施加力和力矩
- * 5. 调试可视化绘制
+ * 4. 矢量喷口偏转与舵机动力学模拟
+ * 5. 物理线程中向刚体施加力和力矩
+ * 6. 调试可视化绘制
+ *
+ * 喷口模型：
+ *   推力方向 = R_nozzle_yaw(θ_y) × R_nozzle_pitch(θ_p) × ThrustAxisLocal
+ *   推力向量 = T × n_rotated（推力大小不变，方向随喷口角旋转）
+ *   反扭矩方向同样随喷口旋转
+ *   舵机响应：|dθ/dt| ≤ MaxRate，一阶延迟近似
  */
 UCLASS(ClassGroup = (AircraftLab), meta = (BlueprintSpawnableComponent))
 class AIRCRAFTLAB_API UAirscrewComponent : public USceneComponent
@@ -71,6 +78,26 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Drone|Airscrew")
 	FVector GetCurrentReactionTorqueVectorWorld() const { return CurrentReactionTorqueVectorWorld; }
+
+	/** 设置矢量喷口指令（俯仰+偏航角度，度） */
+	UFUNCTION(BlueprintCallable, Category = "Drone|Airscrew|Nozzle")
+	void SetNozzleCommand(float PitchDeg, float YawDeg);
+
+	/** 获取当前实际喷口俯仰角（度，经舵机动力学） */
+	UFUNCTION(BlueprintPure, Category = "Drone|Airscrew|Nozzle")
+	float GetCurrentNozzlePitchDeg() const { return CurrentNozzlePitchDeg; }
+
+	/** 获取当前实际喷口偏航角（度，经舵机动力学） */
+	UFUNCTION(BlueprintPure, Category = "Drone|Airscrew|Nozzle")
+	float GetCurrentNozzleYawDeg() const { return CurrentNozzleYawDeg; }
+
+	/**
+	 * 获取考虑喷口偏转后的推力轴方向（机体系）
+	 * 替代原来固定方向的GetThrustAxisLocal()
+	 * 物理模型：n = R_yaw(θ_y) × R_pitch(θ_p) × CachedThrustAxisLocal
+	 */
+	UFUNCTION(BlueprintPure, Category = "Drone|Airscrew|Nozzle")
+	FVector GetCurrentThrustAxisBody() const;
 
 	const FDroneRotorDefinition& GetRotorDefinition() const { return RotorDefinition; }
 	bool IsRotorEnabled() const { return RotorDefinition.IsEnabled(); }
@@ -187,4 +214,22 @@ protected:
 
 	/** 是否处于强制停止状态（故障时跳过电机模型，立即归零物理输出） */
 	bool bForceStopped = false;
+
+	// ── 矢量喷口状态 ──
+
+	/** 目标喷口俯仰角（度），由ControlAllocator分配 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Airscrew|Nozzle", meta = (AllowPrivateAccess = "true"))
+	float TargetNozzlePitchDeg = 0.0f;
+
+	/** 目标喷口偏航角（度），由ControlAllocator分配 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Airscrew|Nozzle", meta = (AllowPrivateAccess = "true"))
+	float TargetNozzleYawDeg = 0.0f;
+
+	/** 当前实际喷口俯仰角（度，经舵机动力学平滑后） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Airscrew|Nozzle", meta = (AllowPrivateAccess = "true"))
+	float CurrentNozzlePitchDeg = 0.0f;
+
+	/** 当前实际喷口偏航角（度，经舵机动力学平滑后） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Airscrew|Nozzle", meta = (AllowPrivateAccess = "true"))
+	float CurrentNozzleYawDeg = 0.0f;
 };

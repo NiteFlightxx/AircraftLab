@@ -80,7 +80,7 @@ struct AIRCRAFTLAB_API FRotorHealthState
 };
 
 /**
- * 控制能力评估
+ * 控制能力评估（6DOF）
  *
  * 描述当前各轴剩余控制能力（0~1归一化）。
  * 在 Allocator Rebuild 后更新。
@@ -90,19 +90,27 @@ struct AIRCRAFTLAB_API FControlAuthorityInfo
 {
 	GENERATED_BODY()
 
-	/** 总距控制能力 */
+	/** 前向力 Fx 控制能力 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
-	float CollectiveAuthority = 0.0f;
+	float FxAuthority = 0.0f;
 
-	/** 横滚控制能力 */
+	/** 侧向力 Fy 控制能力 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
+	float FyAuthority = 0.0f;
+
+	/** 垂直力 Fz 控制能力 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
+	float FzAuthority = 0.0f;
+
+	/** 滚转力矩 Mx 控制能力 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
 	float RollAuthority = 0.0f;
 
-	/** 俯仰控制能力 */
+	/** 俯仰力矩 My 控制能力 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
 	float PitchAuthority = 0.0f;
 
-	/** 偏航控制能力 */
+	/** 偏航力矩 Mz 控制能力 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
 	float YawAuthority = 0.0f;
 
@@ -116,7 +124,9 @@ struct AIRCRAFTLAB_API FControlAuthorityInfo
 
 	void Reset()
 	{
-		CollectiveAuthority = 0.0f;
+		FxAuthority = 0.0f;
+		FyAuthority = 0.0f;
+		FzAuthority = 0.0f;
 		RollAuthority = 0.0f;
 		PitchAuthority = 0.0f;
 		YawAuthority = 0.0f;
@@ -211,9 +221,45 @@ struct AIRCRAFTLAB_API FHoldTargets
 };
 
 /**
+ * LookAt/瞄准运行状态
+ *
+ * 独立于位置控制器管理姿态目标的计算与跟踪。
+ */
+struct FLookAtRuntimeState
+{
+	/** 当前计算出的期望姿态（四元数）— 由 ResolveDesiredAttitude 写入 */
+	FQuat CurrentDesiredAttitude = FQuat::Identity;
+
+	/** LookAt 目标世界坐标（厘米）— 仅 LookAt 模式有效 */
+	FVector LookAtTargetCm = FVector::ZeroVector;
+
+	/** 到目标距离（厘米）— 诊断用 */
+	float TargetDistanceCm = 0.0f;
+
+	/** LookAt 计算的 Yaw（度） */
+	float LookAtYawDeg = 0.0f;
+
+	/** LookAt 计算的 Pitch（度） */
+	float LookAtPitchDeg = 0.0f;
+
+	/** 是否已锁定目标 */
+	bool bTargetLocked = false;
+
+	void Reset()
+	{
+		CurrentDesiredAttitude = FQuat::Identity;
+		LookAtTargetCm = FVector::ZeroVector;
+		TargetDistanceCm = 0.0f;
+		LookAtYawDeg = 0.0f;
+		LookAtPitchDeg = 0.0f;
+		bTargetLocked = false;
+	}
+};
+
+/**
  * 控制器运行状态
  *
- * 包含运行期状态：估计状态、控制输出、保持目标、Home状态、解锁状态、飞行模式。
+ * 包含运行期状态：估计状态、控制输出、保持目标、Home状态、解锁状态、飞行模式、瞄准模式。
  */
 struct FControllerRuntimeState
 {
@@ -233,19 +279,16 @@ struct FControllerRuntimeState
 	EDroneArmState ArmState = EDroneArmState::Disarmed;
 
 	/** 当前激活的飞行模式 */
-	EDroneFlightMode ActiveFlightMode = EDroneFlightMode::Angle;
+	EDroneFlightMode ActiveFlightMode = EDroneFlightMode::Hover;
 
-	/** 姿态控制模式 */
-	EDroneAttitudeMode AttitudeMode = EDroneAttitudeMode::Angle;
+	/** 当前瞄准模式（决定姿态目标来源） */
+	EDroneAimMode ActiveAimMode = EDroneAimMode::Default;
 
-	/** 是否启用高度保持 */
-	bool bAltitudeHoldEnabled = false;
+	/** 是否启用力控制器（位置/速度/高度PID → Fx Fy Fz） */
+	bool bForceControlEnabled = false;
 
-	/** 是否启用位置保持 */
-	bool bPositionHoldEnabled = false;
-
-	/** 是否启用速度保持 */
-	bool bVelocityHoldEnabled = false;
+	/** LookAt/瞄准运行状态 */
+	FLookAtRuntimeState LookAtState;
 
 	/** 控制循环时间累加器 */
 	float ControlAccumulatorSeconds = 0.0f;
@@ -307,35 +350,34 @@ struct AIRCRAFTLAB_API FControllerPidStates
  *
  * 模式切换时更新一次，控制循环直接读取。
  * 避免每帧重复分支判断。
+ *
+ * 矢量飞控架构下，能力不再按"倾斜角→力矩"级联，
+ * 而是按"力路径"和"姿态路径"两条独立管线描述。
  */
 struct FModeCapabilities
 {
-	/** 是否支持高度保持 */
-	bool CanHoldAltitude = false;
+	/** 是否启用力控制器（位置/速度/高度PID → Fx Fy Fz） */
+	bool CanUseForceControl = false;
 
-	/** 是否支持位置保持 */
-	bool CanHoldPosition = false;
+	/** 是否支持自动水平（Hover模式默认姿态） */
+	bool CanAutoLevel = false;
 
 	/** 是否支持偏航保持 */
 	bool CanHoldYaw = false;
 
-	/** 是否支持水平速度控制 */
-	bool CanUseVelocityControl = false;
+	/** 是否支持姿态保持（HeldAttitude模式） */
+	bool CanHoldAttitude = false;
 
-	/** 是否支持位置控制 */
-	bool CanUsePositionControl = false;
-
-	/** 是否支持返航 */
-	bool CanUseReturnHome = false;
+	/** 是否支持LookAt瞄准 */
+	bool CanLookAt = false;
 
 	void Reset()
 	{
-		CanHoldAltitude = false;
-		CanHoldPosition = false;
+		CanUseForceControl = false;
+		CanAutoLevel = false;
 		CanHoldYaw = false;
-		CanUseVelocityControl = false;
-		CanUsePositionControl = false;
-		CanUseReturnHome = false;
+		CanHoldAttitude = false;
+		CanLookAt = false;
 	}
 };
 
@@ -343,17 +385,18 @@ struct FModeCapabilities
  * 控制分配诊断信息
  *
  * 记录控制分配的中间结果，用于调试和诊断。
+ * 6DOF: [Fx Fy Fz Mx My Mz]
  */
 struct FAllocationDiagnostics
 {
 	/** 期望力/力矩（归一化） */
-	double DesiredWrench[4] = {};
+	double DesiredWrench[6] = {};
 
 	/** 实际分配力/力矩 */
-	double AllocatedWrench[4] = {};
+	double AllocatedWrench[6] = {};
 
 	/** 分配残差（Desired - Allocated） */
-	double AllocationResidual[4] = {};
+	double AllocationResidual[6] = {};
 
 	/** 残差总大小 */
 	double ResidualMagnitude = 0.0;
@@ -368,7 +411,7 @@ struct FAllocationDiagnostics
 	int32 ActiveConstraints = 0;
 
 	/** 各轴剩余控制能力 */
-	double RemainingAuthority[4] = {};
+	double RemainingAuthority[6] = {};
 
 	void Reset()
 	{
@@ -386,30 +429,36 @@ struct FAllocationDiagnostics
 /**
  * 控制分配器缓存
  *
- * 对固定机架缓存雅可比矩阵、伪逆和控制能力，
+ * 对固定机架缓存6DOF雅可比矩阵、伪逆和控制能力，
  * 避免每控制周期重复计算。
+ *
+ * 6DOF Jacobian: 6行 × 3N列
+ *   每旋翼3个控制输入：[Thrust_i, NozzlePitch_i, NozzleYaw_i]
+ *   6行: [Fx Fy Fz Mx My Mz]
  */
 struct FAllocationCache
 {
-	/** 缓存的雅可比矩阵列（每个旋翼一列） */
-	TArray<FVector4> JacobianColumns;
+	/** 6DOF Jacobian 每列 — 每旋翼3列（T, NP, NY），存为6D向量 */
+	TArray<TArray<double>> JacobianColumns;
 
-	/** 缓存的归一化列 */
-	TArray<FVector4> NormalizedColumns;
+	/** 归一化列（物理列 / RowScale） */
+	TArray<TArray<double>> NormalizedColumns;
 
-	/** 缓存的最大分配推力 */
+	/** 每旋翼最大可分配推力 (N) */
 	TArray<double> MaxAllocatedThrusts;
 
-	/** 缓存的行缩放因子 */
-	double RowScale[4] = {};
+	/** 行缩放因子 [6] */
+	double RowScale[6] = {};
 
-	/** 缓存的控制能力信息 */
-	double CollectiveAuthority = 0.0;
-	double PositiveTorqueAuthority[3] = {};
-	double NegativeTorqueAuthority[3] = {};
+	/** 有效控制能力信息（含 Effectiveness） */
+	double FxAuthority = 0.0;
+	double FyAuthority = 0.0;
+	double FzAuthority = 0.0;
+	double PositiveMomentAuthority[3] = {};
+	double NegativeMomentAuthority[3] = {};
 
-	/** 自由旋翼标记 */
-	TArray<bool> FreeRotors;
+	/** 自由旋翼标记（3N = Thrust+NP+NY per rotor） */
+	TArray<bool> FreeControls;
 
 	/** 缓存是否有效 */
 	bool bIsValid = false;
@@ -420,11 +469,13 @@ struct FAllocationCache
 		JacobianColumns.Reset();
 		NormalizedColumns.Reset();
 		MaxAllocatedThrusts.Reset();
-		FreeRotors.Reset();
+		FreeControls.Reset();
 		FMemory::Memzero(RowScale);
-		CollectiveAuthority = 0.0;
-		FMemory::Memzero(PositiveTorqueAuthority);
-		FMemory::Memzero(NegativeTorqueAuthority);
+		FxAuthority = 0.0;
+		FyAuthority = 0.0;
+		FzAuthority = 0.0;
+		FMemory::Memzero(PositiveMomentAuthority);
+		FMemory::Memzero(NegativeMomentAuthority);
 	}
 };
 
@@ -463,18 +514,26 @@ struct FDebugState
 /**
  * 飞行控制器组件
  *
- * 职责：无人机级联PID控制与控制分配。
+ * 职责：无人机统一矢量飞控（6DOF力+力矩架构）与控制分配。
  *
- * 控制架构（Cascaded PID）：
- *   位置/速度环 → 姿态角环 → 角速度环 → 混合器 → 电机
+ * 控制架构（Unified Vector-Thrust 6DOF）：
+ *   位置/速度PID → 期望力 [Fx Fy Fz]
+ *   姿态PID → 期望力矩 [Mx My Mz]
+ *   6DOF Wrench → 控制分配 → 各旋翼 Thrust + NozzlePitch/Yaw
+ *
+ * 姿态目标独立于力路径：
+ *   AimMode::Default     → 自动水平（Hover）或固定Pitch（Cruise）
+ *   AimMode::HeldAttitude → 外部四元数姿态目标（支持倒飞/侧飞）
+ *   AimMode::LookAt      → 从目标位置解算姿态 → 驱动 HeldAttitude
+ *
+ * 控制分配：
+ *   6DOF Jacobian + QP/阻尼伪逆 + 迭代主动集
+ *   优先级：位置力 > 力满足 > 姿态（姿态可松弛）
  *
  * 物理线程执行：
  *   1. 读取物理状态
  *   2. 固定频率控制循环
  *   3. 施加推力/力矩
- *
- * 控制分配：
- *   阻尼伪逆法（Damped Pseudo-Inverse）
  */
 UCLASS(ClassGroup = (AircraftLab), meta = (BlueprintSpawnableComponent))
 class AIRCRAFTLAB_API UFlightControllerComponent : public UActorComponent
@@ -505,21 +564,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void SetFlightMode(EDroneFlightMode NewFlightMode);
 
-	/** 设置姿态控制模式 */
+	/** 设置瞄准模式（决定姿态目标来源） */
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
-	void SetAttitudeMode(EDroneAttitudeMode NewAttitudeMode);
+	void SetAimMode(EDroneAimMode NewAimMode);
 
-	/** 设置高度保持开关 */
+	/** 设置保持姿态（四元数，支持任意姿态如倒飞/侧飞） */
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
-	void SetAltitudeHoldEnabled(bool bEnabled);
+	void SetHeldAttitude(const FQuat& AttitudeQuat);
 
-	/** 设置位置保持开关 */
+	/** 设置保持姿态（欧拉角便捷接口） */
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
-	void SetPositionHoldEnabled(bool bEnabled);
+	void SetHeldAttitudeEuler(float PitchDeg, float YawDeg, float RollDeg);
 
-	/** 设置速度保持开关 */
+	/** 设置LookAt目标世界坐标和距离 */
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
-	void SetVelocityHoldEnabled(bool bEnabled);
+	void SetLookAtTarget(const FVector& TargetWorldCm, float TargetDistanceCm = 500.0f);
+
+	/** 清除LookAt目标，回到Default瞄准模式 */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	void ClearLookAtTarget();
 
 	/** 设置控制器启用状态 */
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
@@ -576,34 +639,28 @@ public:
 	EDroneFlightMode GetFlightMode() const { return Runtime.ActiveFlightMode; }
 
 	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
-	EDroneAttitudeMode GetAttitudeMode() const { return Runtime.AttitudeMode; }
+	EDroneAimMode GetAimMode() const { return Runtime.ActiveAimMode; }
 
 	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
 	bool IsControllerEnabled() const { return bControllerEnabled; }
 
 	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
-	bool IsAltitudeHoldEnabled() const { return Runtime.bAltitudeHoldEnabled; }
+	bool IsForceControlEnabled() const { return Runtime.bForceControlEnabled; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
-	bool IsPositionHoldEnabled() const { return Runtime.bPositionHoldEnabled; }
+	/** 当前模式是否使用力控制 */
+	bool UsesForceControl() const { return ModeCapabilities.CanUseForceControl; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
-	bool IsVelocityHoldEnabled() const { return Runtime.bVelocityHoldEnabled; }
+	/** 当前模式是否自动水平 */
+	bool CanAutoLevel() const { return ModeCapabilities.CanAutoLevel; }
 
-	/** 当前模式是否使用高度保持 */
-	bool UsesAltitudeHoldMode() const { return ModeCapabilities.CanHoldAltitude; }
-
-	/** 当前模式是否使用位置保持 */
-	bool UsesPositionHoldMode() const { return ModeCapabilities.CanHoldPosition; }
-
-	/** 当前模式是否使用偏航保持 */
+	/** 当前模式是否支持偏航保持 */
 	bool UsesYawHoldMode() const { return ModeCapabilities.CanHoldYaw; }
 
-	/** 当前模式是否使用速度控制 */
-	bool UsesVelocityControl() const { return ModeCapabilities.CanUseVelocityControl; }
+	/** 当前模式是否支持姿态保持 */
+	bool CanHoldAttitude() const { return ModeCapabilities.CanHoldAttitude; }
 
-	/** 当前模式是否使用位置控制 */
-	bool UsesPositionControl() const { return ModeCapabilities.CanUsePositionControl; }
+	/** 当前模式是否支持LookAt */
+	bool CanLookAt() const { return ModeCapabilities.CanLookAt; }
 
 	const FDroneEstimatedState& GetEstimatedState() const { return Runtime.EstimatedState; }
 	const FDroneControlOutput& GetControlOutput() const { return Runtime.ControlOutput; }
@@ -630,116 +687,137 @@ protected:
 	/** 更新Home点状态 */
 	void UpdateHomeState(bool bForceResetHome = false);
 
-	/** 更新模式能力缓存 */
-	void UpdateModeCapabilities();
+		/** 更新模式能力缓存 */
+		void UpdateModeCapabilities();
 
-	/** 运行飞控主循环 */
-	void RunControlLoop(float DeltaSeconds, const FDronePilotInput& PilotInput);
+		/** 运行飞控主循环 — 统一6DOF矢量飞控 */
+		void RunControlLoop(float DeltaSeconds, const FDronePilotInput& PilotInput);
 
-	/** 统一重置所有控制器状态 */
-	void ResetControllerState();
+		/** 统一重置所有控制器状态 */
+		void ResetControllerState();
 
-	/** 停止所有旋翼 */
-	void StopAllRotors(bool bResetController);
+		/** 停止所有旋翼 */
+		void StopAllRotors(bool bResetController);
 
-	/** 更新旋翼组件缓存 */
-	void UpdateRotorCache();
+		/** 更新旋翼组件缓存 */
+		void UpdateRotorCache();
 
-	/** 重建控制分配缓存（仅在旋翼配置变化时调用） */
-	void RebuildAllocationCache();
+		/** 重建控制分配缓存（仅在旋翼配置变化时调用） */
+		void RebuildAllocationCache();
 
-	/** 更新控制能力评估（在 RebuildAllocationCache 后调用） */
-	void UpdateControlAuthorityInfo();
+		/** 更新控制能力评估（在 RebuildAllocationCache 后调用） */
+		void UpdateControlAuthorityInfo();
 
-	/**
-	 * 计算垂直控制
-	 *
-	 * 输入：飞行员油门输入
-	 * 输出：总距指令、期望垂直速度
-	 * 控制原理：高度PID → 垂直速度PID → 总距
-	 */
-	float ComputeVerticalControl(const FDronePilotInput& PilotInput, float DeltaSeconds, float& OutDesiredVerticalVelocity);
+		/** 评估6轴控制能力并决定是否自动降级到Failure模式 */
+		void EvaluateControlAuthority();
 
-	/**
-	 * 计算期望姿态
-	 *
-	 * 输入：飞行员摇杆 / 位置PID输出
-	 * 输出：期望Roll/Pitch/Yaw
-	 * 控制原理：水平加速度 → tan(θ) = a/g → 倾斜角
-	 */
-	FRotator ComputeDesiredAttitude(const FDronePilotInput& PilotInput, float DeltaSeconds);
+		// ========================================================================
+		// 新管线：力路径（位置/速度/高度 → 期望力）
+		// ========================================================================
 
-	/**
-	 * 计算期望偏航率
-	 *
-	 * 输入：飞行员偏航输入 / 偏航保持PID
-	 * 输出：期望偏航角速度
-	 */
-	float ComputeDesiredYawRate(const FDronePilotInput& PilotInput, float DeltaSeconds);
+		/**
+		 * 计算期望机体力 (N) — 力路径核心
+		 *
+		 * 串级结构：
+		 *   外环：位置PID → 期望速度
+		 *   内环：速度PID → 期望加速度 → 期望力
+		 *   Z轴：高度PID → 期望垂直速度 → 期望Fz（含 mg 重力补偿前馈）
+		 *
+		 * Acro模式：摇杆直出 Fx/Fy/Fz（跳过位置/速度PID）
+		 * 
+		 * 输出：DesiredForceBodyN ∈ R³
+		 */
+		FVector ComputeDesiredForce(const FDronePilotInput& PilotInput, float DeltaSeconds);
 
-	/**
-	 * 计算期望机体角速度
-	 *
-	 * 输入：姿态误差 / 摇杆直接映射
-	 * 输出：期望Roll/Pitch/Yaw角速度
-	 */
-	FVector ComputeDesiredBodyRates(const FDronePilotInput& PilotInput, const FRotator& DesiredAttitude, float DesiredYawRate, float DeltaSeconds);
+		// ========================================================================
+		// 新管线：姿态路径（AimMode → 期望姿态 → 期望力矩）
+		// ========================================================================
 
-	/**
-	 * 计算机体力矩指令
-	 *
-	 * 输入：期望角速度、当前角速度
-	 * 输出：Roll/Pitch/Yaw力矩指令
-	 * 控制原理：角速度PID → 力矩
-	 */
-	FVector ComputeBodyTorqueCommand(const FVector& DesiredBodyRatesDegreesPerSec, float DeltaSeconds);
+		/**
+		 * 解析期望姿态 — 姿态路径核心
+		 *
+		 * 根据 AimMode 决定姿态目标来源：
+		 *   Default     → 自动水平（Hover）或固定Pitch（Cruise）
+		 *   HeldAttitude → 使用 FQuat 姿态目标（支持倒飞/任意姿态）
+		 *   LookAt      → 从目标位置解算 Yaw+Pitch，驱动 HeldAttitude
+		 *
+		 * 输出：更新 Runtime.LookAtState.CurrentDesiredAttitude
+		 */
+		void ResolveDesiredAttitude(float DeltaSeconds);
 
-	/**
-	 * 控制分配
-	 *
-	 * 输入：总距指令、力矩指令
-	 * 输出：各旋翼推力指令
-	 * 控制原理：阻尼伪逆 u = J^T·(J·J^T + λ²·I)^(-1)·w
-	 */
-	void AllocateToRotors(float CollectiveCommand, const FVector& AxisCommands);
+		/**
+		 * 计算期望机体力矩 (N·m) — 姿态路径力矩输出
+		 *
+		 * 串级结构：
+		 *   外环：姿态角误差 → 角速率PID → 归一化力矩指令
+		 *   Acro模式：摇杆直出 Mx/My/Mz（跳过角度环）
+		 *
+		 * 输出：DesiredMomentBodyNm ∈ R³
+		 */
+		FVector ComputeDesiredMoment(const FDronePilotInput& PilotInput, float DeltaSeconds);
 
-	/** 计算期望水平速度 */
-	FVector ComputeDesiredHorizontalVelocity(const FDronePilotInput& PilotInput) const;
+		// ========================================================================
+		// 组合 + 分配
+		// ========================================================================
 
-	/** 计算期望水平加速度 */
-	FVector ComputeDesiredHorizontalAcceleration(const FDronePilotInput& PilotInput, float DeltaSeconds);
+		/**
+		 * 组合6DOF期望Wrench
+		 *
+		 * 将力路径和姿态路径的输出组合为 [Fx Fy Fz Mx My Mz]
+		 * 写入 ControlOutput.Wrench
+		 */
+		void ComposeDesiredWrench(const FVector& DesiredForce, const FVector& DesiredMoment);
 
-	/** 获取旋翼相对质心的机体坐标位置 */
-	FVector GetRotorPositionFromCenterOfMassBodyCm(const UAirscrewComponent* Airscrew) const;
+		/**
+		 * 控制分配（6DOF → 3N 执行器指令）
+		 *
+		 * 输入：ControlOutput.Wrench
+		 * 输出：各旋翼 Thrust + NozzlePitch/Yaw
+		 */
+		void AllocateToRotors();
 
-	/** 获取旋翼推力轴在机体坐标系下的方向 */
-	FVector GetRotorThrustAxisBody(const UAirscrewComponent* Airscrew) const;
+		// ========================================================================
+		// 辅助函数
+		// ========================================================================
 
-	/** 构建雅可比矩阵一列 */
-	FVector4 BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm) const;
+		/** 计算期望水平速度（摇杆映射） */
+		FVector ComputeDesiredHorizontalVelocity(const FDronePilotInput& PilotInput) const;
 
-	/** 条件性记录旋翼布局 */
-	void LogRotorLayoutIfNeeded();
+		/** 计算期望水平加速度（位置/速度PID串级） */
+		FVector ComputeDesiredHorizontalAcceleration(const FDronePilotInput& PilotInput, float DeltaSeconds);
 
-	/** 条件性输出调试日志 */
-	void MaybeEmitDebugLog(
-		const FDronePilotInput& PilotInput,
-		float DeltaSeconds,
-		float CollectiveCommand,
-		float DesiredVerticalVelocity,
-		const FRotator& DesiredAttitude,
-		float DesiredYawRate,
-		const FVector& DesiredBodyRates,
-		const FVector& AxisCommands);
+		/** 获取旋翼相对质心的机体坐标位置 */
+		FVector GetRotorPositionFromCenterOfMassBodyCm(const UAirscrewComponent* Airscrew) const;
 
-	/** 油门映射到总距 */
-	float MapCenteredThrottleToCollective(float ThrottleInput) const;
+		/** 获取旋翼推力轴在机体坐标系下的方向（考虑喷口偏转） */
+		FVector GetRotorThrustAxisBody(const UAirscrewComponent* Airscrew) const;
 
-	/** 解析机身Primitive组件 */
-	UPrimitiveComponent* ResolveBodyPrimitive() const;
+		/** 构建6DOF雅可比矩阵子列 — 每旋翼3列 (T, NP, NY)，每列6D */
+		void BuildJacobianSubmatrix(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm,
+			TArray<double>& OutThrustCol, TArray<double>& OutNozzlePitchCol, TArray<double>& OutNozzleYawCol) const;
 
-	/** 解析无人机输入组件 */
-	UDroneInputComponent* ResolveDroneInput() const;
+		/** 条件性记录旋翼布局 */
+		void LogRotorLayoutIfNeeded();
+
+		/** 条件性输出调试日志 */
+		void MaybeEmitDebugLog(
+			const FDronePilotInput& PilotInput,
+			float DeltaSeconds,
+			const FVector& DesiredForce,
+			const FQuat& DesiredAttitude,
+			const FVector& DesiredMoment);
+
+		/** 油门映射到垂直力 (N) */
+		float MapThrottleToVerticalForce(float ThrottleInput) const;
+
+		/** 解析机身Primitive组件 */
+		UPrimitiveComponent* ResolveBodyPrimitive() const;
+
+		/** 解析无人机输入组件 */
+		UDroneInputComponent* ResolveDroneInput() const;
+
+		/** LookAt姿态解算 — 从目标位置计算期望Yaw+Pitch */
+		void ComputeLookAtAttitude();
 
 protected:
 	/** 是否启用飞控 */
@@ -778,10 +856,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
 	bool bLogRotorLayout = true;
 
-	/** 是否记录符号诊断日志 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
-	bool bLogSignDiagnostics = true;
-
 	/** 调试日志输出间隔（秒） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug", meta = (ClampMin = "0.0"))
 	float DebugLogIntervalSeconds = 0.20f;
@@ -808,11 +882,19 @@ protected:
 
 	/** 初始飞行模式 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
-	EDroneFlightMode InitialFlightMode = EDroneFlightMode::Angle;
+	EDroneFlightMode InitialFlightMode = EDroneFlightMode::Hover;
 
 	/** 飞控配置参数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
 	FDroneFlightControllerConfig ControllerConfig;
+
+	/** 姿态惩罚权重 — 控制分配中力矩轴的松弛权重。
+	 *  值越大→姿态跟踪越严格（力轴和力矩轴冲突时优先满足力矩），
+	 *  值越小→力轴优先（姿态可作为软约束被放松）。
+	 *  默认 10.0 表示姿态偏差的权重是力偏差的 10 倍。
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController|Allocation", meta = (ClampMin = "0.01"))
+	float AttitudePenaltyWeight = 10.0f;
 
 private:
 	/** 机身Primitive组件 */
@@ -853,8 +935,11 @@ private:
 	/** 控制能力评估（Allocator Rebuild 后更新） */
 	FControlAuthorityInfo AuthorityInfo;
 
-	/** 分配器缓存是否需要重建（Effectiveness变化时标记） */
-	bool bAllocatorDirty = true;
+		/** 分配器缓存是否需要重建（Effectiveness变化时标记） */
+		bool bAllocatorDirty = true;
+
+		/** 自动降级前记录的飞行模式，恢复时使用 */
+		EDroneFlightMode LastPreFailureMode = EDroneFlightMode::Hover;
 
 	/** 调试状态 */
 	FDebugState DebugState;
