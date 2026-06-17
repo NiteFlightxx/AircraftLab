@@ -4,6 +4,11 @@
 
 #define LOCTEXT_NAMESPACE "AircraftAssetEditorCommands"
 
+const FString FAircraftAssetEditorCommands::ToggleSimulationSuspendedIdentifier = TEXT("ToggleSimulationSuspended");
+const FString FAircraftAssetEditorCommands::SoftResetSimulationIdentifier = TEXT("SoftResetSimulation");
+const FString FAircraftAssetEditorCommands::HardResetSimulationIdentifier = TEXT("HardResetSimulation");
+const FString FAircraftAssetEditorCommands::TogglePreviewWireframeIdentifier = TEXT("TogglePreviewWireframe");
+
 FAircraftAssetEditorCommands::FAircraftAssetEditorCommands()
 	: TCommands<FAircraftAssetEditorCommands>(
 		// 命令上下文名，必须与 FAircraftAssetEditorStyle 的图标 key 前缀完全一致

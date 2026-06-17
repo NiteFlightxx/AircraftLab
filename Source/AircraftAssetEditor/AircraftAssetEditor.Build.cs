@@ -35,6 +35,9 @@ public class AircraftAssetEditor : ModuleRules
                 "SlateCore",
                 "ToolMenus",
                 "UnrealEd",
+                "Projects",
+                
+                
                 "Aircraft",
                 "AircraftAsset",
                 "AircraftAssetDataflowNodes",

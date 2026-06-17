@@ -57,14 +57,10 @@ public:
 		Arguments._IsEditable = []()->bool { return true; };
 		SDataflowGraphEditor::Construct(Arguments, InAssetOwner);
 	}
-
+	
 	virtual TSharedPtr<UE::Dataflow::FContext> GetDataflowContext() const override
 	{
-		if (ensure(AircraftAssetEditorToolkit))
-		{
-			return StaticCastSharedPtr<UE::Dataflow::FContext>(AircraftAssetEditorToolkit->GetDataflowContext());
-		}
-		return TSharedPtr<UE::Dataflow::FContext>();
+		return ensure(AircraftAssetEditorToolkit) ? AircraftAssetEditorToolkit->GetDataflowContext() : TSharedPtr<UE::Dataflow::FContext>();
 	}
 
 	virtual bool NodesHaveToggleWidget() const override
