@@ -242,18 +242,25 @@ struct FLookAtRuntimeState
 	/** LookAt 计算的 Pitch（度） */
 	float LookAtPitchDeg = 0.0f;
 
-	/** 是否已锁定目标 */
-	bool bTargetLocked = false;
+		/** 是否已锁定目标 */
+		bool bTargetLocked = false;
 
-	void Reset()
-	{
-		CurrentDesiredAttitude = FQuat::Identity;
-		LookAtTargetCm = FVector::ZeroVector;
-		TargetDistanceCm = 0.0f;
-		LookAtYawDeg = 0.0f;
-		LookAtPitchDeg = 0.0f;
-		bTargetLocked = false;
-	}
+		/** 喷口力预算产生的倾斜补偿角 (度) — (Pitch, Roll, 0)
+		 *  由 ApplyNozzleForceBudget 写入，由 ResolveDesiredAttitude 消费。
+		 *  分离存储避免循环依赖：旧版直接修改 CurrentDesiredAttitude，
+		 *  导致 ResolveDesiredAttitude 读取到的姿态目标已被倾斜污染。 */
+		FVector NozzleTiltCompensationDeg = FVector::ZeroVector;
+
+		void Reset()
+		{
+			CurrentDesiredAttitude = FQuat::Identity;
+			LookAtTargetCm = FVector::ZeroVector;
+			TargetDistanceCm = 0.0f;
+			LookAtYawDeg = 0.0f;
+			LookAtPitchDeg = 0.0f;
+			bTargetLocked = false;
+			NozzleTiltCompensationDeg = FVector::ZeroVector;
+		}
 };
 
 /**
@@ -291,9 +298,18 @@ struct FControllerRuntimeState
 	bool bForceControlEnabled = false;
 
 	/** LookAt/瞄准运行状态 */
-	FLookAtRuntimeState LookAtState;
+		FLookAtRuntimeState LookAtState;
 
-	/** 控制循环时间累加器 */
+		/** 喷口补偿不足的水平力 (N) — 超出喷口最大偏转可达范围的残余水平力，需倾斜补偿 */
+		FVector NozzleResidualForceN = FVector::ZeroVector;
+
+		/** 喷口满偏时X轴最大水平力 (N) — Σ MaxAllocThrust_i × sin(MaxNozzlePitchDeg)，用于钳制分配器输入 */
+		float MaxNozzleForceXN = 0.0f;
+
+		/** 喷口满偏时Y轴最大水平力 (N) — Σ MaxAllocThrust_i × sin(MaxNozzleYawDeg)，用于钳制分配器输入 */
+		float MaxNozzleForceYN = 0.0f;
+
+		/** 控制循环时间累加器 */
 	float ControlAccumulatorSeconds = 0.0f;
 
 	/** 上一帧线速度（用于计算加速度） */
@@ -357,130 +373,180 @@ struct AIRCRAFTLAB_API FControllerPidStates
  * 矢量飞控架构下，能力不再按"倾斜角→力矩"级联，
  * 而是按"力路径"和"姿态路径"两条独立管线描述。
  */
-struct FModeCapabilities
-{
-	/** 是否启用力控制器（位置/速度/高度PID → Fx Fy Fz） */
-	bool CanUseForceControl = false;
-
-	/** 是否支持自动水平（Hover模式默认姿态） */
-	bool CanAutoLevel = false;
-
-	/** 是否支持偏航保持 */
-	bool CanHoldYaw = false;
-
-	/** 是否支持姿态保持（HeldAttitude模式） */
-	bool CanHoldAttitude = false;
-
-	/** 是否支持LookAt瞄准 */
-	bool CanLookAt = false;
-
-	void Reset()
+	struct FModeCapabilities
 	{
-		CanUseForceControl = false;
-		CanAutoLevel = false;
-		CanHoldYaw = false;
-		CanHoldAttitude = false;
-		CanLookAt = false;
-	}
-};
+		/** 是否启用力控制器（位置/速度/高度PID → Fx Fy Fz） */
+		bool CanUseForceControl = false;
+	
+		/** 是否支持自动水平（Hover模式默认姿态） */
+		bool CanAutoLevel = false;
+	
+		/** 是否支持偏航保持 */
+		bool CanHoldYaw = false;
+	
+		/** 是否支持姿态保持（HeldAttitude模式） */
+		bool CanHoldAttitude = false;
+	
+		/** 是否支持LookAt瞄准 */
+		bool CanLookAt = false;
 
-/**
- * 控制分配诊断信息
- *
- * 记录控制分配的中间结果，用于调试和诊断。
- * 6DOF: [Fx Fy Fz Mx My Mz]
- */
-struct FAllocationDiagnostics
-{
-	/** 期望力/力矩（归一化） */
-	double DesiredWrench[6] = {};
+		/** 是否支持倒飞悬停（需要喷口偏转≥90°或可反转电机） */
+		bool CanInvertedHover = false;
+	
+		void Reset()
+		{
+			CanUseForceControl = false;
+			CanAutoLevel = false;
+			CanHoldYaw = false;
+			CanHoldAttitude = false;
+			CanLookAt = false;
+			CanInvertedHover = false;
+		}
+	};
 
-	/** 实际分配力/力矩 */
-	double AllocatedWrench[6] = {};
+	// ---- Wrench 维度常量（头文件可见） ----
+	// FlightControllerAllocation::WrenchAxisCount 在 cpp 中定义，
+	// 此处用同名常量供固定数组使用，值始终为 6。
+	static constexpr int32 WrenchAxisCount_Header = 6;
 
-	/** 分配残差（Desired - Allocated） */
-	double AllocationResidual[6] = {};
-
-	/** 残差总大小 */
-	double ResidualMagnitude = 0.0;
-
-	/** 饱和电机索引列表 */
-	TArray<int32> SaturatedMotors;
-
-	/** 失效电机索引列表 */
-	TArray<int32> FailedMotors;
-
-	/** 活跃约束数 */
-	int32 ActiveConstraints = 0;
-
-	/** 各轴剩余控制能力 */
-	double RemainingAuthority[6] = {};
-
-	void Reset()
+	/**
+	 * 控制分配器缓存
+	 *
+	 * 对固定机架缓存6DOF雅可比矩阵、伪逆和控制能力，
+	 * 避免每控制周期重复计算。
+	 *
+	 * 6DOF Jacobian: 6行 × 3N列
+	 *   每旋翼3个控制输入：[Thrust_i, NozzlePitch_i, NozzleYaw_i]
+	 *   6行: [Fx Fy Fz Mx My Mz]
+	 *
+	 * 性能优化：使用固定大小数组替代 TArray，消除每帧堆分配。
+	 * 最大支持 MaxCachedRotors (8) 个旋翼，3N=24 个控制量。
+	 */
+	struct FAllocationCache
 	{
-		FMemory::Memzero(DesiredWrench);
-		FMemory::Memzero(AllocatedWrench);
-		FMemory::Memzero(AllocationResidual);
-		ResidualMagnitude = 0.0;
-		SaturatedMotors.Reset();
-		FailedMotors.Reset();
-		ActiveConstraints = 0;
-		FMemory::Memzero(RemainingAuthority);
-	}
-};
+		// ---- 容量常量 ----
+		static constexpr int32 MaxCachedRotors = 8;
+		static constexpr int32 MaxCachedControls = MaxCachedRotors * 3; // 24
 
-/**
- * 控制分配器缓存
- *
- * 对固定机架缓存6DOF雅可比矩阵、伪逆和控制能力，
- * 避免每控制周期重复计算。
- *
- * 6DOF Jacobian: 6行 × 3N列
- *   每旋翼3个控制输入：[Thrust_i, NozzlePitch_i, NozzleYaw_i]
- *   6行: [Fx Fy Fz Mx My Mz]
- */
-struct FAllocationCache
-{
-	/** 6DOF Jacobian 每列 — 每旋翼3列（T, NP, NY），存为6D向量 */
-	TArray<TArray<double>> JacobianColumns;
+		/** 6D 向量（固定大小，避免 TArray 堆分配） */
+		struct FJacobianColumn
+		{
+			double V[WrenchAxisCount_Header] = {};
+		};
 
-	/** 归一化列（物理列 / RowScale） */
-	TArray<TArray<double>> NormalizedColumns;
+		/** 6DOF Jacobian 每列 — 每旋翼3列（T, NP, NY），存为6D向量 */
+		FJacobianColumn JacobianColumns[MaxCachedControls];
 
-	/** 每旋翼最大可分配推力 (N) */
-	TArray<double> MaxAllocatedThrusts;
+		/** 归一化列（物理列 / RowScale） */
+		FJacobianColumn NormalizedColumns[MaxCachedControls];
 
-	/** 行缩放因子 [6] */
-	double RowScale[6] = {};
+		/** 每旋翼最大可分配推力 (N) */
+			double MaxAllocatedThrusts[MaxCachedRotors] = {};
 
-	/** 有效控制能力信息（含 Effectiveness） */
-	double FxAuthority = 0.0;
-	double FyAuthority = 0.0;
-	double FzAuthority = 0.0;
-	double PositiveMomentAuthority[3] = {};
-	double NegativeMomentAuthority[3] = {};
+		/** 上一帧每旋翼实际分配推力 (N) — 用于喷口列缩放 */
+			double PrevAllocatedThrusts[MaxCachedRotors] = {};
 
-	/** 自由旋翼标记（3N = Thrust+NP+NY per rotor） */
-	TArray<bool> FreeControls;
+		/** 行缩放因子 [6] */
+		double RowScale[6] = {};
 
-	/** 缓存是否有效 */
-	bool bIsValid = false;
+		/** 有效控制能力信息（含 Effectiveness） */
+		double FxAuthority = 0.0;
+		double FyAuthority = 0.0;
+		double FzAuthority = 0.0;
+		double PositiveMomentAuthority[3] = {};
+		double NegativeMomentAuthority[3] = {};
 
-	void Invalidate()
+		/** 自由旋翼标记（3N = Thrust+NP+NY per rotor） */
+			bool FreeControls[MaxCachedControls] = {};
+
+		/** 上一帧控制解 — 用于抖动抑制正则化 */
+			double PrevControlValues[MaxCachedControls] = {};
+
+		/** 当前有效旋翼数（决定实际使用多少列/推力/自由控制） */
+			int32 NumRotors = 0;
+
+		/** Jacobian 秩（0~6），由 RebuildAllocationCache 计算 */
+			int32 JacobianRank = 0;
+
+		/** 可控性分类，由 JacobianRank 推导 */
+			int32 ControllabilityRank = 0;  // 0=UnderActuated, 1=Partially, 2=Fully
+
+		/** 缓存是否有效 */
+		bool bIsValid = false;
+
+		void Invalidate()
+		{
+			bIsValid = false;
+				NumRotors = 0;
+				JacobianRank = 0;
+				ControllabilityRank = 0;
+			FMemory::Memzero(JacobianColumns);
+			FMemory::Memzero(NormalizedColumns);
+			FMemory::Memzero(MaxAllocatedThrusts);
+				FMemory::Memzero(PrevAllocatedThrusts);
+			FMemory::Memzero(FreeControls);
+				FMemory::Memzero(PrevControlValues);
+				FMemory::Memzero(RowScale);
+			FxAuthority = 0.0;
+			FyAuthority = 0.0;
+			FzAuthority = 0.0;
+			FMemory::Memzero(PositiveMomentAuthority);
+			FMemory::Memzero(NegativeMomentAuthority);
+		}
+	};
+
+	/**
+	 * 控制分配诊断信息
+	 *
+	 * 记录控制分配的中间结果，用于调试和诊断。
+	 * 6DOF: [Fx Fy Fz Mx My Mz]
+	 *
+	 * 性能优化：饱和/失效电机用固定大小数组+计数器替代 TArray。
+	 */
+	struct FAllocationDiagnostics
 	{
-		bIsValid = false;
-		JacobianColumns.Reset();
-		NormalizedColumns.Reset();
-		MaxAllocatedThrusts.Reset();
-		FreeControls.Reset();
-		FMemory::Memzero(RowScale);
-		FxAuthority = 0.0;
-		FyAuthority = 0.0;
-		FzAuthority = 0.0;
-		FMemory::Memzero(PositiveMomentAuthority);
-		FMemory::Memzero(NegativeMomentAuthority);
-	}
-};
+		static constexpr int32 MaxDiagMotors = FAllocationCache::MaxCachedRotors;
+
+		/** 期望力/力矩（归一化） */
+		double DesiredWrench[6] = {};
+
+		/** 实际分配力/力矩 */
+		double AllocatedWrench[6] = {};
+
+		/** 分配残差（Desired - Allocated） */
+		double AllocationResidual[6] = {};
+
+		/** 残差总大小 */
+		double ResidualMagnitude = 0.0;
+
+		/** 饱和电机索引列表 + 计数 */
+		int32 SaturatedMotors[MaxDiagMotors] = {};
+		int32 SaturatedMotorCount = 0;
+
+		/** 失效电机索引列表 + 计数 */
+		int32 FailedMotors[MaxDiagMotors] = {};
+		int32 FailedMotorCount = 0;
+
+		/** 活跃约束数 */
+		int32 ActiveConstraints = 0;
+
+		/** 各轴剩余控制能力 */
+		double RemainingAuthority[6] = {};
+
+		void Reset()
+		{
+			FMemory::Memzero(DesiredWrench);
+			FMemory::Memzero(AllocatedWrench);
+			FMemory::Memzero(AllocationResidual);
+			ResidualMagnitude = 0.0;
+			FMemory::Memzero(SaturatedMotors);
+			SaturatedMotorCount = 0;
+			FMemory::Memzero(FailedMotors);
+			FailedMotorCount = 0;
+			ActiveConstraints = 0;
+			FMemory::Memzero(RemainingAuthority);
+		}
+	};
 
 /**
  * 调试状态
@@ -727,10 +793,11 @@ protected:
 		 *   Z轴：高度PID → 期望垂直速度 → 期望Fz（含 mg 重力补偿前馈）
 		 *
 		 * Acro模式：摇杆直出 Fx/Fy/Fz（跳过位置/速度PID）
-		 * 
-		 * 输出：DesiredForceBodyN ∈ R³
-		 */
-		FVector ComputeDesiredForce(const FDronePilotInput& PilotInput, float DeltaSeconds);
+			 *
+			 * 输出：DesiredForceBodyN ∈ R³（返回值，机体系）
+			 *       OutDesiredForceWorldN ∈ R³（输出参数，世界系，供倾斜补偿使用）
+			 */
+			FVector ComputeDesiredForce(const FDronePilotInput& PilotInput, float DeltaSeconds, FVector& OutDesiredForceWorldN);
 
 		// ========================================================================
 		// 新管线：姿态路径（AimMode → 期望姿态 → 期望力矩）
@@ -795,11 +862,25 @@ protected:
 		/** 获取旋翼推力轴在机体坐标系下的方向（考虑喷口偏转） */
 		FVector GetRotorThrustAxisBody(const UAirscrewComponent* Airscrew) const;
 
-		/** 构建6DOF雅可比矩阵子列 — 每旋翼3列 (T, NP, NY)，每列6D */
-		void BuildJacobianSubmatrix(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm,
-			TArray<double>& OutThrustCol, TArray<double>& OutNozzlePitchCol, TArray<double>& OutNozzleYawCol) const;
+		/** 构建6DOF雅可比矩阵子列 — 每旋翼3列 (T, NP, NY)，每列6D — 固定数组输出版
+			 *  @param CurrentNozzlePitchDeg  当前喷口俯仰角（°），绕机体Y轴，产生Fx
+			 *  @param CurrentNozzleYawDeg    当前喷口侧倾角（°），绕机体X轴，产生Fy
+			 *  @param CurrentThrustN         当前实际推力 (N)，用于喷口列缩放；默认 -1 表示使用 MaxAllocatedThrust
+			 */
+			void BuildJacobianSubmatrix(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm,
+				double (&OutThrustCol)[6], double (&OutNozzlePitchCol)[6], double (&OutNozzleYawCol)[6],
+				float CurrentNozzlePitchDeg = 0.0f, float CurrentNozzleYawDeg = 0.0f,
+				double CurrentThrustN = -1.0) const;
 
-		/** 条件性记录旋翼布局 */
+	/** 逐帧更新Jacobian — 读取每个Airscrew当前喷口角度，在工作点附近重新线性化 */
+		void UpdateJacobianForCurrentState();
+
+	/** 喷口力预算→倾斜补偿+力钳制
+		 * @param DesiredForceBody   机体系期望力（钳制后写回，供分配器使用）
+		 * @param DesiredForceWorld  世界系期望力（用于计算倾斜补偿角，避免正反馈） */
+		void ApplyNozzleForceBudget(FVector& DesiredForceBody, const FVector& DesiredForceWorld);
+
+	/** 条件性记录旋翼布局 */
 		void LogRotorLayoutIfNeeded();
 
 		/** 条件性输出调试日志 */
@@ -891,18 +972,23 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
 	FDroneFlightControllerConfig ControllerConfig;
 
-	/** 姿态惩罚权重 — 控制分配中力矩轴的松弛权重。
-	 *  值越大→姿态跟踪越严格（力轴和力矩轴冲突时优先满足力矩），
-	 *  值越小→力轴优先（姿态可作为软约束被放松）。
-	 *  默认 10.0 表示姿态偏差的权重是力偏差的 10 倍。
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController|Allocation", meta = (ClampMin = "0.01"))
-	float AttitudePenaltyWeight = 10.0f;
+		/** 姿态惩罚权重 — 矢量推力架构中 Fz 轴相对力矩轴的阻尼倍率。
+		 *  值越大→Fz 轴阻尼越大→力矩优先级相对 Fz 越高。
+		 *  默认 10.0 表示 Fz 轴阻尼是力矩轴的 10 倍（力矩优先满足）。
+		 *  传统四轴设 0.1~0.5（力优先）；矢量推力设 5~20（力矩优先）。
+		 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController|Allocation", meta = (ClampMin = "0.01"))
+		float AttitudePenaltyWeight = 10.0f;
 
-private:
-	/** 机身Primitive组件 */
-	UPROPERTY(Transient)
-	TObjectPtr<UPrimitiveComponent> BodyPrimitive;
+	private:
+		/** Chaos 角速度约定常量 — 若为 true，角速度 X/Y 分量在状态估计时取负，
+		 *  以将 Chaos 的"正Mx=左滚, 正My=低头"映射到飞控的"正滚=右滚, 正俯=抬头"。
+		 *  ComputeDesiredMoment 中力矩符号翻转依赖此常量，集中管理避免散落的硬编码负号。 */
+		static constexpr bool bUseChaosAngularVelocityConvention = true;
+
+		/** 机身Primitive组件 */
+		UPROPERTY(Transient)
+		TObjectPtr<UPrimitiveComponent> BodyPrimitive;
 
 	/** 无人机输入组件 */
 	UPROPERTY(Transient)

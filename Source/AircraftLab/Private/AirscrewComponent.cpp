@@ -145,7 +145,7 @@ void UAirscrewComponent::SyncDefinitionFromComponentTransform()
  *    T = T_max × (ω / ω_max)² × C_T × η
  * 
  * 6. 推力方向计算（考虑矢量喷口偏转）：
- *    n_body = R_yaw(θ_y) × R_pitch(θ_p) × CachedThrustAxisLocal
+ *    n_body = R_pitch(θ_p) × R_lateral(θ_l) × CachedThrustAxisLocal
  *    n_world = BodyTransform × n_body
  *    F = T × n_world
  * 
@@ -250,9 +250,9 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& Bod
 	// 计算推力施加点的世界坐标
 	CurrentApplicationPointWorld = BodyTransform.TransformPosition(CachedRelativeLocationFromBody);
 
-	// 步骤6: 推力方向（考虑矢量喷口偏转）
-	// 推力方向 = BodyTransform × R_yaw(θ_y) × R_pitch(θ_p) × CachedThrustAxisLocal
-	// 反扭矩方向同步旋转
+		// 步骤6: 推力方向（考虑矢量喷口偏转）
+		// 推力方向 = BodyTransform × R_pitch(θ_p) × R_lateral(θ_l) × CachedThrustAxisLocal
+		// X-Y旋转顺序，无万向节锁，反扭矩方向同步旋转
 	const FVector ThrustDirLocal = GetCurrentThrustAxisBody();
 	const FVector ThrustDirWorld = BodyTransform.TransformVectorNoScale(ThrustDirLocal).GetSafeNormal();
 	CurrentThrustVectorWorld = ThrustDirWorld * CurrentThrustForce;

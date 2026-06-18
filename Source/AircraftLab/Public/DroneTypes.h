@@ -1089,20 +1089,20 @@ struct AIRCRAFTLAB_API FDroneRotorDefinition
 	// ========================================================================
 
 	/** 喷口俯仰偏转极限 (°)，0=固定旋翼（退化传统四轴） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0", ClampMax = "90.0"))
-	float MaxNozzlePitchDeg = 30.0f;
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0", ClampMax = "120.0"))
+		float MaxNozzlePitchDeg = 30.0f;
 
-	/** 喷口偏航偏转极限 (°)，0=仅单轴偏转 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0", ClampMax = "90.0"))
-	float MaxNozzleYawDeg = 30.0f;
+		/** 喷口侧倾偏转极限 (°)，0=仅单轴偏转。绕机体X轴旋转，产生Y方向水平力 */
+			UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0", ClampMax = "120.0"))
+			float MaxNozzleYawDeg = 30.0f;
 
-	/** 舵机俯仰最大速率 (°/s)——限制喷口动态响应 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0"))
-	float MaxNozzlePitchRateDegPerSec = 300.0f;
+		/** 舵机俯仰最大速率 (°/s)——限制喷口绕Y轴的动态响应 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0"))
+		float MaxNozzlePitchRateDegPerSec = 300.0f;
 
-	/** 舵机偏航最大速率 (°/s) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0"))
-	float MaxNozzleYawRateDegPerSec = 300.0f;
+		/** 舵机侧倾最大速率 (°/s)——限制喷口绕X轴的动态响应 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle", meta = (ClampMin = "0.0"))
+		float MaxNozzleYawRateDegPerSec = 300.0f;
 
 	/** 喷口俯仰中位角 (°)——悬停时喷口朝向，0=沿机体Z轴 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor|Nozzle")
@@ -1172,30 +1172,61 @@ struct AIRCRAFTLAB_API FDroneRotorDefinition
 			return MaxNozzlePitchDeg > UE_SMALL_NUMBER || MaxNozzleYawDeg > UE_SMALL_NUMBER;
 		}
 
-		/**
-		 * 计算给定喷口角度下的推力方向（机体坐标系）
-		 *
-		 * 物理模型：
-		 *   n = R_yaw(θ_y) × R_pitch(θ_p) × ThrustAxisLocal
-		 *
-		 * 先绕局部Y轴旋转NozzlePitch（俯仰），再绕局部Z轴旋转NozzleYaw（偏航）。
-		 * 这对应标准的 Tait-Bryan Y-Z 旋转顺序（先俯仰后偏航）。
-		 *
-		 * @param NozzlePitchDeg  喷口俯仰角 (°)，正值=前倾
-		 * @param NozzleYawDeg    喷口偏航角 (°)，正值=右偏
-		 * @return 推力方向单位向量（机体坐标系）
-		 */
-		FVector GetThrustAxisWithNozzle(float NozzlePitchDeg, float NozzleYawDeg) const
-		{
-			const FVector BaseAxis = GetNormalizedThrustAxisLocal();
-			// R_yaw × R_pitch × base
-			const FRotator PitchRot(NozzlePitchDeg, 0.0f, 0.0f);
-			const FRotator YawRot(0.0f, NozzleYawDeg, 0.0f);
-			const FQuat NozzleQuat = FQuat(YawRot) * FQuat(PitchRot);
-			FVector Result = NozzleQuat.RotateVector(BaseAxis);
-			return Result.IsNearlyZero() ? FVector::UpVector : Result.GetSafeNormal();
-		}
-};
+			/**
+			 * 计算给定喷口角度下的推力方向（机体坐标系）
+			 *
+			 * 物理模型：
+			 *   n = R_pitch(θ_p) × R_lateral(θ_l) × ThrustAxisLocal
+			 *
+			 * 先绕机体X轴旋转NozzleYaw（侧倾/横向偏转），再绕机体Y轴旋转NozzlePitch（俯仰）。
+			 * 两轴均垂直于推力方向(Z)，在零偏转时均有效，不存在万向节锁奇异性。
+			 *   - NozzlePitch (Y轴旋转) → 产生机体X方向水平力 Fx
+			 *   - NozzleYaw   (X轴旋转) → 产生机体Y方向水平力 Fy
+			 *
+			 * 设计说明：旧版采用 Y-Z 旋转顺序（先俯仰后偏航），在零俯仰时
+			 * 偏航轴与推力轴重合，导致偏航通道完全失效（NY_col = 0）。
+			 * 改为 X-Y 顺序后，两轴始终正交，Fy 权限从 0% 恢复至 100%。
+			 *
+			 * @param NozzlePitchDeg  喷口俯仰角 (°)，正值=推力前倾（产生负Fx）
+			 * @param NozzleYawDeg    喷口侧倾角 (°)，正值=推力右偏（产生负Fy）
+			 * @return 推力方向单位向量（机体坐标系）
+			 *
+			 * 性能优化：内置 sin/cos 缓存。同一帧内同一 (NP, NY) 参数的重复调用
+			 * 直接返回缓存结果，避免重复三角运算。当参数变化时自动失效。
+			 */
+			FVector GetThrustAxisWithNozzle(float NozzlePitchDeg, float NozzleYawDeg) const
+			{
+				// ---- 缓存命中检测 ----
+				// 使用不可能的哨兵值（-9999.0f）确保首次调用和参数变化时必定 miss
+				if (NozzlePitchDeg == CachedNozzlePitchDeg && NozzleYawDeg == CachedNozzleYawDeg)
+				{
+					return CachedThrustAxis;
+				}
+
+				const FVector BaseAxis = GetNormalizedThrustAxisLocal();
+				// R_pitch × R_lateral × base（先侧倾后俯仰）
+				const FRotator PitchRot(NozzlePitchDeg, 0.0f, 0.0f);    // Y轴旋转 → Fx
+				const FRotator LateralRot(0.0f, 0.0f, NozzleYawDeg);    // X轴旋转 → Fy
+				const FQuat NozzleQuat = FQuat(PitchRot) * FQuat(LateralRot);
+				FVector Result = NozzleQuat.RotateVector(BaseAxis);
+				Result = Result.IsNearlyZero() ? FVector::UpVector : Result.GetSafeNormal();
+
+				// ---- 更新缓存 ----
+				CachedNozzlePitchDeg = NozzlePitchDeg;
+				CachedNozzleYawDeg = NozzleYawDeg;
+				CachedThrustAxis = Result;
+
+				return Result;
+			}
+
+		private:
+			// ---- sin/cos 缓存字段 ----
+			// mutable：GetThrustAxisWithNozzle 是 const 方法，但缓存需要更新
+			// -9999.0f = 不可能的哨兵值，确保首次调用必然 miss
+			mutable float CachedNozzlePitchDeg = -9999.0f;
+			mutable float CachedNozzleYawDeg = -9999.0f;
+			mutable FVector CachedThrustAxis = FVector::UpVector;
+	};
 
 /**
  * 标量传感器噪声模型（偏置、白噪声、随机游走）
@@ -1632,14 +1663,29 @@ struct AIRCRAFTLAB_API FDroneRotorCommand
  * 控制分配器配置
  */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneControlAllocationConfig
-{
-	GENERATED_BODY()
+	struct AIRCRAFTLAB_API FDroneControlAllocationConfig
+	{
+		GENERATED_BODY()
 
-	/** 阻尼最小二乘伪逆的阻尼系数，越大越稳定但控制跟踪越软 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (ClampMin = "0.0"))
-	float DampedPseudoInverseLambda = 0.05f;
-};
+		/** 阻尼最小二乘伪逆的阻尼系数，越大越稳定但控制跟踪越软 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (ClampMin = "0.0"))
+		float DampedPseudoInverseLambda = 0.05f;
+
+		/** 推力变化率惩罚权重 — 抑制推力抖动，0=关闭 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator|Jitter", meta = (ClampMin = "0.0"))
+		float ThrustRatePenalty = 0.01f;
+
+			/** 喷口偏转变化率惩罚权重 — 抑制喷口抖动，0=关闭 */
+			UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator|Jitter", meta = (ClampMin = "0.0"))
+			float NozzleRatePenalty = 0.05f;
+
+			/** 水平力(Fx/Fy)阻尼缩放 — 相对于 Fz 阻尼的倍率。
+			 *  值越大→水平力优先级越低（分配器更倾向于保持姿态而非满足水平力需求）。
+			 *  对矢量推力无人机，推荐 50~200（力矩优先）；传统四轴设为 1.0（力优先）。
+			 */
+			UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator|Priority", meta = (ClampMin = "1.0"))
+			float HorizontalForceDampingScale = 100.0f;
+		};
 
 /**
  * 飞控整体输出（目标、力/力矩、各电机命令）

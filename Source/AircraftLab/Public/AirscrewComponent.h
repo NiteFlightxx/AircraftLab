@@ -91,11 +91,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Drone|Airscrew|Nozzle")
 	float GetCurrentNozzleYawDeg() const { return CurrentNozzleYawDeg; }
 
-	/**
-	 * 获取考虑喷口偏转后的推力轴方向（机体系）
-	 * 替代原来固定方向的GetThrustAxisLocal()
-	 * 物理模型：n = R_yaw(θ_y) × R_pitch(θ_p) × CachedThrustAxisLocal
-	 */
+		/**
+		 * 获取考虑喷口偏转后的推力轴方向（机体系）
+		 * 替代原来固定方向的GetThrustAxisLocal()
+		 * 物理模型：n = R_pitch(θ_p) × R_lateral(θ_l) × CachedThrustAxisLocal
+		 * X-Y旋转顺序，两轴均垂直于推力方向，无万向节锁
+		 */
 	UFUNCTION(BlueprintPure, Category = "Drone|Airscrew|Nozzle")
 	FVector GetCurrentThrustAxisBody() const;
 
