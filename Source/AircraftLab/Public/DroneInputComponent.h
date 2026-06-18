@@ -55,11 +55,7 @@ private:
 	/** 偏航输入（摇杆/按键 → 旋转） */
 	UPROPERTY(EditAnywhere, Category = "Drone|Input")
 	TObjectPtr<UInputAction> IA_Turn;
-
-	/** 启动时是否自动解锁（Armed） */
-	UPROPERTY(EditAnywhere, Category = "Drone|Input")
-	bool bStartArmed = true;
-
+	
 	/** 飞行员输入状态（Throttle/Roll/Pitch/Yaw） */
 	UPROPERTY(VisibleAnywhere, Category = "Drone|Input")
 	FDronePilotInput PilotInput;

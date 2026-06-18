@@ -767,53 +767,56 @@ struct AIRCRAFTLAB_API FDroneControlLimits
 {
 	GENERATED_BODY()
 
-	/** 最大倾斜角度（度）——作为分配器的可松弛软约束，非硬约束 */
-		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-		float MaxTiltAngleDegrees = 35.0f;
+	/** 最大倾斜角度（度）——作为分配器的可松弛软约束，非硬约束
+	 *  100kg 重型机：25° 约束水平力分量 ≤ sin(25°)×TotalThrust */
+			UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxTiltAngleDegrees = 25.0f;
 
 	// ========================================================================
 	// 力限制（矢量飞控新增——替代纯倾角限制的力控制约束）
 	// ========================================================================
 
-	/** 单轴最大水平力 (N) — 限制 Fx/Fy 输出，防止位置控制器需求超出物理能力 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force", meta = (ClampMin = "0.0"))
-	float MaxHorizontalForceN = 15.0f;
+	/** 单轴最大水平力 (N) — 限制 Fx/Fy 输出，防止位置控制器需求超出物理能力
+	 *  100kg 四旋翼 4×500N=2000N：sin(25°)×2000≈845N，取800N */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force", meta = (ClampMin = "0.0"))
+		float MaxHorizontalForceN = 800.0f;
 
-	/** 最大垂直力 (N) — 限制 Fz 输出上限（含重力补偿） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force", meta = (ClampMin = "0.0"))
-	float MaxVerticalForceN = 50.0f;
+	/** 最大垂直力 (N) — 限制 Fz 输出上限（含重力补偿）
+	 *  100kg 四旋翼 4×500N=2000N 总升力上限 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force", meta = (ClampMin = "0.0"))
+		float MaxVerticalForceN = 2000.0f;
 
-	/** 最大偏航角速率（度/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxYawRateDegreesPerSec = 180.0f;
+	/** 最大偏航角速率（度/秒）— 100kg 重型机偏航惯量大，60°/s */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxYawRateDegreesPerSec = 60.0f;
 
-	/** 最大滚转角速率（度/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxRollRateDegreesPerSec = 360.0f;
+	/** 最大滚转角速率（度/秒）— 100kg 重型机惯量大，120°/s */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxRollRateDegreesPerSec = 120.0f;
 
-	/** 最大俯仰角速率（度/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxPitchRateDegreesPerSec = 360.0f;
+	/** 最大俯仰角速率（度/秒）— 100kg 重型机惯量大，120°/s */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxPitchRateDegreesPerSec = 120.0f;
 
-	/** 最大上升速率（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxClimbRateCmPerSec = 400.0f;
+	/** 最大上升速率（厘米/秒）— 100kg 机 3 m/s 爬升 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxClimbRateCmPerSec = 300.0f;
 
-	/** 最大下降速率（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxDescentRateCmPerSec = 250.0f;
+	/** 最大下降速率（厘米/秒）— 100kg 机 2 m/s 下降 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxDescentRateCmPerSec = 200.0f;
 
-	/** 最大水平速度（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxHorizontalSpeedCmPerSec = 1200.0f;
+	/** 最大水平速度（厘米/秒）— 100kg 机 8 m/s 巡航 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxHorizontalSpeedCmPerSec = 800.0f;
 
-	/** 最大水平加速度（厘米/秒²） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxHorizontalAccelerationCmPerSecSq = 1200.0f;
+	/** 最大水平加速度（厘米/秒²）— 100kg 机 6 m/s² */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxHorizontalAccelerationCmPerSecSq = 600.0f;
 
-	/** 最大垂直加速度（厘米/秒²） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxVerticalAccelerationCmPerSecSq = 1000.0f;
+	/** 最大垂直加速度（厘米/秒²）— 100kg 机 4 m/s²（受限于剩余推力） */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+		float MaxVerticalAccelerationCmPerSecSq = 400.0f;
 
 		/** 最小总距指令（归一化）— 已弃用：6DOF力控制不再使用总距指令 */
 		UE_DEPRECATED(5.1, "Use HoverThrustN / MaxVerticalForceN in FDroneForceControllerConfig instead")
@@ -878,13 +881,15 @@ struct AIRCRAFTLAB_API FDroneForceControllerConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force")
 	FDroneCartesianPidGains VelocityGains;
 
-	/** 高度外环 PID（Z 产生期望垂直速度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force")
-	FDronePidGains AltitudeGains = { 2.0f, 0.0f, 0.0f, 0.0f, 500.0f };
+	/** 高度外环 PID（Z 产生期望垂直速度）
+	 *  100kg 机：1.5 × 100cm = 150 cm/s 目标速率 → 匹配 MaxClimbRate 300cm/s 的 50% */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force")
+		FDronePidGains AltitudeGains = { 1.5f, 0.0f, 0.0f, 0.0f, 300.0f };
 
-	/** 垂直速度内环 PID（Z 产生 Fz 偏移 N） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force")
-	FDronePidGains VerticalVelocityGains = { 3.0f, 0.5f, 0.1f, 400.0f, 1000.0f };
+	/** 垂直速度内环 PID（Z 产生 ΔFz 偏移 N）
+	 *  100kg 机：Kp=4 → 1m/s 误差出 400N, Ki=0.4 消除稳态, Kd=0.3 阻尼 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force")
+		FDronePidGains VerticalVelocityGains = { 4.0f, 0.4f, 0.3f, 8000.0f, 2000.0f };
 
 	/** 悬停推力 (N)，= m × g。用于 Fz 重力补偿前馈 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|Force", meta = (ClampMin = "0.0"))
@@ -899,17 +904,18 @@ struct AIRCRAFTLAB_API FDroneMassProperties
 {
 	GENERATED_BODY()
 
-	/** 总质量（千克） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body", meta = (ClampMin = "0.01"))
-	float MassKg = 1.2f;
-
-	/** 质心相对于骨骼原点的偏移（厘米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body")
-	FVector CenterOfMassOffsetCm = FVector::ZeroVector;
-
-	/** 惯性矩对角线分量（千克·厘米²），近似为 Ixx, Iyy, Izz */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body", meta = (ClampMin = "0.0"))
-	FVector InertiaDiagonalKgCmSq = FVector(5000.0f, 5000.0f, 9000.0f);
+		/** 总质量（千克）— 100kg 重型多旋翼 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body", meta = (ClampMin = "0.01"))
+		float MassKg = 100.0f;
+	
+		/** 质心相对于骨骼原点的偏移（厘米） */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body")
+		FVector CenterOfMassOffsetCm = FVector::ZeroVector;
+	
+		/** 惯性矩对角线分量（千克·厘米²），近似为 Ixx, Iyy, Izz
+			 *  100kg 四旋翼 R≈80cm: Ixx=Iyy≈400000, Izz≈800000 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body", meta = (ClampMin = "0.0"))
+		FVector InertiaDiagonalKgCmSq = FVector(400000.0f, 400000.0f, 800000.0f);
 };
 
 /**
@@ -920,13 +926,13 @@ struct AIRCRAFTLAB_API FDroneAerodynamicsConfig
 {
 	GENERATED_BODY()
 
-	/** 线性阻尼系数（X/Y/Z，单位：阻力/速度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero", meta = (ClampMin = "0.0"))
-	FVector LinearDragPerAxis = FVector(0.12f, 0.12f, 0.18f);
-
-	/** 角阻尼系数（滚转/俯仰/偏航，单位：阻力矩/角速度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero", meta = (ClampMin = "0.0"))
-	FVector AngularDragPerAxis = FVector(0.02f, 0.02f, 0.03f);
+		/** 线性阻尼系数（X/Y/Z，单位：阻力/速度）— 100kg 大机体阻尼更大 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero", meta = (ClampMin = "0.0"))
+		FVector LinearDragPerAxis = FVector(1.5f, 1.5f, 2.5f);
+	
+		/** 角阻尼系数（滚转/俯仰/偏航，单位：阻力矩/角速度）— 大惯量需更大阻尼 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero", meta = (ClampMin = "0.0"))
+		FVector AngularDragPerAxis = FVector(0.20f, 0.20f, 0.40f);
 
 	/** 地面效应开始高度（厘米，低于此高度时推力增加） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero", meta = (ClampMin = "0.0"))
@@ -969,29 +975,29 @@ struct AIRCRAFTLAB_API FDroneMotorModelConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
 	float MinRpm = 0.0f;
 
-	/** 怠速转速（RPM，解锁后低速旋转） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
-	float IdleRpm = 1500.0f;
-
-	/** 最大转速（RPM） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
-	float MaxRpm = 12000.0f;
-
-	/** 加速时间常数（秒，从0到最大转速所需近似时间） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.001"))
-	float SpinUpTimeSeconds = 0.06f;
-
-	/** 减速时间常数（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.001"))
-	float SpinDownTimeSeconds = 0.10f;
-
-	/** 指令到推力的指数（通常2.0模拟推力∝转速²） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.1"))
-	float CommandExponent = 2.0f;
-
-	/** 最大指令变化率（每秒归一化指令变化量，用于平滑） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
-	float MaxCommandSlewPerSecond = 8.0f;
+		/** 怠速转速（RPM，解锁后低速旋转）— 大桨低怠速 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
+		float IdleRpm = 800.0f;
+	
+		/** 最大转速（RPM）— 大型多旋翼典型 4000~5000 RPM */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
+		float MaxRpm = 4500.0f;
+	
+		/** 加速时间常数（秒）— 大惯性电机响应较慢 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.001"))
+		float SpinUpTimeSeconds = 0.15f;
+	
+		/** 减速时间常数（秒）— 大桨风阻制动，减速稍快 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.001"))
+		float SpinDownTimeSeconds = 0.20f;
+	
+		/** 指令到推力的指数（通常2.0模拟推力∝转速²） */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.1"))
+		float CommandExponent = 2.0f;
+	
+		/** 最大指令变化率（每秒归一化指令变化量）— 大电机慢响应 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
+		float MaxCommandSlewPerSecond = 4.0f;
 };
 
 /**
@@ -1054,21 +1060,21 @@ struct AIRCRAFTLAB_API FDroneRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
 	EDroneRotorSpinDirection SpinDirection = EDroneRotorSpinDirection::CounterClockwise;
 
-	/** 螺旋桨半径（厘米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
-	float RadiusCm = 12.0f;
-
-	/** 最大推力（牛顿） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
-	float MaxThrustForce = 900.0f;
+		/** 螺旋桨半径（厘米）— 100kg 重型机用大桨 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+		float RadiusCm = 70.0f;
+	
+		/** 最大推力（牛顿）— 单旋翼 500N × 4 = 2000N 总升力（2× 悬停 980N） */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+		float MaxThrustForce = 500.0f;
 
 	/** 推力系数（用于推力∝系数*转速²） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
 	float ThrustCoefficient = 1.0f;
 
-	/** 反扭矩系数（扭矩 = 系数 * 推力） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
-	float ReactionTorqueCoefficient = 0.03f;
+		/** 反扭矩系数（扭矩 = 系数 * 推力）— 大桨低转速，反扭矩比例略高 */
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+		float ReactionTorqueCoefficient = 0.05f;
 
 	/** 效率（0~1，影响实际推力和扭矩） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))

@@ -281,6 +281,9 @@ struct FControllerRuntimeState
 	/** 当前激活的飞行模式 */
 	EDroneFlightMode ActiveFlightMode = EDroneFlightMode::Hover;
 
+	/** 模式是否已初始化（BeginPlay 首次 SetFlightMode 必须执行配置链，绕过 early-return） */
+	bool bModeInitialized = false;
+
 	/** 当前瞄准模式（决定姿态目标来源） */
 	EDroneAimMode ActiveAimMode = EDroneAimMode::Default;
 
@@ -783,8 +786,8 @@ protected:
 		/** 计算期望水平速度（摇杆映射） */
 		FVector ComputeDesiredHorizontalVelocity(const FDronePilotInput& PilotInput) const;
 
-		/** 计算期望水平加速度（位置/速度PID串级） */
-		FVector ComputeDesiredHorizontalAcceleration(const FDronePilotInput& PilotInput, float DeltaSeconds);
+		/** 计算期望水平力(N)（位置/速度PID串级，速度环直接输出力） */
+		FVector ComputeDesiredHorizontalForce(const FDronePilotInput& PilotInput, float DeltaSeconds);
 
 		/** 获取旋翼相对质心的机体坐标位置 */
 		FVector GetRotorPositionFromCenterOfMassBodyCm(const UAirscrewComponent* Airscrew) const;
@@ -949,4 +952,14 @@ private:
 	 * 游戏线程写入（TickComponent），物理线程读取（AsyncPhysicsTick）
 	 */
 	FDronePilotInput CachedPilotInput;
+
+	/**
+	 * 缓存的机体质量（kg）
+	 * 游戏线程写入（TickComponent），物理线程读取（RunControlLoop）
+	 *
+	 * 注意：BodyPrimitive->GetMass() 访问 UPrimitiveComponent/BodyInstance 状态，
+	 * 属于游戏线程所有权，不可在 AsyncPhysics 物理线程中调用。
+	 * 故在此缓存，与 PhysicsCache.GravityMagnitudeCmPerSecSq 同一处理方式。
+	 */
+	float CachedBodyMassKg = 0.0f;
 };

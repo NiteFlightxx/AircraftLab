@@ -406,9 +406,9 @@ void UFlightControllerComponent::BeginPlay()
 	Super::BeginPlay();
 	RefreshReferences();
 
-	// 注意：这里不预先设置 Runtime.ActiveFlightMode，让 SetFlightMode 能正确执行
-	// SetFlightMode 内部有 early-return guard: if (Active == New) return;
-	// 如果在调用前就把 Active 设成 New，则初始化链（UpdateModeCapabilities + ResetControllerState）会被跳过
+	// 首次设置飞行模式。SetFlightMode 内部用 bModeInitialized 标志保证
+	// 首次调用即使 NewFlightMode 与 ActiveFlightMode 默认值相同也会执行配置链
+	// （设置 bForceControlEnabled / ActiveAimMode + UpdateModeCapabilities + ResetControllerState）。
 	SetFlightMode(InitialFlightMode);
 
 	// 解锁状态：初始是否解锁取决于 bStartArmed
@@ -438,6 +438,25 @@ void UFlightControllerComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	// 重力用于悬停倾斜方程 tan(θ) = a/g 以及高度 PID
 	if (UWorld* World = GetWorld())
 		PhysicsCache.GravityMagnitudeCmPerSecSq = FMath::Abs(World->GetGravityZ());
+
+	// ---- 机体质量缓存 + 悬停推力自动标定 ----
+	// BodyPrimitive->GetMass() 属游戏线程所有权，不可在 AsyncPhysics 物理线程中调用，
+	// 故在此缓存质量，并在游戏线程完成 HoverThrustN 标定（物理线程仅读取结果）。
+	// 单位：MassKg × g_mps2 = N（力用 SI，速度/位置用 UE cm）
+	// 重力统一取自 PhysicsCache.GravityMagnitudeCmPerSecSq（cm/s²，来自 World->GetGravityZ），
+	// ×0.01 转 m/s²，避免与硬编码 9.8 不一致（项目改重力时仍正确）。
+	if (BodyPrimitive)
+	{
+		CachedBodyMassKg = BodyPrimitive->GetMass();
+		if (ControllerConfig.Force.HoverThrustN <= 0.0f && CachedBodyMassKg > 0.0f)
+		{
+			const float GravityMPerSecSq = PhysicsCache.GravityMagnitudeCmPerSecSq * 0.01f; // cm/s² → m/s²
+			ControllerConfig.Force.HoverThrustN = CachedBodyMassKg * GravityMPerSecSq;       // kg × m/s² = N
+			UE_LOG(LogFlightController, Log,
+				TEXT("[HoverThrust] Auto-calibrated: %.1f kg × %.2f m/s² = %.1f N"),
+				CachedBodyMassKg, GravityMPerSecSq, ControllerConfig.Force.HoverThrustN);
+		}
+	}
 
 	// 从输入组件读取飞手摇杆状态
 	const FDronePilotInput PilotInput = DroneInput ? DroneInput->GetPilotInput() : FDronePilotInput();
@@ -544,8 +563,14 @@ void UFlightControllerComponent::Disarm()
 // ---------------------------------------------------------------------------
 void UFlightControllerComponent::SetFlightMode(EDroneFlightMode NewFlightMode)
 {
-	if (Runtime.ActiveFlightMode == NewFlightMode) return;
+	// early-return 仅在运行时重复切换到同一模式时跳过配置链。
+	// 首次调用（bModeInitialized==false）必须强制执行，否则当
+	// ActiveFlightMode 的成员默认值恰好等于 InitialFlightMode 时（如默认 Hover==Hover），
+	// 配置链（bForceControlEnabled/ActiveAimMode/UpdateModeCapabilities/ResetControllerState）
+	// 会被跳过，导致力控制永远不启用。
+	if (Runtime.bModeInitialized && Runtime.ActiveFlightMode == NewFlightMode) return;
 	Runtime.ActiveFlightMode = NewFlightMode;
+	Runtime.bModeInitialized = true;
 
 	switch (NewFlightMode)
 	{
@@ -708,70 +733,111 @@ void UFlightControllerComponent::SetHeldYaw(float YawDegrees)
 //   - 内环带宽 > 外环带宽（保证串级稳定性）
 //   - 积分项仅用于消除稳态误差，增益要小，必须有积分限幅
 // ---------------------------------------------------------------------------
-void UFlightControllerComponent::InitializeDefaultControllerConfig()
-{
-	// ========================================================================
-	// 运动限制（安全边界）
-	// ========================================================================
-	ControllerConfig.Limits.MaxTiltAngleDegrees = 25.0f;         // 最大倾角（软约束）
-	ControllerConfig.Limits.MaxHorizontalForceN = 15.0f;         // 最大水平力
-	ControllerConfig.Limits.MaxVerticalForceN = 50.0f;           // 最大垂直力
-	ControllerConfig.Limits.MaxYawRateDegreesPerSec = 90.0f;      // 最大偏航角速率
-	ControllerConfig.Limits.MaxRollRateDegreesPerSec = 360.0f;    // 最大滚转角速率
-	ControllerConfig.Limits.MaxPitchRateDegreesPerSec = 360.0f;  // 最大俯仰角速率
-	ControllerConfig.Limits.MaxClimbRateCmPerSec = 400.0f;        // 最大爬升率
-	ControllerConfig.Limits.MaxDescentRateCmPerSec = 250.0f;     // 最大下降率
-	ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec = 1200.0f; // 最大水平速度
-		ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq = 1200.0f;
-		ControllerConfig.Limits.MaxVerticalAccelerationCmPerSecSq = 1000.0f;
+	void UFlightControllerComponent::InitializeDefaultControllerConfig()
+	{
+		// ========================================================================
+		// 运动限制（安全边界）— 100kg 重型多旋翼
+		// ========================================================================
+		// 总升力 2000N（4×500N），悬停 ~980N，爬升裕量 ~1020N
+		ControllerConfig.Limits.MaxTiltAngleDegrees = 25.0f;         // 最大倾角（软约束）
+		ControllerConfig.Limits.MaxHorizontalForceN = 800.0f;        // sin(25°)×2000 ≈ 845N，取800
+		ControllerConfig.Limits.MaxVerticalForceN = 2000.0f;         // 4 × 500N 总升力上限
+		ControllerConfig.Limits.MaxYawRateDegreesPerSec = 60.0f;     // 重型机偏航慢
+		ControllerConfig.Limits.MaxRollRateDegreesPerSec = 120.0f;   // 重型机滚转惯量大
+		ControllerConfig.Limits.MaxPitchRateDegreesPerSec = 120.0f;  // 同上
+		ControllerConfig.Limits.MaxClimbRateCmPerSec = 300.0f;        // 3 m/s 爬升
+		ControllerConfig.Limits.MaxDescentRateCmPerSec = 200.0f;     // 2 m/s 下降
+		ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec = 800.0f;  // 8 m/s 水平速度
+		ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq = 600.0f;
+		ControllerConfig.Limits.MaxVerticalAccelerationCmPerSecSq = 400.0f;
 		// 注：MinCollectiveCommand/HoverCollectiveCommand/MaxCollectiveCommand 已移除
 		// 等效语义由 HoverThrustN / MaxVerticalForceN 替代
 
-	// ========================================================================
-	// 力控制器 — 统一位置/速度/高度 PID → [Fx Fy Fz] (N)
-	// ========================================================================
-	// 外环：位置PID → 期望速度
-	//   X/Y: P控制 + Kd速度阻尼
-	//   Z:   P控制（高度误差 → 期望垂直速度）
-	ControllerConfig.Force.PositionGains.X = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
-	ControllerConfig.Force.PositionGains.Y = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
-	ControllerConfig.Force.PositionGains.Z = { 2.00f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
+		// ========================================================================
+		// 力控制器 — 统一位置/速度/高度 PID → [Fx Fy Fz] (N)
+		// ========================================================================
+		// 单位换算关键：
+		//   位置误差 → cm，速度误差 → cm/s
+		//   输出力 → N = kg·m/s²
+		//   因此速度PID Kp的单位是 N/(cm/s) = N·s/cm = 0.01 × kg
+		//
+		// 外环：位置PID → 期望速度 (cm/s)
+		//   X/Y: P控制 + Kd速度阻尼
+		//   Z:   P控制（高度误差 → 期望垂直速度）
+		ControllerConfig.Force.PositionGains.X = { 0.50f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
+		ControllerConfig.Force.PositionGains.Y = { 0.50f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
+		ControllerConfig.Force.PositionGains.Z = { 1.50f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
 
-	// 内环：速度PID → 期望力 (N)
-	//   X/Y: 输出直接是 Fx/Fy (N)
-	//   Z:   输出是 ΔFz (N)，加在 HoverThrustN 上
-	ControllerConfig.Force.VelocityGains.X = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalForceN };
-	ControllerConfig.Force.VelocityGains.Y = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalForceN };
-	ControllerConfig.Force.VelocityGains.Z = { 3.00f, 0.50f, 0.10f, 400.0f, ControllerConfig.Limits.MaxVerticalForceN };
-	ControllerConfig.Force.VelocityGains.X.DerivativeCutoffHz = 12.0f;
-	ControllerConfig.Force.VelocityGains.Y.DerivativeCutoffHz = 12.0f;
-	ControllerConfig.Force.VelocityGains.Z.DerivativeCutoffHz = 10.0f;
+		// 内环：速度PID → 期望力 (N)
+		//   X/Y: 输出直接是 Fx/Fy (N)，限幅由 MaxHorizontalForceN 控制
+		//   Z:   输出是 ΔFz (N)，加在 HoverThrustN 上
+		//
+		// Kp 推导（XY）：
+		//   目标：1 m/s 误差 → ~5 m/s² 加速度 → F=100×5=500N
+		//   1 m/s = 100 cm/s 代码单位 → Kp = 500/100 = 5.0 N/(cm/s)
+		//
+		// Kd 推导：
+		//   临界阻尼 Kd_SI = 2×sqrt(Kp_SI × m) = 2×sqrt(500×100) = 447 N·s/m
+		//   Kd_code = Kd_SI / 100 = 4.47 N/(cm/s²) → 取2.0略欠阻尼，响应更快
+		//
+		// Ki 积分限幅：
+		//   需克服稳态风力 ~500N → KiLimit ≥ 500N / Ki → 10000 足够
+		ControllerConfig.Force.VelocityGains.X = { 5.00f, 0.02f, 2.00f, 10000.0f, ControllerConfig.Limits.MaxHorizontalForceN };
+		ControllerConfig.Force.VelocityGains.Y = { 5.00f, 0.02f, 2.00f, 10000.0f, ControllerConfig.Limits.MaxHorizontalForceN };
+		// Kp 推导（Z）：
+		//   目标：1 m/s 误差 → ~4 m/s² 加速度 → F=100×4=400N
+		//   1 m/s = 100 cm/s → Kp = 400/100 = 4.0 N/(cm/s)
+		//   Kd: 临界 Kd_SI=2×sqrt(400×100)=400 → Kd_code=4.0 → 取0.3偏欠阻尼（高度安全）
+		ControllerConfig.Force.VelocityGains.Z = { 4.00f, 0.40f, 0.30f, 8000.0f, ControllerConfig.Limits.MaxVerticalForceN };
+		ControllerConfig.Force.VelocityGains.X.DerivativeCutoffHz = 8.0f;
+		ControllerConfig.Force.VelocityGains.Y.DerivativeCutoffHz = 8.0f;
+		ControllerConfig.Force.VelocityGains.Z.DerivativeCutoffHz = 6.0f;
 
-	// Z轴用 Altitude/VerticalVelocity 子配置（向新结构过渡兼容）
-	ControllerConfig.Force.AltitudeGains = { 2.00f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
-	ControllerConfig.Force.VerticalVelocityGains = { 3.00f, 0.50f, 0.10f, 400.0f, ControllerConfig.Limits.MaxVerticalForceN };
-	ControllerConfig.Force.VerticalVelocityGains.DerivativeCutoffHz = 10.0f;
-	// 悬停推力由运行时根据机体质量自动计算：HoverThrustN = MassKg × g
-	ControllerConfig.Force.HoverThrustN = 0.0f;
+		// Z轴用 Altitude/VerticalVelocity 子配置（向新结构过渡兼容）
+		ControllerConfig.Force.AltitudeGains = { 1.50f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
+		ControllerConfig.Force.VerticalVelocityGains = { 4.00f, 0.40f, 0.30f, 8000.0f, ControllerConfig.Limits.MaxVerticalForceN };
+		ControllerConfig.Force.VerticalVelocityGains.DerivativeCutoffHz = 6.0f;
+		// 悬停推力 = m × g = 100 × 9.8 = 980 N（运行时由质量自动计算）
+		ControllerConfig.Force.HoverThrustN = 0.0f;
 
-	// ========================================================================
-	// 姿态控制器 — 角度环+角速率环 → [Mx My Mz] (N·m)
-	// ========================================================================
-	// 外环：角度PID → 期望角速率
-	ControllerConfig.Attitude.AngleGains.Roll = { 4.5f, 0.0f, 0.20f, 20.0f, ControllerConfig.Limits.MaxRollRateDegreesPerSec };
-	ControllerConfig.Attitude.AngleGains.Pitch = { 4.5f, 0.0f, 0.20f, 20.0f, ControllerConfig.Limits.MaxPitchRateDegreesPerSec };
-	ControllerConfig.Attitude.AngleGains.Yaw = { 3.0f, 0.0f, 0.10f, 25.0f, ControllerConfig.Limits.MaxYawRateDegreesPerSec };
-	ControllerConfig.Attitude.AngleGains.Roll.DerivativeCutoffHz = 12.0f;
-	ControllerConfig.Attitude.AngleGains.Pitch.DerivativeCutoffHz = 12.0f;
-	ControllerConfig.Attitude.AngleGains.Yaw.DerivativeCutoffHz = 8.0f;
+		// ========================================================================
+		// 姿态控制器 — 角度环+角速率环 → [Mx My Mz] (N·m)
+		// ========================================================================
+		// 外环：角度PID → 期望角速率 (°/s)
+		//
+		// Kp 推导：
+		//   目标：10° 姿态误差 → 50°/s 期望角速率（约0.4s收敛到水平）
+		//   Kp_angle = 50/10 = 5.0
+		//   但内环有限带宽，取 3.5 确保外环比内环慢 5× 以上
+		ControllerConfig.Attitude.AngleGains.Roll = { 3.5f, 0.0f, 0.12f, 12.0f, ControllerConfig.Limits.MaxRollRateDegreesPerSec };
+		ControllerConfig.Attitude.AngleGains.Pitch = { 3.5f, 0.0f, 0.12f, 12.0f, ControllerConfig.Limits.MaxPitchRateDegreesPerSec };
+		ControllerConfig.Attitude.AngleGains.Yaw = { 2.0f, 0.0f, 0.04f, 18.0f, ControllerConfig.Limits.MaxYawRateDegreesPerSec };
+		ControllerConfig.Attitude.AngleGains.Roll.DerivativeCutoffHz = 6.0f;
+		ControllerConfig.Attitude.AngleGains.Pitch.DerivativeCutoffHz = 6.0f;
+		ControllerConfig.Attitude.AngleGains.Yaw.DerivativeCutoffHz = 4.0f;
 
-	// 内环：角速率PID → 归一化力矩指令
-	ControllerConfig.Attitude.RateGains.Roll = { 0.0020f, 0.00025f, 0.00015f, 120.0f, 0.35f };
-	ControllerConfig.Attitude.RateGains.Pitch = { 0.0020f, 0.00025f, 0.00015f, 120.0f, 0.35f };
-	ControllerConfig.Attitude.RateGains.Yaw = { 0.0012f, 0.00015f, 0.00008f, 120.0f, 0.20f };
-	ControllerConfig.Attitude.RateGains.Roll.DerivativeCutoffHz = 18.0f;
-	ControllerConfig.Attitude.RateGains.Pitch.DerivativeCutoffHz = 18.0f;
-	ControllerConfig.Attitude.RateGains.Yaw.DerivativeCutoffHz = 15.0f;
+		// 内环：角速率PID → 归一化力矩指令 [-1, 1]
+		//
+		// 物理量推导（100kg 四旋翼 R=80cm）：
+		//   Max可用roll/pitch力矩 = 2 × 500N × 0.8m × sin(45°) ≈ 566 N·m
+		//   OutputLimit = 0.35 → 最大角速率力矩 = 0.35 × 566 = 198 N·m
+		//   Ixx = Iyy = 400000 kg·cm² = 40 kg·m²
+		//     (注意：UE惯量单位 kg·cm²，换算到SI力矩需除以 10000)
+		//   角加速度 α_max = 198/40 = 4.95 rad/s² = 284 °/s²
+		//   达到 120°/s 需 0.42s → 合理
+		//
+		// Kp_rate 推导：
+		//   目标：30°/s 速率误差 → 使用约 50% 力矩限额(0.175归一化)
+		//   Kp = 0.175 / 30 = 0.0058 → 取 0.006
+		//   60°/s 误差 → 0.36 归一化 → 接近满额 → 有足够跟踪能力
+		//
+		// Yaw轴：力矩更小（仅反扭矩差），Kp × 0.5
+		ControllerConfig.Attitude.RateGains.Roll  = { 0.0060f, 0.00050f, 0.00030f, 50.0f, 0.35f };
+		ControllerConfig.Attitude.RateGains.Pitch = { 0.0060f, 0.00050f, 0.00030f, 50.0f, 0.35f };
+		ControllerConfig.Attitude.RateGains.Yaw   = { 0.0030f, 0.00030f, 0.00015f, 50.0f, 0.20f };
+		ControllerConfig.Attitude.RateGains.Roll.DerivativeCutoffHz = 10.0f;
+		ControllerConfig.Attitude.RateGains.Pitch.DerivativeCutoffHz = 10.0f;
+		ControllerConfig.Attitude.RateGains.Yaw.DerivativeCutoffHz = 6.0f;
 
 	// ========================================================================
 	// 控制分配器参数
@@ -886,12 +952,16 @@ void UFlightControllerComponent::UpdateHomeState(bool bForceResetHome)
 //   │ 6. 更新旋翼物理状态                            │
 //   └─────────────────────────────────────────────────┘
 // ---------------------------------------------------------------------------
-void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDronePilotInput& PilotInput)
-{
-	if (Airscrews.IsEmpty()) UpdateRotorCache();
-	if (Airscrews.IsEmpty() || !BodyPrimitive) return;
+	void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDronePilotInput& PilotInput)
+	{
+		if (Airscrews.IsEmpty()) UpdateRotorCache();
+		if (Airscrews.IsEmpty() || !BodyPrimitive) return;
 
-	// 清空上帧的控制输出
+		// 悬停推力 HoverThrustN 的自动标定已在游戏线程 TickComponent 中完成
+		// （BodyPrimitive->GetMass() 不可在物理线程调用），此处仅使用其结果。
+		// 若标定尚未完成（HoverThrustN <= 0），跳过本帧力控制以避免无效输出。
+
+		// 清空上帧的控制输出
 	Runtime.ControlOutput = FDroneControlOutput();
 	Runtime.ControlOutput.Targets.FlightMode = Runtime.ActiveFlightMode;
 
@@ -1050,55 +1120,79 @@ void UFlightControllerComponent::RebuildAllocationCache()
 	double OriginalPositiveMomentAuthority[3] = {};
 	double OriginalNegativeMomentAuthority[3] = {};
 
-	// ========== 第一遍：用原始 Jacobian 计算 RowScale ==========
-	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
-	{
-		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
-		if (!Airscrew || !Airscrew->IsRotorEnabled()) continue;
-
-		const float Effectiveness = RotorHealthStates.IsValidIndex(RotorIndex)
-			? RotorHealthStates[RotorIndex].Effectiveness : 1.0f;
-
-		// 完全失效的旋翼不参与 RowScale 计算
-		if (Effectiveness <= FlightControllerAllocation::AuthorityEpsilon)
+		// ========== 第一遍：用原始 Jacobian 计算 RowScale ==========
+		// RowScale 代表"全健康时各轴最大可达 wrench"。对于矢量推力无人机，
+		// 喷口偏转也能贡献水平力，因此力轴权限必须累加推力列 + 喷口列的绝对贡献。
+		// 力矩轴：推力列贡献力矩（r×F + 反扭矩），喷口列的贡献较小且正负
+		// 不对称，但为完整性也纳入。控制上下界：T∈[0,1], NP∈[-1,1], NY∈[-1,1]。
+		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 		{
-			FailedCount++;
-			continue;
+			const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
+			if (!Airscrew || !Airscrew->IsRotorEnabled()) continue;
+
+			const float Effectiveness = RotorHealthStates.IsValidIndex(RotorIndex)
+				? RotorHealthStates[RotorIndex].Effectiveness : 1.0f;
+
+			// 完全失效的旋翼不参与 RowScale 计算
+			if (Effectiveness <= FlightControllerAllocation::AuthorityEpsilon)
+			{
+				FailedCount++;
+				continue;
+			}
+
+			if (Effectiveness >= 1.0f) HealthyCount++;
+			else FailedCount++;
+
+			const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
+
+			// 构建6DOF子矩阵
+			TArray<double> ThrustCol, NPCol, NYCol;
+			BuildJacobianSubmatrix(Airscrew, LocalPosition, ThrustCol, NPCol, NYCol);
+
+			const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
+
+			// 计算推力列的幅度（6D L1范数）
+			double ThrustColMag = 0.0;
+			for (int32 Row = 0; Row < WrenchDim; ++Row) ThrustColMag += FMath::Abs(ThrustCol[Row]);
+
+			// 跳过零推力或零贡献旋翼
+			if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ThrustColMag <= FlightControllerAllocation::AuthorityEpsilon)
+				continue;
+
+			const bool bHasNozzle = Airscrew->GetRotorDefinition().HasNozzle();
+
+			// 累加原始（未缩放）权限 — RowScale 基于"全健康时能做什么"
+			// 力轴 [0..2]：推力列 + 喷口列的绝对值之和（力可双向）
+			//   推力列贡献：|T_col[Axis]| × 1（满油门）
+			//   喷口列贡献：|NP_col[Axis]| × 1 + |NY_col[Axis]| × 1（满偏转）
+			for (int32 Axis = 0; Axis < 3; ++Axis)
+			{
+				OriginalForceAuthority[Axis] += FMath::Abs(ThrustCol[Axis]);
+				if (bHasNozzle)
+				{
+					OriginalForceAuthority[Axis] += FMath::Abs(NPCol[Axis]) + FMath::Abs(NYCol[Axis]);
+				}
+			}
+			// 力矩轴 [3..5]：推力列贡献是主要的（力臂×力 + 反扭矩），
+			// 喷口列的力矩贡献也纳入以反映完整能力
+			for (int32 Axis = 0; Axis < 3; ++Axis)
+			{
+				const double AxisMomentT = ThrustCol[Axis + 3];
+				if (AxisMomentT >= 0.0) OriginalPositiveMomentAuthority[Axis] += AxisMomentT;
+				else OriginalNegativeMomentAuthority[Axis] -= AxisMomentT;
+
+				if (bHasNozzle)
+				{
+					const double AxisMomentNP = NPCol[Axis + 3];
+					if (AxisMomentNP >= 0.0) OriginalPositiveMomentAuthority[Axis] += AxisMomentNP;
+					else OriginalNegativeMomentAuthority[Axis] -= AxisMomentNP;
+
+					const double AxisMomentNY = NYCol[Axis + 3];
+					if (AxisMomentNY >= 0.0) OriginalPositiveMomentAuthority[Axis] += AxisMomentNY;
+					else OriginalNegativeMomentAuthority[Axis] -= AxisMomentNY;
+				}
+			}
 		}
-
-		if (Effectiveness >= 1.0f) HealthyCount++;
-		else FailedCount++;
-
-		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
-
-		// 构建6DOF子矩阵
-		TArray<double> ThrustCol, NPCol, NYCol;
-		BuildJacobianSubmatrix(Airscrew, LocalPosition, ThrustCol, NPCol, NYCol);
-
-		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
-
-		// 计算推力列的幅度（6D L1范数）
-		double ThrustColMag = 0.0;
-		for (int32 Row = 0; Row < WrenchDim; ++Row) ThrustColMag += FMath::Abs(ThrustCol[Row]);
-
-		// 跳过零推力或零贡献旋翼
-		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ThrustColMag <= FlightControllerAllocation::AuthorityEpsilon)
-			continue;
-
-		// 累加原始（未缩放）权限 — RowScale 基于"全健康时能做什么"
-		// 力轴 [0..2]：累加各力分量的绝对值（力可以双向，对于 Fz 主要正向）
-		for (int32 Axis = 0; Axis < 3; ++Axis)
-		{
-			OriginalForceAuthority[Axis] += FMath::Abs(ThrustCol[Axis]);
-		}
-		// 力矩轴 [3..5]：正/负方向分别累加
-		for (int32 Axis = 0; Axis < 3; ++Axis)
-		{
-			const double AxisMoment = ThrustCol[Axis + 3];
-			if (AxisMoment >= 0.0) OriginalPositiveMomentAuthority[Axis] += AxisMoment;
-			else OriginalNegativeMomentAuthority[Axis] -= AxisMoment;
-		}
-	}
 
 	// RowScale[0..2] = 原始力轴权限（取绝对值累加，因力可以双向）
 	AllocationCache.RowScale[0] = OriginalForceAuthority[0];
@@ -1160,24 +1254,37 @@ void UFlightControllerComponent::RebuildAllocationCache()
 		AllocationCache.FreeControls[NPIdx] = Airscrew->GetRotorDefinition().HasNozzle() && Effectiveness > 0.0f;
 		AllocationCache.FreeControls[NYIdx] = Airscrew->GetRotorDefinition().HasNozzle() && Effectiveness > 0.0f;
 
-		// 有效 Authority（乘以 Effectiveness 后的值，用于 AuthorityInfo 诊断）
-		const FDroneRotorDefinition& RotorDef = Airscrew->GetRotorDefinition();
-		const double EffFactor = static_cast<double>(Effectiveness);
-		// 力轴：累加有效推力列的绝对值
-		for (int32 Axis = 0; Axis < 3; ++Axis)
-		{
-			const double EffectiveForce = FMath::Abs(ThrustCol[Axis]) * EffFactor;
-			if (Axis == 0) AllocationCache.FxAuthority += EffectiveForce;
-			else if (Axis == 1) AllocationCache.FyAuthority += EffectiveForce;
-			else AllocationCache.FzAuthority += EffectiveForce;
-		}
-		// 力矩轴：正/负方向分别累加有效推力列
-		for (int32 Axis = 0; Axis < 3; ++Axis)
-		{
-			const double AxisMoment = ThrustCol[Axis + 3] * EffFactor;
-			if (AxisMoment >= 0.0) AllocationCache.PositiveMomentAuthority[Axis] += AxisMoment;
-			else AllocationCache.NegativeMomentAuthority[Axis] -= AxisMoment;
-		}
+			// 有效 Authority（含 Effectiveness 后的值，用于 AuthorityInfo 诊断）
+			// 与第一遍 RowScale 相同逻辑：力轴累加推力列+喷口列，力矩轴也纳入喷口列
+			const FDroneRotorDefinition& RotorDef = Airscrew->GetRotorDefinition();
+			const double EffFactor = static_cast<double>(Effectiveness);
+			const bool bHasNozzleEff = RotorDef.HasNozzle() && Effectiveness > 0.0f;
+			// 力轴：累加有效推力列+喷口列的绝对值
+			for (int32 Axis = 0; Axis < 3; ++Axis)
+			{
+				const double EffectiveForce = FMath::Abs(ThrustCol[Axis]) * EffFactor;
+				const double TotalForce = bHasNozzleEff
+					? EffectiveForce + (FMath::Abs(NPCol[Axis]) + FMath::Abs(NYCol[Axis])) * EffFactor
+					: EffectiveForce;
+				if (Axis == 0) AllocationCache.FxAuthority += TotalForce;
+				else if (Axis == 1) AllocationCache.FyAuthority += TotalForce;
+				else AllocationCache.FzAuthority += TotalForce;
+			}
+			// 力矩轴：正/负方向分别累加有效推力列+喷口列
+			for (int32 Axis = 0; Axis < 3; ++Axis)
+			{
+				auto AccumulateMoment = [&](double MomentVal)
+				{
+					if (MomentVal >= 0.0) AllocationCache.PositiveMomentAuthority[Axis] += MomentVal;
+					else AllocationCache.NegativeMomentAuthority[Axis] -= MomentVal;
+				};
+				AccumulateMoment(ThrustCol[Axis + 3] * EffFactor);
+				if (bHasNozzleEff)
+				{
+					AccumulateMoment(NPCol[Axis + 3] * EffFactor);
+					AccumulateMoment(NYCol[Axis + 3] * EffFactor);
+				}
+			}
 
 		// 归一化列：PhysicalColumn / RowScale
 		// 使控制器输出的 [-1,1] 指令直接对应"该轴最大权限的百分比"
@@ -1229,7 +1336,8 @@ FVector UFlightControllerComponent::ComputeDesiredForce(const FDronePilotInput& 
 	const FVector CurrentVelocity = Runtime.EstimatedState.State.VelocityCmPerSec;
 	const float CurrentAltitude = CurrentPosition.Z;
 	const float CurrentVerticalVelocity = CurrentVelocity.Z;
-	const float GravityCmPerSecSq = PhysicsCache.GravityMagnitudeCmPerSecSq;
+	// 注：重力补偿已含在 HoverThrustN 前馈中（游戏线程标定），此处不需要重力值。
+	// 矢量飞控用喷口产生 Fx/Fy，不依赖 tan(θ)=a/g 倾斜方程。
 
 	// ========================================================================
 	// Z轴：垂直力（替代旧总距/高度管线）
@@ -1317,16 +1425,10 @@ FVector UFlightControllerComponent::ComputeDesiredForce(const FDronePilotInput& 
 	if (ModeCapabilities.CanUseForceControl)
 	{
 		// ---- 力控制启用：位置/速度PID → Fx/Fy (N) ----
-		const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(PilotInput, DeltaSeconds);
-		// F = m × a，但PID输出已经考虑了缩放，直接取XY分量作为力
-		DesiredForceXY = FVector2D(DesiredHorizontalAcceleration.X, DesiredHorizontalAcceleration.Y);
-
-		// 限幅：不超过最大水平力
-		const float MaxHF = ControllerConfig.Limits.MaxHorizontalForceN;
-		if (DesiredForceXY.SizeSquared() > FMath::Square(MaxHF))
-		{
-			DesiredForceXY = DesiredForceXY.GetSafeNormal() * MaxHF;
-		}
+		// 速度环PID直接输出水平力（N），Kp已含 cm/s→N 的换算。
+		// ComputeDesiredHorizontalForce 内部已对单轴与合力限幅，此处直接取XY。
+		const FVector DesiredHorizontalForce = ComputeDesiredHorizontalForce(PilotInput, DeltaSeconds);
+		DesiredForceXY = FVector2D(DesiredHorizontalForce.X, DesiredHorizontalForce.Y);
 	}
 	else
 	{
@@ -1492,7 +1594,7 @@ FVector UFlightControllerComponent::ComputeDesiredMoment(const FDronePilotInput&
 		// 计算姿态误差四元数：Q_err = Q_desired * Q_current^(-1)
 		const FQuat AttitudeErrorQuat = DesiredAttitudeQuat * CurrentAttitudeQuat.Inverse();
 
-		// 将四元数误差转为角速率误差向量
+		// 将四元数误差转为姿态误差向量（单位：度，非角速率）
 		// 小角度近似：ω_err ≈ 2 × [Q_err.x, Q_err.y, Q_err.z] / Q_err.w
 		// 但用旋转向量更稳定：
 		FVector Axis;
@@ -1501,15 +1603,16 @@ FVector UFlightControllerComponent::ComputeDesiredMoment(const FDronePilotInput&
 
 		// Axis是世界系方向，转到机体系
 		const FVector AxisBody = CurrentAttitudeQuat.Inverse().RotateVector(Axis);
-		const FVector AttitudeErrorDegPerSec = AxisBody * FMath::RadiansToDegrees(AngleRad);
+		// AttitudeErrorDeg = 旋转向量(轴×角度)，单位是度（姿态误差，喂给角度环Kp得期望角速率deg/s）
+		const FVector AttitudeErrorDeg = AxisBody * FMath::RadiansToDegrees(AngleRad);
 
-		// 角度环 PID → 期望角速率
+		// 角度环 PID → 期望角速率（输入 deg 误差，Kp 输出 deg/s）
 		DesiredBodyRates = FVector(
-			PidStates.Angle.Roll.UpdateFromError(AttitudeErrorDegPerSec.X, DeltaSeconds,
+			PidStates.Angle.Roll.UpdateFromError(AttitudeErrorDeg.X, DeltaSeconds,
 				ControllerConfig.Attitude.AngleGains.Roll),
-			PidStates.Angle.Pitch.UpdateFromError(AttitudeErrorDegPerSec.Y, DeltaSeconds,
+			PidStates.Angle.Pitch.UpdateFromError(AttitudeErrorDeg.Y, DeltaSeconds,
 				ControllerConfig.Attitude.AngleGains.Pitch),
-			PidStates.Angle.Yaw.UpdateFromError(AttitudeErrorDegPerSec.Z, DeltaSeconds,
+			PidStates.Angle.Yaw.UpdateFromError(AttitudeErrorDeg.Z, DeltaSeconds,
 				ControllerConfig.Attitude.AngleGains.Yaw));
 
 		// 限幅角速率
@@ -1548,12 +1651,18 @@ FVector UFlightControllerComponent::ComputeDesiredMoment(const FDronePilotInput&
 	Runtime.ControlOutput.Targets.Rate.BodyRatesDegreesPerSec = DesiredBodyRates;
 
 	// 将归一化指令转换为物理力矩 (N·m)
-	// M_axis = u_axis × M_max_axis
-	// M_max 由 Jacobian RowScale 给出（该轴最大可用力矩）
-	const double* RowScale = AllocationCache.RowScale;
-	const float DesiredMomentX = static_cast<float>(FMath::Clamp(NormalizedTorqueCommand.X, -1.0f, 1.0f) * RowScale[3]);
-	const float DesiredMomentY = static_cast<float>(FMath::Clamp(NormalizedTorqueCommand.Y, -1.0f, 1.0f) * RowScale[4]);
-	const float DesiredMomentZ = static_cast<float>(FMath::Clamp(NormalizedTorqueCommand.Z, -1.0f, 1.0f) * RowScale[5]);
+		// M_axis = u_axis × M_max_axis
+		// M_max 由 Jacobian RowScale 给出（该轴最大可用力矩）
+		//
+		// ★ X/Y 符号翻转（关键，勿删）★
+		// 状态估计中角速度 X/Y 分量取负，使飞控约定（正滚=右滚，正俯=抬头）
+		// 与物理/Chaos 约定（正Mx=左滚，正My=低头）方向相反。
+		// PID 在飞控约定下输出归一化指令，乘 RowScale 前必须取反 X/Y，
+		// 否则"抬头纠正"会变成"低头加速"——即正反馈导致失控翻转。
+		const double* RowScale = AllocationCache.RowScale;
+		const float DesiredMomentX = static_cast<float>(FMath::Clamp(-NormalizedTorqueCommand.X, -1.0f, 1.0f) * RowScale[3]);
+		const float DesiredMomentY = static_cast<float>(FMath::Clamp(-NormalizedTorqueCommand.Y, -1.0f, 1.0f) * RowScale[4]);
+		const float DesiredMomentZ = static_cast<float>(FMath::Clamp(NormalizedTorqueCommand.Z, -1.0f, 1.0f) * RowScale[5]);
 
 	return FVector(DesiredMomentX, DesiredMomentY, DesiredMomentZ);
 }
@@ -1872,7 +1981,7 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalVelocity(const FDron
 }
 
 // ---------------------------------------------------------------------------
-// ComputeDesiredHorizontalAcceleration — 计算期望水平加速度
+// ComputeDesiredHorizontalForce — 计算期望水平力 (N)
 // ---------------------------------------------------------------------------
 // 串级结构（从外到内）：
 //
@@ -1880,17 +1989,17 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalVelocity(const FDron
 //     v_des_x = PID_pos_x(x_held − x_current)
 //     v_des_y = PID_pos_y(y_held − y_current)
 //
-//   速度环：
-//     a_des_x = PID_vel_x(v_des_x − v_current_x)
-//     a_des_y = PID_vel_y(v_des_y − v_current_y)
+//   速度环（直接输出力，非加速度）：
+//     F_des_x = PID_vel_x(v_des_x − v_current_x)   // Kp 已含 /100: cm/s 误差 → N
+//     F_des_y = PID_vel_y(v_des_y − v_current_y)
 //
-//   加速度限幅 → 送给力路径
+//   水平合力限幅(MaxHorizontalForceN) → 送给力路径
 //
 // 位置保持的"锚定"逻辑：
 //   - 有摇杆输入时 → 重新锚定 HeldPosition 到当前位置（位置 PID 暂停）
 //   - 无摇杆输入时 → 位置 PID 将无人机拉回 HeldPosition
 // ---------------------------------------------------------------------------
-FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const FDronePilotInput& PilotInput, float DeltaSeconds)
+FVector UFlightControllerComponent::ComputeDesiredHorizontalForce(const FDronePilotInput& PilotInput, float DeltaSeconds)
 {
 	const FVector CurrentPosition = Runtime.EstimatedState.State.PositionCm;
 	const FVector CurrentVelocity = Runtime.EstimatedState.State.VelocityCmPerSec;
@@ -1953,25 +2062,31 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const F
 	Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.X = DesiredVelocity.X;
 	Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.Y = DesiredVelocity.Y;
 
-	// ---- 速度环 → 期望加速度 ----
-	//   a_des = PID_vel(v_des − v_current)
+	// ---- 速度环 → 期望水平力 (N) ----
+	// 速度PID输出即为力(N)：
+	//   误差是 cm/s，输出是 N，故 Kp 已含 /100 换算（Kp_code = Kp_SI/100）
+	//   F_des = PID_vel(v_des − v_current)，单位 N
 	//   使用 UpdateFromMeasurement（导数对测量值），避免速度设定值跳变的 kick
-	FVector DesiredAcceleration = FVector::ZeroVector;
-	DesiredAcceleration.X = PidStates.Velocity.X.UpdateFromMeasurement(
+	//   注：PID 内部 OutputLimit=MaxHorizontalForceN 已对单轴力限幅，
+	//       此处对外层合力再做一次限幅，保证合力不超最大水平力。
+	FVector DesiredForceXY = FVector::ZeroVector;
+	DesiredForceXY.X = PidStates.Velocity.X.UpdateFromMeasurement(
 		DesiredVelocity.X, CurrentVelocity.X, DeltaSeconds, ControllerConfig.Force.VelocityGains.X);
-	DesiredAcceleration.Y = PidStates.Velocity.Y.UpdateFromMeasurement(
+	DesiredForceXY.Y = PidStates.Velocity.Y.UpdateFromMeasurement(
 		DesiredVelocity.Y, CurrentVelocity.Y, DeltaSeconds, ControllerConfig.Force.VelocityGains.Y);
 
-	// ---- 加速度限幅 ----
-	const float MaxHorizontalAcceleration = ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq;
-	const FVector2D DesiredAcceleration2D(DesiredAcceleration.X, DesiredAcceleration.Y);
-	if (DesiredAcceleration2D.SizeSquared() > FMath::Square(MaxHorizontalAcceleration))
+	// ---- 水平合力限幅 (N) ----
+	// 用 MaxHorizontalForceN 限幅，与速度PID OutputLimit 语义一致（力，非加速度）。
+	// 历史 MaxHorizontalAccelerationCmPerSecSq 仅作数值巧合（默认 600==600N），不在此使用。
+	const float MaxHF = ControllerConfig.Limits.MaxHorizontalForceN;
+	const FVector2D DesiredForce2D(DesiredForceXY.X, DesiredForceXY.Y);
+	if (DesiredForce2D.SizeSquared() > FMath::Square(MaxHF))
 	{
-		const FVector2D ClampedAcceleration = DesiredAcceleration2D.GetSafeNormal() * MaxHorizontalAcceleration;
-		DesiredAcceleration.X = ClampedAcceleration.X; DesiredAcceleration.Y = ClampedAcceleration.Y;
+		const FVector2D ClampedForce = DesiredForce2D.GetSafeNormal() * MaxHF;
+		DesiredForceXY.X = ClampedForce.X; DesiredForceXY.Y = ClampedForce.Y;
 	}
 
-	return FVector(DesiredAcceleration.X, DesiredAcceleration.Y, 0.0f);
+	return FVector(DesiredForceXY.X, DesiredForceXY.Y, 0.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -2503,28 +2618,42 @@ void UFlightControllerComponent::UpdateControlAuthorityInfo()
 		TArray<double> ThrustCol, NPCol, NYCol;
 		BuildJacobianSubmatrix(Airscrew, LocalPosition, ThrustCol, NPCol, NYCol);
 
-		const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
+			const double MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Airscrew->GetRotorDefinition());
 
-		// 计算推力列的6D L1范数
-		double ThrustColMag = 0.0;
-		for (int32 Row = 0; Row < WrenchDim; ++Row) ThrustColMag += FMath::Abs(ThrustCol[Row]);
+			// 计算推力列的6D L1范数
+			double ThrustColMag = 0.0;
+			for (int32 Row = 0; Row < WrenchDim; ++Row) ThrustColMag += FMath::Abs(ThrustCol[Row]);
 
-		if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ThrustColMag <= FlightControllerAllocation::AuthorityEpsilon)
-			continue;
+			if (MaxAllocatedThrust <= FlightControllerAllocation::AuthorityEpsilon || ThrustColMag <= FlightControllerAllocation::AuthorityEpsilon)
+				continue;
 
-		// 累加基准权限（Effectiveness = 1 的原始值）
-		// 力轴 [0..2]：累加绝对值
-		for (int32 Axis = 0; Axis < 3; ++Axis)
-		{
-			BaselineForceAuthority[Axis] += FMath::Abs(ThrustCol[Axis]);
-		}
-		// 力矩轴 [3..5]：正/负方向分别累加
-		for (int32 Axis = 0; Axis < 3; ++Axis)
-		{
-			const double AxisMoment = ThrustCol[Axis + 3];
-			if (AxisMoment >= 0.0) BaselinePositiveMoment[Axis] += AxisMoment;
-			else BaselineNegativeMoment[Axis] -= AxisMoment;
-		}
+			const bool bHasNozzle = Airscrew->GetRotorDefinition().HasNozzle();
+
+			// 累加基准权限（Effectiveness = 1 的原始值）
+			// 力轴 [0..2]：推力列 + 喷口列的绝对值之和
+			for (int32 Axis = 0; Axis < 3; ++Axis)
+			{
+				BaselineForceAuthority[Axis] += FMath::Abs(ThrustCol[Axis]);
+				if (bHasNozzle)
+				{
+					BaselineForceAuthority[Axis] += FMath::Abs(NPCol[Axis]) + FMath::Abs(NYCol[Axis]);
+				}
+			}
+			// 力矩轴 [3..5]：正/负方向分别累加推力列+喷口列
+			for (int32 Axis = 0; Axis < 3; ++Axis)
+			{
+				auto AccMom = [&](double Val)
+				{
+					if (Val >= 0.0) BaselinePositiveMoment[Axis] += Val;
+					else BaselineNegativeMoment[Axis] -= Val;
+				};
+				AccMom(ThrustCol[Axis + 3]);
+				if (bHasNozzle)
+				{
+					AccMom(NPCol[Axis + 3]);
+					AccMom(NYCol[Axis + 3]);
+				}
+			}
 	}
 
 	// 基准平衡力矩权限

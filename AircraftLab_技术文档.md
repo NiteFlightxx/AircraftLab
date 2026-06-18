@@ -558,7 +558,7 @@ DesiredRollDegrees  =  RadiansToDegrees(Atan2(RightAccel, Gravity));
 
 ### 6.3 期望水平速度与加速度
 
-`ComputeDesiredHorizontalVelocity`（`cpp:1010-1018`）和 `ComputeDesiredHorizontalAcceleration`（`cpp:1020-1102`）。
+`ComputeDesiredHorizontalVelocity`（`cpp:1010-1018`）和 `ComputeDesiredHorizontalForce`（`cpp:1020-1102`）。
 
 #### 速度设定
 

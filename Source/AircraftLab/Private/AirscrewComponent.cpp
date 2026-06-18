@@ -291,18 +291,43 @@ void UAirscrewComponent::ApplyThrustForce_PhysicsThread(Chaos::FRigidBodyHandle_
 		return;
 	}
 
-	// 1. 施加推力
-	BodyHandle->AddForce(CurrentThrustVectorWorld, false);
+	// =========================================================================
+	// 单位约定（关键，勿改）：
+	//   控制器/PID/Jacobian 全部用 SI：
+	//     力 N = kg·m/s²，力矩 N·m = m × N
+	//   Chaos 物理引擎用 UE 厘米单位：
+	//     位置/速度 cm / cm/s，质量 kg，但 AddForce/AddTorque 期望的力/力矩
+	//     是 a=F/M 直接在 cm 域积分的形式，即力单位 = kg·cm/s² = N × 100。
+	//
+	//   证明：悬停标定 HoverThrustN = m×g = 100×9.8 = 980 N。
+	//     重力 g = 980 cm/s²。AddForce(F) 按 a=F/M 积分：
+	//       若 F 用 N  → a = 980/100 = 9.8 cm/s²，仅抵消重力 1%，悬停不住
+	//       若 F 用 N×100 → a = 98000/100 = 980 cm/s²，正好抵消重力 ✓
+	//     故 SI→Chaos 力换算系数 = 100。
+	//
+	//   力矩：SI 用 N·m，Chaos 用 kg·cm²/s² = N·m × 100（同理）。
+	//     偏心矩 τ = r × F：r 是 cm（Chaos 位置 X() 为 cm），F 是 N（SI），
+	//     叉乘得 N·cm = N·m × 0.01，再 ×100 转 UE 力矩 = N·m × 1.0。
+	//     即：力臂先 ×0.01→m，算出 N·m，再 ×100 喂给 AddTorque。
+	// =========================================================================
+	constexpr float SI_FORCE_TO_UE = 100.0f;        // N → kg·cm/s²
+	constexpr float SI_MOMENT_TO_UE = 100.0f;       // N·m → kg·cm²/s²
+	constexpr float CM_TO_M = 0.01f;                // cm → m
+
+	// 1. 施加推力（N → UE力）
+	BodyHandle->AddForce(CurrentThrustVectorWorld * SI_FORCE_TO_UE, false);
 
 	// 2. 推力偏心矩：τ_pos = r × F_thrust
-	// r = 旋翼世界位置 - 刚体质心世界位置
+	// r = 旋翼世界位置 - 刚体质心世界位置（cm）
+	// 力臂 cm→m 使叉乘得 N·m，再 ×100 转 UE 力矩
 	const FVector RigidBodyComWorldPos(BodyHandle->X());
-	const FVector ArmWorld = CurrentApplicationPointWorld - RigidBodyComWorldPos;
-	const FVector ThrustMoment = FVector::CrossProduct(ArmWorld, CurrentThrustVectorWorld);
-	BodyHandle->AddTorque(ThrustMoment, false);
+	const FVector ArmWorldMeters = (CurrentApplicationPointWorld - RigidBodyComWorldPos) * CM_TO_M;
+	const FVector ThrustMomentNm = FVector::CrossProduct(ArmWorldMeters, CurrentThrustVectorWorld);
+	BodyHandle->AddTorque(ThrustMomentNm * SI_MOMENT_TO_UE, false);
 
 	// 3. 反扭矩（accumulate 模式，因可能多个旋翼需要叠加）
-	BodyHandle->AddTorque(CurrentReactionTorqueVectorWorld, true);
+	// CurrentReactionTorqueVectorWorld 已是 SI 力矩（N·m，方向沿推力轴），直接 ×100
+	BodyHandle->AddTorque(CurrentReactionTorqueVectorWorld * SI_MOMENT_TO_UE, true);
 }
 
 void UAirscrewComponent::DrawDebugVisualization() const
