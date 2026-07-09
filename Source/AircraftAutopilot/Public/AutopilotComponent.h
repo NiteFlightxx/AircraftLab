@@ -11,6 +11,7 @@
 #include "PathFollowing/PathFollowingTypes.h"
 #include "Turn/TurnBehavior.h"           // FTurnCommand
 #include "Behavior/BehaviorTypes.h"
+#include "HoverThrust/HoverThrustEstimator.h"  // FHoverThrustEstimator + FHoverThrustEstimatorConfig
 
 #include "AutopilotComponent.generated.h"
 
@@ -250,6 +251,22 @@ protected:
 	float MissionUpdateRateHz = 10.0f;
 
 	// -----------------------------------------------------------------------
+	// 悬停推力自适应估计（第 1 批：零阶 EKF，对标 PX4 mc_hover_thrust_estimator）
+	// -----------------------------------------------------------------------
+
+	/** 悬停推力 EKF 配置 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust")
+	FHoverThrustEstimatorConfig HoverThrustConfig;
+
+	/** 是否启用悬停推力自适应估计（false=回退 HoverCollective 死常数） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust")
+	bool bUseHoverThrustEstimator = true;
+
+	/** 取当前悬停推力估计（归一化 0~1）。未启用/未初始化时返回 HoverThrustConfig.InitialHoverThrust */
+	UFUNCTION(BlueprintPure, Category = "Autopilot|HoverThrust")
+	float GetEstimatedHoverThrust() const;
+
+	// -----------------------------------------------------------------------
 	// 传感器输入（由外部传感器组件写入，驱动 Emergency/AvoidObstacle 仲裁）
 	// -----------------------------------------------------------------------
 
@@ -297,6 +314,9 @@ protected:
 	/** Mission 累加器 */
 	float MissionAccumulatorSeconds = 0.0f;
 
+	/** 悬停推力零阶 EKF 实例（纯 C++ 值成员，游戏线程每帧 Update） */
+	FHoverThrustEstimator HoverThrustEstimator;
+
 	/** 创建各层实例 */
 	void CreateSubobjects();
 
@@ -308,4 +328,12 @@ protected:
 
 	/** 组装 FAutopilotInjection */
 	void BuildInjection(FAutopilotInjection& OutInjection) const;
+
+	/**
+	 * 推进悬停推力 EKF 并把估计值注入 FeedForwardCalculator 基准。
+	 * 读 FlightController 的垂直加速度（世界系 cm/s² → m/s²）与当前总推力
+	 * （Targets.Attitude.CollectiveThrust），更新估计后调
+	 * FeedForwardCalc->SetHoverThrustBaseline。每帧在 FeedForward.Compute 之前调用。
+	 */
+	void UpdateHoverThrustEstimate(float DeltaSeconds);
 };

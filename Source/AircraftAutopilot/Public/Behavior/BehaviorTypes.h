@@ -116,6 +116,20 @@ struct AIRCRAFTAUTOPILOT_API FBehaviorStateInput
 	/** 距最近障碍距离（cm），<0 表示无检测 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Behavior")
 	float NearestObstacleDistanceCm = -1.0f;
+
+	/**
+	 * 当前归一化总推力（0~1），来自上一帧控制循环输出 CollectiveThrust。
+	 * 第 6 批：Land 着陆检测用（与 HoverThrustEstimateNormalized 比较，判定"推力≈悬停"）。
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Behavior")
+	float CollectiveThrustNormalized = 0.0f;
+
+	/**
+	 * 估计的悬停推力（0~1），来自 HoverThrustEstimator（第 1 批 EKF）。
+	 * 未初始化时回退到配置初值。Land 着陆检测用于"推力≈悬停"判定。
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Behavior")
+	float HoverThrustEstimateNormalized = 0.5f;
 };
 
 /**

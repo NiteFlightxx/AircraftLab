@@ -310,6 +310,14 @@ void UTrajectoryGenerator::RecomputeArcLengths()
 // ---------------------------------------------------------------------------
 // 从静止启动（V_init=0），加速到 Vc，巡航，减速到 VEnd。
 // CurrentS = 从轨迹起点算的绝对弧长（加速段从 s=0 开始，增量距离 = CurrentS）。
+//
+// 冷启动死锁修复：
+//   纯公式 v=sqrt(2·a·s) 在 s=0 处 v=0 → 游标推进 0 → 设定点不动 →
+//   MotionProfile 位置闭合误差为 0 → 输出速度 0 → 无人机不动 → 投影游标不增长 →
+//   死锁，仅靠物理扰动缓慢打破。表现为"下发了 CommandMoveTo 却纹丝不动"。
+//   修复：加速段给一个起步保底速度 MinStartSpeed，使游标自推进、设定点前移，
+//   位置环产生误差拉动无人机前进。保底速度由加速度推导（sqrt(2·a·dt_planning)），
+//   dt_planning 取游戏线程典型帧时（0.02s=50Hz），保证起步即有可观测位移。
 // ---------------------------------------------------------------------------
 float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS) const
 {
@@ -335,6 +343,11 @@ float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS
 		EffectiveVc = FMath::Min(EffectiveVc, Vc);
 	}
 
+	// 起步保底速度：打破 s=0 → v=0 死锁。
+	// 取 sqrt(2·a·dt_planning)（dt_planning=0.02s），随加速段推进被 sqrt(2·a·s) 自然接管。
+	constexpr float PlanningDtSeconds = 0.02f;
+	const float MinStartSpeed = FMath::Sqrt(2.0f * A * PlanningDtSeconds);
+
 	// 减速段优先：距终点 < s_dec → 减速
 	const float DecelStartS = FMath::Max(TotalS - SDec, 0.0f);
 	if (CurrentS >= DecelStartS)
@@ -348,6 +361,7 @@ float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS
 	if (CurrentS < SAcc)
 	{
 		float VAccel = FMath::Sqrt(2.0f * A * CurrentS);
+		VAccel = FMath::Max(VAccel, MinStartSpeed); // 冷启动保底
 		return FMath::Min(VAccel, EffectiveVc);
 	}
 

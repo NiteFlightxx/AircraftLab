@@ -804,6 +804,41 @@ struct AIRCRAFTLAB_API FDroneAttitudeControllerConfig
 	/** 角速率反馈的一阶低通滤波配置 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
 	FDroneFirstOrderFilterConfig RateFilter;
+
+	// -----------------------------------------------------------------------
+	// 第 3 批：姿态设定值 2 阶参考模型（对标 PX4 AttitudeControl.cpp:82-129）
+	// -----------------------------------------------------------------------
+
+	/** 是否启用 Roll/Pitch 设定值 2 阶参考模型平滑（关闭则保留原始直通行为） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	bool bEnableAttitudeRefModel = true;
+
+	/** 参考模型自然频率 ω（rad/s）。临界阻尼 ζ=1，时间常数 τ=1/ω。
+	 *  ω 越大跟踪越快但越接近阶跃（前馈越激进）；越小越平滑。
+	 *  默认 6.0（τ≈0.17s），与 AngleGains Kp 量级匹配。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.5", ClampMax = "30.0"))
+	float RefModelNaturalFrequency = 6.0f;
+
+	/** 角速度前馈限幅（°/s）。防止参考模型在设定值大跳变时输出过大的 rate_ff。
+	 *  对标 PX4 MC_REF_FF_MAX（默认 100°/s）。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	float RefModelRateFFLimitDegPerSec = 100.0f;
+
+	// -----------------------------------------------------------------------
+	// 第 5 批：四元数姿态控制（对标 PX4 AttitudeControl.cpp:139-205）
+	// -----------------------------------------------------------------------
+
+	/** 是否启用四元数姿态误差（取代欧拉角线性误差）。
+	 *  开启后用 Q_err = Q_cur⁻¹·Q_des 提取机体角速度设定值，消除欧拉角耦合。
+	 *  关闭则保留第 3 批的欧拉角+参考模型路径（向后兼容）。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	bool bEnableQuaternionAttitude = true;
+
+	/** 偏航权重 [0,1]。推力方向（Roll/Pitch）优先对齐，Yaw 用此权重缩放。
+	 *  默认 0.4（PX4 默认）：偏航响应较姿态慢，优先保推力方向。
+	 *  1.0 = 全权偏航（与欧拉角行为一致），0 = 完全忽略偏航误差。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float YawWeight = 0.4f;
 };
 
 /**
@@ -1513,6 +1548,27 @@ struct AIRCRAFTLAB_API FDroneControlAllocationConfig
 	/** 阻尼最小二乘伪逆的阻尼系数，越大越稳定但控制跟踪越软 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (ClampMin = "0.0"))
 	float DampedPseudoInverseLambda = 0.05f;
+
+	// -----------------------------------------------------------------------
+	// 第 2 批：推力-姿态解耦 + 垂直优先分配（对标 PX4 PositionControl/ControlAllocation）
+	// -----------------------------------------------------------------------
+
+	/** 是否启用总距倾斜补偿（cos_tilt compensation）。
+	 *  开启后机体倾斜时总距自动除以 cos(tilt) 以维持垂直升力，
+	 *  消除"倾斜掉高度"。关闭则保留原始行为。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator")
+	bool bEnableTiltCompensation = true;
+
+	/** cos(tilt) 下限，防止接近 90° 倾角时除零 / 推力爆炸 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float MinCosTilt = 0.1f;
+
+	/** 法矩阵行权重（垂直优先分配的加权伪逆近似，对标 PX4 sequential desaturation）。
+	 *  行0=总距、行1=滚转、行2=俯仰、行3=偏航。
+	 *  权重大者优先保留，权重小者饱和时先被牺牲。
+	 *  默认 roll/pitch 最高、thrust 次之、yaw 最低 → 饱和时先牺牲偏航保姿态/升力。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator")
+	FVector4 AxisWeights = FVector4(0.7f, 1.0f, 1.0f, 0.4f); // (Thrust, Roll, Pitch, Yaw)
 };
 
 /**

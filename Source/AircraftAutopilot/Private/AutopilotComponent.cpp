@@ -12,6 +12,7 @@
 #include "Turn/TurnBehavior.h"
 #include "Behavior/BehaviorPlanner.h"
 #include "Mission/MissionPlanner.h"
+#include "HoverThrust/HoverThrustEstimator.h"
 #include "AutopilotDebugDraw.h"
 
 // AircraftLab 依赖（Phase 4+ 单向依赖）
@@ -53,6 +54,9 @@ void UAutopilotComponent::BeginPlay()
 		{
 			MotionProfile->Initialize(EstState.State.PositionCm, EstState.State.AttitudeDegrees.Yaw);
 		}
+
+		// 配置悬停推力 EKF（应用详情面板的 HoverThrustConfig 并重置到 InitialHoverThrust）
+		HoverThrustEstimator.Configure(HoverThrustConfig);
 	}
 }
 
@@ -189,6 +193,12 @@ void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 		ProfiledSP = MotionProfile->Update(NominalSP, DeltaTime);
 	}
 	CachedProfiledSetpoint = ProfiledSP;
+
+	// -----------------------------------------------------------------------
+	// 7.5) Hover Thrust EKF（第 1 批：在线估计悬停推力基准，注入 FeedForward）
+	//      在 FeedForward.Compute 之前更新，使本帧推力前馈即用最新估计。
+	// -----------------------------------------------------------------------
+	UpdateHoverThrustEstimate(DeltaTime);
 
 	// -----------------------------------------------------------------------
 	// 8) Feed Forward（前馈计算）
@@ -511,4 +521,51 @@ void UAutopilotComponent::FillBehaviorInput(FBehaviorStateInput& OutInput) const
 	OutInput.BatteryLevel = BatteryLevel;
 	OutInput.bLinkHealthy = bLinkHealthy;
 	OutInput.NearestObstacleDistanceCm = NearestObstacleDistanceCm;
+
+	// 第 6 批：推力感知着陆检测所需的两路推力信号
+	//   CollectiveThrustNormalized —— 上一帧控制循环输出的归一化总推力
+	//   HoverThrustEstimateNormalized —— EKF 估计的悬停推力（未初始化回退到配置初值）
+	OutInput.CollectiveThrustNormalized = FlightController->GetControlOutput().Targets.Attitude.CollectiveThrust;
+	OutInput.HoverThrustEstimateNormalized = HoverThrustEstimator.IsInitialized()
+		? HoverThrustEstimator.GetHoverThrust()
+		: HoverThrustConfig.InitialHoverThrust;
+}
+
+// ---------------------------------------------------------------------------
+// 悬停推力自适应估计（第 1 批）
+// ---------------------------------------------------------------------------
+
+float UAutopilotComponent::GetEstimatedHoverThrust() const
+{
+	return HoverThrustEstimator.GetHoverThrust();
+}
+
+void UAutopilotComponent::UpdateHoverThrustEstimate(float DeltaSeconds)
+{
+	if (!bUseHoverThrustEstimator || !FeedForwardCalc || !FlightController)
+	{
+		// 未启用或缺失依赖：确保 FeedForward 回退到配置值（基准置负即触发回退分支）
+		if (FeedForwardCalc)
+		{
+			FeedForwardCalc->SetHoverThrustBaseline(-1.0f);
+		}
+		return;
+	}
+
+	// 输入1：垂直加速度（世界系 cm/s² → m/s²）。+Z 向上，悬停≈0，与 EKF 模型自洽。
+	const float AccZCmPerSecSq = FlightController->GetEstimatedState().State.AccelerationWorldCmPerSecSq.Z;
+	const float AccZMpsSq = AccZCmPerSecSq * 0.01f; // cm/s² → m/s²
+
+	// 输入2：当前施加的归一化总推力（上一帧控制循环输出，Targets.Attitude.CollectiveThrust）。
+	// 首帧（控制器尚未产出）CollectiveThrust=0，EKF 会以悬停模型预测 acc=-g 并被门限拒绝，
+	// 不影响估计稳定性；待控制器产出有效推力后即正常融合。
+	const float ThrustNormalized = FlightController->GetControlOutput().Targets.Attitude.CollectiveThrust;
+
+	HoverThrustEstimator.Update(DeltaSeconds, AccZMpsSq, ThrustNormalized);
+
+	// 把估计值注入推力前馈基准（>0 生效，替代 Params.HoverCollective 死常数）
+	if (HoverThrustEstimator.IsInitialized())
+	{
+		FeedForwardCalc->SetHoverThrustBaseline(HoverThrustEstimator.GetHoverThrust());
+	}
 }

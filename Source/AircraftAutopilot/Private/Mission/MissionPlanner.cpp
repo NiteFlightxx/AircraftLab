@@ -199,16 +199,26 @@ bool UMissionPlanner::IsCurrentItemComplete(const FBehaviorStateInput& Input) co
 	if (!MissionItems.IsValidIndex(CurrentItemIndex)) return false;
 	const FMissionItem& Item = MissionItems[CurrentItemIndex];
 
+	// 第 7 批：水平/垂直分离接受判定辅助 lambda
+	// 水平距离² < max(AcceptanceRadiusCm, 50)² 且 垂直距离 < AcceptanceRadiusZCm
+	auto ReachedXYZ = [&Input](const FVector& TargetCm, float AcceptXY, float AcceptZ)
+	{
+		const float XYDistSq = FVector::DistSquared2D(Input.PositionCm, TargetCm);
+		const float XYTol = FMath::Max(AcceptXY, 50.0f);
+		const float ZDist = FMath::Abs(Input.PositionCm.Z - TargetCm.Z);
+		return XYDistSq < XYTol * XYTol && ZDist < FMath::Max(AcceptZ, 1.0f);
+	};
+
 	switch (Item.Type)
 	{
 	case EMissionItemType::TakeOff:
 		// 到达起飞高度（粗判：当前高度 > Home高度 + TakeOffAltitude - 容差）
 		return Input.PositionCm.Z > (HomePositionCm.Z + Item.TakeOffAltitudeCm - 50.0f) && !Input.bOnGround;
 	case EMissionItemType::Waypoint:
-		return FVector::DistSquared(Input.PositionCm, Item.TargetPositionCm) < 100.0f * 100.0f; // 100cm 容差
+		return ReachedXYZ(Item.TargetPositionCm, Item.AcceptanceRadiusCm, Item.AcceptanceRadiusZCm);
 	case EMissionItemType::Path:
 		if (Item.PathPointsCm.Num() == 0) return true;
-		return FVector::DistSquared(Input.PositionCm, Item.PathPointsCm.Last()) < 100.0f * 100.0f;
+		return ReachedXYZ(Item.PathPointsCm.Last(), Item.AcceptanceRadiusCm, Item.AcceptanceRadiusZCm);
 	case EMissionItemType::Orbit:
 		// Orbit 持续指定时长
 		return OrbitTimer >= Item.LoiterDurationSeconds;
@@ -216,9 +226,10 @@ bool UMissionPlanner::IsCurrentItemComplete(const FBehaviorStateInput& Input) co
 		return LoiterTimer >= Item.LoiterDurationSeconds;
 	case EMissionItemType::ReturnHome:
 	{
+		// 第 7 批：用 AcceptanceRadiusCm/ZCm 替代硬编码 150cm 球体
 		FVector HomeAbove = HomePositionCm;
 		HomeAbove.Z = Item.ReturnAltitudeCm;
-		return FVector::DistSquared(Input.PositionCm, HomeAbove) < 150.0f * 150.0f;
+		return ReachedXYZ(HomeAbove, Item.AcceptanceRadiusCm, Item.AcceptanceRadiusZCm);
 	}
 	case EMissionItemType::Land:
 		return Input.bOnGround || (Input.PositionCm.Z < 20.0f && Input.VelocityCmPerSec.Z >= -10.0f);

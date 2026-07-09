@@ -96,6 +96,22 @@ struct AIRCRAFTAUTOPILOT_API FMissionItem
 	/** 返航高度（cm）—— ReturnHome 用 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Mission", meta = (ClampMin = "0.0"))
 	float ReturnAltitudeCm = 2000.0f;
+
+	/**
+	 * 航点到达水平容差（cm）—— 第 7 批：航点判定 XY/Z 分离。
+	 * Waypoint/Path/ReturnHome 完成判定：水平距离² < max(AcceptanceRadiusCm, 50)²
+	 *                                       且 垂直距离 < AcceptanceRadiusZCm。
+	 * 默认 50cm（沿用原 100cm³ 球体判定的体感下限）。
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Mission", meta = (ClampMin = "0.0"))
+	float AcceptanceRadiusCm = 50.0f;
+
+	/**
+	 * 航点到达垂直容差（cm）—— 第 7 批：与水平容差分离。
+	 * 垂直精度通常比水平要求更宽（高度保持误差大），默认 100cm。
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Mission", meta = (ClampMin = "0.0"))
+	float AcceptanceRadiusZCm = 100.0f;
 };
 
 /** 任务执行状态 */

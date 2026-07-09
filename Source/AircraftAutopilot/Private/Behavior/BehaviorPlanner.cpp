@@ -108,9 +108,14 @@ bool UBehaviorPlanner::Update(const FBehaviorStateInput& Input, float DeltaSecon
 	EBehaviorState Arbitrated = Arbitrate(Input);
 	if (Arbitrated != CurrentStateType && Arbitrated != EBehaviorState::Idle)
 	{
-		SwitchTo(Arbitrated, EBehaviorTransitionReason::EmergencyTrigger, Input);
-		// 紧急抢占时清除挂起状态，避免紧急解除后误执行陈旧指令
-		PendingState.Reset();
+	// 第 7 批：failsafe 直接触发的 ReturnHome 未经 CommandReturnHome，需补齐 Home/高度参数
+	if (Arbitrated == EBehaviorState::ReturnHome)
+	{
+	SyncReturnHomeState();
+	}
+	SwitchTo(Arbitrated, EBehaviorTransitionReason::EmergencyTrigger, Input);
+	// 紧急抢占时清除挂起状态，避免紧急解除后误执行陈旧指令
+	PendingState.Reset();
 	}
 	else if (PendingState.IsSet() && PendingState.GetValue() != CurrentStateType)
 	{
@@ -137,7 +142,11 @@ bool UBehaviorPlanner::Update(const FBehaviorStateInput& Input, float DeltaSecon
 		EBehaviorState ReArb = Arbitrate(Input);
 		if (ReArb != CurrentStateType && ReArb != EBehaviorState::Idle)
 		{
-			SwitchTo(ReArb, EBehaviorTransitionReason::EmergencyTrigger, Input);
+		if (ReArb == EBehaviorState::ReturnHome)
+		{
+		SyncReturnHomeState();
+		}
+		SwitchTo(ReArb, EBehaviorTransitionReason::EmergencyTrigger, Input);
 		}
 		else
 		{
@@ -173,18 +182,50 @@ void UBehaviorPlanner::SwitchTo(EBehaviorState NewState, EBehaviorTransitionReas
 
 EBehaviorState UBehaviorPlanner::Arbitrate(const FBehaviorStateInput& Input) const
 {
-	// Failsafe：最高（此处无具体触发条件，保留接口）
-	// Emergency：低电量/失联
-	if (!Input.bLinkHealthy || Input.BatteryLevel < 0.15f)
+	// 第 7 批：failsafe 分层仲裁（优先级从高到低），对标 PX4 failsafe 分级
+	// 0) Emergency —— 显式触发（TriggerEmergency），最高优先级，立即悬停保命
+	if (bEmergencyTriggered)
 	{
 		return EBehaviorState::Emergency;
 	}
-	// AvoidObstacle：检测到近距障碍
+	// 已进入 Land 后只允许 Emergency 抢占：避免电池电压在下降卸载后回弹导致 Land↔RTH 反复抖动
+	if (CurrentStateType == EBehaviorState::Land)
+	{
+		return CurrentStateType;
+	}
+	// 1) 电量危急（<10%）→ 立即降落（对标 PX4 critical battery land）
+	if (Input.BatteryLevel < 0.10f)
+	{
+		return EBehaviorState::Land;
+	}
+	// 2) 电量低（<20%）→ 返航；无 Home 则就地降落（避免飞向未设置的零点）
+	if (Input.BatteryLevel < 0.20f)
+	{
+		return bHomePositionSet ? EBehaviorState::ReturnHome : EBehaviorState::Land;
+	}
+	// 3) 链路丢失 → 有 Home 则返航，无 Home 则原地悬停保命
+	if (!Input.bLinkHealthy)
+	{
+		return bHomePositionSet ? EBehaviorState::ReturnHome : EBehaviorState::Hover;
+	}
+	// 4) 近距障碍 → 避障
 	if (Input.NearestObstacleDistanceCm >= 0.0f && Input.NearestObstacleDistanceCm < 200.0f)
 	{
 		return EBehaviorState::AvoidObstacle;
 	}
 	return CurrentStateType; // 无高优先级触发
+}
+
+void UBehaviorPlanner::SyncReturnHomeState()
+{
+	// failsafe 仲裁直接返回 ReturnHome 时不经过 CommandReturnHome，故状态实例的
+	// HomePositionCm/ReturnAltitudeCm 仍是默认值（零点/2000）。这里用 Planner 的
+	// HomePositionCm 与 DefaultReturnAltitudeCm 补齐，确保 RTL 飞向正确 Home。
+	if (UBehaviorState_ReturnHome* RTH = Cast<UBehaviorState_ReturnHome>(EnsureState(EBehaviorState::ReturnHome)))
+	{
+		RTH->HomePositionCm = HomePositionCm;
+		RTH->ReturnAltitudeCm = DefaultReturnAltitudeCm;
+	}
 }
 
 UBehaviorState* UBehaviorPlanner::EnsureState(EBehaviorState StateType)

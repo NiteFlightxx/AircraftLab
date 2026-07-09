@@ -92,13 +92,29 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
 	void CommandTakeOff(float AltitudeCm = 1000.0f);
 
-	/** 设置 Home 位置（用于 RTH） */
+	/** 设置 Home 位置（用于 RTH）。设置后 bHomePositionSet 置真，使 failsafe 可触发返航。 */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
-	void SetHomePosition(const FVector& HomeCm) { HomePositionCm = HomeCm; }
+	void SetHomePosition(const FVector& HomeCm) { HomePositionCm = HomeCm; bHomePositionSet = true; }
 
 	/** 获取 Home 位置 */
 	UFUNCTION(BlueprintPure, Category = "Autopilot|Behavior")
 	FVector GetHomePosition() const { return HomePositionCm; }
+
+	/** Home 是否已设置（failsafe 仲裁用，决定链路丢失/低电量时能否返航） */
+	UFUNCTION(BlueprintPure, Category = "Autopilot|Behavior")
+	bool HasHomePosition() const { return bHomePositionSet; }
+
+	/** 触发紧急状态（最高优先级 failsafe，外部/传感器调用）。立即抢占到 Emergency 行为。 */
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
+	void TriggerEmergency() { bEmergencyTriggered = true; }
+
+	/** 清除紧急触发（恢复正常仲裁）。外部确认异常排除后调用。 */
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
+	void ClearEmergency() { bEmergencyTriggered = false; }
+
+	/** 紧急触发是否激活 */
+	UFUNCTION(BlueprintPure, Category = "Autopilot|Behavior")
+	bool IsEmergencyTriggered() const { return bEmergencyTriggered; }
 
 	// -----------------------------------------------------------------------
 	// 主更新
@@ -135,6 +151,18 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Behavior")
 	FVector HomePositionCm = FVector::ZeroVector;
 
+	/** Home 是否已设置（SetHomePosition 后置真）。failsafe 决定能否返航，否则原地降落/悬停。 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Behavior")
+	bool bHomePositionSet = false;
+
+	/** 紧急触发标志（最高优先级 failsafe）。由 TriggerEmergency 置真，ClearEmergency 清除。 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Behavior")
+	bool bEmergencyTriggered = false;
+
+	/** failsafe 返航默认高度（cm）。Arbitrate 直接触发 ReturnHome 时使用（不经 Command* 路径）。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior", meta = (ClampMin = "0.0"))
+	float DefaultReturnAltitudeCm = 2000.0f;
+
 	/** 最近一次输出缓存 */
 	FBehaviorOutput LastOutput;
 
@@ -156,4 +184,7 @@ protected:
 
 	/** 确保指定状态有实例，没有则创建默认 */
 	UBehaviorState* EnsureState(EBehaviorState StateType);
+
+	/** 同步 ReturnHome 状态实例的 Home/高度参数（failsafe 直接触发 RTL 时，未经 CommandReturnHome 路径需补齐） */
+	void SyncReturnHomeState();
 };

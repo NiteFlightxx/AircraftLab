@@ -944,6 +944,46 @@ private:
 	FDronePilotInput CachedPilotInput;
 
 	// -----------------------------------------------------------------------
+	// 第 3 批：姿态设定值 2 阶参考模型（对标 PX4 AttitudeControl.cpp:82-129）
+	// 对期望 Roll/Pitch 做临界阻尼平滑，输出平滑设定值 + 其导数（角速度前馈），
+	// 消除角度设定值阶跃引起的角速度环过冲。
+	// -----------------------------------------------------------------------
+
+	/** 单轴 2 阶参考模型状态：x=平滑设定值，v=其导数（角速度前馈） */
+	struct FRefModelState1D
+	{
+		float x = 0.0f;   // 平滑后的设定值
+		float v = 0.0f;   // dx/dt（角速度前馈）
+		bool bInitialized = false;
+		void Reset() { x = 0.0f; v = 0.0f; bInitialized = false; }
+	};
+
+	/** Roll 参考模型状态 */
+	FRefModelState1D RollRefModel;
+	/** Pitch 参考模型状态 */
+	FRefModelState1D PitchRefModel;
+
+	/**
+	 * 角速度前馈缓存（第 3 批）。
+	 * ComputeDesiredBodyRates 写入（参考模型导数 rate_ff），
+	 * ComputeBodyTorqueCommand 读取并注入角速度环 Kff 通道。
+	 * Yaw 通道无参考模型，前馈置零（Autopilot 偏航前馈已由 AngleGains.Yaw.Kff 承载）。
+	 */
+	FVector RateFeedForwardDegPerSec = FVector::ZeroVector;
+
+	// -----------------------------------------------------------------------
+	// 第 4 批：分配饱和回传（对标 PX4 rate_control.cpp:88-117）
+	// AllocateToRotors 从残差符号算出各轴饱和标志，ComputeBodyTorqueCommand
+	// 据此限制角速度误差同向累积（防 windup）+ 大误差 I 衰减。
+	// 索引：[0]=Roll、[1]=Pitch、[2]=Yaw（与 RateGains 顺序一致）。
+	// -----------------------------------------------------------------------
+
+	/** 各轴正方向饱和（残差>0：该轴指令无法被满足，禁止误差继续正向累积） */
+	bool bAllocSaturatedPositive[3] = { false, false, false };
+	/** 各轴负方向饱和（残差<0：禁止误差继续负向累积） */
+	bool bAllocSaturatedNegative[3] = { false, false, false };
+
+	// -----------------------------------------------------------------------
 	// Autopilot 集成
 	// -----------------------------------------------------------------------
 

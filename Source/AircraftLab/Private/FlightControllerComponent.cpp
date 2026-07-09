@@ -780,21 +780,42 @@ void UFlightControllerComponent::InitializeDefaultControllerConfig()
 	ControllerConfig.Attitude.AngleGains.Pitch = { 4.5f, 0.0f, 0.20f, 20.0f, ControllerConfig.Limits.MaxPitchRateDegreesPerSec };
 	ControllerConfig.Attitude.AngleGains.Yaw = { 3.0f, 0.0f, 0.10f, 25.0f, ControllerConfig.Limits.MaxYawRateDegreesPerSec };
 	ControllerConfig.Attitude.AngleGains.Yaw.Kff = 1.0f; // 偏航角速度前馈（Autopilot 协调转弯/航向跟踪）
+	// 第 3 批：Roll/Pitch 角度环前馈——参考模型导数 rate_ff 注入 Kff 通道。
+	// Kff=1.0 使前馈全量通过；rate_ff 已在 ComputeDesiredBodyRates 限幅，无过冲风险。
+	ControllerConfig.Attitude.AngleGains.Roll.Kff = 1.0f;
+	ControllerConfig.Attitude.AngleGains.Pitch.Kff = 1.0f;
 	ControllerConfig.Attitude.AngleGains.Roll.DerivativeCutoffHz = 12.0f;
 	ControllerConfig.Attitude.AngleGains.Pitch.DerivativeCutoffHz = 12.0f;
 	ControllerConfig.Attitude.AngleGains.Yaw.DerivativeCutoffHz = 8.0f;
 
 	// ========================================================================
 	// Rate PID — 内环：角速率误差 → 归一化力矩指令
-	// 公式：u = Kp·(ω_des − ω_current) + Ki·∫(ω_des − ω)dt + Kd·d(ω_des − ω)/dt
+	// 公式：u = Kp·(ω_des − ω_current) + Ki·∫(ω_des − ω)dt + Kd·d(ω_des − ω)/dt + Kff·rate_ff
 	// 速率环用 UpdateFromMeasurement（导数对测量值），避免设定值阶跃时的 kick
 	// 输出限制 = 0.35（归一化，对应混合器中该轴最大权限的 35%）
-	// 增益极小是因为惯量大（I ~ 5000 kg·cm² = 0.5 kg·m²），所需力矩很大
-	// 但混合器的归一化使输出范围也是 [−1, 1]，所以增益已隐含了惯量缩放
+	// 第 6 批调参（Bug #5 修复后）：速率环增益提升 4×。
+	//   Bug #5 修复前，四元数姿态环期望角速率被砍 57×（量纲错误），速率环在
+	//   ~0.06°/s 量级的期望值下勉强够用。修复后姿态环输出正确量级（瞬态可达
+	//   22°/s），但旧 Kp=0.002 在 22°/s 误差下仅产出 0.044 轴指令——速率环
+	//   无法跟踪姿态环设定值，积分器需 ~30s 建立物理配平，导致缓慢漂移。
+	//   提升 4× 后：满 P 权限对应 44°/s 误差（原 175°/s），积分器 ~3s 建立配平。
+	//   OutputLimit=0.35 仍是安全网，不会因增益增大而过驱。
+	// 第 3 批：Roll/Pitch Kff=0.5 激活角速度前馈通道（参考模型 rate_ff 注入），
+	//   对标 PX4 rate_control.cpp:78 的 rate feedforward；Yaw 保留 Kff=0（前馈在角度环）。
 	// ========================================================================
-	ControllerConfig.Attitude.RateGains.Roll = { 0.0020f, 0.00025f, 0.00015f, 120.0f, 0.35f };
-	ControllerConfig.Attitude.RateGains.Pitch = { 0.0020f, 0.00025f, 0.00015f, 120.0f, 0.35f };
+	ControllerConfig.Attitude.RateGains.Roll = { 0.0080f, 0.00100f, 0.00040f, 120.0f, 0.35f };
+	ControllerConfig.Attitude.RateGains.Pitch = { 0.0080f, 0.00100f, 0.00040f, 120.0f, 0.35f };
 	ControllerConfig.Attitude.RateGains.Yaw = { 0.0012f, 0.00015f, 0.00008f, 120.0f, 0.20f };
+	// 角速度环 Kff 必须为 0（修复双重前馈）。
+	// 参考模型导数 rate_ff（°/s，可达 ±100）已在角度环以 Kff=1.0 注入 DesiredRate（四元数路径
+	// 直接 +RollRateFF）。角速度环以 DesiredRate 为设定值，通过 Kp·(DesiredRate−ω) 跟踪即可——
+	// FF 已含在设定值中。若角速度环再开 Kff，则 rate_ff 被二次叠加：
+	//   1) Kp_rate·rate_ff（经设定值）+ 2) Kff_rate·rate_ff（FF 通道）
+	// 且 rate_ff 量纲为 °/s（最大 100），Kff_rate=0.5 会产出 50 的归一化输出，
+	// 远超 OutputLimit=0.35 → 角速度环被 FF 永久饱和 → 过冲 → 极限环振荡。
+	// 对标 PX4：rate setpoint 已含 FF，rate controller 自身 Kff=0，仅 Kp 跟踪。
+	ControllerConfig.Attitude.RateGains.Roll.Kff = 0.0f;
+	ControllerConfig.Attitude.RateGains.Pitch.Kff = 0.0f;
 	ControllerConfig.Attitude.RateGains.Roll.DerivativeCutoffHz = 18.0f;
 	ControllerConfig.Attitude.RateGains.Pitch.DerivativeCutoffHz = 18.0f;
 	ControllerConfig.Attitude.RateGains.Yaw.DerivativeCutoffHz = 15.0f;
@@ -819,6 +840,8 @@ void UFlightControllerComponent::InitializeDefaultControllerConfig()
 	// λ = DampedPseudoInverseLambda — 阻尼系数
 	// 公式中的 λ² 项加在法矩阵对角线上，防止 J·J^T 接近奇异时解爆炸
 	// 默认 0.05：轻微正则化，几乎不影响正常工况，但在权限极低时防止数值爆炸
+	// 第 2 批新增字段（bEnableTiltCompensation=true、MinCosTilt=0.1、
+	//   AxisWeights=(0.7,1,1,0.4)）取结构体默认值，无需此处显式赋值。
 	// ========================================================================
 	ControllerConfig.Allocator.DampedPseudoInverseLambda = 0.05f;
 }
@@ -995,6 +1018,12 @@ void UFlightControllerComponent::ResetControllerState()
 {
 	PidStates.ResetAll();
 	Runtime.ControlAccumulatorSeconds = 0.0f;
+	// 第 3 批：重置姿态参考模型状态与角速度前馈缓存，避免模式切换后残留旧设定值
+	RollRefModel.Reset();
+	PitchRefModel.Reset();
+	RateFeedForwardDegPerSec = FVector::ZeroVector;
+	// 第 4 批：重置分配饱和标志，避免模式切换后残留导致积分被误冻结
+	for (int32 i = 0; i < 3; ++i) { bAllocSaturatedPositive[i] = false; bAllocSaturatedNegative[i] = false; }
 	// 重新锁定保持目标到当前位置/高度/航向
 	Runtime.HoldTargets.ResetHoldFlags();
 	Runtime.HoldTargets.HeldPositionCm = Runtime.EstimatedState.State.PositionCm;
@@ -1202,12 +1231,15 @@ void UFlightControllerComponent::RebuildAllocationCache()
 			else AllocationCache.NegativeTorqueAuthority[Axis] -= AxisMoment;
 		}
 
-		// 归一化列：PhysicalColumn / RowScale
-		// 使控制器输出的 [-1,1] 指令直接对应"该轴最大权限的百分比"
+		// 归一化列：PhysicalColumn / RowScale，再乘以 Effectiveness（第 4 批）
+		// 使控制器输出的 [-1,1] 指令直接对应"该轴最大权限的百分比"。
+		// 第 4 批：失效旋翼的列也乘 Effectiveness——求解器据此降权，
+		//   候选推力分数自动缩小，避免"列满权但上限低"导致的过早锁定/饱和。
+		//   对标 PX4 ControlAllocator 把失效致动器列缩零（Effectiveness=0 即整列清零）。
 		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 		{
 			AllocationCache.NormalizedColumns[RotorIndex][Axis] = AllocationCache.RowScale[Axis] > FlightControllerAllocation::AuthorityEpsilon
-				? PhysicalColumn[Axis] / AllocationCache.RowScale[Axis] : 0.0f;
+				? (PhysicalColumn[Axis] / AllocationCache.RowScale[Axis]) * Effectiveness : 0.0f;
 		}
 	}
 
@@ -1500,16 +1532,111 @@ FVector UFlightControllerComponent::ComputeDesiredBodyRates(const FDronePilotInp
 	// Acro/Manual 模式的默认值：摇杆直通
 	float DesiredRollRate = PilotInput.Roll * ControllerConfig.Limits.MaxRollRateDegreesPerSec;
 	float DesiredPitchRate = -PilotInput.Pitch * ControllerConfig.Limits.MaxPitchRateDegreesPerSec;
+	// 角速度前馈（第 3 批：由参考模型导数产生，供角速度环 Kff 通道消费）
+	float RollRateFF = 0.0f;
+	float PitchRateFF = 0.0f;
 
 	// Angle 模式：角度环覆盖默认值
 	if (Runtime.AttitudeMode != EDroneAttitudeMode::Acro && Runtime.AttitudeMode != EDroneAttitudeMode::Manual)
 	{
-		// 角度环 PID：将角度误差转换为期望角速率
-		// p_des = Kp·φ_err + Kd·d(φ_err)/dt
-		// 使用 UpdateFromError，因为角度设定值来自速度环，已是平滑信号
-		DesiredRollRate = PidStates.Angle.Roll.UpdateFromError(RollError, DeltaSeconds, ControllerConfig.Attitude.AngleGains.Roll);
-		DesiredPitchRate = PidStates.Angle.Pitch.UpdateFromError(PitchError, DeltaSeconds, ControllerConfig.Attitude.AngleGains.Pitch);
+		// ---- 第 3 批：2 阶临界阻尼参考模型（对标 PX4 AttitudeControl.cpp:82-129）----
+		// 对期望 Roll/Pitch 设定值做平滑：ẍ + 2ω·ẋ + ω²·(x − x_sp) = 0，ζ=1 临界阻尼。
+		// 输出平滑设定值 x_smooth 及其导数 v=ẋ（角速度前馈 rate_ff）。
+		// 角速度设定值 = Kp·(x_smooth − current) + rate_ff，前馈承担"已知运动学"部分，
+		// PID 只补模型误差，Kp 可降低、过冲减小。
+		const FDroneAttitudeControllerConfig& AttCfg = ControllerConfig.Attitude;
+		float SmoothedRoll = DesiredAttitude.Roll;
+		float SmoothedPitch = DesiredAttitude.Pitch;
+
+		if (AttCfg.bEnableAttitudeRefModel)
+		{
+			const float Omega = FMath::Max(AttCfg.RefModelNaturalFrequency, UE_SMALL_NUMBER);
+			const float FFLimit = AttCfg.RefModelRateFFLimitDegPerSec;
+			// ZOH 离散积分（半隐式 Euler，稳定且简单）：
+			//   v += ω²·(x_sp − x)·dt − 2ω·v·dt
+			//   x += v·dt
+			auto StepRefModel = [Omega, DeltaSeconds](FRefModelState1D& S, float Setpoint)
+			{
+				if (!S.bInitialized) { S.x = Setpoint; S.v = 0.0f; S.bInitialized = true; return; }
+				const float Accel = Omega * Omega * (Setpoint - S.x) - 2.0f * Omega * S.v;
+				S.v += Accel * DeltaSeconds;
+				S.x += S.v * DeltaSeconds;
+			};
+			StepRefModel(RollRefModel, DesiredAttitude.Roll);
+			StepRefModel(PitchRefModel, DesiredAttitude.Pitch);
+			SmoothedRoll = RollRefModel.x;
+			SmoothedPitch = PitchRefModel.x;
+			RollRateFF = FMath::Clamp(RollRefModel.v, -FFLimit, FFLimit);
+			PitchRateFF = FMath::Clamp(PitchRefModel.v, -FFLimit, FFLimit);
+		}
+
+		// 角度环 PID：误差基于【平滑后】设定值，前馈 = 参考模型导数（注入 Kff 通道）
+		// p_des = Kp·(x_smooth − current) + Kd·d(err)/dt + Kff·rate_ff
+		const float SmoothedRollError = FRotator::NormalizeAxis(SmoothedRoll - CurrentAttitude.Roll);
+		const float SmoothedPitchError = FRotator::NormalizeAxis(SmoothedPitch - CurrentAttitude.Pitch);
+
+		if (AttCfg.bEnableQuaternionAttitude)
+		{
+			// ---- 第 5 批：四元数姿态误差 + 推力方向优先（对标 PX4 AttitudeControl.cpp:139-205）----
+			// Q_des = 由平滑后 Roll/Pitch + 当前 Yaw 构造（Yaw 由 DesiredYawRate 单独处理）
+			// Q_err = Q_cur⁻¹ · Q_des → 提取机体角速度设定值（消除欧拉角耦合）
+			// 推力方向优先：Roll/Pitch 误差全权，Yaw 误差按 YawWeight 缩放
+			const FQuat QCur = CurrentAttitude.Quaternion();
+			const FQuat QDes = FRotator(SmoothedPitch, CurrentAttitude.Yaw, SmoothedRoll).Quaternion();
+			FQuat QErr = QCur.Inverse() * QDes;
+			// 取最短路径（w<0 时取反，避免大角度冗余旋转）
+			if (QErr.W < 0.0f) QErr = FQuat(-QErr.X, -QErr.Y, -QErr.Z, -QErr.W);
+			QErr.Normalize();
+
+			// 小角度近似：ω_sp = 2 · q_err.imag · Kp（q_err 在机体系）
+			// 符号约定对齐（修复日志 Bug #3：俯仰符号翻转致前漂发散）：
+			//   q_err.imag 来自 QCur⁻¹·QDes，处于与 Chaos 相同的右手机体系——
+			//   绕 X 正向=左滚、绕 Y 正向=低头、绕 Z 正向=右偏。
+			//   但角速度【测量】在 UpdateEstimatedState_PhysicsThread 已对 X/Y 取负
+			//   （FVector(-X,-Y,Z)），转为飞控的 d(angle)/dt 约定（正向=右滚/抬头/右偏）。
+			//   因此期望角速率须同样对 X/Y 取负、Z 不取负，才能与测量同号、角速度环
+			//   形成负反馈。修复前用 +2·QErr.X/Y 致 Roll/Pitch 期望角速率符号翻转：
+			//   俯仰案例——期望俯仰 +25°(抬头制动前漂)，角度误差 +56°，QErr.Y 为负，
+			//   旧代码输出 -4.25°/s(低头)，无人机反而低头、前漂加速；符号修复后输出 +4.22°/s
+			//   （与日志 4.25 吻合）。注意：此仅验证【符号】正确——4.22°/s 本身比欧拉路径
+			//   4.5×56°=252°/s 小约 57 倍，是【量纲】缺陷（见下方 RadiansToDegrees 修复 Bug #5）。
+			//   偏航测量未取负 Z，故 QErr.Z 保持 +2 不变。
+			const float YawW = FMath::Clamp(AttCfg.YawWeight, 0.0f, 1.0f);
+			const float KpRoll  = ControllerConfig.Attitude.AngleGains.Roll.Kp;
+			const float KpPitch = ControllerConfig.Attitude.AngleGains.Pitch.Kp;
+			const float KpYaw   = ControllerConfig.Attitude.AngleGains.Yaw.Kp;
+			// Roll/Pitch：全权对齐推力方向 + 参考模型前馈。
+			// X/Y 取负（与角速度测量约定对齐，见上方块注释），Z 不取负。
+			//
+			// 量纲修正（Bug #5：四元数期望角速率量纲不符，纠偏偏弱 ~57× 致缓慢发散）：
+			//   2·q_err.imag 为无量纲量（小角度下 ≈ 误差弧度），× Kp(1/s) 得 rad/s。
+			//   但下游（角速度环、测量、限幅、RollRateFF/PitchRateFF）全部以 deg/s 为单位，
+			//   且 KpRoll/KpPitch=4.5 是按【欧拉路径】度数误差标定的（4.5×34°=153°/s）。
+			//   若直接把 2·QErr·Kp 当 deg/s，34° 误差仅得 2·sin(17°)·4.5≈2.63°/s，
+			//   比欧拉路径小 180/π≈57.3 倍，角速度环被严重"饿死"——表现为起飞旋翼起转
+			//   瞬态扰动后纠偏过慢、单调发散（俯仰持续低头、前漂累积、期望角速率偏小）。
+			//   修复：RadiansToDegrees 把四元数项转 deg/s，与前馈及下游量纲对齐。
+			//   符号（Bug #3 取负）不变——RadiansToDegrees 是正比例，不改变符号。
+			DesiredRollRate  = FMath::RadiansToDegrees(-2.0f * QErr.X * KpRoll)  + RollRateFF;
+			DesiredPitchRate = FMath::RadiansToDegrees(-2.0f * QErr.Y * KpPitch) + PitchRateFF;
+			// Yaw：四元数误差提供纠偏项，按 YawWeight 缩放叠加到外部给定偏航率。
+			// 偏航测量未取负 Z（见 UpdateEstimatedState_PhysicsThread），故 QErr.Z 保持 +2。
+			// （推力方向优先：YawWeight 小→偏航纠偏弱→优先保 Roll/Pitch）
+			// 量纲同 Roll/Pitch：2·QErr·Kp 为 rad/s，需 RadiansToDegrees 转 deg/s。
+			DesiredYawRate += FMath::RadiansToDegrees(2.0f * QErr.Z * KpYaw * YawW);
+			// 注：四元数路径直接产出角速度设定值，不经角度 PID（避免冗余积分累积）。
+			//   角度 PID 状态在此路径下保持冻结（ResetControllerState 时清零），仅欧拉路径推进。
+		}
+		else
+		{
+			// 欧拉角线性误差路径（第 3 批原始路径，向后兼容）
+			DesiredRollRate = PidStates.Angle.Roll.UpdateFromError(SmoothedRollError, DeltaSeconds, ControllerConfig.Attitude.AngleGains.Roll, RollRateFF);
+			DesiredPitchRate = PidStates.Angle.Pitch.UpdateFromError(SmoothedPitchError, DeltaSeconds, ControllerConfig.Attitude.AngleGains.Pitch, PitchRateFF);
+		}
 	}
+
+	// 缓存角速度前馈供角速度环 Kff 通道消费（第 3 批）
+	RateFeedForwardDegPerSec = FVector(RollRateFF, PitchRateFF, 0.0f);
 
 	// 限幅到最大角速率
 	DesiredRollRate = FMath::Clamp(DesiredRollRate, -ControllerConfig.Limits.MaxRollRateDegreesPerSec, ControllerConfig.Limits.MaxRollRateDegreesPerSec);
@@ -1530,10 +1657,40 @@ FVector UFlightControllerComponent::ComputeDesiredBodyRates(const FDronePilotInp
 FVector UFlightControllerComponent::ComputeBodyTorqueCommand(const FVector& DesiredBodyRatesDegreesPerSec, float DeltaSeconds)
 {
 	const FVector CurrentBodyRates = Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec;
+
+	// 第 3 批：角速度前馈注入 Kff 通道。
+	// RateFeedForwardDegPerSec 由 ComputeDesiredBodyRates 的参考模型导数填入（Roll/Pitch），
+	// Yaw 通道前馈置零（偏航前馈已由 AngleGains.Yaw.Kff 在角度环承载）。
+
+	// ---- 第 4 批：分配饱和回传抗 windup（对标 PX4 rate_control.cpp:88-117）----
+	// 上一帧 AllocateToRotors 算出的饱和标志（1 帧延迟，可接受）。
+	// 当某轴正/负方向分配饱和（残差>0/<0）时，禁止该方向角速度误差继续累积积分，
+	// 避免积分项在"物理上无法满足"的方向上无限增长。
+	// 实现：复制该轴增益并把 Ki 置零（仅在饱和方向），其余项（Kp/Kd/Kff）保留。
+	auto MakeAntiWindupGains = [](const FDronePidGains& Base, bool bSaturatedPos, bool bSaturatedNeg, float RateError) -> FDronePidGains
+	{
+		FDronePidGains G = Base;
+		// 仅当误差方向与饱和方向一致时禁积分（PX4：saturated_positive → error=min(error,0)）
+		if ((bSaturatedPos && RateError > 0.0f) || (bSaturatedNeg && RateError < 0.0f))
+		{
+			G.Ki = 0.0f;
+		}
+		return G;
+	};
+
+	const float RollError  = DesiredBodyRatesDegreesPerSec.X - CurrentBodyRates.X;
+	const float PitchError = DesiredBodyRatesDegreesPerSec.Y - CurrentBodyRates.Y;
+	const float YawError   = DesiredBodyRatesDegreesPerSec.Z - CurrentBodyRates.Z;
+
+	const FDronePidGains RollGains  = MakeAntiWindupGains(ControllerConfig.Attitude.RateGains.Roll,  bAllocSaturatedPositive[0], bAllocSaturatedNegative[0], RollError);
+	const FDronePidGains PitchGains = MakeAntiWindupGains(ControllerConfig.Attitude.RateGains.Pitch, bAllocSaturatedPositive[1], bAllocSaturatedNegative[1], PitchError);
+	const FDronePidGains YawGains   = MakeAntiWindupGains(ControllerConfig.Attitude.RateGains.Yaw,   bAllocSaturatedPositive[2], bAllocSaturatedNegative[2], YawError);
+
+	// u = Kp·(ω_des − ω) + Ki·∫ + Kd·d(ω)/dt + Kff·rate_ff
 	return FVector(
-		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.X, CurrentBodyRates.X, DeltaSeconds, ControllerConfig.Attitude.RateGains.Roll),
-		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Y, CurrentBodyRates.Y, DeltaSeconds, ControllerConfig.Attitude.RateGains.Pitch),
-		PidStates.Rate.Yaw.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Z, CurrentBodyRates.Z, DeltaSeconds, ControllerConfig.Attitude.RateGains.Yaw));
+		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.X, CurrentBodyRates.X, DeltaSeconds, RollGains, RateFeedForwardDegPerSec.X),
+		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Y, CurrentBodyRates.Y, DeltaSeconds, PitchGains, RateFeedForwardDegPerSec.Y),
+		PidStates.Rate.Yaw.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Z, CurrentBodyRates.Z, DeltaSeconds, YawGains, RateFeedForwardDegPerSec.Z));
 }
 
 // ---------------------------------------------------------------------------
@@ -1574,12 +1731,28 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 
 	Runtime.ControlOutput.RotorCommands.SetNum(NumRotors);
 
+	// ---- 总距倾斜补偿（第 2 批：推力-姿态解耦）----
+	// 对标 PX4 thrust_ned_z / cos_ned_body（PositionControl.cpp:222）。
+	// 机体倾斜后，旋翼推力的垂直分量 = T·cos(tilt)；为维持升力须把总距除以 cos(tilt)。
+	// cos(tilt) = 机体 Z 轴在世界系中与世界上方向的点积。
+	const FDroneControlAllocationConfig& AllocCfg = ControllerConfig.Allocator;
+	double CompensatedCollective = FMath::Clamp(static_cast<double>(CollectiveCommand), 0.0, 1.0);
+	if (AllocCfg.bEnableTiltCompensation && CompensatedCollective > 0.0)
+	{
+		// 机体 Z 轴在世界系的方向：用物理线程刚写入的 BodyTransform 四元数（精确，无欧拉往返误差）
+		const FQuat BodyQuat = PhysicsCache.BodyTransform.GetRotation();
+		const FVector BodyZWorld = BodyQuat.RotateVector(FVector::UpVector);
+		double CosTilt = static_cast<double>(BodyZWorld | FVector::UpVector);
+		CosTilt = FMath::Max(CosTilt, static_cast<double>(AllocCfg.MinCosTilt));
+		CompensatedCollective /= CosTilt;
+	}
+
 	// ---- 构造期望 wrench 向量（归一化域）----
 	// W[0] = 总距指令 ∈ [0, 1]（推力只有正方向）
 	// W[k] = 力矩指令 ∈ [-1, 1]（力矩正负对称）
 	// 仅在该轴有有效权限时才接受指令，否则置零
 	double DesiredWrench[FlightControllerAllocation::WrenchAxisCount] = {};
-	DesiredWrench[0] = RowScale[0] > FlightControllerAllocation::AuthorityEpsilon ? FMath::Clamp(static_cast<double>(CollectiveCommand), 0.0, 1.0) : 0.0;
+	DesiredWrench[0] = RowScale[0] > FlightControllerAllocation::AuthorityEpsilon ? FMath::Clamp(CompensatedCollective, 0.0, 1.0) : 0.0;
 	DesiredWrench[1] = RowScale[1] > FlightControllerAllocation::AuthorityEpsilon ? FMath::Clamp(AxisCommands.X, -1.0, 1.0) : 0.0;
 	DesiredWrench[2] = RowScale[2] > FlightControllerAllocation::AuthorityEpsilon ? FMath::Clamp(AxisCommands.Y, -1.0, 1.0) : 0.0;
 	DesiredWrench[3] = RowScale[3] > FlightControllerAllocation::AuthorityEpsilon ? FMath::Clamp(AxisCommands.Z, -1.0, 1.0) : 0.0;
@@ -1611,22 +1784,29 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 	for (int32 Iteration = 0; Iteration < NumRotors; ++Iteration)
 	{
 		// --- 步骤1：计算残差 wrench ---
-		// residual = W_desired − Σ(已锁定旋翼的 NormalizedColumn × 已分配推力分数)
-		// 即：还差多少 wrench 没有被满足
+		// residual = W_desired − Σ(已锁定/失效旋翼的 NormalizedColumn × 已分配推力分数)
+		// 即：还差多少 wrench 没有被满足。
+		// 第 4 批：失效旋翼（!FreeRotors）也参与扣除——其列在第 4.1 批已按 Effectiveness
+		//   缩放（全失效列清零，部分失效列缩小），扣除其已分配（可能为 0）的份额，
+		//   保证残差不被失效旋翼的虚假权限虚增。对标 PX4 ControlAllocator 残差修正。
 		double ResidualWrench[FlightControllerAllocation::WrenchAxisCount];
 		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 		{
 			ResidualWrench[Axis] = DesiredWrench[Axis];
 			for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 			{
-				if (SolvedRotors[RotorIndex])
+				if (!FreeRotors[RotorIndex] || SolvedRotors[RotorIndex])
 					ResidualWrench[Axis] -= NormalizedColumns[RotorIndex][Axis] * AllocatedThrustFractions[RotorIndex];
 			}
 		}
 
 		// --- 步骤2：构造法矩阵 N = J_free·J_free^T + λ²I ---
-		// 这是阻尼伪逆 (J·J^T + λ²I)^{-1} 的法方程形式
-		// N[row][col] = Σ(自由旋翼 Column[row] × Column[col])  + λ² (对角线上)
+		// 标准阻尼伪逆 (J·J^T + λ²I)^{-1} 的法方程形式。
+		// 注：第 2 批曾引入 AxisWeights 轴向加权（N = diag(1/W)·JJ^T + λ²I），但该公式非标准
+		//   加权伪逆——1/W 作用在轴（行）而非旋翼（列）上，diag(1/W) 与 (JJ^T)⁻¹ 不可交换，
+		//   破坏了 J·u = residual 的精确求解（4×4 满秩时未加权可精确满足），导致分配力矩符号
+		//   翻转、姿态指数发散。已回退为标准阻尼伪逆。轴向优先级应通过主动集去饱和层次实现，
+		//   而非矩阵加权。AxisWeights 配置字段保留供未来正确的层次化分配使用。
 		double NormalMatrix[FlightControllerAllocation::WrenchAxisCount][FlightControllerAllocation::WrenchAxisCount] = {};
 		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 		{
@@ -1640,7 +1820,7 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 		// 添加阻尼项 λ²·I
 		// λ = DampedPseudoInverseLambda (默认 0.05)
 		// 阻尼使矩阵恒正定，保证可逆；λ 越大解越保守（偏零），越小越精确但可能数值爆炸
-		const double Lambda = FMath::Max(static_cast<double>(ControllerConfig.Allocator.DampedPseudoInverseLambda), 0.0);
+		const double Lambda = FMath::Max(static_cast<double>(AllocCfg.DampedPseudoInverseLambda), 0.0);
 		const double Damping = FMath::Square(Lambda);   // λ²
 		for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 			NormalMatrix[Axis][Axis] += Damping;
@@ -1652,8 +1832,7 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 			break;   // 矩阵奇异，放弃后续迭代
 
 		// --- 步骤4：计算候选推力分数 u_i = J^T · y ---
-		// u_i = Σ_axis Column_i[axis] × DualSolution[axis]
-		// 等价于 u = J^T · (J·J^T + λ²I)^{-1} · residual — 右阻尼伪逆
+		// 标准阻尼伪逆 u = J^T·(J·J^T+λ²I)⁻¹·residual（第 2 批加权已回退，见步骤2注释）。
 		int32 ViolatingRotorIndex = INDEX_NONE;
 		double LargestViolation = 0.0;
 		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
@@ -1705,6 +1884,23 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 	for (int32 Axis = 0; Axis < FlightControllerAllocation::WrenchAxisCount; ++Axis)
 		AllocationDiagnostics.ResidualMagnitude += FMath::Square(AllocationDiagnostics.AllocationResidual[Axis]);
 	AllocationDiagnostics.ResidualMagnitude = FMath::Sqrt(AllocationDiagnostics.ResidualMagnitude);
+
+	// ---- 第 4 批：分配饱和标志回传（对标 PX4 rate_control.cpp:88-99）----
+	// 从残差符号提取各力矩轴饱和状态，供下一帧角速度环积分抗 windup。
+	// 残差>0：该轴正向指令无法满足（饱和正方向）→ 禁止角速度误差继续正向累积。
+	// 残差<0：饱和负方向 → 禁止负向累积。
+	// 轴映射：wrench[1]=Roll→flag[0]、wrench[2]=Pitch→flag[1]、wrench[3]=Yaw→flag[2]。
+	// （wrench[0]=推力，推力饱和不回传角速度环——推力由垂直通道独立处理。）
+	constexpr double SatResidualEpsilon = 1e-3;
+	const double ResidualRoll  = AllocationDiagnostics.AllocationResidual[1];
+	const double ResidualPitch = AllocationDiagnostics.AllocationResidual[2];
+	const double ResidualYaw   = AllocationDiagnostics.AllocationResidual[3];
+	bAllocSaturatedPositive[0] = ResidualRoll  >  SatResidualEpsilon;
+	bAllocSaturatedNegative[0] = ResidualRoll  < -SatResidualEpsilon;
+	bAllocSaturatedPositive[1] = ResidualPitch >  SatResidualEpsilon;
+	bAllocSaturatedNegative[1] = ResidualPitch < -SatResidualEpsilon;
+	bAllocSaturatedPositive[2] = ResidualYaw   >  SatResidualEpsilon;
+	bAllocSaturatedNegative[2] = ResidualYaw   < -SatResidualEpsilon;
 
 	// ---- 将推力分数转换为旋翼指令 ----
 	//   T_target = fraction × MaxAllocatedThrusts[i]

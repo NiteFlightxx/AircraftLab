@@ -101,10 +101,30 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|FeedForward")
 	virtual void Compute(const FProfiledSetpoint& Setpoint, FFeedForward& OutFF);
 
+	/**
+	 * 设置悬停推力基准（由 AutopilotComponent 的零阶 EKF 估计注入）。
+	 * 传入 >0 的值时替代 Params.HoverCollective 作为推力前馈基准；
+	 * 传入 <=0 时回退到 Params.HoverCollective（兼容无估计器的旧路径）。
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|FeedForward")
+	void SetHoverThrustBaseline(float InHoverThrustBaseline) { HoverThrustBaseline = InHoverThrustBaseline; }
+
+	/** 取当前生效的悬停推力基准（>0 为 EKF 估计，<=0 表示回退配置值） */
+	UFUNCTION(BlueprintPure, Category = "Autopilot|FeedForward")
+	float GetHoverThrustBaseline() const { return HoverThrustBaseline; }
+
 protected:
 	/** 物理参数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward")
 	FFeedForwardParams Params;
+
+	/**
+	 * 悬停推力基准（EKF 估计注入）。
+	 * <=0 表示未注入，ComputeThrustFF 回退到 Params.HoverCollective；
+	 * >0 时作为推力前馈的归一化基准，替代死常数。
+	 * 由 UAutopilotComponent::Tick 每帧在 Compute 之前刷新。
+	 */
+	float HoverThrustBaseline = -1.0f;
 
 	/** 计算推力前馈（含重力补偿 + 加速度耦合） */
 	float ComputeThrustFF(const FProfiledSetpoint& Setpoint) const;
