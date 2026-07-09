@@ -80,9 +80,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
 	void CommandOrbit(const FVector& CenterCm, float RadiusCm, float AngularRateDegPerSec = 45.0f);
 
-	/** 命令返航 */
+	/** 命令返航（使用内部已设置的 HomePositionCm，飞回 Home 上方指定高度） */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
-	void CommandReturnHome(const FVector& InHomePositionCm, float ReturnAltitudeCm = 2000.0f);
+	void CommandReturnHome(float ReturnAltitudeCm = 2000.0f);
 
 	/** 命令降落 */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
@@ -95,6 +95,10 @@ public:
 	/** 设置 Home 位置（用于 RTH） */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
 	void SetHomePosition(const FVector& HomeCm) { HomePositionCm = HomeCm; }
+
+	/** 获取 Home 位置 */
+	UFUNCTION(BlueprintPure, Category = "Autopilot|Behavior")
+	FVector GetHomePosition() const { return HomePositionCm; }
 
 	// -----------------------------------------------------------------------
 	// 主更新

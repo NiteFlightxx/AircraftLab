@@ -22,6 +22,7 @@ bool UMissionPlanner::LoadMission(const TArray<FMissionItem>& Items)
 	bCurrentItemDispatched = false;
 	LoiterTimer = 0.0f;
 	OrbitTimer = 0.0f;
+	bLoopPatrol = false; // 重置循环巡逻标志，仅 LoadPatrolMission 重新设置
 	UE_LOG(LogMissionPlanner, Log, TEXT("Mission loaded: %d items."), Items.Num());
 	return true;
 }
@@ -185,7 +186,7 @@ void UMissionPlanner::DispatchCurrentItem(const FBehaviorStateInput& Input)
 		LoiterTimer = 0.0f;
 		break;
 	case EMissionItemType::ReturnHome:
-		BehaviorPlanner->CommandReturnHome(HomePositionCm, Item.ReturnAltitudeCm);
+		BehaviorPlanner->CommandReturnHome(Item.ReturnAltitudeCm);
 		break;
 	case EMissionItemType::Land:
 		BehaviorPlanner->CommandLand();

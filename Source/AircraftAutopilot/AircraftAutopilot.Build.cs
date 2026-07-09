@@ -39,7 +39,8 @@ public class AircraftAutopilot : ModuleRules
 			}
 		);
 
-		// Phase 3+ 集成阶段取消下方注释，建立对下层控制器的单向依赖：
-		// PrivateDependencyModuleNames.Add("AircraftLab");
+		// Phase 4+ 集成阶段：建立对下层控制器的单向依赖。
+		// 单向依赖铁律：AircraftAutopilot → AircraftLab，绝不允许反向。
+		PrivateDependencyModuleNames.Add("AircraftLab");
 	}
 }

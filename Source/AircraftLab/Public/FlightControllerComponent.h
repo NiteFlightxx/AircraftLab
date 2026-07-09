@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "DroneTypes.h"
+#include "AutopilotProvider.h"
 
 #include "FlightControllerComponent.generated.h"
 
@@ -10,6 +11,72 @@ class UAirscrewComponent;
 class UDroneInputComponent;
 class UPrimitiveComponent;
 namespace Chaos { class FRigidBodyHandle_Internal; }
+
+/**
+ * Autopilot 注入设定值集合
+ *
+ * 由 UAutopilotComponent（实现 IAutopilotProvider）在游戏线程计算并填充，
+ * UFlightControllerComponent 通过 IAutopilotProvider::GetAutopilotInjection 拉取，
+ * 缓存到 CachedAutopilotInjection，供物理线程控制循环读取。
+ *
+ * 本结构由 AircraftLab 拥有（无 Autopilot 模块依赖），是两层之间的纯数据契约。
+ * 各字段直接对应控制金字塔各环的前馈/设定值通道：
+ *   - PositionSetpointCm / AltitudeSetpointCm → 外环位置/高度设定值
+ *   - VelocitySetpointCmPerSec.XY → 位置环 Kff（速度前馈）
+ *   - AccelerationSetpointCmPerSecSq.XY → 速度环 Kff（加速度前馈）
+ *   - VerticalVelocitySetpointCmPerSec → 高度环 Kff（垂直速度前馈）
+ *   - ThrustFeedForward → collective 基准（含重力补偿，替代 HoverCollective）
+ *   - YawSetpointDegrees → 偏航设定值
+ *   - YawRateSetpointDegPerSec → 偏航环 Kff（偏航角速度前馈）
+ *   - TurnRollDegrees → 协调转弯滚转附加（叠加到期望 Roll）
+ *
+ * 单位：位置 cm、速度 cm/s、加速度 cm/s²、角度 °、角速度 °/s（与 DroneTypes 一致）。
+ */
+USTRUCT(BlueprintType)
+struct AIRCRAFTLAB_API FAutopilotInjection
+{
+	GENERATED_BODY()
+
+	/** 期望位置（cm，世界系）—— 位置环外环设定值 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	FVector PositionSetpointCm = FVector::ZeroVector;
+
+	/** 速度前馈（cm/s，世界系）—— 注入位置环 Kff 通道 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	FVector VelocitySetpointCmPerSec = FVector::ZeroVector;
+
+	/** 加速度前馈（cm/s²，世界系）—— 注入速度环 Kff 通道 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	FVector AccelerationSetpointCmPerSecSq = FVector::ZeroVector;
+
+	/** 期望高度（cm，世界系 Z）—— 高度环外环设定值 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	float AltitudeSetpointCm = 0.0f;
+
+	/** 垂直速度前馈（cm/s）—— 注入高度环 Kff 通道 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	float VerticalVelocitySetpointCmPerSec = 0.0f;
+
+	/** 推力前馈（归一化 0~1，含重力补偿）—— collective 基准，替代 HoverCollective */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	float ThrustFeedForward = 0.0f;
+
+	/** 期望航向（°，世界系）—— 偏航环设定值 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	float YawSetpointDegrees = 0.0f;
+
+	/** 偏航角速度前馈（°/s）—— 注入偏航环 Kff 通道 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	float YawRateSetpointDegPerSec = 0.0f;
+
+	/** 协调转弯滚转附加（°）—— 叠加到期望 Roll（bank turn） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	float TurnRollDegrees = 0.0f;
+
+	/** 是否有效（无效时控制器应回退到手动路径） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	bool bValid = false;
+};
 
 /**
  * 旋翼失效模式（预留扩展）
@@ -525,10 +592,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void SetControllerEnabled(bool bNewEnabled);
 
-	/** 设置位置保持目标 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
-	void SetHeldPosition(const FVector& WorldPositionCm);
-
 	/** 设置高度保持目标 */
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void SetHeldAltitude(float WorldAltitudeCm);
@@ -536,6 +599,29 @@ public:
 	/** 设置偏航保持目标 */
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
 	void SetHeldYaw(float YawDegrees);
+
+	// ========================================================================
+	// Autopilot 集成接口
+	// ========================================================================
+
+	/**
+	 * 设置是否使用 Autopilot 注入的设定值（灰度开关）。
+	 * true：控制循环读取 CachedAutopilotInjection（位置/高度/航向/前馈全部来自 Autopilot）
+	 * false：控制循环使用手动摇杆 + HoldTargets（原有手动模式，完全不受影响）
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController|Autopilot")
+	void SetUseAutopilotSetpoint(bool bEnabled);
+
+	/** 查询是否正在使用 Autopilot 设定值 */
+	UFUNCTION(BlueprintPure, Category = "Drone|FlightController|Autopilot")
+	bool IsUsingAutopilotSetpoint() const { return bUseAutopilotSetpoint; }
+
+	/**
+	 * 绑定 Autopilot 设定值提供者（实现 IAutopilotProvider 的 UObject）。
+	 * 通常在 UAutopilotComponent::BeginPlay 中调用 SetAutopilotProvider(this)。
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController|Autopilot")
+	void SetAutopilotProvider(UObject* Provider);
 
 	// ========================================================================
 	// 旋翼失效与容错接口
@@ -798,14 +884,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float YawHoldStickDeadband = 0.05f;
 
-	/** 返航爬升高度偏移（厘米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController", meta = (ClampMin = "0.0"))
-	float ReturnHomeClimbAltitudeOffsetCm = 300.0f;
-
-	/** 自动降落下降速率（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController", meta = (ClampMin = "0.0"))
-	float AutoLandDescentRateCmPerSec = 120.0f;
-
 	/** 初始飞行模式 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
 	EDroneFlightMode InitialFlightMode = EDroneFlightMode::Angle;
@@ -864,4 +942,32 @@ private:
 	 * 游戏线程写入（TickComponent），物理线程读取（AsyncPhysicsTick）
 	 */
 	FDronePilotInput CachedPilotInput;
+
+	// -----------------------------------------------------------------------
+	// Autopilot 集成
+	// -----------------------------------------------------------------------
+
+	/**
+	 * 是否使用 Autopilot 注入的设定值（灰度开关）。
+	 * false（默认）时控制循环走手动摇杆路径，与改动前完全一致。
+	 * true 时控制循环读取 CachedAutopilotInjection。
+	 */
+	bool bUseAutopilotSetpoint = false;
+
+	/**
+	 * Autopilot 设定值提供者（实现 IAutopilotProvider 的 UObject，通常是 UAutopilotComponent）。
+	 * 用 WeakObjectPtr 持有，避免强引用环。FlightController 不依赖 Autopilot 模块。
+	 */
+	TWeakObjectPtr<UObject> AutopilotProviderObject;
+
+	/**
+	 * 缓存的 Autopilot 注入设定值。
+	 * 游戏线程写入（TickComponent 通过 IAutopilotProvider 拉取），物理线程读取（控制循环）。
+	 * 与 CachedPilotInput 相同的无锁跨线程模式。
+	 */
+	FAutopilotInjection CachedAutopilotInjection;
+
+	/** 注入拉取点静默失败已警告标志（防刷屏：Provider 缺失/接口失败时首次提示） */
+	bool bWarnedAutopilotProviderMissing = false;
+	bool bWarnedAutopilotInjectionInvalid = false;
 };

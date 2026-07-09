@@ -259,4 +259,27 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryRequest
 	/** 航向跟随策略：true=跟随路径切向，false=锁定 TargetYawDegrees */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
 	bool bYawFollowPath = true;
+
+	/**
+	 * 语义等价比较：判断两个请求是否描述同一轨迹。
+	 * 仅比较轨迹定义字段（Type/Target/Path/Cruise/Orbit 等），
+	 * 不比较 StartPositionCm/StartVelocity（每帧由当前位置更新，非轨迹定义）。
+	 * 位置用 1cm 容差：Hover 每帧 TargetPositionCm=当前位置，微动（<1cm）
+	 * 不应判为请求变化，避免每帧重建轨迹 + 重置 MotionProfile。
+	 */
+	bool IsSameTrajectoryAs(const FTrajectoryRequest& Other) const
+	{
+		constexpr float PosTol = 1.0f; // cm
+		return Type == Other.Type
+			&& TargetPositionCm.Equals(Other.TargetPositionCm, PosTol)
+			&& FMath::IsNearlyEqual(TargetYawDegrees, Other.TargetYawDegrees, 0.5f)
+			&& CruiseSpeedCmPerSec == Other.CruiseSpeedCmPerSec
+			&& PlanningAccelerationCmPerSecSq == Other.PlanningAccelerationCmPerSecSq
+			&& AcceptanceRadiusCm == Other.AcceptanceRadiusCm
+			&& PathPointsCm == Other.PathPointsCm
+			&& OrbitCenterCm.Equals(Other.OrbitCenterCm, PosTol)
+			&& OrbitRadiusCm == Other.OrbitRadiusCm
+			&& OrbitAngularRateDegPerSec == Other.OrbitAngularRateDegPerSec
+			&& bYawFollowPath == Other.bYawFollowPath;
+	}
 };

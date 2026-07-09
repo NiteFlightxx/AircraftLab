@@ -22,12 +22,44 @@ bool UTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 {
 	Clear();
 
+	// 悬停退化：Start≈Target（零长度 Waypoint/Line）时无需构造段，
+	// 直接缓存目标位置为驻留设定值。Hover 状态每帧生成"原地悬停"请求，
+	// 若走 BuildSegments 会在 LineSegment 的 coincident 检查处失败并刷屏。
+	// 此处提前拦截，使 bIsValid=true，下游 UpdateSetpoint 输出静止设定值。
+	const float StartToTargetDist = FVector::Dist(Request.StartPositionCm, Request.TargetPositionCm);
+	const bool bHoverRequest = (Request.Type == ETrajectoryType::Waypoint || Request.Type == ETrajectoryType::Line)
+		&& StartToTargetDist <= 1.0f; // 1cm 容差（悬停微动）
+
 	FString Error;
-	if (!BuildSegments(Request, Error))
+	if (!bHoverRequest && !BuildSegments(Request, Error))
 	{
 		UE_LOG(LogTrajectoryGen, Warning, TEXT("TrajectoryGenerator: build failed — %s"), *Error);
 		bIsValid = false;
 		return false;
+	}
+
+	if (bHoverRequest)
+	{
+		// 驻留态：零弧长，设定值=目标位置静止
+		TotalArcLengthCm = 0.0f;
+		CruiseSpeedCmPerSec = 0.0f;
+		PlanningAccelCmPerSecSq = FMath::Max(Request.PlanningAccelerationCmPerSecSq, UE_SMALL_NUMBER);
+		TargetEndSpeedCmPerSec = 0.0f;
+		AcceptanceRadiusCm = FMath::Max(Request.AcceptanceRadiusCm, 1.0f);
+		DecelTriggerDistanceCm = 0.0f;
+		CurrentArcLength = 0.0f;
+		CurrentSpeedCmPerSec = 0.0f;
+		bIsValid = true;
+		// 预置驻留设定值（UpdateSetpoint 会复用）
+		CurrentSetpoint.PositionCm = Request.TargetPositionCm;
+		CurrentSetpoint.VelocityCmPerSec = FVector::ZeroVector;
+		CurrentSetpoint.AccelerationCmPerSecSq = FVector::ZeroVector;
+		CurrentSetpoint.YawDegrees = Request.TargetYawDegrees;
+		CurrentSetpoint.YawRateDegreesPerSec = 0.0f;
+		CurrentSetpoint.ArcLengthCm = 0.0f;
+		CurrentSetpoint.Curvature = 0.0f;
+		CurrentSetpoint.bValid = true;
+		return true;
 	}
 
 	RecomputeArcLengths();
@@ -75,7 +107,22 @@ void UTrajectoryGenerator::Clear()
 bool UTrajectoryGenerator::IsComplete() const
 {
 	if (!bIsValid) return true;
+	// 无限循环段（如 Orbit 持续盘旋）永不自动完成
+	if (IsCurrentSegmentInfiniteLoop()) return false;
 	return CurrentArcLength + AcceptanceRadiusCm >= TotalArcLengthCm;
+}
+
+bool UTrajectoryGenerator::IsCurrentSegmentInfiniteLoop() const
+{
+	if (!bIsValid || Segments.Num() == 0) return false;
+	int32 SegIndex;
+	float LocalArc;
+	LocateSegment(CurrentArcLength, SegIndex, LocalArc);
+	if (Segments.IsValidIndex(SegIndex) && Segments[SegIndex])
+	{
+		return Segments[SegIndex]->IsInfiniteLoop();
+	}
+	return false;
 }
 
 float UTrajectoryGenerator::GetProgress() const
@@ -100,14 +147,38 @@ bool UTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVector& Cur
 		return false;
 	}
 
+	// 悬停退化态（零弧长）：直接输出驻留设定值（目标位置静止），不推进游标
+	if (TotalArcLengthCm <= UE_SMALL_NUMBER)
+	{
+		OutSetpoint = CurrentSetpoint;
+		return true;
+	}
+
+	const bool bInfinite = IsCurrentSegmentInfiniteLoop();
+
 	// --- 1. 用当前位置投影到轨迹，校正游标（防漂移） ---
 	const float ProjectedS = ProjectToArcLength(CurrentPosition);
 	// 取投影点与当前游标的较大者，防止因投影滞后导致游标倒退
 	CurrentArcLength = FMath::Max(CurrentArcLength, ProjectedS);
 
+	if (bInfinite)
+	{
+		// --- 无限循环段（Orbit 持续盘旋）：恒定巡航速，游标不 clamp、不触发完成 ---
+		CurrentSpeedCmPerSec = CruiseSpeedCmPerSec;
+		CurrentArcLength += CurrentSpeedCmPerSec * DeltaSeconds;
+
+		// 采样设定值（含 LookAhead），弧长取模一圈以支持环绕段
+		const float SampleArc = bUseLookAhead
+			? CurrentArcLength + LookAheadDistanceCm
+			: CurrentArcLength;
+		OutSetpoint = SampleGlobalArcLength(SampleArc, CurrentSpeedCmPerSec);
+		CurrentSetpoint = OutSetpoint;
+		return true;
+	}
+
 	// --- 2. 梯形速度剖面：根据剩余距离决定本周期速度 ---
 	const float RemainingDistance = FMath::Max(TotalArcLengthCm - CurrentArcLength, 0.0f);
-	CurrentSpeedCmPerSec = ComputeTrapezoidalSpeed(CurrentArcLength, TotalArcLengthCm, CurrentSpeedCmPerSec);
+	CurrentSpeedCmPerSec = ComputeTrapezoidalSpeed(CurrentArcLength, TotalArcLengthCm);
 
 	// --- 3. 推进游标：s += v·Δt ---
 	CurrentArcLength = FMath::Clamp(CurrentArcLength + CurrentSpeedCmPerSec * DeltaSeconds, 0.0f, TotalArcLengthCm);
@@ -225,9 +296,11 @@ void UTrajectoryGenerator::RecomputeArcLengths()
 	float Cum = 0.0f;
 	for (UTrajectorySegment* Seg : Segments)
 	{
-		if (!Seg) continue;
-		Cum += Seg->GetTotalArcLengthCm();
-		CumStartArc.Add(Cum);
+		if (Seg)
+		{
+			Cum += Seg->GetTotalArcLengthCm();
+		}
+		CumStartArc.Add(Cum); // null 段也占位，保持 CumStartArc[i] 与 Segments[i] 索引对齐
 	}
 	TotalArcLengthCm = Cum;
 }
@@ -235,28 +308,30 @@ void UTrajectoryGenerator::RecomputeArcLengths()
 // ---------------------------------------------------------------------------
 // ComputeTrapezoidalSpeed —— 梯形/三角形速度剖面
 // ---------------------------------------------------------------------------
-float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS, float V0) const
+// 从静止启动（V_init=0），加速到 Vc，巡航，减速到 VEnd。
+// CurrentS = 从轨迹起点算的绝对弧长（加速段从 s=0 开始，增量距离 = CurrentS）。
+// ---------------------------------------------------------------------------
+float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS) const
 {
 	const float Vc = CruiseSpeedCmPerSec;
 	const float A = PlanningAccelCmPerSecSq;
 	const float VEnd = TargetEndSpeedCmPerSec;
 	const float Remaining = FMath::Max(TotalS - CurrentS, 0.0f);
 
-	// 加速段距离 s_acc = (Vc² − V0²)/(2a)
-	const float SAcc = (Vc * Vc - V0 * V0) / (2.0f * A);
+	// 加速段距离 s_acc = Vc²/(2a)（从静止启动，V_init=0）
+	const float SAcc = (Vc * Vc) / (2.0f * A);
 	// 减速段距离 s_dec = (Vc² − V_end²)/(2a)（已缓存为 DecelTriggerDistanceCm）
 	const float SDec = DecelTriggerDistanceCm;
 
 	// 三角形退化：总距离不足以既加速到 Vc 又减速到 V_end
-	// 退化为峰值速度 V_peak = sqrt(2·a·L/(1 + (a/(a))))，此处用简化：
-	// 取 V_peak = min(Vc, sqrt(2·a·(L − s_acc_min)))
 	bool bTriangle = (SAcc + SDec) > TotalS;
 	float EffectiveVc = Vc;
 	if (bTriangle)
 	{
-		// 退化为三角形：峰值速度由剩余对称距离反解
-		// 此处用当前剩余距离粗略估计，保证减速触发早于冲过终点
-		EffectiveVc = FMath::Sqrt(2.0f * A * Remaining * 0.5f) + VEnd * 0.5f;
+		// 对称三角剖面：加速距离 = 减速距离 = L/2
+		// V_peak² = VEnd² + 2·a·(L/2) = VEnd² + a·L
+		const float VPeakSq = VEnd * VEnd + A * TotalS;
+		EffectiveVc = FMath::Sqrt(FMath::Max(VPeakSq, 0.0f));
 		EffectiveVc = FMath::Min(EffectiveVc, Vc);
 	}
 
@@ -269,10 +344,10 @@ float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS
 		return FMath::Min(VDecel, EffectiveVc);
 	}
 
-	// 加速段：v = V0 + a·Δt ≈ 用 sqrt(V0² + 2·a·s_acc_progress) 估算
+	// 加速段：v = sqrt(2·a·s_acc_progress)，s 从加速起点(s=0)算
 	if (CurrentS < SAcc)
 	{
-		float VAccel = FMath::Sqrt(V0 * V0 + 2.0f * A * CurrentS);
+		float VAccel = FMath::Sqrt(2.0f * A * CurrentS);
 		return FMath::Min(VAccel, EffectiveVc);
 	}
 
@@ -299,6 +374,21 @@ void UTrajectoryGenerator::LocateSegment(float GlobalArc, int32& OutSegIndex, fl
 		else Hi = Mid;
 	}
 	OutSegIndex = FMath::Clamp(Lo, 0, Segments.Num() - 1);
+
+	// null 段保护：跳到下一个非空段（防御性，正常流程不产生 null 段）
+	if (!Segments[OutSegIndex])
+	{
+		for (int32 i = OutSegIndex + 1; i < Segments.Num(); ++i)
+		{
+			if (Segments[i])
+			{
+				OutSegIndex = i;
+				break;
+			}
+		}
+		if (!Segments[OutSegIndex]) return; // 全部为 null，放弃
+	}
+
 	OutLocalArc = FMath::Clamp(GlobalArc - CumStartArc[OutSegIndex], 0.0f, Segments[OutSegIndex]->GetTotalArcLengthCm());
 }
 
@@ -333,20 +423,50 @@ float UTrajectoryGenerator::ProjectToArcLength(const FVector& WorldPosition) con
 	float BestS = CurrentArcLength;
 	float BestDistSq = TNumericLimits<float>::Max();
 
+	// 无限循环段（Orbit）：限制在当前游标附近 ±OneLap 局部窗口搜索，
+	// 避免全局最近点导致游标错误前跳（圆周上处处都有几何最近点）
+	const bool bInfinite = IsCurrentSegmentInfiniteLoop();
+	float SearchWindowMin = 0.0f;
+	float SearchWindowMax = TNumericLimits<float>::Max();
+	if (bInfinite)
+	{
+		// 当前段的单圈弧长作为窗口半宽
+		int32 CurSegIdx;
+		float CurLocalArc;
+		LocateSegment(CurrentArcLength, CurSegIdx, CurLocalArc);
+		if (Segments.IsValidIndex(CurSegIdx) && Segments[CurSegIdx])
+		{
+			const float OneLap = Segments[CurSegIdx]->GetTotalArcLengthCm();
+			SearchWindowMin = FMath::Max(CurrentArcLength - OneLap, 0.0f);
+			SearchWindowMax = CurrentArcLength + OneLap;
+		}
+	}
+
 	for (int32 i = 0; i < Segments.Num(); ++i)
 	{
 		UTrajectorySegment* Seg = Segments[i];
 		if (!Seg) continue;
+		const float SegStart = CumStartArc[i];
 		const float SegLen = Seg->GetTotalArcLengthCm();
+
+		// 无限段：跳过窗口外的段
+		if (bInfinite && (SegStart + SegLen < SearchWindowMin || SegStart > SearchWindowMax))
+			continue;
+
 		const float Step = FMath::Max(SegLen / 8.0f, 1.0f); // 每段 8 个采样点
 		for (float LocalS = 0.0f; LocalS <= SegLen; LocalS += Step)
 		{
+			const float GlobalS = SegStart + LocalS;
+			// 无限段：跳过窗口外的采样点
+			if (bInfinite && (GlobalS < SearchWindowMin || GlobalS > SearchWindowMax))
+				continue;
+
 			const FFrenetFrame Frame = Seg->GetFrenetAtArcLength(LocalS);
 			const float DistSq = FVector::DistSquared(Frame.OriginCm, WorldPosition);
 			if (DistSq < BestDistSq)
 			{
 				BestDistSq = DistSq;
-				BestS = CumStartArc[i] + LocalS;
+				BestS = GlobalS;
 			}
 		}
 	}
@@ -360,7 +480,30 @@ float UTrajectoryGenerator::ProjectToArcLength(const FVector& WorldPosition) con
 // ---------------------------------------------------------------------------
 FTrajectoryPoint UTrajectoryGenerator::SampleAtGlobalArc(float GlobalArc, float Speed) const
 {
-	// 复用内部 SampleGlobalArcLength，弧长 clamp 到 [0, TotalArcLength]
+	FTrajectoryPoint Point;
+	if (!bIsValid || Segments.Num() == 0) { Point.bValid = false; return Point; }
+
+	// 无限循环段（Orbit）：不 clamp 上界。段自身已用 Fmod 绕回单圈，
+	// 故前瞻点超过一圈也能正确采样（连续盘旋）。有限轨迹会走到终点后
+	// 被 LocateSegment 内的 clamp 截断，无法表达"绕回"，故二者需分别处理。
+	if (IsCurrentSegmentInfiniteLoop())
+	{
+		const float EffectiveArc = FMath::Max(GlobalArc, 0.0f); // 仅 clamp 下界
+		int32 CurSegIdx;
+		float CurLocalArc;
+		LocateSegment(CurrentArcLength, CurSegIdx, CurLocalArc);
+		if (Segments.IsValidIndex(CurSegIdx) && Segments[CurSegIdx])
+		{
+			const float SegStart = CumStartArc.IsValidIndex(CurSegIdx) ? CumStartArc[CurSegIdx] : 0.0f;
+			// 段内局部弧长（不 clamp 上界，由段内部 Fmod 绕回单圈）
+			const float LocalArc = EffectiveArc - SegStart;
+			FTrajectoryPoint P = Segments[CurSegIdx]->SampleAtArcLength(LocalArc, Speed);
+			P.ArcLengthCm = EffectiveArc; // 全局弧长供下游诊断
+			return P;
+		}
+	}
+
+	// 有限轨迹：clamp 到 [0, TotalArcLength] 后采样
 	const float ClampedArc = FMath::Clamp(GlobalArc, 0.0f, TotalArcLengthCm);
 	return SampleGlobalArcLength(ClampedArc, Speed);
 }

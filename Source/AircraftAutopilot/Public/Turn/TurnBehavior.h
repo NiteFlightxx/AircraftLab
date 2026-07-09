@@ -23,6 +23,12 @@ class UTrajectoryGenerator;
  *   - 高速：滚转协调转弯（bank turn），靠 Roll 把向心力投影到水平，
  *           产生圆周运动的向心加速度，机体自然指向速度方向（无侧滑）
  *
+ * 架构原则（与 MotionProfile 一致）：
+ *   航向闭合是 FlightController 姿态环 Yaw PID 的唯一职责。
+ *   本类输出的 DesiredYawRateDegPerSec 仅作为【几何前馈】（期望速度方向的
+ *   变化率），绝不闭合航向误差。历史上低速路径用 YawError×增益 反推角速度
+ *   并注入前馈，与 Yaw PID 双重闭合 → 正反馈自旋，已修正为纯几何角速度。
+ *
  * 协调转弯几何（水平圆周）：
  *   向心加速度 a_c = v²/R = v·ω（ω 为偏航角速度）
  *   滚转角 φ 满足：tan(φ) = a_c / g  →  φ = atan2(a_c, g)

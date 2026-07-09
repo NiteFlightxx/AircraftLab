@@ -37,6 +37,9 @@ public:
 	/** 环绕不自动完成（除非 Behavior 取消），覆写为 false */
 	virtual bool IsComplete(float CurrentS) const override { return bLoopLimitEnabled && Super::IsComplete(CurrentS); }
 
+	/** 无圈数上限时为无限循环段，生成器不做完成判定/不 clamp 游标 */
+	virtual bool IsInfiniteLoop() const override { return !bLoopLimitEnabled; }
+
 protected:
 	/** 圆心（世界系 cm，Z = 盘旋高度） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Trajectory")

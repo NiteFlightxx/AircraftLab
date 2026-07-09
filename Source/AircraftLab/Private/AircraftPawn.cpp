@@ -4,6 +4,7 @@
 #include "DroneInputComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "FlightControllerComponent.h"
+#include "AutopilotProvider.h"
 
 /**
  * 飞行器Pawn构造函数
@@ -32,7 +33,7 @@ AAircraftPawn::AAircraftPawn()
 	AutoPossessPlayer = EAutoReceiveInput::Player0;
 }
 
-/** 游戏开始时：应用输入映射，唤醒物理状态 */
+/** 游戏开始时：应用输入映射，唤醒物理状态，发现 Autopilot 组件 */
 void AAircraftPawn::BeginPlay()
 {
 	Super::BeginPlay();
@@ -41,6 +42,23 @@ void AAircraftPawn::BeginPlay()
 	DroneInput->ApplyMappingContext();
 	// 唤醒所有刚体确保物理模拟启动
 	BodyMesh->WakeAllRigidBodies();
+
+	// 通过 IAutopilotProvider 接口发现 Autopilot 组件（不反向依赖 AircraftAutopilot 模块）
+	// 用户在 Blueprint 添加 UAutopilotComponent 后，此处自动发现并绑定到 FlightController
+	TArray<UActorComponent*> Components;
+	GetComponents(Components);
+	for (UActorComponent* Comp : Components)
+	{
+		if (Comp && Comp->GetClass()->ImplementsInterface(UAutopilotProvider::StaticClass()))
+		{
+			AutopilotComponent = Comp;
+			if (FlightController)
+			{
+				FlightController->SetAutopilotProvider(Comp);
+			}
+			break;
+		}
+	}
 }
 
 void AAircraftPawn::Tick(float DeltaSeconds)

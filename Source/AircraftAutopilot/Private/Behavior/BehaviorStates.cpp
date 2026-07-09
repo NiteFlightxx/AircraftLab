@@ -78,6 +78,34 @@ EBehaviorState UBehaviorState_Move::OnUpdate(const FBehaviorStateInput& Input, f
 }
 
 // =========================================================================
+// Approach
+// =========================================================================
+void UBehaviorState_Approach::OnEnter(EBehaviorState PreviousState, const FBehaviorStateInput& Input)
+{
+	// 用编辑器配置的 TargetPositionCm
+}
+
+EBehaviorState UBehaviorState_Approach::OnUpdate(const FBehaviorStateInput& Input, float DeltaSeconds, FBehaviorOutput& OutOutput)
+{
+	OutOutput.TrajectoryRequest.Type = ETrajectoryType::Waypoint;
+	OutOutput.TrajectoryRequest.StartPositionCm = Input.PositionCm;
+	OutOutput.TrajectoryRequest.StartVelocityCmPerSec = Input.VelocityCmPerSec;
+	OutOutput.TrajectoryRequest.TargetPositionCm = TargetPositionCm;
+	OutOutput.TrajectoryRequest.TargetYawDegrees = TargetYawDegrees;
+	OutOutput.TrajectoryRequest.CruiseSpeedCmPerSec = CruiseSpeedCmPerSec;
+	OutOutput.TrajectoryRequest.PlanningAccelerationCmPerSecSq = 150.0f; // 低加速度，精细接近
+	OutOutput.TrajectoryRequest.AcceptanceRadiusCm = AcceptanceRadiusCm;
+	OutOutput.bRequestArm = true;
+	OutOutput.bValid = true;
+
+	if (FVector::DistSquared(Input.PositionCm, TargetPositionCm) < AcceptanceRadiusCm * AcceptanceRadiusCm)
+	{
+		return EBehaviorState::Hover;
+	}
+	return EBehaviorState::Approach;
+}
+
+// =========================================================================
 // FollowPath
 // =========================================================================
 void UBehaviorState_FollowPath::OnEnter(EBehaviorState PreviousState, const FBehaviorStateInput& Input)

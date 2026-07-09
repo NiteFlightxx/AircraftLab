@@ -196,8 +196,11 @@ protected:
 	/** 重新计算累积弧长与总弧长 */
 	void RecomputeArcLengths();
 
-	/** 根据当前弧长和剩余距离，用梯形剖面计算名义速度 */
-	float ComputeTrapezoidalSpeed(float CurrentS, float TotalS, float V0) const;
+	/** 根据当前弧长和剩余距离，用梯形剖面计算名义速度（从静止启动） */
+	float ComputeTrapezoidalSpeed(float CurrentS, float TotalS) const;
+
+	/** 当前游标所在段是否为无限循环段（如 Orbit 持续盘旋） */
+	bool IsCurrentSegmentInfiniteLoop() const;
 
 	/** 给定全局弧长，定位所属段索引和段内局部弧长 */
 	void LocateSegment(float GlobalArc, int32& OutSegIndex, float& OutLocalArc) const;

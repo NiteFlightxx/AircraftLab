@@ -87,6 +87,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Autopilot|Trajectory")
 	virtual bool IsComplete(float CurrentS) const { return CurrentS + UE_SMALL_NUMBER >= TotalArcLengthCm; }
 
+	/**
+	 * 该段是否为无限循环段（如 Orbit 持续盘旋）。
+	 * 返回 true 时，生成器不 clamp 游标到 TotalArcLengthCm、不触发完成判定，
+	 * 速度用恒定巡航速。由 Orbit 等持续段覆写为 true。
+	 */
+	virtual bool IsInfiniteLoop() const { return false; }
+
 	// -----------------------------------------------------------------------
 	// Look Ahead —— 路径跟踪的前瞻采样
 	// -----------------------------------------------------------------------

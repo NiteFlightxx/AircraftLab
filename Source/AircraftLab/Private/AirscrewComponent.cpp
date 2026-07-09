@@ -284,7 +284,7 @@ float UAirscrewComponent::ComputeTargetRpm(float EffectiveCommand) const
 	const float CommandExponent = FMath::Max(RotorDefinition.Motor.CommandExponent, 0.01f);
 	// ShapedCommand = Command^exp，将线性指令映射为非线性转速曲线
 	const float ShapedCommand = FMath::Pow(ClampedCommand, CommandExponent);
-	const float MaxRpm = FMath::Max(RotorDefinition.Motor.MaxRpm, 0.0f);
+	const float MaxRpm = FMath::Max(RotorDefinition.Motor.MaxRpm, 1.0f);
 
 	if (ShapedCommand <= UE_SMALL_NUMBER)
 	{

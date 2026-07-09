@@ -34,7 +34,16 @@ FFrenetFrame ULineTrajectorySegment::GetFrenetAtArcLength(float S) const
 	Frame.OriginCm = StartCm + Tangent * ClampedS;
 	Frame.Tangent = Tangent;
 	// 法向：水平面内切向的左转 90°（Normal = (-Ty, Tx, 0)），用于横向误差度量
-	Frame.Normal = FVector(-Tangent.Y, Tangent.X, 0.0f).GetSafeNormal();
+	Frame.Normal = FVector(-Tangent.Y, Tangent.X, 0.0f);
+	if (Frame.Normal.IsNearlyZero())
+	{
+		// 纯垂直切向（起飞/降落）：法向 fallback 到世界 X 轴，避免归零
+		Frame.Normal = FVector::ForwardVector;
+	}
+	else
+	{
+		Frame.Normal = Frame.Normal.GetSafeNormal();
+	}
 	Frame.Up = FVector::UpVector;
 	Frame.ArcLengthCm = ClampedS;
 	Frame.Curvature = 0.0f; // 直线曲率为 0

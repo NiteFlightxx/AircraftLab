@@ -97,20 +97,24 @@ FProfiledSetpoint UMotionProfile::Update(const FTrajectoryPoint& Nominal, float 
 	ProfiledPosition += ProfiledVel * DeltaSeconds;
 
 	// -----------------------------------------------------------------------
-	// 5) Yaw：偏航角速度 Rate/Jerk 限幅 → 积分
+	// 5) Yaw：直接透传名义航向设定值，角速度前馈仅用几何角速度
+	//
+	//    设计原则：航向闭合是 FlightController 姿态环 Yaw PID 的职责，
+	//    MotionProfile 只做运动学整形（速度/加速度/位置），不参与航向控制。
+	//    历史上此处用 YawError×增益 反推角速度并积分 ProfiledYaw，导致：
+	//      ① 反推的角速度作为前馈注入姿态环 → 与 Yaw PID 双重闭合航向误差 → 正反馈自旋
+	//      ② ProfiledYaw 自积分产生移动设定值，PID 永远追不上 → 积分饱和（I=120 钉死）
+	//    修正：YawDegrees 直接透传 Nominal.YawDegrees（轨迹/制导律决定航向），
+	//          YawRateDegreesPerSec 直接透传 Nominal.YawRateDegreesPerSec
+	//          （直线段=0，曲线段=几何角速度），经 Slew 做 Jerk 限幅后输出。
+	//          姿态环用 Yaw PID 闭合 YawSetpoint→currentYaw，前馈只用真实几何角速度。
 	// -----------------------------------------------------------------------
-	float TargetYawRate = Nominal.YawRateDegreesPerSec;
-	// 若名义给出绝对航向而非角速度，反推目标角速度（朝名义航向转）
-	if (FMath::Abs(TargetYawRate) < UE_SMALL_NUMBER && Nominal.bValid)
-	{
-		float YawError = FMath::FindDeltaAngleDegrees(Nominal.YawDegrees, ProfiledYaw);
-		// 用限幅速率闭合航向
-		TargetYawRate = FMath::Clamp(YawError * 2.0f, -Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
-	}
-	float ProfiledYawRate = YawRateSlew.Update(
+	const float TargetYawRate = Nominal.bValid ? Nominal.YawRateDegreesPerSec : 0.0f;
+	const float ProfiledYawRate = YawRateSlew.Update(
 		TargetYawRate, DeltaSeconds,
 		Limits.MaxYawRateDegPerSec, Limits.MaxYawJerkDegPerSecCubed);
-	ProfiledYaw = FMath::UnwindDegrees(ProfiledYaw + ProfiledYawRate * DeltaSeconds);
+	// 航向设定值透传（不积分），由姿态环 PID 闭合
+	ProfiledYaw = Nominal.bValid ? FMath::UnwindDegrees(Nominal.YawDegrees) : 0.0f;
 
 	// -----------------------------------------------------------------------
 	// 输出

@@ -389,6 +389,45 @@ void UFlightControllerComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
 	// 跨线程数据传递：游戏线程写入，物理线程读取
 	CachedPilotInput = PilotInput;
+
+	// Autopilot 注入拉取：通过 IAutopilotProvider 接口获取本周期设定值（游戏线程写，物理线程读）
+	// 链路三处静默失败点：①开关未开 ②Provider 未注册 ③GetAutopilotInjection 返回 false。
+	// 历史上全部静默，导致"调了 Command 却无反应"无从诊断。下面给①②③各一条防刷屏提示。
+	if (bUseAutopilotSetpoint)
+	{
+		if (!AutopilotProviderObject.IsValid())
+		{
+			CachedAutopilotInjection.bValid = false;
+			if (!bWarnedAutopilotProviderMissing)
+			{
+				UE_LOG(LogFlightController, Warning,
+					TEXT("bUseAutopilotSetpoint=true 但 AutopilotProvider 未注册。注入链路断开，控制回退手动路径。"
+					     "请确认 UAutopilotComponent 已挂载且 BeginPlay 完成自注册（ResolveFlightController→SetAutopilotProvider）。"));
+				bWarnedAutopilotProviderMissing = true;
+			}
+		}
+		else if (IAutopilotProvider* Provider = Cast<IAutopilotProvider>(AutopilotProviderObject.Get()))
+		{
+			Provider->GetAutopilotInjection(CachedAutopilotInjection);
+			// Provider 存在但注入无效：通常是 Autopilot 尚未激活 / 管线尚未产出 ProfiledSetpoint
+			if (!CachedAutopilotInjection.bValid && !bWarnedAutopilotInjectionInvalid)
+			{
+				UE_LOG(LogFlightController, Warning,
+					TEXT("GetAutopilotInjection 返回无效（Provider=%s）。"
+					     "常见原因：SetAutopilotActive(true) 未调用，或 Behavior/Trajectory 管线尚未产出有效 ProfiledSetpoint。"),
+					*AutopilotProviderObject->GetName());
+				bWarnedAutopilotInjectionInvalid = true;
+			}
+			else if (CachedAutopilotInjection.bValid)
+			{
+				bWarnedAutopilotInjectionInvalid = false; // 恢复有效后复位，下次再失败可再提示
+			}
+		}
+		else
+		{
+			CachedAutopilotInjection.bValid = false;
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -432,10 +471,19 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 	//
 	Runtime.ControlAccumulatorSeconds = FMath::Min(Runtime.ControlAccumulatorSeconds + DeltaTime, 0.25f);
 	const float ControlStepSeconds = 1.0f / FMath::Max(ControlLoopRateHz, 1.0f);
-	while (Runtime.ControlAccumulatorSeconds + UE_SMALL_NUMBER >= ControlStepSeconds)
+	// 限制单帧最大控制步数，避免卡顿时雪崩式累积（62 步用冻结输入 → 积分饱和 → 恢复后过冲）
+	constexpr int32 MaxStepsPerFrame = 8;
+	int32 StepsThisFrame = 0;
+	while (Runtime.ControlAccumulatorSeconds + UE_SMALL_NUMBER >= ControlStepSeconds && StepsThisFrame < MaxStepsPerFrame)
 	{
 		RunControlLoop(ControlStepSeconds, CachedPilotInput);
 		Runtime.ControlAccumulatorSeconds -= ControlStepSeconds;
+		++StepsThisFrame;
+	}
+	// 超限则丢弃剩余累积，避免雪崩
+	if (Runtime.ControlAccumulatorSeconds >= ControlStepSeconds)
+	{
+		Runtime.ControlAccumulatorSeconds = 0.0f;
 	}
 
 	// 控制循环已更新各旋翼指令，现在对刚体施力
@@ -585,15 +633,8 @@ void UFlightControllerComponent::SetControllerEnabled(bool bNewEnabled)
 }
 
 // ---------------------------------------------------------------------------
-// 锁定目标接口 — 外部设置保持点（用于自动化任务）
+// 锁定目标接口 — 外部设置保持点（高度/航向；位置保持由 Autopilot 注入驱动）
 // ---------------------------------------------------------------------------
-void UFlightControllerComponent::SetHeldPosition(const FVector& WorldPositionCm)
-{
-	Runtime.HoldTargets.HeldPositionCm = WorldPositionCm;
-	Runtime.HoldTargets.bPositionHoldInitialized = true;
-	PidStates.Position.Reset();
-}
-
 void UFlightControllerComponent::SetHeldAltitude(float WorldAltitudeCm)
 {
 	Runtime.HoldTargets.HeldAltitudeCm = WorldAltitudeCm;
@@ -608,6 +649,28 @@ void UFlightControllerComponent::SetHeldYaw(float YawDegrees)
 	Runtime.HoldTargets.HeldYawDegrees = FRotator::NormalizeAxis(YawDegrees);
 	Runtime.HoldTargets.bYawHoldInitialized = true;
 	PidStates.Angle.Yaw.Reset();
+}
+
+// ---------------------------------------------------------------------------
+// Autopilot 集成接口
+// ---------------------------------------------------------------------------
+void UFlightControllerComponent::SetUseAutopilotSetpoint(bool bEnabled)
+{
+	bUseAutopilotSetpoint = bEnabled;
+	if (bEnabled)
+	{
+		// 启用 Autopilot 注入时复位位置/高度/航向 PID，避免旧积分残留
+		PidStates.Position.Reset();
+		PidStates.Velocity.Reset();
+		PidStates.Altitude.Reset();
+		PidStates.VerticalVelocity.Reset();
+		PidStates.Angle.Yaw.Reset();
+	}
+}
+
+void UFlightControllerComponent::SetAutopilotProvider(UObject* Provider)
+{
+	AutopilotProviderObject = Provider;
 }
 
 // ---------------------------------------------------------------------------
@@ -674,24 +737,31 @@ void UFlightControllerComponent::InitializeDefaultControllerConfig()
 
 	// ========================================================================
 	// Position PID — 外环：位置误差 → 期望速度
-	// 公式：v_des = Kp·(pos_held − pos_current)
+	// 公式：v_des = Kp·(pos_held − pos_current) + Kff·v_setpoint
 	// 注意这是 P 控制器（Ki=0, Kd 提供速度阻尼）
 	// Kd 项 = Kd·d(error)/dt ≈ Kd·(−v_current)，等效于速度阻尼
+	// Kff=1.0 激活速度前馈通道：Autopilot 注入时直接用设定速度驱动，消除跟踪滞后
+	//   手动模式 Kff 无副作用（FeedForwardInput=0，Kff·0=0）
 	// 输出限制 = MaxSpeed，确保期望速度不超物理极限
 	// ========================================================================
 	ControllerConfig.Position.PositionGains.X = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
 	ControllerConfig.Position.PositionGains.Y = { 0.40f, 0.0f, 0.30f, 0.0f, ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec };
+	ControllerConfig.Position.PositionGains.X.Kff = 1.0f; // 速度前馈（Autopilot 位置环）
+	ControllerConfig.Position.PositionGains.Y.Kff = 1.0f;
 	// Z 轴位置 → 期望垂直速度（P 控制，Kd=0 因为速度内环已有微分）
 	ControllerConfig.Position.PositionGains.Z = { 1.20f, 0.0f, 0.0f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
 
 	// ========================================================================
 	// Velocity PID — 内环：速度误差 → 期望加速度
-	// 公式：a_des = Kp·(v_des − v_current) + Ki·∫(v_des − v)dt + Kd·d(v_des − v)/dt
+	// 公式：a_des = Kp·(v_des − v_current) + Ki·∫(v_des − v)dt + Kd·d(v_des − v)/dt + Kff·a_setpoint
+	// Kff=1.0 激活加速度前馈通道：Autopilot 注入时直接用设定加速度驱动
 	// 输出限制 = MaxAcceleration（X/Y）或归一化总距偏移（Z，范围 [-0.3, 0.3]）
 	// Z 轴增益特别小是因为输出单位是归一化总距偏移（0.3 ≈ 30% 最大推力变化）
 	// ========================================================================
 	ControllerConfig.Position.VelocityGains.X = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
 	ControllerConfig.Position.VelocityGains.Y = { 1.50f, 0.01f, 0.60f, 3000.0f, ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
+	ControllerConfig.Position.VelocityGains.X.Kff = 1.0f; // 加速度前馈（Autopilot 速度环）
+	ControllerConfig.Position.VelocityGains.Y.Kff = 1.0f;
 	ControllerConfig.Position.VelocityGains.Z = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
 	// 微分截止频率降低 → 更强滤波 → 减少角速率噪声引起的抖动
 	ControllerConfig.Position.VelocityGains.X.DerivativeCutoffHz = 12.0f;
@@ -701,12 +771,15 @@ void UFlightControllerComponent::InitializeDefaultControllerConfig()
 	// ========================================================================
 	// Angle PID — 外环：倾角误差 → 期望角速率
 	// 公式：ω_des = Kp·(θ_des − θ_current) + Kd·d(θ_error)/dt
+	// Yaw 轴 Kff=1.0 激活偏航角速度前馈通道（Autopilot 协调转弯/路径跟踪航向）
+	//   Roll/Pitch 保持 Kff=0（无前馈通道，倾角由速度环驱动）
 	// 输出限制 = MaxRate（与速率内环的输入范围匹配）
 	// 角度环用 UpdateFromError（导数对误差），因为设定值来自速度环，已是平滑信号
 	// ========================================================================
 	ControllerConfig.Attitude.AngleGains.Roll = { 4.5f, 0.0f, 0.20f, 20.0f, ControllerConfig.Limits.MaxRollRateDegreesPerSec };
 	ControllerConfig.Attitude.AngleGains.Pitch = { 4.5f, 0.0f, 0.20f, 20.0f, ControllerConfig.Limits.MaxPitchRateDegreesPerSec };
 	ControllerConfig.Attitude.AngleGains.Yaw = { 3.0f, 0.0f, 0.10f, 25.0f, ControllerConfig.Limits.MaxYawRateDegreesPerSec };
+	ControllerConfig.Attitude.AngleGains.Yaw.Kff = 1.0f; // 偏航角速度前馈（Autopilot 协调转弯/航向跟踪）
 	ControllerConfig.Attitude.AngleGains.Roll.DerivativeCutoffHz = 12.0f;
 	ControllerConfig.Attitude.AngleGains.Pitch.DerivativeCutoffHz = 12.0f;
 	ControllerConfig.Attitude.AngleGains.Yaw.DerivativeCutoffHz = 8.0f;
@@ -729,12 +802,15 @@ void UFlightControllerComponent::InitializeDefaultControllerConfig()
 	// ========================================================================
 	// Altitude PID — 高度控制（与垂直通道并行）
 	// 外环：高度误差 → 期望垂直速度
-	//   v_z_des = Kp·(z_held − z_current) + Kd·d(z_error)/dt
-	// 内环：垂直速度误差 → 总距偏移
+	//   v_z_des = Kp·(z_held − z_current) + Kd·d(z_error)/dt + Kff·v_z_setpoint
+	//   Kff=1.0 激活垂直速度前馈通道（Autopilot 高度环）
+	// 内环：垂直速度误差 → 总距偏移（Kff=0，推力前馈走基准偏移而非 Kff）
 	//   Δc = Kp·(v_z_des − v_z_current) + Ki·∫(v_z_des − v_z)dt + Kd·d(v_z_des − v_z)/dt
-	//   Collective = Clamp(HoverCollective + Δc, Min, Max)
+	//   Collective = Clamp(HoverCollective + Δc, Min, Max)         （手动）
+	//   Collective = Clamp(ThrustFeedForward + Δc, Min, Max)        （Autopilot）
 	// ========================================================================
 	ControllerConfig.Altitude.AltitudeGains = { 1.20f, 0.0f, 0.20f, 0.0f, ControllerConfig.Limits.MaxClimbRateCmPerSec };
+	ControllerConfig.Altitude.AltitudeGains.Kff = 1.0f; // 垂直速度前馈（Autopilot 高度环）
 	ControllerConfig.Altitude.VerticalVelocityGains = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
 	ControllerConfig.Altitude.VerticalVelocityGains.DerivativeCutoffHz = 10.0f;
 
@@ -1165,9 +1241,9 @@ void UFlightControllerComponent::RebuildAllocationCache()
 //      油门杆在中位死区内 → 锁定 z_held
 //      油门杆超出死区   → 以爬升/下降率飞行，同时重新锚定 z_held
 //
-//   特殊模式：
-//     ReturnToHome: z_held = max(z_current, z_home + ClimbOffset)
-//     AutoLand:     v_z_des = −DescentRate（匀速下降）
+//   C) Autopilot 注入 (bUseAutopilotSetpoint=true):
+//      高度设定值 + 垂直速度前馈（Kff）+ 推力前馈（替代 HoverCollective 基准）
+//      RTH/AutoLand 由 BehaviorPlanner 经 TrajectoryGenerator 驱动，不再内联
 // ---------------------------------------------------------------------------
 float UFlightControllerComponent::ComputeVerticalControl(const FDronePilotInput& PilotInput, float DeltaSeconds, float& OutDesiredVerticalVelocity)
 {
@@ -1193,8 +1269,7 @@ float UFlightControllerComponent::ComputeVerticalControl(const FDronePilotInput&
 		return MapCenteredThrottleToCollective(PilotInput.Throttle);
 	}
 
-	// ---- 路径 B：高度保持 ----
-	// 初始化锁定高度
+	// 高度保持初始化（手动路径用；Autopilot 路径直接使用设定值，忽略此锁定值）
 	if (!Runtime.HoldTargets.bAltitudeHoldInitialized)
 	{
 		Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
@@ -1203,19 +1278,26 @@ float UFlightControllerComponent::ComputeVerticalControl(const FDronePilotInput&
 		PidStates.VerticalVelocity.Reset();
 	}
 
-	// ReturnToHome: 爬升到归航高度以上
-	if (Runtime.ActiveFlightMode == EDroneFlightMode::ReturnToHome && Runtime.HomeState.bValid)
-		Runtime.HoldTargets.HeldAltitudeCm = FMath::Max(CurrentAltitude, Runtime.HomeState.PositionCm.Z + ReturnHomeClimbAltitudeOffsetCm);
-	// AutoLand: 跟随当前高度（持续下降）
-	else if (Runtime.ActiveFlightMode == EDroneFlightMode::AutoLand)
-		Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
-
-	if (Runtime.ActiveFlightMode == EDroneFlightMode::AutoLand)
+	// ---- 路径 C：Autopilot 注入 ----
+	if (bUseAutopilotSetpoint && CachedAutopilotInjection.bValid)
 	{
-		// 自动降落：固定下降率
-		OutDesiredVerticalVelocity = -AutoLandDescentRateCmPerSec;
+		const FAutopilotInjection& AI = CachedAutopilotInjection;
+		// 高度外环：设定值=AltitudeSetpointCm，前馈=垂直速度设定值（Kff 通道）
+		OutDesiredVerticalVelocity = PidStates.Altitude.UpdateFromMeasurement(
+			AI.AltitudeSetpointCm, CurrentAltitude, DeltaSeconds,
+			ControllerConfig.Altitude.AltitudeGains, AI.VerticalVelocitySetpointCmPerSec);
+		OutDesiredVerticalVelocity = FMath::Clamp(OutDesiredVerticalVelocity,
+			-ControllerConfig.Limits.MaxDescentRateCmPerSec, ControllerConfig.Limits.MaxClimbRateCmPerSec);
+		// 垂直速度内环（无前馈，推力前馈走基准偏移而非 Kff）
+		const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
+			OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds,
+			ControllerConfig.Altitude.VerticalVelocityGains);
+		// 推力前馈作总距基准（含重力补偿），替代 HoverCollective
+		return FMath::Clamp(AI.ThrustFeedForward + CollectiveOffset, MinCollective, MaxCollective);
 	}
-	else
+
+	// ---- 路径 B（手动）：高度保持 ----
+	// RTH/AutoLand 内联已删除，由 BehaviorPlanner 经 TrajectoryGenerator 驱动
 	{
 		// 油门杆在死区外 → 手动爬升/下降率，重新锚定高度
 		const float ThrottleMagnitude = FMath::Abs(PilotInput.Throttle);
@@ -1244,7 +1326,7 @@ float UFlightControllerComponent::ComputeVerticalControl(const FDronePilotInput&
 		}
 	}
 
-	// ---- 垂直速度内环 ----
+	// ---- 垂直速度内环（手动路径）----
 	// PID_vz: Δc = Kp·(v_z_des − v_z) + Ki·∫(v_z_des − v_z)dt + Kd·d(v_z_des − v_z)/dt
 	// 输出 Δc 是总距偏移量，加在悬停点上
 	const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
@@ -1316,6 +1398,12 @@ FRotator UFlightControllerComponent::ComputeDesiredAttitude(const FDronePilotInp
 	float DesiredPitchDegrees = -FMath::RadiansToDegrees(FMath::Atan2(ForwardAcceleration, GravityMagnitude));
 	float DesiredRollDegrees = FMath::RadiansToDegrees(FMath::Atan2(RightAcceleration, GravityMagnitude));
 
+	// Autopilot 协调转弯滚转叠加（TurnBehavior 输出，叠加在悬停倾斜方程之上）
+	if (bUseAutopilotSetpoint && CachedAutopilotInjection.bValid)
+	{
+		DesiredRollDegrees += CachedAutopilotInjection.TurnRollDegrees;
+	}
+
 	// 限制最大倾角——超出此角度可能推力不足以抵消重力分量
 	DesiredRollDegrees = FMath::Clamp(DesiredRollDegrees, -ControllerConfig.Limits.MaxTiltAngleDegrees, ControllerConfig.Limits.MaxTiltAngleDegrees);
 	DesiredPitchDegrees = FMath::Clamp(DesiredPitchDegrees, -ControllerConfig.Limits.MaxTiltAngleDegrees, ControllerConfig.Limits.MaxTiltAngleDegrees);
@@ -1325,14 +1413,31 @@ FRotator UFlightControllerComponent::ComputeDesiredAttitude(const FDronePilotInp
 // ---------------------------------------------------------------------------
 // ComputeDesiredYawRate — 计算期望偏航角速率
 // ---------------------------------------------------------------------------
-// 两条路径：
+// 三条路径：
 //   A) 无偏航保持（Manual/Acro）：摇杆 → ψ̇_des = stick_yaw × ψ̇_max
-//   B) 偏航保持：摇杆在死区外 → 手动偏航率 + 重锁航向
-//                         死区内 → 偏航角 PID 锁定航向
-//                           ψ̇_des = PID_yaw(ψ_held − ψ_current)
+//   B) 偏航保持（手动）：摇杆在死区外 → 手动偏航率 + 重锁航向
+//                        死区内 → 偏航角 PID 锁定航向
+//                          ψ̇_des = PID_yaw(ψ_held − ψ_current)
+//   C) Autopilot 注入 (bUseAutopilotSetpoint=true):
+//      ψ̇_des = PID_yaw(ψ_setpoint − ψ_current) + Kff·ψ̇_setpoint
+//      航向设定值 + 偏航角速度前馈（协调转弯/路径跟踪航向）
 // ---------------------------------------------------------------------------
 float UFlightControllerComponent::ComputeDesiredYawRate(const FDronePilotInput& PilotInput, float DeltaSeconds)
 {
+	// ---- 路径 C：Autopilot 注入 ----
+	if (bUseAutopilotSetpoint && CachedAutopilotInjection.bValid)
+	{
+		const FAutopilotInjection& AI = CachedAutopilotInjection;
+		// 偏航角 PID：设定值=YawSetpointDegrees，前馈=偏航角速度设定值（Kff 通道）
+		const float YawError = FRotator::NormalizeAxis(
+			AI.YawSetpointDegrees - Runtime.EstimatedState.State.AttitudeDegrees.Yaw);
+		const float DesiredYawRate = PidStates.Angle.Yaw.UpdateFromError(
+			YawError, DeltaSeconds, ControllerConfig.Attitude.AngleGains.Yaw, AI.YawRateSetpointDegPerSec);
+		return FMath::Clamp(DesiredYawRate,
+			-ControllerConfig.Limits.MaxYawRateDegreesPerSec, ControllerConfig.Limits.MaxYawRateDegreesPerSec);
+	}
+
+	// ---- 手动路径 ----
 	// 手动偏航角速率
 	const float ManualYawRate = PilotInput.Yaw * ControllerConfig.Limits.MaxYawRateDegreesPerSec;
 
@@ -1641,20 +1746,19 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalVelocity(const FDron
 // ---------------------------------------------------------------------------
 // 串级结构（从外到内）：
 //
-//   位置环（仅 PositionHold/Mission/RTH/AutoLand）：
-//     v_des_x = PID_pos_x(x_held − x_current)
-//     v_des_y = PID_pos_y(y_held − y_current)
+//   位置环：
+//     v_des_x = PID_pos_x(x_set − x_current) + Kff·v_ff_x   （前馈速度注入）
+//     v_des_y = PID_pos_y(y_set − y_current) + Kff·v_ff_y
 //
 //   速度环：
-//     a_des_x = PID_vel_x(v_des_x − v_current_x)
-//     a_des_y = PID_vel_y(v_des_y − v_current_y)
+//     a_des_x = PID_vel_x(v_des_x − v_current_x) + Kff·a_ff_x   （前馈加速度注入）
+//     a_des_y = PID_vel_y(v_des_y − v_current_y) + Kff·a_ff_y
 //
 //   加速度限幅 → 送给悬停倾斜方程
 //
-// 位置保持的"锚定"逻辑：
-//   - 有摇杆输入时 → 重新锚定 HeldPosition 到当前位置（位置 PID 暂停）
-//   - 无摇杆输入时 → 位置 PID 将无人机拉回 HeldPosition
-//   - ReturnToHome → HeldPosition 设为 Home X/Y
+// 双路径（灰度开关 bUseAutopilotSetpoint）：
+//   - true：设定值 + 前馈全部来自 CachedAutopilotInjection（Autopilot 模块）
+//   - false：手动摇杆路径，HeldPosition 锚定摇杆居中时的位置（原有逻辑）
 // ---------------------------------------------------------------------------
 FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const FDronePilotInput& PilotInput, float DeltaSeconds)
 {
@@ -1668,6 +1772,68 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const F
 		return FVector::ZeroVector;
 	}
 
+	// ======================================================================
+	// Autopilot 注入路径
+	// ======================================================================
+	if (bUseAutopilotSetpoint && CachedAutopilotInjection.bValid)
+	{
+		const FAutopilotInjection& AI = CachedAutopilotInjection;
+
+		FVector DesiredVelocity = FVector::ZeroVector;
+		FVector DesiredAcceleration = FVector::ZeroVector;
+
+		if (ModeCapabilities.CanUsePositionControl)
+		{
+			// 位置环：设定值 = PositionSetpointCm.XY，前馈 = VelocitySetpointCmPerSec.XY
+			DesiredVelocity = FVector(
+				PidStates.Position.X.UpdateFromMeasurement(AI.PositionSetpointCm.X, CurrentPosition.X, DeltaSeconds, ControllerConfig.Position.PositionGains.X, AI.VelocitySetpointCmPerSec.X),
+				PidStates.Position.Y.UpdateFromMeasurement(AI.PositionSetpointCm.Y, CurrentPosition.Y, DeltaSeconds, ControllerConfig.Position.PositionGains.Y, AI.VelocitySetpointCmPerSec.Y),
+				0.0f);
+
+			Runtime.ControlOutput.Targets.Position.bEnabled = true;
+			Runtime.ControlOutput.Targets.Position.PositionCm = FVector(AI.PositionSetpointCm.X, AI.PositionSetpointCm.Y, AI.AltitudeSetpointCm);
+		}
+		else
+		{
+			DesiredVelocity = AI.VelocitySetpointCmPerSec;
+		}
+
+		// 速度限幅
+		DesiredVelocity.Z = 0.0f;
+		const float MaxHSpeed = ControllerConfig.Limits.MaxHorizontalSpeedCmPerSec;
+		const FVector2D DV2D(DesiredVelocity.X, DesiredVelocity.Y);
+		if (DV2D.SizeSquared() > FMath::Square(MaxHSpeed))
+		{
+			const FVector2D Clamped = DV2D.GetSafeNormal() * MaxHSpeed;
+			DesiredVelocity.X = Clamped.X; DesiredVelocity.Y = Clamped.Y;
+		}
+
+		Runtime.ControlOutput.Targets.Velocity.bEnabled = true;
+		Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.X = DesiredVelocity.X;
+		Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.Y = DesiredVelocity.Y;
+
+		// 速度环：前馈 = AccelerationSetpointCmPerSecSq.XY
+		DesiredAcceleration.X = PidStates.Velocity.X.UpdateFromMeasurement(
+			DesiredVelocity.X, CurrentVelocity.X, DeltaSeconds, ControllerConfig.Position.VelocityGains.X, AI.AccelerationSetpointCmPerSecSq.X);
+		DesiredAcceleration.Y = PidStates.Velocity.Y.UpdateFromMeasurement(
+			DesiredVelocity.Y, CurrentVelocity.Y, DeltaSeconds, ControllerConfig.Position.VelocityGains.Y, AI.AccelerationSetpointCmPerSecSq.Y);
+
+		// 加速度限幅
+		const float MaxHAccel = ControllerConfig.Limits.MaxHorizontalAccelerationCmPerSecSq;
+		const FVector2D DA2D(DesiredAcceleration.X, DesiredAcceleration.Y);
+		if (DA2D.SizeSquared() > FMath::Square(MaxHAccel))
+		{
+			const FVector2D Clamped = DA2D.GetSafeNormal() * MaxHAccel;
+			DesiredAcceleration.X = Clamped.X; DesiredAcceleration.Y = Clamped.Y;
+		}
+
+		return FVector(DesiredAcceleration.X, DesiredAcceleration.Y, 0.0f);
+	}
+
+	// ======================================================================
+	// 手动摇杆路径（原有逻辑）
+	// ======================================================================
+
 	// 先计算摇杆对应的期望速度
 	FVector DesiredVelocity = ComputeDesiredHorizontalVelocity(PilotInput);
 
@@ -1678,14 +1844,7 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const F
 		const bool bManualHorizontalCommand = FMath::Abs(PilotInput.Roll) > HorizontalHoldStickDeadband
 			|| FMath::Abs(PilotInput.Pitch) > HorizontalHoldStickDeadband;
 
-		// ReturnToHome：将保持目标设为归航点
-		if (Runtime.ActiveFlightMode == EDroneFlightMode::ReturnToHome && Runtime.HomeState.bValid)
-		{
-			Runtime.HoldTargets.HeldPositionCm.X = Runtime.HomeState.PositionCm.X;
-			Runtime.HoldTargets.HeldPositionCm.Y = Runtime.HomeState.PositionCm.Y;
-			Runtime.HoldTargets.bPositionHoldInitialized = true;
-		}
-		else if (!Runtime.HoldTargets.bPositionHoldInitialized)
+		if (!Runtime.HoldTargets.bPositionHoldInitialized)
 		{
 			// 首次进入位置保持 → 锁定当前位置
 			Runtime.HoldTargets.HeldPositionCm = CurrentPosition;
@@ -1694,7 +1853,7 @@ FVector UFlightControllerComponent::ComputeDesiredHorizontalAcceleration(const F
 		}
 
 		// 手动输入时 → 重新锚定保持点，让位置 PID 不与手动指令打架
-		if (bManualHorizontalCommand && Runtime.ActiveFlightMode != EDroneFlightMode::ReturnToHome && Runtime.ActiveFlightMode != EDroneFlightMode::AutoLand)
+		if (bManualHorizontalCommand)
 		{
 			Runtime.HoldTargets.HeldPositionCm = CurrentPosition;
 			PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();

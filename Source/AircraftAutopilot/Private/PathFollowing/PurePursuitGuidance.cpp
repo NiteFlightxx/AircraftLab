@@ -66,14 +66,22 @@ bool UPurePursuitGuidance::Update(const FVector& CurrentPositionCm, const FVecto
 	// 5) 期望航向 = 速度方向
 	const float DesiredYaw = FMath::RadiansToDegrees(FMath::Atan2(ToLA.Y, ToLA.X));
 
-	// 6) 横向误差（当前位置到最近路径点的水平距离，带符号）
+	// 6) 横向误差（带符号：与路径法向的点积，正=路径左侧）
 	const FTrajectoryPoint Closest = Trajectory->SampleAtGlobalArc(S0, 0.0f);
 	float CrossTrack = 0.0f;
 	if (Closest.bValid)
 	{
-		FVector CT = CurrentPositionCm - Closest.PositionCm;
-		CT.Z = 0.0f;
-		CrossTrack = CT.Size();
+		// 用最近点 → 前瞻点方向近似路径切向，再左转 90° 得法向
+		FVector PathDir = LookAheadPoint - Closest.PositionCm;
+		PathDir.Z = 0.0f;
+		if (!PathDir.IsNearlyZero())
+		{
+			PathDir = PathDir.GetSafeNormal();
+			const FVector Normal = FVector(-PathDir.Y, PathDir.X, 0.0f); // 切向左转 90°
+			FVector ToCurrent = CurrentPositionCm - Closest.PositionCm;
+			ToCurrent.Z = 0.0f;
+			CrossTrack = FVector::DotProduct(ToCurrent, Normal); // 带符号
+		}
 	}
 
 	OutCommand.DesiredVelocityCmPerSec = DesiredVel;

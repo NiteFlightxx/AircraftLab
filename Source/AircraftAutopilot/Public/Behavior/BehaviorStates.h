@@ -92,6 +92,36 @@ public:
 	float AcceptanceRadiusCm = 50.0f;
 };
 
+/**
+ * 接近状态：低速精细靠近目标点，到达后切 Hover。
+ * 与 Move 的区别：巡航速度低、到达容差小，用于精确接近/对接场景。
+ */
+UCLASS(BlueprintType, Blueprintable, EditInlineNew, DefaultToInstanced, ClassGroup = (AircraftAutopilot))
+class AIRCRAFTAUTOPILOT_API UBehaviorState_Approach : public UBehaviorState
+{
+	GENERATED_BODY()
+public:
+	virtual EBehaviorState GetStateType() const override { return EBehaviorState::Approach; }
+	virtual void OnEnter(EBehaviorState PreviousState, const FBehaviorStateInput& Input) override;
+	virtual EBehaviorState OnUpdate(const FBehaviorStateInput& Input, float DeltaSeconds, FBehaviorOutput& OutOutput) override;
+
+	/** 目标位置（cm，世界系） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|Approach")
+	FVector TargetPositionCm = FVector::ZeroVector;
+
+	/** 目标航向（°） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|Approach")
+	float TargetYawDegrees = 0.0f;
+
+	/** 接近巡航速度（cm/s，低速精细） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|Approach", meta = (ClampMin = "0.0"))
+	float CruiseSpeedCmPerSec = 200.0f;
+
+	/** 精确到达容差（cm，比 Move 更小） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|Approach", meta = (ClampMin = "0.0"))
+	float AcceptanceRadiusCm = 15.0f;
+};
+
 /** 沿路径飞行状态：跟踪 Nav3D 折线点串 */
 UCLASS(BlueprintType, Blueprintable, EditInlineNew, DefaultToInstanced, ClassGroup = (AircraftAutopilot))
 class AIRCRAFTAUTOPILOT_API UBehaviorState_FollowPath : public UBehaviorState

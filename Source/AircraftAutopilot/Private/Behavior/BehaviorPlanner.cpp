@@ -16,6 +16,7 @@ void UBehaviorPlanner::Initialize()
 	StateInstances.Add(EBehaviorState::TakeOff, NewObject<UBehaviorState_TakeOff>(this));
 	StateInstances.Add(EBehaviorState::Hover, NewObject<UBehaviorState_Hover>(this));
 	StateInstances.Add(EBehaviorState::Move, NewObject<UBehaviorState_Move>(this));
+	StateInstances.Add(EBehaviorState::Approach, NewObject<UBehaviorState_Approach>(this));
 	StateInstances.Add(EBehaviorState::FollowPath, NewObject<UBehaviorState_FollowPath>(this));
 	StateInstances.Add(EBehaviorState::Orbit, NewObject<UBehaviorState_Orbit>(this));
 	StateInstances.Add(EBehaviorState::AvoidObstacle, NewObject<UBehaviorState_AvoidObstacle>(this));
@@ -77,12 +78,11 @@ void UBehaviorPlanner::CommandOrbit(const FVector& CenterCm, float RadiusCm, flo
 	RequestState(EBehaviorState::Orbit);
 }
 
-void UBehaviorPlanner::CommandReturnHome(const FVector& InHomePositionCm, float ReturnAltitudeCm)
+void UBehaviorPlanner::CommandReturnHome(float ReturnAltitudeCm)
 {
-	HomePositionCm = InHomePositionCm;
 	if (UBehaviorState_ReturnHome* RTH = Cast<UBehaviorState_ReturnHome>(EnsureState(EBehaviorState::ReturnHome)))
 	{
-		RTH->HomePositionCm = InHomePositionCm;
+		RTH->HomePositionCm = HomePositionCm;
 		RTH->ReturnAltitudeCm = ReturnAltitudeCm;
 	}
 	RequestState(EBehaviorState::ReturnHome);
@@ -109,6 +109,8 @@ bool UBehaviorPlanner::Update(const FBehaviorStateInput& Input, float DeltaSecon
 	if (Arbitrated != CurrentStateType && Arbitrated != EBehaviorState::Idle)
 	{
 		SwitchTo(Arbitrated, EBehaviorTransitionReason::EmergencyTrigger, Input);
+		// 紧急抢占时清除挂起状态，避免紧急解除后误执行陈旧指令
+		PendingState.Reset();
 	}
 	else if (PendingState.IsSet() && PendingState.GetValue() != CurrentStateType)
 	{
@@ -197,8 +199,9 @@ UBehaviorState* UBehaviorPlanner::EnsureState(EBehaviorState StateType)
 	{
 	case EBehaviorState::TakeOff: NewState = NewObject<UBehaviorState_TakeOff>(this); break;
 	case EBehaviorState::Hover: NewState = NewObject<UBehaviorState_Hover>(this); break;
-	case EBehaviorState::Move: NewState = NewObject<UBehaviorState_Move>(this); break;
-	case EBehaviorState::FollowPath: NewState = NewObject<UBehaviorState_FollowPath>(this); break;
+		case EBehaviorState::Move: NewState = NewObject<UBehaviorState_Move>(this); break;
+		case EBehaviorState::Approach: NewState = NewObject<UBehaviorState_Approach>(this); break;
+		case EBehaviorState::FollowPath: NewState = NewObject<UBehaviorState_FollowPath>(this); break;
 	case EBehaviorState::Orbit: NewState = NewObject<UBehaviorState_Orbit>(this); break;
 	case EBehaviorState::AvoidObstacle: NewState = NewObject<UBehaviorState_AvoidObstacle>(this); break;
 	case EBehaviorState::ReturnHome: NewState = NewObject<UBehaviorState_ReturnHome>(this); break;

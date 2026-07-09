@@ -70,11 +70,13 @@ FTurnCommand UTurnBehavior::Compute(const FVector& DesiredVelocityCmPerSec, cons
 	else
 	{
 		// ---- 低速偏航跟踪 ----
-		// 机体航向跟踪期望速度方向，比例增益
-		float YawError = FMath::FindDeltaAngleDegrees(DesiredYaw, CurrentYawDegrees);
-		float YawRate = FMath::Clamp(YawError * Limits.YawFollowGain, -Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
+		// 低速不执行协调转弯（无滚转）。偏航角速度前馈用【几何角速度】
+		// （期望速度方向的变化率），【不闭合航向误差】——
+		// 航向闭合是 FlightController 姿态环 Yaw PID 的唯一职责。
+		// 历史上此处用 YawError×增益 反推角速度并注入前馈，与 Yaw PID 双重闭合
+		// 航向误差 → 正反馈自旋（与 MotionProfile Yaw bug 同类）。
 		Cmd.DesiredRollDegrees = 0.0f;
-		Cmd.DesiredYawRateDegPerSec = YawRate;
+		Cmd.DesiredYawRateDegPerSec = FMath::Clamp(DesiredYawRate, -Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
 		Cmd.bCoordinatedTurn = false;
 	}
 
