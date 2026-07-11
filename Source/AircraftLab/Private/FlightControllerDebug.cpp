@@ -88,7 +88,7 @@ const TCHAR* GetConsistencyLabel(bool bIsConsistent)
 }
 void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 {
-	if (!RuntimeConfig.Debug.bEnableDebugLog || !RuntimeConfig.Debug.bLogRotorLayout || DebugState.bHasLoggedRotorLayout || Airscrews.IsEmpty()) return;
+	if (!bEnableDebugLog || !bLogRotorLayout || DebugState.bHasLoggedRotorLayout || Airscrews.IsEmpty()) return;
 
 	const FString OwnerName = GetOwner() ? GetOwner()->GetName() : TEXT("None");
 	//UE_LOG(LogFlightController, Log, TEXT("[RotorLayout] Owner=%s Rotors=%d"), *OwnerName, Airscrews.Num());
@@ -126,12 +126,12 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 	float DesiredVerticalVelocity, const FRotator& DesiredAttitude, float DesiredYawRate,
 	const FVector& DesiredBodyRates, const FVector& AxisCommands)
 {
-	if (!RuntimeConfig.Debug.bEnableDebugLog) return;
+	if (!bEnableDebugLog) return;
 	LogRotorLayoutIfNeeded();
 
 	// 按间隔累积时间，间隔到达时才输出
 	DebugState.LogAccumulatorSeconds += DeltaSeconds;
-	if (RuntimeConfig.Debug.LogIntervalSeconds > UE_SMALL_NUMBER && DebugState.LogAccumulatorSeconds + UE_SMALL_NUMBER < RuntimeConfig.Debug.LogIntervalSeconds)
+	if (DebugLogIntervalSeconds > UE_SMALL_NUMBER && DebugState.LogAccumulatorSeconds + UE_SMALL_NUMBER < DebugLogIntervalSeconds)
 		return;
 	DebugState.LogAccumulatorSeconds = 0.0f;
 
@@ -187,7 +187,7 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 		if (LocalPosition.Y > UE_SMALL_NUMBER) { RightCommandSum += RotorCommand->NormalizedCommand; ++RightCommandCount; }
 		else if (LocalPosition.Y < -UE_SMALL_NUMBER) { LeftCommandSum += RotorCommand->NormalizedCommand; ++LeftCommandCount; }
 
-		if (RuntimeConfig.Debug.bLogRotorCommands)
+		if (bLogRotorCommands)
 		{
 			RotorSummary += FString::Printf(
 				TEXT("[%d:%s Y=%+.1f JacRoll=%+.2f Cmd=%.3f Cur=%.3f Rpm=%.0f Thr=%.1f] "),
@@ -197,12 +197,12 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 		}
 	}
 
-	if (RuntimeConfig.Debug.bLogRotorCommands && !RotorSummary.IsEmpty())
+	if (bLogRotorCommands && !RotorSummary.IsEmpty())
 	//	UE_LOG(LogFlightController, Log, TEXT("[Rotors] %s"), *RotorSummary);
 
 	// ---- 符号一致性诊断 ----
 	// 检查滚转通道从误差→角速率→力矩→混合器输出→左右差值的符号链是否一致
-	if (RuntimeConfig.Debug.bLogSignDiagnostics)
+	if (bLogSignDiagnostics)
 	{
 		const float SampleDeltaSeconds = DebugState.bHasPreviousSample
 			? FMath::Max(Runtime.EstimatedState.State.TimeSeconds - DebugState.PreviousSampleTimeSeconds, 0.0f) : 0.0f;

@@ -19,8 +19,6 @@ UFlightControllerComponent::UFlightControllerComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 	bAutoActivate = true;
-	// 初始化默认 PID 参数（100kg 级无人机调参）
-	InitializeDefaultControllerConfig();
 }
 
 
@@ -29,77 +27,56 @@ void UFlightControllerComponent::OnRegister()
 	Super::OnRegister();
 	// 启用异步物理 Tick，使本组件能在物理线程执行控制循环
 	SetAsyncPhysicsTickEnabled(true);
-	RefreshReferences();
 }
 
 
 void UFlightControllerComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	InitializeRuntimeConfig();
+	if (!InitializeRuntimeConfig())
+	{
+		SetComponentTickEnabled(false);
+		SetAsyncPhysicsTickEnabled(false);
+		return;
+	}
 	RefreshReferences();
 
 	// 注意：这里不预先设置 Runtime.ActiveFlightMode，让 SetFlightMode 能正确执行
 	// SetFlightMode 内部有 early-return guard: if (Active == New) return;
 	// 如果在调用前就把 Active 设成 New，则初始化链（UpdateModeCapabilities + ResetControllerState）会被跳过
-	SetFlightMode(InitialFlightMode);
+	SetFlightMode(RuntimeConfig.Execution.InitialFlightMode);
 
-	// 解锁状态：初始是否解锁取决于 bStartArmed
-	Runtime.ArmState = bStartArmed ? EDroneArmState::Armed : EDroneArmState::Disarmed;
+	// 解锁状态：初始是否解锁取决于 Profile
+	Runtime.ArmState = RuntimeConfig.Execution.bStartArmed ? EDroneArmState::Armed : EDroneArmState::Disarmed;
 	UpdateHomeState(true);
 	ResetControllerState();
 }
 
 
-void UFlightControllerComponent::InitializeRuntimeConfig()
+bool UFlightControllerComponent::InitializeRuntimeConfig()
 {
-	if (ControllerProfile)
+	bRuntimeConfigInitialized = false;
+	if (!ControllerProfile)
 	{
-		TArray<FText> ValidationErrors;
-		if (!ControllerProfile->ValidateProfile(ValidationErrors))
-		{
-			for (const FText& Error : ValidationErrors)
-			{
-				UE_LOG(LogTemp, Error, TEXT("Flight controller profile '%s': %s"),
-					*ControllerProfile->GetName(), *Error.ToString());
-			}
-		}
-
-		if (ValidationErrors.IsEmpty())
-		{
-			RuntimeConfig = ControllerProfile->BuildRuntimeConfig();
-			ControllerConfig = RuntimeConfig.Controller;
-			HorizontalHoldStickDeadband = RuntimeConfig.Input.HorizontalHoldStickDeadband;
-			VerticalHoldStickDeadband = RuntimeConfig.Input.VerticalHoldStickDeadband;
-			YawHoldStickDeadband = RuntimeConfig.Input.YawHoldStickDeadband;
-			bCenteredThrottleUsesHoverPoint = RuntimeConfig.Input.bCenteredThrottleUsesHoverPoint;
-			ControlLoopRateHz = RuntimeConfig.Execution.ControlLoopRateHz;
-			InitialFlightMode = RuntimeConfig.Execution.InitialFlightMode;
-			bStartArmed = RuntimeConfig.Execution.bStartArmed;
-			bControllerEnabled = RuntimeConfig.Execution.bControllerEnabledByDefault;
-			bEnableDebugLog = RuntimeConfig.Debug.bEnableDebugLog;
-			bLogRotorCommands = RuntimeConfig.Debug.bLogRotorCommands;
-			bLogRotorLayout = RuntimeConfig.Debug.bLogRotorLayout;
-			bLogSignDiagnostics = RuntimeConfig.Debug.bLogSignDiagnostics;
-			DebugLogIntervalSeconds = RuntimeConfig.Debug.LogIntervalSeconds;
-			return;
-		}
+		UE_LOG(LogTemp, Error, TEXT("FlightControllerComponent requires a FlightControllerProfileAsset; controller initialization aborted."));
+		return false;
 	}
 
-	RuntimeConfig.Controller = ControllerConfig;
-	RuntimeConfig.Input.HorizontalHoldStickDeadband = HorizontalHoldStickDeadband;
-	RuntimeConfig.Input.VerticalHoldStickDeadband = VerticalHoldStickDeadband;
-	RuntimeConfig.Input.YawHoldStickDeadband = YawHoldStickDeadband;
-	RuntimeConfig.Input.bCenteredThrottleUsesHoverPoint = bCenteredThrottleUsesHoverPoint;
-	RuntimeConfig.Execution.ControlLoopRateHz = ControlLoopRateHz;
-	RuntimeConfig.Execution.InitialFlightMode = InitialFlightMode;
-	RuntimeConfig.Execution.bStartArmed = bStartArmed;
-	RuntimeConfig.Execution.bControllerEnabledByDefault = bControllerEnabled;
-	RuntimeConfig.Debug.bEnableDebugLog = bEnableDebugLog;
-	RuntimeConfig.Debug.bLogRotorCommands = bLogRotorCommands;
-	RuntimeConfig.Debug.bLogRotorLayout = bLogRotorLayout;
-	RuntimeConfig.Debug.bLogSignDiagnostics = bLogSignDiagnostics;
-	RuntimeConfig.Debug.LogIntervalSeconds = DebugLogIntervalSeconds;
+	TArray<FText> ValidationErrors;
+	if (!ControllerProfile->ValidateProfile(ValidationErrors))
+	{
+		for (const FText& Error : ValidationErrors)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Flight controller profile '%s': %s"),
+				*ControllerProfile->GetName(), *Error.ToString());
+		}
+		return false;
+	}
+
+	RuntimeConfig = ControllerProfile->BuildRuntimeConfig();
+	bControllerEnabled = RuntimeConfig.Execution.bControllerEnabledByDefault;
+	bRuntimeConfigInitialized = true;
+	return true;
 }
 
 
@@ -225,8 +202,9 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 void UFlightControllerComponent::RefreshReferences()
 {
 	BodyPrimitive = ResolveBodyPrimitive();
-	if (bAutoDiscoverInput || !DroneInput) DroneInput = ResolveDroneInput();
-	if (bAutoDiscoverRotors || Airscrews.IsEmpty()) UpdateRotorCache();
+	if (!bRuntimeConfigInitialized) return;
+	DroneInput = ResolveDroneInput();
+	UpdateRotorCache();
 }
 
 
@@ -413,12 +391,6 @@ void UFlightControllerComponent::UpdateModeCapabilities()
 }
 
 
-void UFlightControllerComponent::InitializeDefaultControllerConfig()
-{
-	FlightControllerConfig::InitializeDefaults(ControllerConfig);
-}
-
-
 void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaSeconds, float SimTime, Chaos::FRigidBodyHandle_Internal* BodyHandle)
 {
 	if (!BodyHandle) return;
@@ -563,7 +535,7 @@ void UFlightControllerComponent::ResetControllerState()
 	Runtime.HoldTargets.HeldPositionCm = Runtime.EstimatedState.State.PositionCm;
 	Runtime.HoldTargets.HeldAltitudeCm = Runtime.EstimatedState.State.PositionCm.Z;
 	Runtime.HoldTargets.HeldYawDegrees = Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
-	DebugState.Reset(RuntimeConfig.Debug.LogIntervalSeconds);
+	DebugState.Reset(DebugLogIntervalSeconds);
 	ControlAllocator.Cache.Invalidate();
 	ControlAllocator.Diagnostics.Reset();
 	RotorFailureManager.AuthorityInfo.Reset();

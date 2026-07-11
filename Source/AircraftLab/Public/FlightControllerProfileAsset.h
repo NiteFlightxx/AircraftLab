@@ -21,8 +21,6 @@ struct AIRCRAFTLAB_API FFlightControllerInputConfig
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float YawHoldStickDeadband = 0.05f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
-	bool bCenteredThrottleUsesHoverPoint = true;
 };
 
 /** 组件固定时序与启动策略。 */
@@ -42,45 +40,23 @@ struct AIRCRAFTLAB_API FFlightControllerExecutionConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
 	bool bControllerEnabledByDefault = true;
-};
 
-/** 调试输出策略，不参与控制算法。 */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FFlightControllerDebugConfig
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
-	bool bEnableDebugLog = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
-	bool bLogRotorCommands = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
-	bool bLogRotorLayout = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
-	bool bLogSignDiagnostics = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug", meta = (ClampMin = "0.0"))
-	float LogIntervalSeconds = 0.20f;
 };
 
 /**
  * 物理线程只读的配置快照。
- * 由组件在 BeginPlay 前后边界从资产或组件回退参数一次性构建；物理线程不访问资产 UObject。
+ * 由组件在 BeginPlay 边界从必需的 Profile 一次性构建；物理线程不访问资产 UObject。
  */
 struct AIRCRAFTLAB_API FFlightControllerRuntimeConfig
 {
 	FDroneFlightControllerConfig Controller;
 	FFlightControllerInputConfig Input;
 	FFlightControllerExecutionConfig Execution;
-	FFlightControllerDebugConfig Debug;
 };
 
 namespace FlightControllerConfig
 {
-	/** 组件回退配置与新建资产共同使用的唯一默认参数来源。 */
+	/** 新建资产使用的唯一默认控制参数来源。 */
 	AIRCRAFTLAB_API void InitializeDefaults(FDroneFlightControllerConfig& OutConfig);
 }
 
@@ -107,9 +83,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile")
 	FFlightControllerExecutionConfig Execution;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile")
-	FFlightControllerDebugConfig Debug;
 
 	/** 构建不含 UObject 引用的只读运行快照。 */
 	FFlightControllerRuntimeConfig BuildRuntimeConfig() const;

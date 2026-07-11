@@ -195,11 +195,8 @@ public:
 
 
 protected:
-	/** 从配置资产或组件回退参数构建物理线程只读快照。 */
-	void InitializeRuntimeConfig();
-
-	/** 初始化默认控制器配置参数 */
-	void InitializeDefaultControllerConfig();
+	/** 从必需的配置资产构建物理线程只读快照。 */
+	bool InitializeRuntimeConfig();
 
 	/** 更新物理缓存和估计状态（物理线程） */
 	void UpdateEstimatedState_PhysicsThread(float DeltaSeconds, float SimTime, Chaos::FRigidBodyHandle_Internal* BodyHandle);
@@ -270,33 +267,9 @@ protected:
 	UDroneInputComponent* ResolveDroneInput() const;
 
 protected:
-	/** 可复用飞控配置资产；为空时保持使用本组件上的现有参数。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Drone|FlightController|Profile")
+	/** 唯一的非调试配置来源；缺失或无效时飞控不会启动。 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Drone|FlightController|Profile")
 	TObjectPtr<UFlightControllerProfileAsset> ControllerProfile;
-
-	/** 是否启用飞控 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
-	bool bControllerEnabled = true;
-
-	/** 启动时是否自动解锁 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
-	bool bStartArmed = false;
-
-	/** 是否自动发现输入组件 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
-	bool bAutoDiscoverInput = true;
-
-	/** 是否自动发现旋翼组件 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
-	bool bAutoDiscoverRotors = true;
-
-	/** 居中油门是否以悬停点为中心映射 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
-	bool bCenteredThrottleUsesHoverPoint = true;
-
-	/** 控制循环频率（Hz） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController", meta = (ClampMin = "1.0"))
-	float ControlLoopRateHz = 250.0f;
 
 	/** 调试日志开关 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
@@ -318,29 +291,13 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug", meta = (ClampMin = "0.0"))
 	float DebugLogIntervalSeconds = 0.20f;
 
-	/** 水平保持摇杆死区 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float HorizontalHoldStickDeadband = 0.08f;
-
-	/** 垂直保持摇杆死区 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float VerticalHoldStickDeadband = 0.08f;
-
-	/** 偏航保持摇杆死区 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float YawHoldStickDeadband = 0.05f;
-
-	/** 初始飞行模式 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
-	EDroneFlightMode InitialFlightMode = EDroneFlightMode::Angle;
-
-	/** 飞控配置参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|FlightController")
-	FDroneFlightControllerConfig ControllerConfig;
-
 private:
 	/** BeginPlay 时建立，此后控制循环只读。 */
 	FFlightControllerRuntimeConfig RuntimeConfig;
+
+	/** 运行期状态；初值来自 Profile，之后可由公开控制接口修改。 */
+	bool bControllerEnabled = false;
+	bool bRuntimeConfigInitialized = false;
 
 	/** 机身Primitive组件 */
 	UPROPERTY(Transient)

@@ -13,7 +13,6 @@ FFlightControllerRuntimeConfig UFlightControllerProfileAsset::BuildRuntimeConfig
 	Result.Controller = Controller;
 	Result.Input = Input;
 	Result.Execution = Execution;
-	Result.Debug = Debug;
 	return Result;
 }
 
