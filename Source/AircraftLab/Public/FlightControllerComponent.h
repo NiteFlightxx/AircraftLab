@@ -146,6 +146,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Drone|RotorHealth")
 	const FControlAuthorityInfo& GetControlAuthorityInfo() const { return RotorFailureManager.AuthorityInfo; }
 
+	UFUNCTION(BlueprintPure, Category = "Drone|FailurePolicy")
+	FFlightFailurePolicyStatus GetFailurePolicyStatus() const { return RotorFailureManager.PolicyStatus; }
+
+	/** 清除 FailurePolicy 锁存；若故障条件仍存在，将在确认时间后再次触发。 */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FailurePolicy")
+	void ResetFailurePolicyLatch();
+
 	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
 	EDroneArmState GetArmState() const { return Runtime.ArmState; }
 
@@ -206,6 +213,9 @@ protected:
 
 	/** 更新Home点状态 */
 	void UpdateHomeState(bool bForceResetHome = false);
+
+	/** 在游戏线程评估并应用 FailurePolicy。 */
+	void ApplyFailurePolicy(float DeltaSeconds);
 
 	/** 更新模式能力缓存 */
 	void UpdateModeCapabilities();

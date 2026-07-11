@@ -101,6 +101,46 @@ struct AIRCRAFTLAB_API FControlAllocator
 	}
 };
 
+/** FailurePolicy 的只读运行状态和最近判定原因。 */
+USTRUCT(BlueprintType)
+struct AIRCRAFTLAB_API FFlightFailurePolicyStatus
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	bool bHasAuthoritySample = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	bool bViolationActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	bool bTriggered = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	float ViolationDurationSeconds = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	float RecoveryDurationSeconds = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	EFlightFailurePolicyAction TriggeredAction = EFlightFailurePolicyAction::WarningOnly;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	bool bHealthyRotorCountViolation = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	bool bCollectiveAuthorityViolation = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	bool bRollAuthorityViolation = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	bool bPitchAuthorityViolation = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	bool bYawAuthorityViolation = false;
+};
+
 /** 旋翼健康管理器拥有的健康状态和控制能力评估。 */
 USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FRotorFailureManager
@@ -113,6 +153,9 @@ struct AIRCRAFTLAB_API FRotorFailureManager
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|RotorHealth")
 	FControlAuthorityInfo AuthorityInfo;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	FFlightFailurePolicyStatus PolicyStatus;
+
 	bool FailRotor(int32 RotorIndex, float Timestamp);
 	bool RecoverRotor(int32 RotorIndex);
 	bool SetRotorEffectiveness(int32 RotorIndex, float Effectiveness, float Timestamp, double FailureEpsilon);
@@ -121,9 +164,16 @@ struct AIRCRAFTLAB_API FRotorFailureManager
 	void UpdateAuthority(const FAllocationCache& AllocationCache, double BaselineCollectiveAuthority,
 		double BaselineRollAuthority, double BaselinePitchAuthority, double BaselineYawAuthority,
 		double AuthorityEpsilon, int32 NumRotors);
+	bool EvaluatePolicy(const FFlightControllerFailurePolicyConfig& Policy, float DeltaSeconds,
+		EFlightFailurePolicyAction& OutAction);
+	void ResetPolicyLatch();
 
 	void ResetAuthority()
 	{
 		AuthorityInfo.Reset();
+		PolicyStatus.bHasAuthoritySample = false;
+		PolicyStatus.bViolationActive = false;
+		PolicyStatus.ViolationDurationSeconds = 0.0f;
+		PolicyStatus.RecoveryDurationSeconds = 0.0f;
 	}
 };

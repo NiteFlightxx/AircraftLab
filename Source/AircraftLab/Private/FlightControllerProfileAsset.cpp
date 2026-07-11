@@ -13,6 +13,7 @@ FFlightControllerRuntimeConfig UFlightControllerProfileAsset::BuildRuntimeConfig
 	Result.Controller = Controller;
 	Result.Input = Input;
 	Result.Execution = Execution;
+	Result.FailurePolicy = FailurePolicy;
 	return Result;
 }
 
@@ -37,6 +38,14 @@ bool UFlightControllerProfileAsset::ValidateProfile(TArray<FText>& OutErrors) co
 	if (Controller.Allocator.MinCosTilt < 0.05f || Controller.Allocator.MinCosTilt > 1.0f)
 	{
 		OutErrors.Add(LOCTEXT("InvalidMinCosTilt", "MinCosTilt must be in [0.05, 1.0]."));
+	}
+	if (FailurePolicy.MinimumHealthyRotorCount < 0)
+	{
+		OutErrors.Add(LOCTEXT("InvalidHealthyRotorCount", "MinimumHealthyRotorCount cannot be negative."));
+	}
+	if (FailurePolicy.ConfirmationTimeSeconds < 0.0f || FailurePolicy.RecoveryConfirmationTimeSeconds < 0.0f)
+	{
+		OutErrors.Add(LOCTEXT("InvalidFailurePolicyTime", "Failure policy confirmation times cannot be negative."));
 	}
 
 	return OutErrors.IsEmpty();

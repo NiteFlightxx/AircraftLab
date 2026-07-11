@@ -43,6 +43,71 @@ struct AIRCRAFTLAB_API FFlightControllerExecutionConfig
 
 };
 
+/** 控制能力不足时由组件执行的降级动作。 */
+UENUM(BlueprintType)
+enum class EFlightFailurePolicyAction : uint8
+{
+	WarningOnly UMETA(DisplayName = "Warning Only"),
+	SwitchFlightMode UMETA(DisplayName = "Switch Flight Mode"),
+	Failsafe UMETA(DisplayName = "Failsafe / Stop Rotors"),
+	EmergencyStop UMETA(DisplayName = "Emergency Stop")
+};
+
+/**
+ * 旋翼故障与控制权限降级策略。
+ * 任一启用的阈值不满足并持续 ConfirmationTimeSeconds 后触发 Action。
+ */
+USTRUCT(BlueprintType)
+struct AIRCRAFTLAB_API FFlightControllerFailurePolicyConfig
+{
+	GENERATED_BODY()
+
+	/** 默认关闭，确保资产化不改变现有飞行行为。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy")
+	bool bEnabled = false;
+
+	/** 默认只在已解锁飞行时评估，避免地面维护阶段触发降级。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy")
+	bool bEvaluateOnlyWhenArmed = true;
+
+	/** 最少健康旋翼数；0 表示不检查。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy", meta = (ClampMin = "0"))
+	int32 MinimumHealthyRotorCount = 4;
+
+	/** 各轴最小剩余控制权限；0 表示不检查该轴。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MinimumCollectiveAuthority = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MinimumRollAuthority = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MinimumPitchAuthority = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MinimumYawAuthority = 0.25f;
+
+	/** 故障条件必须连续成立的时间，防止单帧抖动。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy", meta = (ClampMin = "0.0"))
+	float ConfirmationTimeSeconds = 0.10f;
+
+	/** 未锁存时，条件恢复后必须连续健康的时间。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy", meta = (ClampMin = "0.0"))
+	float RecoveryConfirmationTimeSeconds = 1.0f;
+
+	/** 触发后保持锁存，必须显式调用 ResetFailurePolicyLatch。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy")
+	bool bLatchTriggeredAction = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy")
+	EFlightFailurePolicyAction Action = EFlightFailurePolicyAction::WarningOnly;
+
+	/** Action=SwitchFlightMode 时切换到的模式。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy",
+		meta = (EditCondition = "Action == EFlightFailurePolicyAction::SwitchFlightMode", EditConditionHides))
+	EDroneFlightMode DegradedFlightMode = EDroneFlightMode::Angle;
+};
+
 /**
  * 物理线程只读的配置快照。
  * 由组件在 BeginPlay 边界从必需的 Profile 一次性构建；物理线程不访问资产 UObject。
@@ -52,6 +117,7 @@ struct AIRCRAFTLAB_API FFlightControllerRuntimeConfig
 	FDroneFlightControllerConfig Controller;
 	FFlightControllerInputConfig Input;
 	FFlightControllerExecutionConfig Execution;
+	FFlightControllerFailurePolicyConfig FailurePolicy;
 };
 
 namespace FlightControllerConfig
@@ -83,6 +149,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile")
 	FFlightControllerExecutionConfig Execution;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile")
+	FFlightControllerFailurePolicyConfig FailurePolicy;
 
 	/** 构建不含 UObject 引用的只读运行快照。 */
 	FFlightControllerRuntimeConfig BuildRuntimeConfig() const;

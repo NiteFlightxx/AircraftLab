@@ -247,7 +247,7 @@ void UFlightControllerComponent::UpdateRotorCache()
 
 void UFlightControllerComponent::RebuildAllocationCache()
 {
-	if (Airscrews.IsEmpty()) { ControlAllocator.Cache.Invalidate(); RotorFailureManager.AuthorityInfo.Reset(); return; }
+	if (Airscrews.IsEmpty()) { ControlAllocator.Cache.Invalidate(); RotorFailureManager.ResetAuthority(); return; }
 
 	const int32 NumRotors = Airscrews.Num();
 	ControlAllocator.Cache.JacobianColumns.SetNumZeroed(NumRotors);

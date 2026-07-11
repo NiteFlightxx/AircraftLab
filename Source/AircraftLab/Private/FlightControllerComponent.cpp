@@ -95,6 +95,7 @@ void UFlightControllerComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	// 从输入组件读取飞手摇杆状态
 	const FDronePilotInput PilotInput = DroneInput ? DroneInput->GetPilotInput() : FDronePilotInput();
 	UpdateRequestedModeAndArmState(PilotInput);
+	ApplyFailurePolicy(DeltaTime);
 
 	// 未解锁时停止所有旋翼（带 PID 重置）
 	if (Runtime.ArmState != EDroneArmState::Armed)
@@ -208,8 +209,62 @@ void UFlightControllerComponent::RefreshReferences()
 }
 
 
+void UFlightControllerComponent::ApplyFailurePolicy(float DeltaSeconds)
+{
+	if (RuntimeConfig.FailurePolicy.bEvaluateOnlyWhenArmed && Runtime.ArmState != EDroneArmState::Armed)
+	{
+		return;
+	}
+
+	EFlightFailurePolicyAction Action = EFlightFailurePolicyAction::WarningOnly;
+	if (!RotorFailureManager.EvaluatePolicy(RuntimeConfig.FailurePolicy, DeltaSeconds, Action))
+	{
+		return;
+	}
+
+	const FFlightFailurePolicyStatus& Status = RotorFailureManager.PolicyStatus;
+	UE_LOG(LogTemp, Warning,
+		TEXT("Flight FailurePolicy triggered: Action=%d Healthy=%d Authority[C=%.3f R=%.3f P=%.3f Y=%.3f] Violations[H=%d C=%d R=%d P=%d Y=%d]"),
+		static_cast<int32>(Action), RotorFailureManager.AuthorityInfo.HealthyRotorCount,
+		RotorFailureManager.AuthorityInfo.CollectiveAuthority, RotorFailureManager.AuthorityInfo.RollAuthority,
+		RotorFailureManager.AuthorityInfo.PitchAuthority, RotorFailureManager.AuthorityInfo.YawAuthority,
+		Status.bHealthyRotorCountViolation, Status.bCollectiveAuthorityViolation,
+		Status.bRollAuthorityViolation, Status.bPitchAuthorityViolation, Status.bYawAuthorityViolation);
+
+	switch (Action)
+	{
+	case EFlightFailurePolicyAction::WarningOnly:
+		break;
+	case EFlightFailurePolicyAction::SwitchFlightMode:
+		SetFlightMode(RuntimeConfig.FailurePolicy.DegradedFlightMode);
+		break;
+	case EFlightFailurePolicyAction::Failsafe:
+		Runtime.ArmState = EDroneArmState::Failsafe;
+		break;
+	case EFlightFailurePolicyAction::EmergencyStop:
+		Runtime.ArmState = EDroneArmState::EmergencyStop;
+		break;
+	default:
+		break;
+	}
+}
+
+
+void UFlightControllerComponent::ResetFailurePolicyLatch()
+{
+	RotorFailureManager.ResetPolicyLatch();
+}
+
+
 void UFlightControllerComponent::Arm()
 {
+	if (RotorFailureManager.PolicyStatus.bTriggered
+		&& (RotorFailureManager.PolicyStatus.TriggeredAction == EFlightFailurePolicyAction::Failsafe
+			|| RotorFailureManager.PolicyStatus.TriggeredAction == EFlightFailurePolicyAction::EmergencyStop))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Arm rejected: FailurePolicy is latched. Reset the policy latch after resolving the fault."));
+		return;
+	}
 	if (Runtime.ArmState == EDroneArmState::Armed) return;
 	Runtime.ArmState = EDroneArmState::Armed;
 	UpdateHomeState(true);       // 解锁时重置归航点
@@ -538,7 +593,7 @@ void UFlightControllerComponent::ResetControllerState()
 	DebugState.Reset(DebugLogIntervalSeconds);
 	ControlAllocator.Cache.Invalidate();
 	ControlAllocator.Diagnostics.Reset();
-	RotorFailureManager.AuthorityInfo.Reset();
+	RotorFailureManager.ResetAuthority();
 	// 标记混合器需要重建（因为 PID 重置可能导致旋翼需求变化）
 	ControlAllocator.bCacheDirty = true;
 }
