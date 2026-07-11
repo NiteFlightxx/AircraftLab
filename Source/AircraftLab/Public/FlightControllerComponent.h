@@ -153,6 +153,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Drone|FailurePolicy")
 	void ResetFailurePolicyLatch();
 
+	/** 临时暂停自动 FailurePolicy 判定；不修改健康状态和控制分配。 */
+	UFUNCTION(BlueprintCallable, Category = "Drone|FailurePolicy")
+	void SetFailurePolicyEvaluationSuspended(bool bSuspended) { bFailurePolicyEvaluationSuspended = bSuspended; }
+
+	UFUNCTION(BlueprintPure, Category = "Drone|FailurePolicy")
+	bool IsFailurePolicyEvaluationSuspended() const { return bFailurePolicyEvaluationSuspended; }
+
 	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
 	EDroneArmState GetArmState() const { return Runtime.ArmState; }
 
@@ -308,6 +315,7 @@ private:
 	/** 运行期状态；初值来自 Profile，之后可由公开控制接口修改。 */
 	bool bControllerEnabled = false;
 	bool bRuntimeConfigInitialized = false;
+	bool bFailurePolicyEvaluationSuspended = false;
 
 	/** 机身Primitive组件 */
 	UPROPERTY(Transient)

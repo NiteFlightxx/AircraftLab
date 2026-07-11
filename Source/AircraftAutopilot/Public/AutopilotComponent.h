@@ -23,6 +23,7 @@ class UPathFollowingStrategy;
 class UTurnBehavior;
 class UBehaviorPlanner;
 class UMissionPlanner;
+class UFlightGameplayPolicyComponent;
 
 /**
  * Autopilot 宿主组件（UAutopilotComponent）
@@ -83,6 +84,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Autopilot")
 	virtual bool IsAutopilotActive() const override { return bAutopilotActive; }
 
+	/** True while a gameplay policy temporarily owns flight-control authority. */
+	UFUNCTION(BlueprintPure, Category = "Autopilot|GameplayPolicy")
+	bool IsPausedByGameplayPolicy() const { return bPausedByGameplayPolicy; }
+
 	// -----------------------------------------------------------------------
 	// 激活控制
 	// -----------------------------------------------------------------------
@@ -107,9 +112,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Command")
 	void CommandMoveTo(const FVector& TargetPositionCm, float TargetYawDegrees = 0.0f, float CruiseSpeedCmPerSec = 800.0f);
 
+	/** Move using explicit professional acceleration, cruise and braking constraints. */
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Command")
+	void CommandMoveToWithConstraints(const FVector& TargetPositionCm, float TargetYawDegrees,
+		const FTrajectoryMotionConstraints& Constraints);
+
 	/** 命令沿路径飞行 */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Command")
 	void CommandFollowPath(const TArray<FVector>& PathPointsCm, float CruiseSpeedCmPerSec = 800.0f);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Command")
+	void CommandFollowPathWithConstraints(const TArray<FVector>& PathPointsCm,
+		const FTrajectoryMotionConstraints& Constraints);
 
 	/** 命令环绕 */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Command")
@@ -234,6 +248,16 @@ protected:
 	 */
 	bool bActivationInitialized = false;
 
+	/** Gameplay policies pause the pipeline without discarding the active mission. */
+	bool bPausedByGameplayPolicy = false;
+
+	/** Flight mode owned by the caller before Autopilot first took control. */
+	uint8 FlightModeBeforeActivation = 0;
+	bool bFlightModeBeforeActivationCaptured = false;
+
+	/** World origin is a valid home, so initialization needs an explicit flag. */
+	bool bHomePositionInitialized = false;
+
 	/** 默认制导策略 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing")
 	EPathFollowingStrategy DefaultStrategy = EPathFollowingStrategy::PurePursuit;
@@ -322,6 +346,13 @@ protected:
 
 	/** 刷新 FlightController 引用 */
 	void ResolveFlightController();
+
+	bool AreGameplayPoliciesReady() const;
+	void UpdateGameplayPolicyPause();
+	void EnterGameplayPolicyPause();
+	void ExitGameplayPolicyPause();
+	void InvalidateOutputCaches();
+	void RebasePipelineOnCurrentState();
 
 	/** 填充 FBehaviorStateInput */
 	void FillBehaviorInput(FBehaviorStateInput& OutInput) const;

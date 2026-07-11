@@ -14,27 +14,27 @@
 // 命名前缀 "Autopilot." 与 "a.AnimNode.PoseHistory." 同为点分式对象路径风格。
 // ---------------------------------------------------------------------------
 
-static bool GVarAutopilotDebugDrawTrajectory = false;
+static bool GVarAutopilotDebugDrawTrajectory = true;
 static FAutoConsoleVariableRef CVarAutopilotDebugDrawTrajectory(
 	TEXT("Autopilot.DebugDrawTrajectory"), GVarAutopilotDebugDrawTrajectory,
 	TEXT("Enable/Disable Autopilot trajectory path debug draw (0=off, 1=on)."));
 
-static bool GVarAutopilotDebugDrawSetpoint = false;
+static bool GVarAutopilotDebugDrawSetpoint = true;
 static FAutoConsoleVariableRef CVarAutopilotDebugDrawSetpoint(
 	TEXT("Autopilot.DebugDrawSetpoint"), GVarAutopilotDebugDrawSetpoint,
 	TEXT("Enable/Disable Autopilot current setpoint + yaw arrow debug draw (0=off, 1=on)."));
 
-static bool GVarAutopilotDebugDrawLookAhead = false;
+static bool GVarAutopilotDebugDrawLookAhead = true;
 static FAutoConsoleVariableRef CVarAutopilotDebugDrawLookAhead(
 	TEXT("Autopilot.DebugDrawLookAhead"), GVarAutopilotDebugDrawLookAhead,
 	TEXT("Enable/Disable Autopilot look-ahead point + cross-track error debug draw (0=off, 1=on)."));
 
-static bool GVarAutopilotDebugDrawVelocity = false;
+static bool GVarAutopilotDebugDrawVelocity = true;
 static FAutoConsoleVariableRef CVarAutopilotDebugDrawVelocity(
 	TEXT("Autopilot.DebugDrawVelocity"), GVarAutopilotDebugDrawVelocity,
 	TEXT("Enable/Disable Autopilot desired velocity vector debug draw (0=off, 1=on)."));
 
-static float GVarAutopilotDebugDrawThickness = 0.0f;
+static float GVarAutopilotDebugDrawThickness = 1.0f;
 static FAutoConsoleVariableRef CVarAutopilotDebugDrawThickness(
 	TEXT("Autopilot.DebugDrawThickness"), GVarAutopilotDebugDrawThickness,
 	TEXT("Line thickness for Autopilot debug draw (default 0.0)."));

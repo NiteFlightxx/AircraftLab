@@ -85,6 +85,15 @@ struct AIRCRAFTAUTOPILOT_API FMissionItem
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Mission", meta = (ClampMin = "0.0"))
 	float CruiseSpeedCmPerSec = 800.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Mission", meta = (ClampMin = "0.0"))
+	float MaxAccelerationCmPerSecSq = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Mission", meta = (ClampMin = "0.0"))
+	float MaxDecelerationCmPerSecSq = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Mission", meta = (ClampMin = "0.0"))
+	float TargetSpeedCmPerSec = 0.0f;
+
 	/** 起飞高度（cm）—— TakeOff 用 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Mission", meta = (ClampMin = "0.0"))
 	float TakeOffAltitudeCm = 1000.0f;

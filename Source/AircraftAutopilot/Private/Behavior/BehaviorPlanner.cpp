@@ -48,21 +48,49 @@ bool UBehaviorPlanner::RequestState(EBehaviorState NewState, EBehaviorTransition
 
 void UBehaviorPlanner::CommandMoveTo(const FVector& TargetPositionCm, float TargetYawDegrees, float CruiseSpeedCmPerSec)
 {
+	FTrajectoryMotionConstraints Constraints;
+	Constraints.CruiseSpeedCmPerSec = CruiseSpeedCmPerSec;
+	CommandMoveToWithConstraints(TargetPositionCm, TargetYawDegrees, Constraints);
+}
+
+void UBehaviorPlanner::CommandMoveToWithConstraints(
+	const FVector& TargetPositionCm,
+	float TargetYawDegrees,
+	const FTrajectoryMotionConstraints& Constraints)
+{
 	if (UBehaviorState_Move* Move = Cast<UBehaviorState_Move>(EnsureState(EBehaviorState::Move)))
 	{
 		Move->TargetPositionCm = TargetPositionCm;
 		Move->TargetYawDegrees = TargetYawDegrees;
-		Move->CruiseSpeedCmPerSec = CruiseSpeedCmPerSec;
+		Move->CruiseSpeedCmPerSec = Constraints.CruiseSpeedCmPerSec;
+		Move->MaxAccelerationCmPerSecSq = Constraints.MaxAccelerationCmPerSecSq;
+		Move->MaxDecelerationCmPerSecSq = Constraints.MaxDecelerationCmPerSecSq;
+		Move->TargetSpeedCmPerSec = Constraints.TargetSpeedCmPerSec;
+		Move->AcceptanceRadiusCm = Constraints.AcceptanceRadiusCm;
 	}
 	RequestState(EBehaviorState::Move);
 }
 
 void UBehaviorPlanner::CommandFollowPath(const TArray<FVector>& PathPointsCm, float CruiseSpeedCmPerSec)
 {
+	FTrajectoryMotionConstraints Constraints;
+	Constraints.CruiseSpeedCmPerSec = CruiseSpeedCmPerSec;
+	Constraints.AcceptanceRadiusCm = 80.0f;
+	CommandFollowPathWithConstraints(PathPointsCm, Constraints);
+}
+
+void UBehaviorPlanner::CommandFollowPathWithConstraints(
+	const TArray<FVector>& PathPointsCm,
+	const FTrajectoryMotionConstraints& Constraints)
+{
 	if (UBehaviorState_FollowPath* FP = Cast<UBehaviorState_FollowPath>(EnsureState(EBehaviorState::FollowPath)))
 	{
 		FP->PathPointsCm = PathPointsCm;
-		FP->CruiseSpeedCmPerSec = CruiseSpeedCmPerSec;
+		FP->CruiseSpeedCmPerSec = Constraints.CruiseSpeedCmPerSec;
+		FP->MaxAccelerationCmPerSecSq = Constraints.MaxAccelerationCmPerSecSq;
+		FP->MaxDecelerationCmPerSecSq = Constraints.MaxDecelerationCmPerSecSq;
+		FP->TargetSpeedCmPerSec = Constraints.TargetSpeedCmPerSec;
+		FP->AcceptanceRadiusCm = Constraints.AcceptanceRadiusCm;
 	}
 	RequestState(EBehaviorState::FollowPath);
 }

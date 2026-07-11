@@ -50,6 +50,29 @@ enum class ETrajectoryType : uint8
 	MinimumSnap UMETA(DisplayName = "Minimum Snap")
 };
 
+/** Physically meaningful limits used to time-parameterize a finite path. */
+USTRUCT(BlueprintType)
+struct AIRCRAFTAUTOPILOT_API FTrajectoryMotionConstraints
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
+	float CruiseSpeedCmPerSec = 800.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
+	float MaxAccelerationCmPerSecSq = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
+	float MaxDecelerationCmPerSecSq = 400.0f;
+
+	/** Desired speed at the target. Zero means stop at the target. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
+	float TargetSpeedCmPerSec = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
+	float AcceptanceRadiusCm = 50.0f;
+};
+
 /**
  * Frenet-Serret 路径坐标系帧
  *
@@ -228,6 +251,10 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryRequest
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
 	float PlanningAccelerationCmPerSecSq = 400.0f;
 
+	/** Nominal braking deceleration (positive magnitude, cm/s^2). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
+	float PlanningDecelerationCmPerSecSq = 400.0f;
+
 	/** 到达容差（cm）—— 距终点小于此值视为完成 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
 	float AcceptanceRadiusCm = 50.0f;
@@ -275,6 +302,8 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryRequest
 			&& FMath::IsNearlyEqual(TargetYawDegrees, Other.TargetYawDegrees, 0.5f)
 			&& CruiseSpeedCmPerSec == Other.CruiseSpeedCmPerSec
 			&& PlanningAccelerationCmPerSecSq == Other.PlanningAccelerationCmPerSecSq
+			&& PlanningDecelerationCmPerSecSq == Other.PlanningDecelerationCmPerSecSq
+			&& TargetVelocityCmPerSec.Equals(Other.TargetVelocityCmPerSec, 0.1f)
 			&& AcceptanceRadiusCm == Other.AcceptanceRadiusCm
 			&& PathPointsCm == Other.PathPointsCm
 			&& OrbitCenterCm.Equals(Other.OrbitCenterCm, PosTol)

@@ -9,6 +9,15 @@ UMissionPlanner::UMissionPlanner()
 {
 }
 
+void UMissionPlanner::SetHomePosition(const FVector& HomeCm)
+{
+	HomePositionCm = HomeCm;
+	if (BehaviorPlanner)
+	{
+		BehaviorPlanner->SetHomePosition(HomeCm);
+	}
+}
+
 bool UMissionPlanner::LoadMission(const TArray<FMissionItem>& Items)
 {
 	if (Items.Num() == 0)
@@ -172,10 +181,26 @@ void UMissionPlanner::DispatchCurrentItem(const FBehaviorStateInput& Input)
 		BehaviorPlanner->CommandTakeOff(Item.TakeOffAltitudeCm);
 		break;
 	case EMissionItemType::Waypoint:
-		BehaviorPlanner->CommandMoveTo(Item.TargetPositionCm, Item.TargetYawDegrees, Item.CruiseSpeedCmPerSec);
+		{
+			FTrajectoryMotionConstraints Constraints;
+			Constraints.CruiseSpeedCmPerSec = Item.CruiseSpeedCmPerSec;
+			Constraints.MaxAccelerationCmPerSecSq = Item.MaxAccelerationCmPerSecSq;
+			Constraints.MaxDecelerationCmPerSecSq = Item.MaxDecelerationCmPerSecSq;
+			Constraints.TargetSpeedCmPerSec = Item.TargetSpeedCmPerSec;
+			Constraints.AcceptanceRadiusCm = Item.AcceptanceRadiusCm;
+			BehaviorPlanner->CommandMoveToWithConstraints(Item.TargetPositionCm, Item.TargetYawDegrees, Constraints);
+		}
 		break;
 	case EMissionItemType::Path:
-		BehaviorPlanner->CommandFollowPath(Item.PathPointsCm, Item.CruiseSpeedCmPerSec);
+		{
+			FTrajectoryMotionConstraints Constraints;
+			Constraints.CruiseSpeedCmPerSec = Item.CruiseSpeedCmPerSec;
+			Constraints.MaxAccelerationCmPerSecSq = Item.MaxAccelerationCmPerSecSq;
+			Constraints.MaxDecelerationCmPerSecSq = Item.MaxDecelerationCmPerSecSq;
+			Constraints.TargetSpeedCmPerSec = Item.TargetSpeedCmPerSec;
+			Constraints.AcceptanceRadiusCm = Item.AcceptanceRadiusCm;
+			BehaviorPlanner->CommandFollowPathWithConstraints(Item.PathPointsCm, Constraints);
+		}
 		break;
 	case EMissionItemType::Orbit:
 		BehaviorPlanner->CommandOrbit(Item.TargetPositionCm, Item.OrbitRadiusCm, Item.OrbitAngularRateDegPerSec);

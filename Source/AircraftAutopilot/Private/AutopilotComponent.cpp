@@ -17,6 +17,7 @@
 
 // AircraftLab 依赖（Phase 4+ 单向依赖）
 #include "FlightControllerComponent.h"
+#include "FlightGameplayPolicyComponent.h"
 #include "DroneTypes.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogAutopilot, Log, All);
@@ -42,11 +43,18 @@ void UAutopilotComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	ResolveFlightController();
+	CreateSubobjects();
 
 	// 确保 Autopilot 在 FlightController 之前 tick，使 FlightController 拉取的是本帧最新注入
 	if (FlightController)
 	{
 		FlightController->AddTickPrerequisiteComponent(this);
+
+		TInlineComponentArray<UFlightGameplayPolicyComponent*> Policies(GetOwner());
+		for (UFlightGameplayPolicyComponent* Policy : Policies)
+		{
+			if (Policy) AddTickPrerequisiteComponent(Policy);
+		}
 
 		// 初始化 MotionProfile 用真实位置，避免从零拉起
 		const FDroneEstimatedState& EstState = FlightController->GetEstimatedState();
@@ -58,11 +66,30 @@ void UAutopilotComponent::BeginPlay()
 		// 配置悬停推力 EKF（应用详情面板的 HoverThrustConfig 并重置到 InitialHoverThrust）
 		HoverThrustEstimator.Configure(HoverThrustConfig);
 	}
+
+	if (bAutopilotActive)
+	{
+		bAutopilotActive = false;
+		SetAutopilotActive(true);
+	}
 }
 
 void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	// Keep edit-time/Blueprint direct writes coherent with the setter semantics.
+	if (!bAutopilotActive && bActivationInitialized)
+	{
+		SetAutopilotActive(false);
+	}
+	// When Autopilot is disabled during a gameplay takeover, keep observing the
+	// policy until it releases authority so its restored Mission mode can be
+	// replaced by the mode that existed before Autopilot was activated.
+	if (FlightController && (bActivationInitialized || bPausedByGameplayPolicy))
+	{
+		UpdateGameplayPolicyPause();
+	}
 
 	// 静默失败守卫：未激活或无 FlightController 时整条管线跳过，
 	// 历史上此分支无任何输出导致"调了 Command 却无反应"无从诊断。
@@ -95,6 +122,11 @@ void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 		SetAutopilotActive(true);
 	}
 
+	if (bPausedByGameplayPolicy)
+	{
+		return;
+	}
+
 	// -----------------------------------------------------------------------
 	// 1) 采集状态快照
 	// -----------------------------------------------------------------------
@@ -104,12 +136,20 @@ void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	// -----------------------------------------------------------------------
 	// 2) Mission 层（低频，10Hz 累加器）
 	// -----------------------------------------------------------------------
-	MissionAccumulatorSeconds += DeltaTime;
 	const float MissionStep = 1.0f / FMath::Max(MissionUpdateRateHz, 1.0f);
-	if (MissionPlanner && MissionAccumulatorSeconds >= MissionStep)
+	MissionAccumulatorSeconds += DeltaTime;
+	constexpr int32 MaxMissionStepsPerFrame = 4;
+	int32 MissionSteps = 0;
+	while (MissionPlanner && MissionAccumulatorSeconds + UE_SMALL_NUMBER >= MissionStep
+		&& MissionSteps < MaxMissionStepsPerFrame)
 	{
-		MissionPlanner->Update(BehaviorInput, MissionAccumulatorSeconds);
-		MissionAccumulatorSeconds = 0.0f;
+		MissionPlanner->Update(BehaviorInput, MissionStep);
+		MissionAccumulatorSeconds -= MissionStep;
+		++MissionSteps;
+	}
+	if (MissionSteps == MaxMissionStepsPerFrame && MissionAccumulatorSeconds >= MissionStep)
+	{
+		MissionAccumulatorSeconds = FMath::Fmod(MissionAccumulatorSeconds, MissionStep);
 	}
 
 	// -----------------------------------------------------------------------
@@ -224,7 +264,8 @@ void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 
 bool UAutopilotComponent::GetAutopilotInjection(FAutopilotInjection& OutInjection) const
 {
-	if (!bAutopilotActive || !CachedProfiledSetpoint.bValid)
+	if (!bAutopilotActive || bPausedByGameplayPolicy || !AreGameplayPoliciesReady()
+		|| !CachedProfiledSetpoint.bValid)
 	{
 		OutInjection.bValid = false;
 		// 不每帧打日志（每物理子步都会拉），仅靠 FlightController 侧的一次性 Warning 提示。
@@ -263,37 +304,54 @@ void UAutopilotComponent::BuildInjection(FAutopilotInjection& OutInjection) cons
 
 void UAutopilotComponent::SetAutopilotActive(bool bActive)
 {
+	if (bActive == bAutopilotActive && bActivationInitialized == bActive)
+	{
+		return;
+	}
+
 	bAutopilotActive = bActive;
 
 	if (FlightController)
 	{
-		FlightController->SetUseAutopilotSetpoint(bActive);
 		if (bActive)
 		{
-			// 切到 Mission 模式（启用全控制能力）
-			FlightController->SetFlightMode(EDroneFlightMode::Mission);
-			FlightController->SetPositionHoldEnabled(true);
-			FlightController->SetAltitudeHoldEnabled(true);
-
-			// 初始化 MotionProfile 用当前位置
-			const FDroneEstimatedState& Est = FlightController->GetEstimatedState();
-			if (MotionProfile)
+			if (!bFlightModeBeforeActivationCaptured)
 			{
-				MotionProfile->Initialize(Est.State.PositionCm, Est.State.AttitudeDegrees.Yaw);
+				FlightModeBeforeActivation = static_cast<uint8>(FlightController->GetFlightMode());
+				bFlightModeBeforeActivationCaptured = true;
 			}
 
-			// 若 Home 仍为默认零向量，自动设为当前位置（避免 RTH 飞向世界原点）
-			if (BehaviorPlanner && BehaviorPlanner->GetHomePosition().IsNearlyZero())
+			bPausedByGameplayPolicy = !AreGameplayPoliciesReady();
+			InvalidateOutputCaches();
+			RebasePipelineOnCurrentState();
+			if (!bPausedByGameplayPolicy)
 			{
-				BehaviorPlanner->SetHomePosition(Est.State.PositionCm);
+				FlightController->SetFlightMode(EDroneFlightMode::Mission);
+				FlightController->SetUseAutopilotSetpoint(true);
+			}
+			else
+			{
+				FlightController->SetUseAutopilotSetpoint(false);
 			}
 
 			bActivationInitialized = true; // 副作用完成，防 Tick 重复补做
 		}
 		else
 		{
-			// 回退到手动 Angle 模式
-			FlightController->SetFlightMode(EDroneFlightMode::Angle);
+			const bool bWaitForGameplayPolicyRelease = bPausedByGameplayPolicy
+				&& !AreGameplayPoliciesReady();
+			FlightController->SetUseAutopilotSetpoint(false);
+			InvalidateOutputCaches();
+			if (bFlightModeBeforeActivationCaptured
+				&& FlightController->GetFlightMode() == EDroneFlightMode::Mission)
+			{
+				FlightController->SetFlightMode(static_cast<EDroneFlightMode>(FlightModeBeforeActivation));
+			}
+			if (!bWaitForGameplayPolicyRelease)
+			{
+				bFlightModeBeforeActivationCaptured = false;
+			}
+			bPausedByGameplayPolicy = bWaitForGameplayPolicyRelease;
 			bActivationInitialized = false; // 失活后复位，允许下次重新激活
 		}
 	}
@@ -314,7 +372,7 @@ void UAutopilotComponent::SetAutopilotActive(bool bActive)
 void UAutopilotComponent::CommandTakeOff(float AltitudeCm)
 {
 	UE_LOG(LogAutopilot, Log, TEXT("CommandTakeOff Alt=%.1fcm Active=%d"), AltitudeCm, bAutopilotActive);
-	if (!bAutopilotActive) UE_LOG(LogAutopilot, Warning, TEXT("CommandTakeOff 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。"));
+	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandTakeOff 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
 	if (BehaviorPlanner) BehaviorPlanner->CommandTakeOff(AltitudeCm);
 }
 
@@ -322,29 +380,60 @@ void UAutopilotComponent::CommandMoveTo(const FVector& TargetPositionCm, float T
 {
 	UE_LOG(LogAutopilot, Log, TEXT("CommandMoveTo Target=%s Yaw=%.1f Cruise=%.1f Active=%d"),
 		*TargetPositionCm.ToString(), TargetYawDegrees, CruiseSpeedCmPerSec, bAutopilotActive);
-	if (!bAutopilotActive) UE_LOG(LogAutopilot, Warning, TEXT("CommandMoveTo 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。"));
+	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandMoveTo 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
 	if (BehaviorPlanner) BehaviorPlanner->CommandMoveTo(TargetPositionCm, TargetYawDegrees, CruiseSpeedCmPerSec);
+}
+
+void UAutopilotComponent::CommandMoveToWithConstraints(
+	const FVector& TargetPositionCm,
+	float TargetYawDegrees,
+	const FTrajectoryMotionConstraints& Constraints)
+{
+	if (!bAutopilotActive)
+	{
+		UE_LOG(LogAutopilot, Warning, TEXT("CommandMoveToWithConstraints ignored: Autopilot is inactive."));
+		return;
+	}
+	if (BehaviorPlanner)
+	{
+		BehaviorPlanner->CommandMoveToWithConstraints(TargetPositionCm, TargetYawDegrees, Constraints);
+	}
 }
 
 void UAutopilotComponent::CommandFollowPath(const TArray<FVector>& PathPointsCm, float CruiseSpeedCmPerSec)
 {
 	UE_LOG(LogAutopilot, Log, TEXT("CommandFollowPath Points=%d Cruise=%.1f Active=%d"), PathPointsCm.Num(), CruiseSpeedCmPerSec, bAutopilotActive);
-	if (!bAutopilotActive) UE_LOG(LogAutopilot, Warning, TEXT("CommandFollowPath 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。"));
+	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandFollowPath 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
 	if (BehaviorPlanner) BehaviorPlanner->CommandFollowPath(PathPointsCm, CruiseSpeedCmPerSec);
+}
+
+void UAutopilotComponent::CommandFollowPathWithConstraints(
+	const TArray<FVector>& PathPointsCm,
+	const FTrajectoryMotionConstraints& Constraints)
+{
+	if (!bAutopilotActive)
+	{
+		UE_LOG(LogAutopilot, Warning, TEXT("CommandFollowPathWithConstraints ignored: Autopilot is inactive."));
+		return;
+	}
+	if (BehaviorPlanner)
+	{
+		BehaviorPlanner->CommandFollowPathWithConstraints(PathPointsCm, Constraints);
+	}
 }
 
 void UAutopilotComponent::CommandOrbit(const FVector& CenterCm, float RadiusCm, float AngularRateDegPerSec)
 {
 	UE_LOG(LogAutopilot, Log, TEXT("CommandOrbit Center=%s R=%.1f Rate=%.1f Active=%d"),
 		*CenterCm.ToString(), RadiusCm, AngularRateDegPerSec, bAutopilotActive);
-	if (!bAutopilotActive) UE_LOG(LogAutopilot, Warning, TEXT("CommandOrbit 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。"));
+	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandOrbit 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
 	if (BehaviorPlanner) BehaviorPlanner->CommandOrbit(CenterCm, RadiusCm, AngularRateDegPerSec);
 }
 
 void UAutopilotComponent::CommandReturnHome(float ReturnAltitudeCm)
 {
 	UE_LOG(LogAutopilot, Log, TEXT("CommandReturnHome Alt=%.1f Active=%d"), ReturnAltitudeCm, bAutopilotActive);
-	if (!bAutopilotActive) UE_LOG(LogAutopilot, Warning, TEXT("CommandReturnHome 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。"));
+	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandReturnHome 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
 	if (BehaviorPlanner)
 	{
 		BehaviorPlanner->CommandReturnHome(ReturnAltitudeCm);
@@ -354,12 +443,13 @@ void UAutopilotComponent::CommandReturnHome(float ReturnAltitudeCm)
 void UAutopilotComponent::CommandLand()
 {
 	UE_LOG(LogAutopilot, Log, TEXT("CommandLand Active=%d"), bAutopilotActive);
-	if (!bAutopilotActive) UE_LOG(LogAutopilot, Warning, TEXT("CommandLand 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。"));
+	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandLand 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
 	if (BehaviorPlanner) BehaviorPlanner->CommandLand();
 }
 
 void UAutopilotComponent::SetHomePosition(const FVector& HomeCm)
 {
+	bHomePositionInitialized = true;
 	if (BehaviorPlanner) BehaviorPlanner->SetHomePosition(HomeCm);
 	if (MissionPlanner) MissionPlanner->SetHomePosition(HomeCm);
 }
@@ -463,21 +553,99 @@ float UAutopilotComponent::GetTrajectoryProgress() const
 
 void UAutopilotComponent::CreateSubobjects()
 {
-	TrajectoryGen = NewObject<UTrajectoryGenerator>(this);
-	MotionProfile = NewObject<UMotionProfile>(this);
-	FeedForwardCalc = NewObject<UFeedForwardCalculator>(this);
-	TurnBehavior = NewObject<UTurnBehavior>(this);
-	BehaviorPlanner = NewObject<UBehaviorPlanner>(this);
-	MissionPlanner = NewObject<UMissionPlanner>(this);
-
-	if (BehaviorPlanner) BehaviorPlanner->Initialize();
+	if (!TrajectoryGen) TrajectoryGen = NewObject<UTrajectoryGenerator>(this);
+	if (!MotionProfile) MotionProfile = NewObject<UMotionProfile>(this);
+	if (!FeedForwardCalc) FeedForwardCalc = NewObject<UFeedForwardCalculator>(this);
+	if (!TurnBehavior) TurnBehavior = NewObject<UTurnBehavior>(this);
+	if (!BehaviorPlanner)
+	{
+		BehaviorPlanner = NewObject<UBehaviorPlanner>(this);
+		if (BehaviorPlanner) BehaviorPlanner->Initialize();
+	}
+	if (!MissionPlanner) MissionPlanner = NewObject<UMissionPlanner>(this);
 	if (MissionPlanner && BehaviorPlanner)
 	{
 		MissionPlanner->SetBehaviorPlanner(BehaviorPlanner);
 	}
 
 	// 默认制导策略
-	SetPathFollowingStrategy(DefaultStrategy);
+	if (!PathFollowing) SetPathFollowingStrategy(DefaultStrategy);
+}
+
+bool UAutopilotComponent::AreGameplayPoliciesReady() const
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner) return true;
+
+	TInlineComponentArray<UFlightGameplayPolicyComponent*> Policies(Owner);
+	for (const UFlightGameplayPolicyComponent* Policy : Policies)
+	{
+		if (IsValid(Policy) && !Policy->IsPolicyReady()) return false;
+	}
+	return true;
+}
+
+void UAutopilotComponent::UpdateGameplayPolicyPause()
+{
+	const bool bShouldPause = !AreGameplayPoliciesReady();
+	if (bShouldPause && !bPausedByGameplayPolicy) EnterGameplayPolicyPause();
+	else if (!bShouldPause && bPausedByGameplayPolicy) ExitGameplayPolicyPause();
+}
+
+void UAutopilotComponent::EnterGameplayPolicyPause()
+{
+	bPausedByGameplayPolicy = true;
+	MissionAccumulatorSeconds = 0.0f;
+	InvalidateOutputCaches();
+	if (TrajectoryGen) TrajectoryGen->Clear();
+	if (FlightController) FlightController->SetUseAutopilotSetpoint(false);
+	UE_LOG(LogAutopilot, Log, TEXT("Autopilot pipeline paused: gameplay policy owns flight control."));
+}
+
+void UAutopilotComponent::ExitGameplayPolicyPause()
+{
+	bPausedByGameplayPolicy = false;
+	InvalidateOutputCaches();
+	if (FlightController && bAutopilotActive)
+	{
+		RebasePipelineOnCurrentState();
+		FlightController->SetFlightMode(EDroneFlightMode::Mission);
+		FlightController->SetUseAutopilotSetpoint(true);
+	}
+	else if (FlightController && bFlightModeBeforeActivationCaptured
+		&& FlightController->GetFlightMode() == EDroneFlightMode::Mission)
+	{
+		FlightController->SetFlightMode(static_cast<EDroneFlightMode>(FlightModeBeforeActivation));
+		bFlightModeBeforeActivationCaptured = false;
+	}
+	UE_LOG(LogAutopilot, Log, TEXT("Autopilot pipeline resumed from current aircraft state."));
+}
+
+void UAutopilotComponent::InvalidateOutputCaches()
+{
+	CachedProfiledSetpoint = FProfiledSetpoint();
+	CachedFeedForward = FFeedForward();
+	CachedGuidanceCommand = FGuidanceCommand();
+	CachedTurnCommand = FTurnCommand();
+	bHasLastTrajectoryRequest = false;
+}
+
+void UAutopilotComponent::RebasePipelineOnCurrentState()
+{
+	if (!FlightController) return;
+	if (TrajectoryGen)
+	{
+		TrajectoryGen->Clear();
+	}
+	const FDroneEstimatedState& Est = FlightController->GetEstimatedState();
+	if (MotionProfile)
+	{
+		MotionProfile->Initialize(Est.State.PositionCm, Est.State.AttitudeDegrees.Yaw);
+	}
+	if (!bHomePositionInitialized && BehaviorPlanner)
+	{
+		SetHomePosition(Est.State.PositionCm);
+	}
 }
 
 void UAutopilotComponent::ResolveFlightController()

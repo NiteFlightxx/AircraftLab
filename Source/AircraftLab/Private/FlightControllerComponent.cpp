@@ -211,6 +211,11 @@ void UFlightControllerComponent::RefreshReferences()
 
 void UFlightControllerComponent::ApplyFailurePolicy(float DeltaSeconds)
 {
+	if (bFailurePolicyEvaluationSuspended)
+	{
+		return;
+	}
+
 	if (RuntimeConfig.FailurePolicy.bEvaluateOnlyWhenArmed && Runtime.ArmState != EDroneArmState::Armed)
 	{
 		return;

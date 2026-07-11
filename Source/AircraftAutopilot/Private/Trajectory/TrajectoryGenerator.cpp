@@ -30,6 +30,22 @@ bool UTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 	const bool bHoverRequest = (Request.Type == ETrajectoryType::Waypoint || Request.Type == ETrajectoryType::Line)
 		&& StartToTargetDist <= 1.0f; // 1cm 容差（悬停微动）
 
+	if (!bHoverRequest && (Request.PlanningAccelerationCmPerSecSq <= UE_SMALL_NUMBER
+		|| Request.PlanningDecelerationCmPerSecSq <= UE_SMALL_NUMBER))
+	{
+		UE_LOG(LogTrajectoryGen, Warning,
+			TEXT("TrajectoryGenerator: acceleration and deceleration must both be positive."));
+		return false;
+	}
+	const float RequestedTerminalSpeed = FVector2D(
+		Request.TargetVelocityCmPerSec.X, Request.TargetVelocityCmPerSec.Y).Size();
+	if (!bHoverRequest && RequestedTerminalSpeed > Request.CruiseSpeedCmPerSec + UE_SMALL_NUMBER)
+	{
+		UE_LOG(LogTrajectoryGen, Warning,
+			TEXT("TrajectoryGenerator: terminal speed cannot exceed cruise speed."));
+		return false;
+	}
+
 	FString Error;
 	if (!bHoverRequest && !BuildSegments(Request, Error))
 	{
@@ -44,6 +60,8 @@ bool UTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 		TotalArcLengthCm = 0.0f;
 		CruiseSpeedCmPerSec = 0.0f;
 		PlanningAccelCmPerSecSq = FMath::Max(Request.PlanningAccelerationCmPerSecSq, UE_SMALL_NUMBER);
+		PlanningDecelCmPerSecSq = FMath::Max(Request.PlanningDecelerationCmPerSecSq, UE_SMALL_NUMBER);
+		InitialSpeedCmPerSec = 0.0f;
 		TargetEndSpeedCmPerSec = 0.0f;
 		AcceptanceRadiusCm = FMath::Max(Request.AcceptanceRadiusCm, 1.0f);
 		DecelTriggerDistanceCm = 0.0f;
@@ -73,17 +91,27 @@ bool UTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 	// 缓存速度剖面参数
 	CruiseSpeedCmPerSec = FMath::Max(Request.CruiseSpeedCmPerSec, UE_SMALL_NUMBER);
 	PlanningAccelCmPerSecSq = FMath::Max(Request.PlanningAccelerationCmPerSecSq, UE_SMALL_NUMBER);
+	PlanningDecelCmPerSecSq = FMath::Max(Request.PlanningDecelerationCmPerSecSq, UE_SMALL_NUMBER);
 	// 目标终点速度取 TargetVelocityCmPerSec 的水平幅值（默认 0 = 停在终点）
-	TargetEndSpeedCmPerSec = FMath::Max(FVector2D(Request.TargetVelocityCmPerSec.X, Request.TargetVelocityCmPerSec.Y).Size(), 0.0f);
+	TargetEndSpeedCmPerSec = FMath::Clamp(
+		FVector2D(Request.TargetVelocityCmPerSec.X, Request.TargetVelocityCmPerSec.Y).Size(),
+		0.0f, CruiseSpeedCmPerSec);
 	AcceptanceRadiusCm = FMath::Max(Request.AcceptanceRadiusCm, 1.0f);
+
+	const FVector StartTangent = Segments.Num() > 0 && Segments[0]
+		? Segments[0]->GetFrenetAtArcLength(0.0f).Tangent.GetSafeNormal()
+		: FVector::ZeroVector;
+	InitialSpeedCmPerSec = StartTangent.IsNearlyZero()
+		? 0.0f
+		: FMath::Clamp(FVector::DotProduct(Request.StartVelocityCmPerSec, StartTangent), 0.0f, CruiseSpeedCmPerSec);
 
 	// 减速触发距离 s_dec = (Vc² − V_end²)/(2a)
 	DecelTriggerDistanceCm = FMath::Max(
-		(CruiseSpeedCmPerSec * CruiseSpeedCmPerSec - TargetEndSpeedCmPerSec * TargetEndSpeedCmPerSec) / (2.0f * PlanningAccelCmPerSecSq),
+		(CruiseSpeedCmPerSec * CruiseSpeedCmPerSec - TargetEndSpeedCmPerSec * TargetEndSpeedCmPerSec) / (2.0f * PlanningDecelCmPerSecSq),
 		0.0f);
 
 	CurrentArcLength = 0.0f;
-	CurrentSpeedCmPerSec = 0.0f;
+	CurrentSpeedCmPerSec = InitialSpeedCmPerSec;
 	bIsValid = true;
 
 	UE_LOG(LogTrajectoryGen, Log,
@@ -109,7 +137,8 @@ bool UTrajectoryGenerator::IsComplete() const
 	if (!bIsValid) return true;
 	// 无限循环段（如 Orbit 持续盘旋）永不自动完成
 	if (IsCurrentSegmentInfiniteLoop()) return false;
-	return CurrentArcLength + AcceptanceRadiusCm >= TotalArcLengthCm;
+	return CurrentArcLength + UE_SMALL_NUMBER >= TotalArcLengthCm
+		&& FMath::Abs(CurrentSpeedCmPerSec - TargetEndSpeedCmPerSec) <= 1.0f;
 }
 
 bool UTrajectoryGenerator::IsCurrentSegmentInfiniteLoop() const
@@ -171,24 +200,26 @@ bool UTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVector& Cur
 		const float SampleArc = bUseLookAhead
 			? CurrentArcLength + LookAheadDistanceCm
 			: CurrentArcLength;
-		OutSetpoint = SampleGlobalArcLength(SampleArc, CurrentSpeedCmPerSec);
+		OutSetpoint = SampleAtGlobalArc(SampleArc, CurrentSpeedCmPerSec);
 		CurrentSetpoint = OutSetpoint;
 		return true;
 	}
 
 	// --- 2. 梯形速度剖面：根据剩余距离决定本周期速度 ---
-	const float RemainingDistance = FMath::Max(TotalArcLengthCm - CurrentArcLength, 0.0f);
-	CurrentSpeedCmPerSec = ComputeTrapezoidalSpeed(CurrentArcLength, TotalArcLengthCm);
+	const float PreviousSpeedCmPerSec = CurrentSpeedCmPerSec;
+	CurrentSpeedCmPerSec = ComputeTrapezoidalSpeed(CurrentArcLength, TotalArcLengthCm, DeltaSeconds);
 
 	// --- 3. 推进游标：s += v·Δt ---
-	CurrentArcLength = FMath::Clamp(CurrentArcLength + CurrentSpeedCmPerSec * DeltaSeconds, 0.0f, TotalArcLengthCm);
+	const float IntegratedDistance = 0.5f * (PreviousSpeedCmPerSec + CurrentSpeedCmPerSec) * DeltaSeconds;
+	CurrentArcLength = FMath::Clamp(CurrentArcLength + IntegratedDistance, 0.0f, TotalArcLengthCm);
 
 	// --- 4. 完成判定 ---
-	if (RemainingDistance <= AcceptanceRadiusCm)
+	const float RemainingDistance = FMath::Max(TotalArcLengthCm - CurrentArcLength, 0.0f);
+	if (RemainingDistance <= UE_SMALL_NUMBER)
 	{
-		// 到点：输出终点的零速设定值
-		OutSetpoint = SampleGlobalArcLength(TotalArcLengthCm, TargetEndSpeedCmPerSec);
-		CurrentSpeedCmPerSec = TargetEndSpeedCmPerSec;
+		// At the endpoint, preserve the configured deceleration instead of
+		// discontinuously snapping velocity to the requested terminal speed.
+		OutSetpoint = SampleGlobalArcLength(TotalArcLengthCm, CurrentSpeedCmPerSec);
 		CurrentSetpoint = OutSetpoint;
 		return true;
 	}
@@ -319,54 +350,24 @@ void UTrajectoryGenerator::RecomputeArcLengths()
 //   位置环产生误差拉动无人机前进。保底速度由加速度推导（sqrt(2·a·dt_planning)），
 //   dt_planning 取游戏线程典型帧时（0.02s=50Hz），保证起步即有可观测位移。
 // ---------------------------------------------------------------------------
-float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS) const
+float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS, float DeltaSeconds) const
 {
 	const float Vc = CruiseSpeedCmPerSec;
 	const float A = PlanningAccelCmPerSecSq;
 	const float VEnd = TargetEndSpeedCmPerSec;
-	const float Remaining = FMath::Max(TotalS - CurrentS, 0.0f);
+	const float D = PlanningDecelCmPerSecSq;
+	if (DeltaSeconds <= UE_SMALL_NUMBER || TotalS <= UE_SMALL_NUMBER) return VEnd;
 
-	// 加速段距离 s_acc = Vc²/(2a)（从静止启动，V_init=0）
-	const float SAcc = (Vc * Vc) / (2.0f * A);
-	// 减速段距离 s_dec = (Vc² − V_end²)/(2a)（已缓存为 DecelTriggerDistanceCm）
-	const float SDec = DecelTriggerDistanceCm;
-
-	// 三角形退化：总距离不足以既加速到 Vc 又减速到 V_end
-	bool bTriangle = (SAcc + SDec) > TotalS;
-	float EffectiveVc = Vc;
-	if (bTriangle)
+	const float RemainingForBraking = FMath::Max(TotalS - CurrentS, 0.0f);
+	const float BrakingSpeedLimit = FMath::Sqrt(FMath::Max(
+		VEnd * VEnd + 2.0f * D * RemainingForBraking, 0.0f));
+	const float TargetSpeed = FMath::Min(Vc, BrakingSpeedLimit);
+	if (TargetSpeed >= CurrentSpeedCmPerSec)
 	{
-		// 对称三角剖面：加速距离 = 减速距离 = L/2
-		// V_peak² = VEnd² + 2·a·(L/2) = VEnd² + a·L
-		const float VPeakSq = VEnd * VEnd + A * TotalS;
-		EffectiveVc = FMath::Sqrt(FMath::Max(VPeakSq, 0.0f));
-		EffectiveVc = FMath::Min(EffectiveVc, Vc);
+		return FMath::Min(CurrentSpeedCmPerSec + A * DeltaSeconds, TargetSpeed);
 	}
+	return FMath::Max(CurrentSpeedCmPerSec - D * DeltaSeconds, TargetSpeed);
 
-	// 起步保底速度：打破 s=0 → v=0 死锁。
-	// 取 sqrt(2·a·dt_planning)（dt_planning=0.02s），随加速段推进被 sqrt(2·a·s) 自然接管。
-	constexpr float PlanningDtSeconds = 0.02f;
-	const float MinStartSpeed = FMath::Sqrt(2.0f * A * PlanningDtSeconds);
-
-	// 减速段优先：距终点 < s_dec → 减速
-	const float DecelStartS = FMath::Max(TotalS - SDec, 0.0f);
-	if (CurrentS >= DecelStartS)
-	{
-		// v = sqrt(V_end² + 2·a·(Remaining))，但不超过 EffectiveVc
-		float VDecel = FMath::Sqrt(VEnd * VEnd + 2.0f * A * Remaining);
-		return FMath::Min(VDecel, EffectiveVc);
-	}
-
-	// 加速段：v = sqrt(2·a·s_acc_progress)，s 从加速起点(s=0)算
-	if (CurrentS < SAcc)
-	{
-		float VAccel = FMath::Sqrt(2.0f * A * CurrentS);
-		VAccel = FMath::Max(VAccel, MinStartSpeed); // 冷启动保底
-		return FMath::Min(VAccel, EffectiveVc);
-	}
-
-	// 巡航段
-	return EffectiveVc;
 }
 
 // ---------------------------------------------------------------------------

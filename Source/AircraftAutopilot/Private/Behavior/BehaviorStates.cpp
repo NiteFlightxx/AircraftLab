@@ -65,7 +65,10 @@ EBehaviorState UBehaviorState_Move::OnUpdate(const FBehaviorStateInput& Input, f
 	OutOutput.TrajectoryRequest.TargetPositionCm = TargetPositionCm;
 	OutOutput.TrajectoryRequest.TargetYawDegrees = TargetYawDegrees;
 	OutOutput.TrajectoryRequest.CruiseSpeedCmPerSec = CruiseSpeedCmPerSec;
-	OutOutput.TrajectoryRequest.PlanningAccelerationCmPerSecSq = 400.0f;
+	OutOutput.TrajectoryRequest.PlanningAccelerationCmPerSecSq = MaxAccelerationCmPerSecSq;
+	OutOutput.TrajectoryRequest.PlanningDecelerationCmPerSecSq = MaxDecelerationCmPerSecSq;
+	OutOutput.TrajectoryRequest.TargetVelocityCmPerSec =
+		(TargetPositionCm - Input.PositionCm).GetSafeNormal() * TargetSpeedCmPerSec;
 	OutOutput.TrajectoryRequest.AcceptanceRadiusCm = AcceptanceRadiusCm;
 	OutOutput.bRequestArm = true;
 	OutOutput.bValid = true;
@@ -124,7 +127,13 @@ EBehaviorState UBehaviorState_FollowPath::OnUpdate(const FBehaviorStateInput& In
 	OutOutput.TrajectoryRequest.PathPointsCm = PathPointsCm;
 	OutOutput.TrajectoryRequest.TargetPositionCm = PathPointsCm.Last();
 	OutOutput.TrajectoryRequest.CruiseSpeedCmPerSec = CruiseSpeedCmPerSec;
-	OutOutput.TrajectoryRequest.PlanningAccelerationCmPerSecSq = 400.0f;
+	OutOutput.TrajectoryRequest.PlanningAccelerationCmPerSecSq = MaxAccelerationCmPerSecSq;
+	OutOutput.TrajectoryRequest.PlanningDecelerationCmPerSecSq = MaxDecelerationCmPerSecSq;
+	if (PathPointsCm.Num() >= 2)
+	{
+		OutOutput.TrajectoryRequest.TargetVelocityCmPerSec =
+			(PathPointsCm.Last() - PathPointsCm[PathPointsCm.Num() - 2]).GetSafeNormal() * TargetSpeedCmPerSec;
+	}
 	OutOutput.TrajectoryRequest.AcceptanceRadiusCm = AcceptanceRadiusCm;
 	OutOutput.bRequestArm = true;
 	OutOutput.bValid = true;

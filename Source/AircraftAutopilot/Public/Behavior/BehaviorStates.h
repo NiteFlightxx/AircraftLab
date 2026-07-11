@@ -87,6 +87,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|Move", meta = (ClampMin = "0.0"))
 	float CruiseSpeedCmPerSec = 800.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|Move", meta = (ClampMin = "0.0"))
+	float MaxAccelerationCmPerSecSq = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|Move", meta = (ClampMin = "0.0"))
+	float MaxDecelerationCmPerSecSq = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|Move", meta = (ClampMin = "0.0"))
+	float TargetSpeedCmPerSec = 0.0f;
+
 	/** 到达容差（cm） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|Move", meta = (ClampMin = "0.0"))
 	float AcceptanceRadiusCm = 50.0f;
@@ -139,6 +148,15 @@ public:
 	/** 巡航速度（cm/s） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|FollowPath", meta = (ClampMin = "0.0"))
 	float CruiseSpeedCmPerSec = 800.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|FollowPath", meta = (ClampMin = "0.0"))
+	float MaxAccelerationCmPerSecSq = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|FollowPath", meta = (ClampMin = "0.0"))
+	float MaxDecelerationCmPerSecSq = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|FollowPath", meta = (ClampMin = "0.0"))
+	float TargetSpeedCmPerSec = 0.0f;
 
 	/** 到达容差（cm） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Behavior|FollowPath", meta = (ClampMin = "0.0"))

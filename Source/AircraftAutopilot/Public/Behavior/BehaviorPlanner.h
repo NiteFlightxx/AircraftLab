@@ -72,9 +72,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
 	void CommandMoveTo(const FVector& TargetPositionCm, float TargetYawDegrees, float CruiseSpeedCmPerSec = 800.0f);
 
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
+	void CommandMoveToWithConstraints(const FVector& TargetPositionCm, float TargetYawDegrees,
+		const FTrajectoryMotionConstraints& Constraints);
+
 	/** 设置 FollowPath 路径（便捷接口，自动切到 FollowPath 状态） */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
 	void CommandFollowPath(const TArray<FVector>& PathPointsCm, float CruiseSpeedCmPerSec = 800.0f);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")
+	void CommandFollowPathWithConstraints(const TArray<FVector>& PathPointsCm,
+		const FTrajectoryMotionConstraints& Constraints);
 
 	/** 设置 Orbit 参数（便捷接口，自动切到 Orbit 状态） */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Behavior")

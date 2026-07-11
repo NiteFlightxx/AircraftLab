@@ -46,7 +46,7 @@ public:
 
 	/** 设置 Home 位置 */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Mission")
-	void SetHomePosition(const FVector& HomeCm) { HomePositionCm = HomeCm; if (BehaviorPlanner) BehaviorPlanner->SetHomePosition(HomeCm); }
+	void SetHomePosition(const FVector& HomeCm);
 
 	// -----------------------------------------------------------------------
 	// 任务加载
