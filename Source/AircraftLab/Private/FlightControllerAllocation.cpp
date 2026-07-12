@@ -617,11 +617,8 @@ void FControlAllocator::Allocate(const FFlightControllerRuntimeConfig& Config, c
 FVector UFlightControllerComponent::GetRotorPositionFromCenterOfMassBodyCm(const UAirscrewComponent* Airscrew) const
 {
 	if (!Airscrew) return FVector::ZeroVector;
-	if (!BodyPrimitive) return Airscrew->GetRelativeLocation();
-	// 旋翼的世界坐标 = 刚体变换 × 旋翼相对刚体的本地偏移
-	const FVector RotorWorldPos = PhysicsCache.BodyTransform.TransformPosition(Airscrew->GetRelativeLocationFromBody());
-	// 机体系下的力臂 = (旋翼世界位置 − 质心世界位置) 逆变换到机体系
-	return PhysicsCache.BodyTransform.InverseTransformVectorNoScale(RotorWorldPos - PhysicsCache.CenterOfMassWorld);
+	// 旋翼位置和 Chaos CenterOfMass() 均在刚体组件局部坐标系中，直接相减得到唯一的质心力臂。
+	return Airscrew->GetRelativeLocationFromBody() - PhysicsCache.CenterOfMassOffsetBodyCm;
 }
 
 

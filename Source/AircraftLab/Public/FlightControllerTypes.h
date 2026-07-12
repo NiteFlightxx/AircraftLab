@@ -197,8 +197,8 @@ struct FPhysicsCache
 	/** 机体变换（位置+旋转，世界坐标系） */
 	FTransform BodyTransform = FTransform::Identity;
 
-	/** 质心世界坐标（厘米） */
-	FVector CenterOfMassWorld = FVector::ZeroVector;
+	/** 质心相对刚体组件原点的机体系偏移（厘米） */
+	FVector CenterOfMassOffsetBodyCm = FVector::ZeroVector;
 
 	/** 机体角速度（度/秒，机体坐标系） */
 	FVector AngularVelocityBodyDegPerSec = FVector::ZeroVector;
@@ -208,6 +208,18 @@ struct FPhysicsCache
 
 	/** 重力加速度大小（厘米/秒²） */
 	float GravityMagnitudeCmPerSecSq = 980.0f;
+
+	/** Chaos 刚体的运行时真实质量（千克） */
+	float MassKg = 0.0f;
+
+	/** Chaos 线性/角阻尼（1/秒） */
+	float LinearDampingPerSecond = 0.0f;
+	float AngularDampingPerSecond = 0.0f;
+	FVector InertiaDiagonalKgM2 = FVector::ZeroVector;
+	FVector RotorAngularAccelerationDeltaBodyDegPerSecSq = FVector::ZeroVector;
+	FVector ChaosAngularAccelerationAfterBodyDegPerSecSq = FVector::ZeroVector;
+	FVector PhysicsStepAppliedTorqueControllerNm = FVector::ZeroVector;
+	uint64 PhysicsStepDiagnosticsSequence = 0;
 
 	/** 世界坐标系上方向（通常为Z轴） */
 	FVector WorldUp = FVector::UpVector;
@@ -220,10 +232,18 @@ struct FPhysicsCache
 	void Reset()
 	{
 		BodyTransform = FTransform::Identity;
-		CenterOfMassWorld = FVector::ZeroVector;
+		CenterOfMassOffsetBodyCm = FVector::ZeroVector;
 		AngularVelocityBodyDegPerSec = FVector::ZeroVector;
 		LinearVelocityCmPerSec = FVector::ZeroVector;
 		GravityMagnitudeCmPerSecSq = 980.0f;
+		MassKg = 0.0f;
+		LinearDampingPerSecond = 0.0f;
+		AngularDampingPerSecond = 0.0f;
+		InertiaDiagonalKgM2 = FVector::ZeroVector;
+		RotorAngularAccelerationDeltaBodyDegPerSecSq = FVector::ZeroVector;
+		ChaosAngularAccelerationAfterBodyDegPerSecSq = FVector::ZeroVector;
+		PhysicsStepAppliedTorqueControllerNm = FVector::ZeroVector;
+		PhysicsStepDiagnosticsSequence = 0;
 		WorldUp = FVector::UpVector;
 		BodyAxisX = FVector::ForwardVector;
 		BodyAxisY = FVector::RightVector;
@@ -315,6 +335,9 @@ struct FControllerRuntimeState
 
 	/** 是否有上一帧线速度 */
 	bool bHasPreviousLinearVelocity = false;
+
+	FVector PreviousAngularVelocityBodyDegPerSec = FVector::ZeroVector;
+	bool bHasPreviousAngularVelocity = false;
 };
 
 /**

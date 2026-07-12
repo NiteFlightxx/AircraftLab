@@ -1,7 +1,9 @@
 #include "AirscrewComponent.h"
+#include "AircraftPhysicsUnits.h"
 
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "Chaos/Particle/ParticleUtilities.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 
@@ -177,7 +179,7 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& Bod
 	const float ThrustRatio = FMath::Clamp(CurrentRpm / MaxRpm, 0.0f, 1.0f);
 	CurrentThrustForce = RotorDefinition.GetEffectiveMaxThrust() * FMath::Square(ThrustRatio) * FMath::Max(RotorDefinition.ThrustCoefficient, 0.0f);
 
-	// 计算推力施加点的世界坐标
+	// 仅更新可视化/查询缓存；实际物理施力点会在物理边界按当前刚体姿态重新计算。
 	CurrentApplicationPointWorld = BodyTransform.TransformPosition(CachedRelativeLocationFromBody);
 
 	// 步骤5: 反扭矩计算
@@ -209,25 +211,43 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& Bod
  *    总力：ΣF = F_thrust
  *    总力矩：Στ = r × F_thrust + τ_reaction
  */
-void UAirscrewComponent::ApplyThrustForce_PhysicsThread(Chaos::FRigidBodyHandle_Internal* BodyHandle)
+FVector UAirscrewComponent::ApplyThrustForce_PhysicsThread(Chaos::FRigidBodyHandle_Internal* BodyHandle)
 {
 	if (!bApplyForce || !BodyHandle || bForceStopped || CurrentThrustForce <= UE_SMALL_NUMBER)
 	{
-		return;
+		return FVector::ZeroVector;
 	}
 
-	// 1. 施加推力
-	BodyHandle->AddForce(CurrentThrustVectorWorld, false);
+	// 世界位置和方向必须在实际施力边界由当前刚体姿态生成，不能使用控制步骤中缓存的世界量。
+	const FVector BodyWorldPosition(BodyHandle->X());
+	const FQuat BodyWorldRotation(BodyHandle->R());
+	const FVector RotorWorldPosition = BodyWorldPosition
+		+ BodyWorldRotation.RotateVector(CachedRelativeLocationFromBody);
+	const FVector ThrustDirectionWorld = BodyWorldRotation.RotateVector(CachedThrustAxisLocal).GetSafeNormal();
+	const FVector ThrustForceWorldN = ThrustDirectionWorld * CurrentThrustForce;
+	const FVector ReactionTorqueWorldNm = ThrustDirectionWorld
+		* (CurrentReactionTorqueMagnitude * RotorDefinition.GetSpinDirectionSign());
+
+	// AircraftLab 内部保持 SI（N、N·m），仅在 Chaos 边界转换为 kg·cm/s²、kg·cm²/s²。
+	const FVector ThrustForceChaos = AircraftPhysicsUnits::NewtonsToChaosForce(ThrustForceWorldN);
+	const FVector ReactionTorqueChaos = AircraftPhysicsUnits::NewtonMetersToChaosTorque(ReactionTorqueWorldNm);
+
+	// 1. 施加推力（N -> Chaos force）
+	BodyHandle->AddForce(ThrustForceChaos, false);
 
 	// 2. 推力偏心矩：τ_pos = r × F_thrust
 	// r = 旋翼世界位置 - 刚体质心世界位置
-	const FVector RigidBodyComWorldPos(BodyHandle->X());
-	const FVector ArmWorld = CurrentApplicationPointWorld - RigidBodyComWorldPos;
-	const FVector ThrustMoment = FVector::CrossProduct(ArmWorld, CurrentThrustVectorWorld);
+	const FVector RigidBodyComWorldPos(Chaos::FParticleUtilitiesGT::GetCoMWorldPosition(BodyHandle));
+	const FVector ArmWorld = RotorWorldPosition - RigidBodyComWorldPos;
+	// ArmWorld 使用 cm，ThrustForceChaos 使用 kg·cm/s²，叉积结果天然是 Chaos torque。
+	const FVector ThrustMoment = FVector::CrossProduct(ArmWorld, ThrustForceChaos);
 	BodyHandle->AddTorque(ThrustMoment, false);
 
-	// 3. 反扭矩（accumulate 模式，因可能多个旋翼需要叠加）
-	BodyHandle->AddTorque(CurrentReactionTorqueVectorWorld, true);
+	// 3. 反扭矩（N·m -> Chaos torque）
+	BodyHandle->AddTorque(ReactionTorqueChaos, true);
+
+	// 直接返回刚刚施加的边界值，避免飞控组件用另一套力臂/坐标计算重建诊断值。
+	return AircraftPhysicsUnits::ChaosTorqueToNewtonMeters(ThrustMoment + ReactionTorqueChaos);
 }
 
 void UAirscrewComponent::DrawDebugVisualization() const

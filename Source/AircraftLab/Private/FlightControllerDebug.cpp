@@ -1,42 +1,14 @@
 #include "FlightControllerComponent.h"
 #include "FlightControllerInternals.h"
 
-#include "AircraftPawn.h"
 #include "AirscrewComponent.h"
-#include "DroneInputComponent.h"
-#include "Components/PrimitiveComponent.h"
-#include "Engine/World.h"
-#include "GameFramework/Actor.h"
-#include "Math/RotationMatrix.h"
-#include "PhysicsEngine/BodyInstance.h"
-#include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 
-//DEFINE_LOG_CATEGORY_STATIC(LogFlightController, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogFlightControllerDebug, Log, All);
 
-// ============================================================================
-// FlightControllerDebug — 调试辅助工具
-// ============================================================================
-// 提供状态标签字符串、符号分桶、一致性判断等工具函数，
-// 用于 MaybeEmitDebugLog 中的诊断输出。
 namespace FlightControllerDebug
 {
-const TCHAR* GetArmStateLabel(EDroneArmState ArmState)
-{
-	// 解锁状态枚举 → 可读字符串
-	switch (ArmState)
-	{
-	case EDroneArmState::Disarmed: return TEXT("Disarmed");
-	case EDroneArmState::Arming: return TEXT("Arming");
-	case EDroneArmState::Armed: return TEXT("Armed");
-	case EDroneArmState::Failsafe: return TEXT("Failsafe");
-	case EDroneArmState::EmergencyStop: return TEXT("EmergencyStop");
-	default: return TEXT("Unknown");
-	}
-}
-
 const TCHAR* GetFlightModeLabel(EDroneFlightMode FlightMode)
 {
-	// 飞行模式枚举 → 可读字符串
 	switch (FlightMode)
 	{
 	case EDroneFlightMode::Manual: return TEXT("Manual");
@@ -54,18 +26,11 @@ const TCHAR* GetFlightModeLabel(EDroneFlightMode FlightMode)
 
 const TCHAR* GetSpinDirectionLabel(EDroneRotorSpinDirection SpinDirection)
 {
-	// 旋翼旋转方向枚举 → 可读字符串
-	switch (SpinDirection)
-	{
-	case EDroneRotorSpinDirection::Clockwise: return TEXT("CW");
-	case EDroneRotorSpinDirection::CounterClockwise: return TEXT("CCW");
-	default: return TEXT("Unknown");
-	}
+	return SpinDirection == EDroneRotorSpinDirection::Clockwise ? TEXT("CW") : TEXT("CCW");
 }
 
 int32 GetSignBucket(float Value, float Deadband)
 {
-	// 将浮点值按死区分桶为 +1 / -1 / 0，用于符号一致性诊断
 	if (Value > Deadband) return 1;
 	if (Value < -Deadband) return -1;
 	return 0;
@@ -73,53 +38,53 @@ int32 GetSignBucket(float Value, float Deadband)
 
 const TCHAR* GetSignLabel(int32 SignBucket)
 {
-	switch (SignBucket)
-	{
-	case 1: return TEXT("+");
-	case -1: return TEXT("-");
-	default: return TEXT("0");
-	}
+	return SignBucket > 0 ? TEXT("+") : SignBucket < 0 ? TEXT("-") : TEXT("0");
+}
 }
 
-const TCHAR* GetConsistencyLabel(bool bIsConsistent)
-{
-	return bIsConsistent ? TEXT("OK") : TEXT("Mismatch");
-}
-}
 void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 {
 	if (!bEnableDebugLog || !bLogRotorLayout || DebugState.bHasLoggedRotorLayout || Airscrews.IsEmpty()) return;
 
 	const FString OwnerName = GetOwner() ? GetOwner()->GetName() : TEXT("None");
-	//UE_LOG(LogFlightController, Log, TEXT("[RotorLayout] Owner=%s Rotors=%d"), *OwnerName, Airscrews.Num());
+	UE_LOG(LogFlightControllerDebug, Log, TEXT("[RotorLayout] Owner=%s Rotors=%d Units=SI(N,Nm,m,kg)"),
+		*OwnerName, Airscrews.Num());
 
-	for (int32 RotorIndex= 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
+	double TotalMaxThrustN = 0.0;
+	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
 	{
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew) continue;
 
-		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
-		const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
-		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition);
-		const FVector ThrustAxisBody = GetRotorThrustAxisBody(Airscrew);
-		const FName RotorName = RotorDefinition.RotorName.IsNone() ? Airscrew->GetFName() : RotorDefinition.RotorName;
+		const FDroneRotorDefinition& Rotor = Airscrew->GetRotorDefinition();
+		const FVector ArmCm = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
+		const FVector AxisBody = GetRotorThrustAxisBody(Airscrew);
+		const FVector4 Jacobian = BuildJacobianColumn(Airscrew, ArmCm);
+		const double MaxThrustN = FlightControllerAllocation::GetRotorMaxPhysicalThrust(Rotor);
+		const double AllocatedMaxThrustN = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Rotor);
+		const FName RotorName = Rotor.RotorName.IsNone() ? Airscrew->GetFName() : Rotor.RotorName;
+		TotalMaxThrustN += MaxThrustN;
 
-		/*UE_LOG(LogFlightController, Log,
-			TEXT("[RotorLayout] [%d] %s ArmCm=(%.1f, %.1f, %.1f) AxisBody=(%.2f, %.2f, %.2f) Spin=%s Jac=(Fz %.2f Roll %.2f Pitch %.2f Yaw %.2f) Scale=%.2f MaxRpm=%.0f IdleRpm=%.0f MaxThrust=%.1f AllocThrust=%.1f"),
-			RotorIndex, *RotorName.ToString(),
-			LocalPosition.X, LocalPosition.Y, LocalPosition.Z,
-			ThrustAxisBody.X, ThrustAxisBody.Y, ThrustAxisBody.Z,
-			FlightControllerDebug::GetSpinDirectionLabel(RotorDefinition.SpinDirection),
-			JacobianCol[0], JacobianCol[1], JacobianCol[2], JacobianCol[3],
-			RotorDefinition.ControlAuthorityScale,
-			RotorDefinition.Motor.MaxRpm, RotorDefinition.Motor.IdleRpm,
-			FlightControllerAllocation::GetRotorMaxPhysicalThrust(RotorDefinition),
-			FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition));*/
+		UE_LOG(LogFlightControllerDebug, Log,
+			TEXT("[RotorLayout] [%d] %s ArmCm=(%.1f,%.1f,%.1f) Axis=(%.2f,%.2f,%.2f) Spin=%s Jacobian=(%.1fN,%.2fNm,%.2fNm,%.2fNm) Max=%.1fN AllocMax=%.1fN Ct=%.3f"),
+			RotorIndex, *RotorName.ToString(), ArmCm.X, ArmCm.Y, ArmCm.Z,
+			AxisBody.X, AxisBody.Y, AxisBody.Z, FlightControllerDebug::GetSpinDirectionLabel(Rotor.SpinDirection),
+			Jacobian[0], Jacobian[1], Jacobian[2], Jacobian[3], MaxThrustN, AllocatedMaxThrustN, Rotor.ThrustCoefficient);
 	}
-	
+
+	const double WeightN = PhysicsCache.MassKg * PhysicsCache.GravityMagnitudeCmPerSecSq * 0.01;
+	const double MaxTwr = WeightN > UE_SMALL_NUMBER ? TotalMaxThrustN / WeightN : 0.0;
+	UE_LOG(LogFlightControllerDebug, Log,
+		TEXT("[UnitCheck] Mass=%.2fkg Weight=%.1fN TotalRotorMax=%.1fN MaxTWR=%.2f. MaxThrustForce is Newtons."),
+		PhysicsCache.MassKg, WeightN, TotalMaxThrustN, MaxTwr);
+	if (MaxTwr > 10.0)
+	{
+		UE_LOG(LogFlightControllerDebug, Warning,
+			TEXT("[UnitCheck] MaxTWR %.2f is abnormally high. Divide values previously entered as Chaos force units by 100."), MaxTwr);
+	}
+
 	DebugState.bHasLoggedRotorLayout = true;
 }
-
 
 void UFlightControllerComponent::MaybeEmitDebugLog(
 	const FDronePilotInput& PilotInput, float DeltaSeconds, float CollectiveCommand,
@@ -129,145 +94,177 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 	if (!bEnableDebugLog) return;
 	LogRotorLayoutIfNeeded();
 
-	// 按间隔累积时间，间隔到达时才输出
 	DebugState.LogAccumulatorSeconds += DeltaSeconds;
-	if (DebugLogIntervalSeconds > UE_SMALL_NUMBER && DebugState.LogAccumulatorSeconds + UE_SMALL_NUMBER < DebugLogIntervalSeconds)
-		return;
+	if (DebugLogIntervalSeconds > UE_SMALL_NUMBER
+		&& DebugState.LogAccumulatorSeconds + UE_SMALL_NUMBER < DebugLogIntervalSeconds) return;
 	DebugState.LogAccumulatorSeconds = 0.0f;
 
-	const FRotator CurrentAttitude = Runtime.EstimatedState.State.AttitudeDegrees;
-	const FVector CurrentVelocity = Runtime.EstimatedState.State.VelocityCmPerSec;
-	const FVector CurrentBodyRates = Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec;
-	const float RollError = FRotator::NormalizeAxis(DesiredAttitude.Roll - CurrentAttitude.Roll);
-	const float PitchError = FRotator::NormalizeAxis(DesiredAttitude.Pitch - CurrentAttitude.Pitch);
-	const bool bYawHoldActive = ModeCapabilities.CanHoldYaw && FMath::Abs(PilotInput.Yaw) <= RuntimeConfig.Input.YawHoldStickDeadband;
-	const float YawError = bYawHoldActive
-		? FRotator::NormalizeAxis(Runtime.HoldTargets.HeldYawDegrees - CurrentAttitude.Yaw) : 0.0f;
-/*
-	UE_LOG(LogFlightController, Log,
-		TEXT("[Ctrl] t=%.2f Mode=%s Arm=%s Input[T %.2f R %.2f P %.2f Y %.2f] Alt[Z %.1f Held %.1f Vz %.1f DesVz %.1f Col %.3f] Att[P %.2f/%.2f E %.2f | Y %.2f Held %.2f E %.2f | R %.2f/%.2f E %.2f] Rate[R %.2f/%.2f I %.3f | P %.2f/%.2f I %.3f | Y %.2f/%.2f I %.3f] Axis[R %.3f P %.3f Y %.3f] VelXY=(%.1f, %.1f)"),
-		Runtime.EstimatedState.State.TimeSeconds,
-		FlightControllerDebug::GetFlightModeLabel(Runtime.ActiveFlightMode),
-		FlightControllerDebug::GetArmStateLabel(Runtime.ArmState),
-		PilotInput.Throttle, PilotInput.Roll, PilotInput.Pitch, PilotInput.Yaw,
-		Runtime.EstimatedState.State.PositionCm.Z, Runtime.HoldTargets.HeldAltitudeCm,
-		CurrentVelocity.Z, DesiredVerticalVelocity, CollectiveCommand,
-		CurrentAttitude.Pitch, DesiredAttitude.Pitch, PitchError,
-		CurrentAttitude.Yaw, Runtime.HoldTargets.HeldYawDegrees, YawError,
-		CurrentAttitude.Roll, DesiredAttitude.Roll, RollError,
-		CurrentBodyRates.X, DesiredBodyRates.X, FlightControlSolver.PidStates.Rate.Roll.Integral,
-		CurrentBodyRates.Y, DesiredBodyRates.Y, FlightControlSolver.PidStates.Rate.Pitch.Integral,
-		CurrentBodyRates.Z, DesiredYawRate, FlightControlSolver.PidStates.Rate.Yaw.Integral,
-		AxisCommands.X, AxisCommands.Y, AxisCommands.Z,
-		CurrentVelocity.X, CurrentVelocity.Y);*/
+	const FRotator Attitude = Runtime.EstimatedState.State.AttitudeDegrees;
+	const FVector Velocity = Runtime.EstimatedState.State.VelocityCmPerSec;
+	const FVector BodyRates = Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec;
+	const FVector TargetVelocity = Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec;
+	const float HorizontalSpeed = FVector2D(Velocity.X, Velocity.Y).Size();
+	const float TargetHorizontalSpeed = FVector2D(TargetVelocity.X, TargetVelocity.Y).Size();
+	const float Gravity = PhysicsCache.GravityMagnitudeCmPerSecSq;
+	const float TiltAcceleration = Gravity * FMath::Tan(
+		FMath::DegreesToRadians(RuntimeConfig.Controller.Limits.MaxTiltAngleDegrees));
+	const float EffectiveAcceleration = FMath::Min(
+		RuntimeConfig.Controller.Limits.MaxHorizontalAccelerationCmPerSecSq, TiltAcceleration);
+	const bool bHasLinearDamping = PhysicsCache.LinearDampingPerSecond > UE_SMALL_NUMBER;
+	const float PredictedTerminalSpeed = bHasLinearDamping
+		? EffectiveAcceleration / PhysicsCache.LinearDampingPerSecond : 0.0f;
+	const FString TerminalText = bHasLinearDamping
+		? FString::Printf(TEXT("%.1fcm/s"), PredictedTerminalSpeed) : TEXT("unbounded");
 
-	if (Airscrews.IsEmpty())
+	double CurrentTotalThrustN = 0.0;
+	for (const UAirscrewComponent* Airscrew : Airscrews)
 	{
-		DebugState.PreviousAttitudeDegrees = CurrentAttitude;
-		DebugState.PreviousSampleTimeSeconds = Runtime.EstimatedState.State.TimeSeconds;
-		DebugState.bHasPreviousSample = true;
-		return;
+		if (Airscrew) CurrentTotalThrustN += Airscrew->GetCurrentThrustForce();
 	}
+	const double WeightN = PhysicsCache.MassKg * Gravity * 0.01;
+	const double MaxVerticalThrustN = ControlAllocator.Cache.RowScale[0];
+	const double MaxTwr = WeightN > UE_SMALL_NUMBER ? MaxVerticalThrustN / WeightN : 0.0;
+	const double RequiredHoverCollective = MaxVerticalThrustN > UE_SMALL_NUMBER ? WeightN / MaxVerticalThrustN : 0.0;
 
-	FString RotorSummary;
-	float LeftCommandSum = 0.0f, RightCommandSum = 0.0f;
-	int32 LeftCommandCount = 0, RightCommandCount = 0;
+	UE_LOG(LogFlightControllerDebug, Log,
+		TEXT("[FlightDiag] t=%.2f Mode=%s Mass=%.2fkg Damping(L/A)=%.3f/%.3f SpeedXY=%.1f TargetXY=%.1f Vel=(%.1f,%.1f,%.1f) AccelLimit(Config/Tilt/Effective)=%.1f/%.1f/%.1f PredTerminal=%s Attitude(R/P)=%.1f/%.1f Desired=%.1f/%.1f"),
+		Runtime.EstimatedState.State.TimeSeconds, FlightControllerDebug::GetFlightModeLabel(Runtime.ActiveFlightMode),
+		PhysicsCache.MassKg, PhysicsCache.LinearDampingPerSecond, PhysicsCache.AngularDampingPerSecond,
+		HorizontalSpeed, TargetHorizontalSpeed, Velocity.X, Velocity.Y, Velocity.Z,
+		RuntimeConfig.Controller.Limits.MaxHorizontalAccelerationCmPerSecSq, TiltAcceleration, EffectiveAcceleration,
+		*TerminalText, Attitude.Roll, Attitude.Pitch, DesiredAttitude.Roll, DesiredAttitude.Pitch);
 
+	UE_LOG(LogFlightControllerDebug, Log,
+		TEXT("[ThrustDiag] Collective=%.3f Hover(Config/Required)=%.3f/%.3f Thrust(Current/Weight/MaxVertical)=%.1f/%.1f/%.1fN MaxTWR=%.2f AxisCmd=(%.3f,%.3f,%.3f) Rate(Current/Desired)=(%.1f,%.1f,%.1f)/(%.1f,%.1f,%.1f) AllocResidual=%.4f Saturated=%d DesVz=%.1f"),
+		CollectiveCommand, RuntimeConfig.Controller.Limits.HoverCollectiveCommand, RequiredHoverCollective,
+		CurrentTotalThrustN, WeightN, MaxVerticalThrustN, MaxTwr,
+		AxisCommands.X, AxisCommands.Y, AxisCommands.Z,
+		BodyRates.X, BodyRates.Y, BodyRates.Z, DesiredBodyRates.X, DesiredBodyRates.Y, DesiredYawRate,
+		ControlAllocator.Diagnostics.ResidualMagnitude, ControlAllocator.Diagnostics.SaturatedMotors.Num(), DesiredVerticalVelocity);
+
+	FVector AppliedForceBodyN = FVector::ZeroVector;
+	FVector AppliedTorqueControllerNm = FVector::ZeroVector;
+	FString RotorTorqueSummary;
 	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
 	{
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
-		const FDroneRotorCommand* RotorCommand = Runtime.ControlOutput.RotorCommands.IsValidIndex(RotorIndex)
+		if (!Airscrew) continue;
+
+		const FVector ArmM = GetRotorPositionFromCenterOfMassBodyCm(Airscrew) * 0.01f;
+		const FVector ForceBodyN = GetRotorThrustAxisBody(Airscrew) * Airscrew->GetCurrentThrustForce();
+		const FVector ReactionTorqueBodyNm = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
+			Airscrew->GetCurrentReactionTorqueVectorWorld());
+		const FVector PhysicalTorqueBodyNm = FVector::CrossProduct(ArmM, ForceBodyN) + ReactionTorqueBodyNm;
+		const FVector ControllerTorqueNm(-PhysicalTorqueBodyNm.X, -PhysicalTorqueBodyNm.Y, PhysicalTorqueBodyNm.Z);
+		AppliedForceBodyN += ForceBodyN;
+		AppliedTorqueControllerNm += ControllerTorqueNm;
+		if (bLogRotorCommands)
+		{
+			RotorTorqueSummary += FString::Printf(TEXT("[%d Pitch=%+.2fNm] "), RotorIndex, ControllerTorqueNm.Y);
+		}
+	}
+
+	const FVector DesiredTorqueControllerNm = Runtime.ControlOutput.Wrench.BodyTorque;
+	const FVector AllocatedTorqueControllerNm(
+		ControlAllocator.Diagnostics.AllocatedWrench[1] * ControlAllocator.Cache.RowScale[1],
+		ControlAllocator.Diagnostics.AllocatedWrench[2] * ControlAllocator.Cache.RowScale[2],
+		ControlAllocator.Diagnostics.AllocatedWrench[3] * ControlAllocator.Cache.RowScale[3]);
+	const FVector InertiaKgM2 = PhysicsCache.InertiaDiagonalKgM2;
+	const FVector TorqueAngularAcceleration(
+		InertiaKgM2.X > UE_SMALL_NUMBER ? FMath::RadiansToDegrees(AppliedTorqueControllerNm.X / InertiaKgM2.X) : 0.0,
+		InertiaKgM2.Y > UE_SMALL_NUMBER ? FMath::RadiansToDegrees(AppliedTorqueControllerNm.Y / InertiaKgM2.Y) : 0.0,
+		InertiaKgM2.Z > UE_SMALL_NUMBER ? FMath::RadiansToDegrees(AppliedTorqueControllerNm.Z / InertiaKgM2.Z) : 0.0);
+	// Chaos 角阻尼近似贡献 -D*w；陀螺耦合项未包含，因此这里只用于符号和量级诊断。
+	const FVector ExpectedAngularAcceleration = TorqueAngularAcceleration
+		- BodyRates * PhysicsCache.AngularDampingPerSecond;
+	const FVector MeasuredAngularAcceleration = Runtime.EstimatedState.State.AngularAccelerationBodyDegreesPerSecSq;
+	UE_LOG(LogFlightControllerDebug, Log,
+		TEXT("[TorqueDiag] Desired=(%+.2f,%+.2f,%+.2f)Nm Allocated=(%+.2f,%+.2f,%+.2f)Nm Applied=(%+.2f,%+.2f,%+.2f)Nm ForceBody=(%+.1f,%+.1f,%+.1f)N Inertia=(%.3f,%.3f,%.3f)kgm2 Alpha(Expected/Measured)=(%+.1f,%+.1f,%+.1f)/(%+.1f,%+.1f,%+.1f)deg/s2"),
+		DesiredTorqueControllerNm.X, DesiredTorqueControllerNm.Y, DesiredTorqueControllerNm.Z,
+		AllocatedTorqueControllerNm.X, AllocatedTorqueControllerNm.Y, AllocatedTorqueControllerNm.Z,
+		AppliedTorqueControllerNm.X, AppliedTorqueControllerNm.Y, AppliedTorqueControllerNm.Z,
+		AppliedForceBodyN.X, AppliedForceBodyN.Y, AppliedForceBodyN.Z,
+		InertiaKgM2.X, InertiaKgM2.Y, InertiaKgM2.Z,
+		ExpectedAngularAcceleration.X, ExpectedAngularAcceleration.Y, ExpectedAngularAcceleration.Z,
+		MeasuredAngularAcceleration.X, MeasuredAngularAcceleration.Y, MeasuredAngularAcceleration.Z);
+	UE_LOG(LogFlightControllerDebug, Log,
+		TEXT("[ChaosTorqueDiag] Seq=%llu PhysicsApplied=(%+.2f,%+.2f,%+.2f)Nm RotorDeltaAlpha=(%+.1f,%+.1f,%+.1f) ChaosAlphaAfter=(%+.1f,%+.1f,%+.1f)deg/s2 COMOffsetBody=(%+.2f,%+.2f,%+.2f)cm"),
+		PhysicsCache.PhysicsStepDiagnosticsSequence,
+		PhysicsCache.PhysicsStepAppliedTorqueControllerNm.X,
+		PhysicsCache.PhysicsStepAppliedTorqueControllerNm.Y,
+		PhysicsCache.PhysicsStepAppliedTorqueControllerNm.Z,
+		PhysicsCache.RotorAngularAccelerationDeltaBodyDegPerSecSq.X,
+		PhysicsCache.RotorAngularAccelerationDeltaBodyDegPerSecSq.Y,
+		PhysicsCache.RotorAngularAccelerationDeltaBodyDegPerSecSq.Z,
+		PhysicsCache.ChaosAngularAccelerationAfterBodyDegPerSecSq.X,
+		PhysicsCache.ChaosAngularAccelerationAfterBodyDegPerSecSq.Y,
+		PhysicsCache.ChaosAngularAccelerationAfterBodyDegPerSecSq.Z,
+		PhysicsCache.CenterOfMassOffsetBodyCm.X,
+		PhysicsCache.CenterOfMassOffsetBodyCm.Y,
+		PhysicsCache.CenterOfMassOffsetBodyCm.Z);
+	if (bLogRotorCommands && !RotorTorqueSummary.IsEmpty())
+	{
+		UE_LOG(LogFlightControllerDebug, Log, TEXT("[RotorTorque] %s"), *RotorTorqueSummary);
+	}
+
+	FString RotorSummary;
+	float LeftCommandSum = 0.0f;
+	float RightCommandSum = 0.0f;
+	int32 LeftCount = 0;
+	int32 RightCount = 0;
+	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
+	{
+		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
+		const FDroneRotorCommand* Command = Runtime.ControlOutput.RotorCommands.IsValidIndex(RotorIndex)
 			? &Runtime.ControlOutput.RotorCommands[RotorIndex] : nullptr;
-		if (!Airscrew || !RotorCommand) continue;
+		if (!Airscrew || !Command) continue;
 
-		const FVector LocalPosition = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
-		const FVector4 JacobianCol = BuildJacobianColumn(Airscrew, LocalPosition);
-
-		// 按 Y 坐标分左右，用于符号一致性诊断
-		if (LocalPosition.Y > UE_SMALL_NUMBER) { RightCommandSum += RotorCommand->NormalizedCommand; ++RightCommandCount; }
-		else if (LocalPosition.Y < -UE_SMALL_NUMBER) { LeftCommandSum += RotorCommand->NormalizedCommand; ++LeftCommandCount; }
+		const float ArmY = GetRotorPositionFromCenterOfMassBodyCm(Airscrew).Y;
+		if (ArmY > UE_SMALL_NUMBER) { RightCommandSum += Command->NormalizedCommand; ++RightCount; }
+		else if (ArmY < -UE_SMALL_NUMBER) { LeftCommandSum += Command->NormalizedCommand; ++LeftCount; }
 
 		if (bLogRotorCommands)
 		{
-			RotorSummary += FString::Printf(
-				TEXT("[%d:%s Y=%+.1f JacRoll=%+.2f Cmd=%.3f Cur=%.3f Rpm=%.0f Thr=%.1f] "),
-				RotorIndex, *RotorCommand->RotorName.ToString(), LocalPosition.Y, JacobianCol[1],
-				RotorCommand->NormalizedCommand, Airscrew->GetCurrentCommand(),
-				RotorCommand->CurrentRpm, RotorCommand->GeneratedThrust);
+			RotorSummary += FString::Printf(TEXT("[%d:%s Cmd=%.3f Cur=%.3f Rpm=%.0f Thrust=%.1fN] "),
+				RotorIndex, *Command->RotorName.ToString(), Command->NormalizedCommand,
+				Airscrew->GetCurrentCommand(), Command->CurrentRpm, Command->GeneratedThrust);
 		}
 	}
-
 	if (bLogRotorCommands && !RotorSummary.IsEmpty())
-	//	UE_LOG(LogFlightController, Log, TEXT("[Rotors] %s"), *RotorSummary);
+	{
+		UE_LOG(LogFlightControllerDebug, Log, TEXT("[Rotors] %s"), *RotorSummary);
+	}
 
-	// ---- 符号一致性诊断 ----
-	// 检查滚转通道从误差→角速率→力矩→混合器输出→左右差值的符号链是否一致
 	if (bLogSignDiagnostics)
 	{
-		const float SampleDeltaSeconds = DebugState.bHasPreviousSample
-			? FMath::Max(Runtime.EstimatedState.State.TimeSeconds - DebugState.PreviousSampleTimeSeconds, 0.0f) : 0.0f;
-		const float RollDeltaDegrees = DebugState.bHasPreviousSample
-			? FRotator::NormalizeAxis(CurrentAttitude.Roll - DebugState.PreviousAttitudeDegrees.Roll) : 0.0f;
-		const float LeftAverageCommand = LeftCommandCount > 0 ? LeftCommandSum / static_cast<float>(LeftCommandCount) : 0.0f;
-		const float RightAverageCommand = RightCommandCount > 0 ? RightCommandSum / static_cast<float>(RightCommandCount) : 0.0f;
-		const float RightMinusLeftCommand = RightAverageCommand - LeftAverageCommand;
-
-		// 各环节符号分桶
-		const int32 RollAngleDeltaSign = FlightControllerDebug::GetSignBucket(RollDeltaDegrees, 0.05f);
-		const int32 BodyRateXSign = FlightControllerDebug::GetSignBucket(CurrentBodyRates.X, 1.0f);
-		const int32 RollErrorSign = FlightControllerDebug::GetSignBucket(RollError, 0.1f);
-		const int32 DesiredRollRateSign = FlightControllerDebug::GetSignBucket(DesiredBodyRates.X, 0.5f);
-		const int32 AxisRollSign = FlightControllerDebug::GetSignBucket(AxisCommands.X, 0.005f);
-		const int32 RightMinusLeftSign = FlightControllerDebug::GetSignBucket(RightMinusLeftCommand, 0.01f);
-		// 期望：R-L 符号 = 轴指令符号取反（正滚转力矩 → 左高右低 → R-L < 0）
-		const int32 ExpectedRightMinusLeftSign = AxisRollSign == 0 ? 0 : -AxisRollSign;
-
-		// 一致性检查
-		const bool bRateVsAngleConsistent = !DebugState.bHasPreviousSample
-			|| RollAngleDeltaSign == 0 || BodyRateXSign == 0 || RollAngleDeltaSign == BodyRateXSign;
-		const bool bOuterLoopConsistent = RollErrorSign == 0 || DesiredRollRateSign == 0 || RollErrorSign == DesiredRollRateSign;
-		const bool bMixerResponseConsistent = AxisRollSign == 0 || RightMinusLeftSign == 0
-			|| RightMinusLeftSign == ExpectedRightMinusLeftSign;
-/*
-		UE_LOG(LogFlightController, Log,
-			TEXT("[SignDiag] Roll: dAngle=%s RateX=%s %s | Error=%s DesRate=%s %s | Axis=%s R-L=%s(exp %s) %s"),
-			FlightControllerDebug::GetSignLabel(RollAngleDeltaSign), FlightControllerDebug::GetSignLabel(BodyRateXSign),
-			FlightControllerDebug::GetConsistencyLabel(bRateVsAngleConsistent),
-			FlightControllerDebug::GetSignLabel(RollErrorSign), FlightControllerDebug::GetSignLabel(DesiredRollRateSign),
-			FlightControllerDebug::GetConsistencyLabel(bOuterLoopConsistent),
-			FlightControllerDebug::GetSignLabel(AxisRollSign), FlightControllerDebug::GetSignLabel(RightMinusLeftSign),
-			FlightControllerDebug::GetSignLabel(ExpectedRightMinusLeftSign),
-			FlightControllerDebug::GetConsistencyLabel(bMixerResponseConsistent));
-*/
-		DebugState.PreviousAttitudeDegrees = CurrentAttitude;
-		DebugState.PreviousSampleTimeSeconds = Runtime.EstimatedState.State.TimeSeconds;
-		DebugState.bHasPreviousSample = true;
-	}
-
-	// ---- 故障状态与控制能力调试 ----
-	if (!RotorFailureManager.HealthStates.IsEmpty())
-	{
-		FString RotorStatus;
-		for (int32 RotorIndex = 0; RotorIndex < RotorFailureManager.HealthStates.Num(); ++RotorIndex)
+		const float RollDelta = DebugState.bHasPreviousSample
+			? FRotator::NormalizeAxis(Attitude.Roll - DebugState.PreviousAttitudeDegrees.Roll) : 0.0f;
+		const int32 AngleDeltaSign = FlightControllerDebug::GetSignBucket(RollDelta, 0.05f);
+		const int32 RateSign = FlightControllerDebug::GetSignBucket(BodyRates.X, 1.0f);
+		const int32 ErrorSign = FlightControllerDebug::GetSignBucket(
+			FRotator::NormalizeAxis(DesiredAttitude.Roll - Attitude.Roll), 0.1f);
+		const int32 DesiredRateSign = FlightControllerDebug::GetSignBucket(DesiredBodyRates.X, 0.5f);
+		const int32 AxisSign = FlightControllerDebug::GetSignBucket(AxisCommands.X, 0.005f);
+		const float LeftAverage = LeftCount > 0 ? LeftCommandSum / LeftCount : 0.0f;
+		const float RightAverage = RightCount > 0 ? RightCommandSum / RightCount : 0.0f;
+		const int32 MixerSign = FlightControllerDebug::GetSignBucket(RightAverage - LeftAverage, 0.01f);
+		const int32 ExpectedMixerSign = AxisSign == 0 ? 0 : -AxisSign;
+		const bool bRateMatchesAngle = !DebugState.bHasPreviousSample || AngleDeltaSign == 0 || RateSign == 0 || AngleDeltaSign == RateSign;
+		const bool bOuterLoopMatches = ErrorSign == 0 || DesiredRateSign == 0 || ErrorSign == DesiredRateSign;
+		const bool bMixerMatches = AxisSign == 0 || MixerSign == 0 || MixerSign == ExpectedMixerSign;
+		if (!bRateMatchesAngle || !bOuterLoopMatches || !bMixerMatches)
 		{
-			const FRotorHealthState& Health = RotorFailureManager.HealthStates[RotorIndex];
-			if (Health.bIsFailed)
-				RotorStatus += FString::Printf(TEXT("[%d:Failed] "), RotorIndex);
-			else if (Health.Effectiveness < 1.0f)
-				RotorStatus += FString::Printf(TEXT("[%d:%d%%] "), RotorIndex, FMath::RoundToInt(Health.Effectiveness * 100.0f));
-			else
-				RotorStatus += FString::Printf(TEXT("[%d:OK] "), RotorIndex);
+			UE_LOG(LogFlightControllerDebug, Warning,
+				TEXT("[SignDiag] Roll AngleDelta/Rate=%s/%s OuterError/DesiredRate=%s/%s Axis/Mixer/Expected=%s/%s/%s"),
+				FlightControllerDebug::GetSignLabel(AngleDeltaSign), FlightControllerDebug::GetSignLabel(RateSign),
+				FlightControllerDebug::GetSignLabel(ErrorSign), FlightControllerDebug::GetSignLabel(DesiredRateSign),
+				FlightControllerDebug::GetSignLabel(AxisSign), FlightControllerDebug::GetSignLabel(MixerSign),
+				FlightControllerDebug::GetSignLabel(ExpectedMixerSign));
 		}
-		/*UE_LOG(LogFlightController, Log,
-			TEXT("[RotorHealth] %s | Authority: Col=%.0f%% Roll=%.0f%% Pitch=%.0f%% Yaw=%.0f%% | Residual=%.4f Failed=%d Saturated=%d"),
-			*RotorStatus,
-			RotorFailureManager.AuthorityInfo.CollectiveAuthority * 100.0f, RotorFailureManager.AuthorityInfo.RollAuthority * 100.0f,
-			RotorFailureManager.AuthorityInfo.PitchAuthority * 100.0f, RotorFailureManager.AuthorityInfo.YawAuthority * 100.0f,
-			ControlAllocator.Diagnostics.ResidualMagnitude,
-			ControlAllocator.Diagnostics.FailedMotors.Num(), ControlAllocator.Diagnostics.SaturatedMotors.Num());*/
 	}
+
+	DebugState.PreviousAttitudeDegrees = Attitude;
+	DebugState.PreviousSampleTimeSeconds = Runtime.EstimatedState.State.TimeSeconds;
+	DebugState.bHasPreviousSample = true;
+	(void)PilotInput;
 }
-
-
-
-

@@ -1042,16 +1042,16 @@ struct AIRCRAFTLAB_API FDroneRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
 	float RadiusCm = 12.0f;
 
-	/** 最大推力（牛顿） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+	/** 最大静推力（N）。该值必须是 SI 牛顿，禁止填写 Unreal/Chaos 原始力单位。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0", Units = "N"))
 	float MaxThrustForce = 900.0f;
 
 	/** 推力系数（用于推力∝系数*转速²） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
 	float ThrustCoefficient = 1.0f;
 
-	/** 反扭矩系数（扭矩 = 系数 * 推力） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+	/** 反扭矩系数（m），满足 ReactionTorque[N·m] = Thrust[N] * Coefficient[m]。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0", Units = "m"))
 	float ReactionTorqueCoefficient = 0.03f;
 
 	/** 效率（0~1，影响实际推力和扭矩） */

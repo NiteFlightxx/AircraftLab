@@ -193,10 +193,28 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 	}
 
 	// 控制循环已更新各旋翼指令，现在对刚体施力
+	const FVector AngularAccelerationBeforeWorldRad(BodyHandle->AngularAcceleration());
+	FVector PhysicsStepAppliedTorqueControllerNm = FVector::ZeroVector;
 	for (UAirscrewComponent* Airscrew : Airscrews)
 	{
-		if (Airscrew) Airscrew->ApplyThrustForce_PhysicsThread(BodyHandle);
+		if (!Airscrew) continue;
+		const FVector AppliedTorqueWorldNm = Airscrew->ApplyThrustForce_PhysicsThread(BodyHandle);
+		const FVector PhysicalTorqueBodyNm = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
+			AppliedTorqueWorldNm);
+		PhysicsStepAppliedTorqueControllerNm += FVector(
+			-PhysicalTorqueBodyNm.X, -PhysicalTorqueBodyNm.Y, PhysicalTorqueBodyNm.Z);
 	}
+	const FVector AngularAccelerationAfterWorldRad(BodyHandle->AngularAcceleration());
+	const FVector RotorDeltaBodyRad = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
+		AngularAccelerationAfterWorldRad - AngularAccelerationBeforeWorldRad);
+	const FVector ChaosAfterBodyRad = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
+		AngularAccelerationAfterWorldRad);
+	PhysicsCache.RotorAngularAccelerationDeltaBodyDegPerSecSq = FMath::RadiansToDegrees(
+		FVector(-RotorDeltaBodyRad.X, -RotorDeltaBodyRad.Y, RotorDeltaBodyRad.Z));
+	PhysicsCache.ChaosAngularAccelerationAfterBodyDegPerSecSq = FMath::RadiansToDegrees(
+		FVector(-ChaosAfterBodyRad.X, -ChaosAfterBodyRad.Y, ChaosAfterBodyRad.Z));
+	PhysicsCache.PhysicsStepAppliedTorqueControllerNm = PhysicsStepAppliedTorqueControllerNm;
+	++PhysicsCache.PhysicsStepDiagnosticsSequence;
 }
 
 
@@ -467,8 +485,12 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 
 	// 缓存体变换（后续 BuildJacobianColumn 等函数使用）
 	PhysicsCache.BodyTransform = FTransform(BodyQuat, BodyPos);
-	PhysicsCache.CenterOfMassWorld = BodyPos;
+	PhysicsCache.CenterOfMassOffsetBodyCm = FVector(BodyHandle->CenterOfMass());
 	PhysicsCache.LinearVelocityCmPerSec = BodyVel;
+	PhysicsCache.MassKg = static_cast<float>(BodyHandle->M());
+	PhysicsCache.LinearDampingPerSecond = static_cast<float>(BodyHandle->LinearEtherDrag());
+	PhysicsCache.AngularDampingPerSecond = static_cast<float>(BodyHandle->AngularEtherDrag());
+	PhysicsCache.InertiaDiagonalKgM2 = FVector(BodyHandle->I()) * 0.0001;
 
 	// 角速度处理：
 	//   1) rad/s → °/s
@@ -477,6 +499,12 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 	const FVector AngVelWorldDeg = FMath::RadiansToDegrees(BodyAngVelRad);
 	const FVector AngVelBodyRaw = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(AngVelWorldDeg);
 	PhysicsCache.AngularVelocityBodyDegPerSec = FVector(-AngVelBodyRaw.X, -AngVelBodyRaw.Y, AngVelBodyRaw.Z);
+	const FVector AngularAccelerationBody =
+		(Runtime.bHasPreviousAngularVelocity && DeltaSeconds > UE_SMALL_NUMBER)
+		? (PhysicsCache.AngularVelocityBodyDegPerSec - Runtime.PreviousAngularVelocityBodyDegPerSec) / DeltaSeconds
+		: FVector::ZeroVector;
+	Runtime.PreviousAngularVelocityBodyDegPerSec = PhysicsCache.AngularVelocityBodyDegPerSec;
+	Runtime.bHasPreviousAngularVelocity = true;
 
 	// 加速度由速度差分估计：
 	//   a = (v[n] − v[n-1]) / Δt
@@ -495,7 +523,7 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 	Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq = CurrentAcceleration;
 	Runtime.EstimatedState.State.AttitudeDegrees = BodyQuat.Rotator();
 	Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec = PhysicsCache.AngularVelocityBodyDegPerSec;
-	Runtime.EstimatedState.State.AngularAccelerationBodyDegreesPerSecSq = FVector::ZeroVector; // 暂未估计
+	Runtime.EstimatedState.State.AngularAccelerationBodyDegreesPerSecSq = AngularAccelerationBody;
 	Runtime.EstimatedState.AltitudeReference = EDroneAltitudeReference::WorldZ;
 	// 置信度硬编码 1.0 = 完美估计（仿真特权）
 	Runtime.EstimatedState.AttitudeConfidence = 1.0f;
@@ -584,6 +612,8 @@ void UFlightControllerComponent::ResetControllerState()
 {
 	FlightControlSolver.PidStates.ResetAll();
 	Runtime.ControlAccumulatorSeconds = 0.0f;
+	Runtime.bHasPreviousAngularVelocity = false;
+	Runtime.PreviousAngularVelocityBodyDegPerSec = FVector::ZeroVector;
 	// 第 3 批：重置姿态参考模型状态与角速度前馈缓存，避免模式切换后残留旧设定值
 	FlightControlSolver.RollReferenceModel.Reset();
 	FlightControlSolver.PitchReferenceModel.Reset();

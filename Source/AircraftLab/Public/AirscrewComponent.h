@@ -93,7 +93,8 @@ public:
 	 * 2. 施加推力的偏心力矩：τ_pos = r × F（r = 施力点 - 质心）
 	 * 3. 施加反扭矩：τ_reaction = k_τ × T × sign × n_world
 	 */
-	void ApplyThrustForce_PhysicsThread(Chaos::FRigidBodyHandle_Internal* BodyHandle);
+	/** 返回本次实际传给 Chaos 的世界系合扭矩（N·m），仅用于无重复计算的物理边界诊断。 */
+	FVector ApplyThrustForce_PhysicsThread(Chaos::FRigidBodyHandle_Internal* BodyHandle);
 
 	/** 绘制调试可视化（推力箭头 + 数值文本） */
 	void DrawDebugVisualization() const;
@@ -179,7 +180,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Airscrew", meta = (AllowPrivateAccess = "true"))
 	FVector CurrentReactionTorqueVectorWorld = FVector::ZeroVector;
 
-	/** 旋翼相对于机体质心的局部坐标（厘米） */
+	/** 旋翼相对于刚体组件原点的局部坐标（厘米）；物理边界再减去 Chaos 真实质心偏移。 */
 	FVector CachedRelativeLocationFromBody = FVector::ZeroVector;
 
 	/** 旋翼推力方向的局部单位向量（通常为Up/Z轴） */
