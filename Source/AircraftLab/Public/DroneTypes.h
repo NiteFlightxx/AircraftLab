@@ -856,6 +856,15 @@ struct AIRCRAFTLAB_API FDronePositionControllerConfig
 	/** 速度内环 PID（产生期望倾斜角度） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
 	FDroneCartesianPidGains VelocityGains;
+
+	/** 使用 Chaos 当前线性阻尼预测维持目标速度所需的水平加速度。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|VelocityFeedForward")
+	bool bEnableLinearDampingFeedForward = true;
+
+	/** 线性阻尼模型前馈比例；1 表示完整补偿运行时实际阻尼。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|VelocityFeedForward",
+		meta = (ClampMin = "0.0"))
+	float LinearDampingFeedForwardScale = 1.0f;
 };
 
 /**

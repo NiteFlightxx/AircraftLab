@@ -46,6 +46,8 @@ void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& Ou
 	OutConfig.Position.VelocityGains.Y = { 1.50f, 0.01f, 0.60f, 3000.0f, OutConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
 	OutConfig.Position.VelocityGains.X.Kff = 1.0f; // 加速度前馈（Autopilot 速度环）
 	OutConfig.Position.VelocityGains.Y.Kff = 1.0f;
+	OutConfig.Position.bEnableLinearDampingFeedForward = true;
+	OutConfig.Position.LinearDampingFeedForwardScale = 1.0f;
 	OutConfig.Position.VelocityGains.Z = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
 	// 微分截止频率降低 → 更强滤波 → 减少角速率噪声引起的抖动
 	OutConfig.Position.VelocityGains.X.DerivativeCutoffHz = 12.0f;

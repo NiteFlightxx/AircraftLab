@@ -134,6 +134,19 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 		RuntimeConfig.Controller.Limits.MaxHorizontalAccelerationCmPerSecSq, TiltAcceleration, EffectiveAcceleration,
 		*TerminalText, Attitude.Roll, Attitude.Pitch, DesiredAttitude.Roll, DesiredAttitude.Pitch);
 
+	const FVector VelocityError = FlightControlSolver.LastDesiredHorizontalVelocityCmPerSec - Velocity;
+	UE_LOG(LogFlightControllerDebug, Log,
+		TEXT("[VelocityDiag] Desired=(%.1f,%.1f) Error=(%.1f,%.1f) DragFF=(%.1f,%.1f) TrajectoryFF=(%.1f,%.1f) AccelCommand=(%.1f,%.1f)cm/s2"),
+		FlightControlSolver.LastDesiredHorizontalVelocityCmPerSec.X,
+		FlightControlSolver.LastDesiredHorizontalVelocityCmPerSec.Y,
+		VelocityError.X, VelocityError.Y,
+		FlightControlSolver.LastVelocityDragFeedForwardCmPerSecSq.X,
+		FlightControlSolver.LastVelocityDragFeedForwardCmPerSecSq.Y,
+		FlightControlSolver.LastTrajectoryAccelerationFeedForwardCmPerSecSq.X,
+		FlightControlSolver.LastTrajectoryAccelerationFeedForwardCmPerSecSq.Y,
+		FlightControlSolver.LastDesiredHorizontalAccelerationCmPerSecSq.X,
+		FlightControlSolver.LastDesiredHorizontalAccelerationCmPerSecSq.Y);
+
 	UE_LOG(LogFlightControllerDebug, Log,
 		TEXT("[ThrustDiag] Collective=%.3f Hover(Config/Required)=%.3f/%.3f Thrust(Current/Weight/MaxVertical)=%.1f/%.1f/%.1fN MaxTWR=%.2f AxisCmd=(%.3f,%.3f,%.3f) Rate(Current/Desired)=(%.1f,%.1f,%.1f)/(%.1f,%.1f,%.1f) AllocResidual=%.4f Saturated=%d DesVz=%.1f"),
 		CollectiveCommand, RuntimeConfig.Controller.Limits.HoverCollectiveCommand, RequiredHoverCollective,

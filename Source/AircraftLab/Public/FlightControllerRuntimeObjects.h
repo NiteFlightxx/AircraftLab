@@ -33,6 +33,13 @@ struct FFlightControlReferenceModelState
 	}
 };
 
+namespace FlightControlDynamics
+{
+	/** Chaos 线性阻尼 a_drag=-d*v 的逆模型：维持目标速度所需 a_ff=d*v_des。 */
+	AIRCRAFTLAB_API FVector ComputeLinearDampingFeedForward(
+		const FVector& DesiredVelocityCmPerSec, float LinearDampingPerSecond, float Scale);
+}
+
 /**
  * 级联控制解算器拥有的全部运行状态。
  * 不持有 UObject，不负责 Tick/模式切换/组件查找。
@@ -48,6 +55,10 @@ struct AIRCRAFTLAB_API FFlightControlSolver
 	FFlightControlReferenceModelState RollReferenceModel;
 	FFlightControlReferenceModelState PitchReferenceModel;
 	FVector RateFeedForwardDegPerSec = FVector::ZeroVector;
+	FVector LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
+	FVector LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
+	FVector LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
+	FVector LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 
 	float ComputeVerticalControl(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput,
 		float DeltaSeconds, float& OutDesiredVerticalVelocity);
@@ -60,6 +71,9 @@ struct AIRCRAFTLAB_API FFlightControlSolver
 	FVector ComputeDesiredHorizontalVelocity(const FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput) const;
 	FVector ComputeDesiredHorizontalAcceleration(FFlightControlSolverContext& Context,
 		const FDronePilotInput& PilotInput, float DeltaSeconds);
+	FVector ComputeVelocityPidAcceleration(FFlightControlSolverContext& Context,
+		const FVector& DesiredVelocityCmPerSec, const FVector& TrajectoryAccelerationFeedForwardCmPerSecSq,
+		float DeltaSeconds);
 	float MapCenteredThrottleToCollective(const FFlightControlSolverContext& Context, float ThrottleInput) const;
 
 	void Reset()
@@ -68,6 +82,10 @@ struct AIRCRAFTLAB_API FFlightControlSolver
 		RollReferenceModel.Reset();
 		PitchReferenceModel.Reset();
 		RateFeedForwardDegPerSec = FVector::ZeroVector;
+		LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
+		LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
+		LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
+		LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 	}
 };
 

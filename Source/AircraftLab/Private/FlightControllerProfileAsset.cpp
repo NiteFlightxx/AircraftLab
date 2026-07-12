@@ -39,6 +39,11 @@ bool UFlightControllerProfileAsset::ValidateProfile(TArray<FText>& OutErrors) co
 	{
 		OutErrors.Add(LOCTEXT("InvalidMinCosTilt", "MinCosTilt must be in [0.05, 1.0]."));
 	}
+	if (Controller.Position.LinearDampingFeedForwardScale < 0.0f)
+	{
+		OutErrors.Add(LOCTEXT("InvalidLinearDampingFeedForwardScale",
+			"LinearDampingFeedForwardScale cannot be negative."));
+	}
 	if (FailurePolicy.MinimumHealthyRotorCount < 0)
 	{
 		OutErrors.Add(LOCTEXT("InvalidHealthyRotorCount", "MinimumHealthyRotorCount cannot be negative."));

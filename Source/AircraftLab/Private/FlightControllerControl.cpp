@@ -2,6 +2,14 @@
 
 #include "Math/RotationMatrix.h"
 
+FVector FlightControlDynamics::ComputeLinearDampingFeedForward(
+	const FVector& DesiredVelocityCmPerSec, float LinearDampingPerSecond, float Scale)
+{
+	const float EffectiveDamping = FMath::Max(LinearDampingPerSecond, 0.0f) * FMath::Max(Scale, 0.0f);
+	return FVector(DesiredVelocityCmPerSec.X * EffectiveDamping,
+		DesiredVelocityCmPerSec.Y * EffectiveDamping, 0.0f);
+}
+
 float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput, float DeltaSeconds, float& OutDesiredVerticalVelocity)
 {
 	const float MinCollective = Context.Config.Controller.Limits.MinCollectiveCommand;
@@ -365,15 +373,61 @@ FVector FFlightControlSolver::ComputeDesiredHorizontalVelocity(const FFlightCont
 }
 
 
+FVector FFlightControlSolver::ComputeVelocityPidAcceleration(
+	FFlightControlSolverContext& Context, const FVector& DesiredVelocityCmPerSec,
+	const FVector& TrajectoryAccelerationFeedForwardCmPerSecSq, float DeltaSeconds)
+{
+	const FDronePositionControllerConfig& PositionConfig = Context.Config.Controller.Position;
+	const FVector CurrentVelocity = Context.Runtime.EstimatedState.State.VelocityCmPerSec;
+	const FVector DragFeedForward = PositionConfig.bEnableLinearDampingFeedForward
+		? FlightControlDynamics::ComputeLinearDampingFeedForward(
+			DesiredVelocityCmPerSec, Context.PhysicsCache.LinearDampingPerSecond,
+			PositionConfig.LinearDampingFeedForwardScale)
+		: FVector::ZeroVector;
+	const FVector TrajectoryFeedForward(
+		TrajectoryAccelerationFeedForwardCmPerSecSq.X,
+		TrajectoryAccelerationFeedForwardCmPerSecSq.Y,
+		0.0f);
+	const FVector TotalFeedForward = DragFeedForward + TrajectoryFeedForward;
+
+	FVector DesiredAcceleration(
+		PidStates.Velocity.X.UpdateFromMeasurement(
+			DesiredVelocityCmPerSec.X, CurrentVelocity.X, DeltaSeconds,
+			PositionConfig.VelocityGains.X, TotalFeedForward.X),
+		PidStates.Velocity.Y.UpdateFromMeasurement(
+			DesiredVelocityCmPerSec.Y, CurrentVelocity.Y, DeltaSeconds,
+			PositionConfig.VelocityGains.Y, TotalFeedForward.Y),
+		0.0f);
+
+	const float MaxHorizontalAcceleration = Context.Config.Controller.Limits.MaxHorizontalAccelerationCmPerSecSq;
+	const FVector2D HorizontalAcceleration(DesiredAcceleration.X, DesiredAcceleration.Y);
+	if (HorizontalAcceleration.SizeSquared() > FMath::Square(MaxHorizontalAcceleration))
+	{
+		const FVector2D Clamped = HorizontalAcceleration.GetSafeNormal() * MaxHorizontalAcceleration;
+		DesiredAcceleration.X = Clamped.X;
+		DesiredAcceleration.Y = Clamped.Y;
+	}
+
+	LastDesiredHorizontalVelocityCmPerSec = FVector(DesiredVelocityCmPerSec.X, DesiredVelocityCmPerSec.Y, 0.0f);
+	LastVelocityDragFeedForwardCmPerSecSq = DragFeedForward;
+	LastTrajectoryAccelerationFeedForwardCmPerSecSq = TrajectoryFeedForward;
+	LastDesiredHorizontalAccelerationCmPerSecSq = DesiredAcceleration;
+	return DesiredAcceleration;
+}
+
+
 FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput, float DeltaSeconds)
 {
 	const FVector CurrentPosition = Context.Runtime.EstimatedState.State.PositionCm;
-	const FVector CurrentVelocity = Context.Runtime.EstimatedState.State.VelocityCmPerSec;
 
 	if (!Context.ModeCapabilities.CanUsePositionControl && !Context.ModeCapabilities.CanUseVelocityControl)
 	{
 		// 无速度/位置控制能力时直接返回零加速度
 		PidStates.Velocity.X.Reset(); PidStates.Velocity.Y.Reset();
+		LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
+		LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
+		LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
+		LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 		return FVector::ZeroVector;
 	}
 
@@ -417,22 +471,10 @@ FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightContro
 		Context.Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.X = DesiredVelocity.X;
 		Context.Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.Y = DesiredVelocity.Y;
 
-		// 速度环：前馈 = AccelerationSetpointCmPerSecSq.XY
-		DesiredAcceleration.X = PidStates.Velocity.X.UpdateFromMeasurement(
-			DesiredVelocity.X, CurrentVelocity.X, DeltaSeconds, Context.Config.Controller.Position.VelocityGains.X, AI.AccelerationSetpointCmPerSecSq.X);
-		DesiredAcceleration.Y = PidStates.Velocity.Y.UpdateFromMeasurement(
-			DesiredVelocity.Y, CurrentVelocity.Y, DeltaSeconds, Context.Config.Controller.Position.VelocityGains.Y, AI.AccelerationSetpointCmPerSecSq.Y);
-
-		// 加速度限幅
-		const float MaxHAccel = Context.Config.Controller.Limits.MaxHorizontalAccelerationCmPerSecSq;
-		const FVector2D DA2D(DesiredAcceleration.X, DesiredAcceleration.Y);
-		if (DA2D.SizeSquared() > FMath::Square(MaxHAccel))
-		{
-			const FVector2D Clamped = DA2D.GetSafeNormal() * MaxHAccel;
-			DesiredAcceleration.X = Clamped.X; DesiredAcceleration.Y = Clamped.Y;
-		}
-
-		return FVector(DesiredAcceleration.X, DesiredAcceleration.Y, 0.0f);
+		// 速度 PID + 轨迹加速度前馈 + 维持目标速度所需的线性阻尼前馈。
+		DesiredAcceleration = ComputeVelocityPidAcceleration(
+			Context, DesiredVelocity, AI.AccelerationSetpointCmPerSecSq, DeltaSeconds);
+		return DesiredAcceleration;
 	}
 
 	// ======================================================================
@@ -498,25 +540,9 @@ FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightContro
 	Context.Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.X = DesiredVelocity.X;
 	Context.Runtime.ControlOutput.Targets.Velocity.VelocityCmPerSec.Y = DesiredVelocity.Y;
 
-	// ---- 速度环 → 期望加速度 ----
-	//   a_des = PID_vel(v_des − v_current)
-	//   使用 UpdateFromMeasurement（导数对测量值），避免速度设定值跳变的 kick
-	FVector DesiredAcceleration = FVector::ZeroVector;
-	DesiredAcceleration.X = PidStates.Velocity.X.UpdateFromMeasurement(
-		DesiredVelocity.X, CurrentVelocity.X, DeltaSeconds, Context.Config.Controller.Position.VelocityGains.X);
-	DesiredAcceleration.Y = PidStates.Velocity.Y.UpdateFromMeasurement(
-		DesiredVelocity.Y, CurrentVelocity.Y, DeltaSeconds, Context.Config.Controller.Position.VelocityGains.Y);
-
-	// ---- 加速度限幅 ----
-	const float MaxHorizontalAcceleration = Context.Config.Controller.Limits.MaxHorizontalAccelerationCmPerSecSq;
-	const FVector2D DesiredAcceleration2D(DesiredAcceleration.X, DesiredAcceleration.Y);
-	if (DesiredAcceleration2D.SizeSquared() > FMath::Square(MaxHorizontalAcceleration))
-	{
-		const FVector2D ClampedAcceleration = DesiredAcceleration2D.GetSafeNormal() * MaxHorizontalAcceleration;
-		DesiredAcceleration.X = ClampedAcceleration.X; DesiredAcceleration.Y = ClampedAcceleration.Y;
-	}
-
-	return FVector(DesiredAcceleration.X, DesiredAcceleration.Y, 0.0f);
+	// ---- 速度 PID + 维持目标速度所需的线性阻尼前馈 ----
+	return ComputeVelocityPidAcceleration(
+		Context, DesiredVelocity, FVector::ZeroVector, DeltaSeconds);
 }
 
 
