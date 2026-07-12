@@ -10,7 +10,7 @@ FVector FlightControlDynamics::ComputeLinearDampingFeedForward(
 		DesiredVelocityCmPerSec.Y * EffectiveDamping, 0.0f);
 }
 
-float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput, float DeltaSeconds, float& OutDesiredVerticalVelocity)
+float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& Context, float DeltaSeconds, float& OutDesiredVerticalVelocity)
 {
 	const float MinCollective = Context.Config.Controller.Limits.MinCollectiveCommand;
 	const float HoverCollective = Context.Config.Controller.Limits.HoverCollectiveCommand;
@@ -26,12 +26,12 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 		PidStates.Altitude.Reset();
 		PidStates.VerticalVelocity.Reset();
 		// 油门杆 → 垂直速度（线性映射）
-		OutDesiredVerticalVelocity = FMath::GetMappedRangeValueClamped(
-			FVector2D(-1.0f, 1.0f),
-			FVector2D(-Context.Config.Controller.Limits.MaxDescentRateCmPerSec, Context.Config.Controller.Limits.MaxClimbRateCmPerSec),
-			PilotInput.Throttle);
+		OutDesiredVerticalVelocity = Context.MovementIntent.DesiredVelocityCmPerSec.Z;
 		// 油门杆 → 总距（悬停点为中心的线性映射）
-		return MapCenteredThrottleToCollective(Context, PilotInput.Throttle);
+		const float NormalizedVerticalCommand = OutDesiredVerticalVelocity >= 0.0f
+			? OutDesiredVerticalVelocity / FMath::Max(Context.Config.Controller.Limits.MaxClimbRateCmPerSec, UE_SMALL_NUMBER)
+			: OutDesiredVerticalVelocity / FMath::Max(Context.Config.Controller.Limits.MaxDescentRateCmPerSec, UE_SMALL_NUMBER);
+		return MapCenteredThrottleToCollective(Context, NormalizedVerticalCommand);
 	}
 
 	// 高度保持初始化（手动路径用；Autopilot 路径直接使用设定值，忽略此锁定值）
@@ -65,16 +65,12 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 	// RTH/AutoLand 内联已删除，由 BehaviorPlanner 经 TrajectoryGenerator 驱动
 	{
 		// 油门杆在死区外 → 手动爬升/下降率，重新锚定高度
-		const float ThrottleMagnitude = FMath::Abs(PilotInput.Throttle);
-		if (ThrottleMagnitude > Context.Config.Input.VerticalHoldStickDeadband)
+		const float RequestedVerticalVelocity = Context.MovementIntent.DesiredVelocityCmPerSec.Z;
+		if (FMath::Abs(RequestedVerticalVelocity) > UE_SMALL_NUMBER)
 		{
 			// 将死区外的输入线性映射到 [0,1]
-			const float NormalizedInput = (ThrottleMagnitude - Context.Config.Input.VerticalHoldStickDeadband)
-				/ FMath::Max(1.0f - Context.Config.Input.VerticalHoldStickDeadband, UE_SMALL_NUMBER);
-			const float SignedInput = NormalizedInput * FMath::Sign(PilotInput.Throttle);
 			// 根据方向选择最大速率
-			const float MaxVerticalRate = SignedInput >= 0.0f ? Context.Config.Controller.Limits.MaxClimbRateCmPerSec : Context.Config.Controller.Limits.MaxDescentRateCmPerSec;
-			OutDesiredVerticalVelocity = SignedInput * MaxVerticalRate;
+			OutDesiredVerticalVelocity = RequestedVerticalVelocity;
 			// 重新锚定高度到当前位置（松手后将保持新高度）
 			Context.Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
 			PidStates.Altitude.Reset();
@@ -101,7 +97,7 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 }
 
 
-FRotator FFlightControlSolver::ComputeDesiredAttitude(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput, float DeltaSeconds)
+FRotator FFlightControlSolver::ComputeDesiredAttitude(FFlightControlSolverContext& Context, float DeltaSeconds)
 {
 	if (!Context.ModeCapabilities.CanUseVelocityControl)
 	{
@@ -109,13 +105,11 @@ FRotator FFlightControlSolver::ComputeDesiredAttitude(FFlightControlSolverContex
 		Context.Runtime.HoldTargets.bPositionHoldInitialized = false;
 		PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();
 		PidStates.Velocity.X.Reset(); PidStates.Velocity.Y.Reset();
-		const float ManualRollDegrees = PilotInput.Roll * Context.Config.Controller.Limits.MaxTiltAngleDegrees;
-		const float ManualPitchDegrees = -PilotInput.Pitch * Context.Config.Controller.Limits.MaxTiltAngleDegrees;
-		return FRotator(ManualPitchDegrees, Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw, ManualRollDegrees);
+		return Context.MovementIntent.DesiredAttitudeDegrees;
 	}
 
 	// ---- 路径 B：速度/位置 PID → 悬停倾斜方程 ----
-	const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(Context, PilotInput, DeltaSeconds);
+	const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(Context, DeltaSeconds);
 	const float GravityMagnitude = Context.PhysicsCache.GravityMagnitudeCmPerSecSq;
 
 	// 构造仅含航向的"平面旋转"——提取机体前/右方向的水平投影
@@ -146,7 +140,7 @@ FRotator FFlightControlSolver::ComputeDesiredAttitude(FFlightControlSolverContex
 }
 
 
-float FFlightControlSolver::ComputeDesiredYawRate(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput, float DeltaSeconds)
+float FFlightControlSolver::ComputeDesiredYawRate(FFlightControlSolverContext& Context, float DeltaSeconds)
 {
 	// ---- 路径 C：Autopilot 注入 ----
 	if (Context.bUseAutopilotSetpoint && Context.AutopilotInjection.bValid)
@@ -163,7 +157,7 @@ float FFlightControlSolver::ComputeDesiredYawRate(FFlightControlSolverContext& C
 
 	// ---- 手动路径 ----
 	// 手动偏航角速率
-	const float ManualYawRate = PilotInput.Yaw * Context.Config.Controller.Limits.MaxYawRateDegreesPerSec;
+	const float ManualYawRate = Context.MovementIntent.DesiredYawRateDegPerSec;
 
 	if (!Context.ModeCapabilities.CanHoldYaw)
 	{
@@ -174,7 +168,7 @@ float FFlightControlSolver::ComputeDesiredYawRate(FFlightControlSolverContext& C
 	}
 
 	// 摇杆超出死区 → 手动偏航率，同时重新锁定航向
-	if (FMath::Abs(PilotInput.Yaw) > Context.Config.Input.YawHoldStickDeadband)
+	if (FMath::Abs(ManualYawRate) > UE_SMALL_NUMBER)
 	{
 		Context.Runtime.HoldTargets.HeldYawDegrees = Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
 		Context.Runtime.HoldTargets.bYawHoldInitialized = true;
@@ -199,7 +193,7 @@ float FFlightControlSolver::ComputeDesiredYawRate(FFlightControlSolverContext& C
 }
 
 
-FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput, const FRotator& DesiredAttitude, float DesiredYawRate, float DeltaSeconds)
+FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContext& Context, const FRotator& DesiredAttitude, float DesiredYawRate, float DeltaSeconds)
 {
 	const FRotator CurrentAttitude = Context.Runtime.EstimatedState.State.AttitudeDegrees;
 	// 计算滚转/俯仰误差，NormalizeAxis 确保在 [−180, 180] 范围内
@@ -207,8 +201,8 @@ FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContex
 	const float PitchError = FRotator::NormalizeAxis(DesiredAttitude.Pitch - CurrentAttitude.Pitch);
 
 	// Acro/Manual 模式的默认值：摇杆直通
-	float DesiredRollRate = PilotInput.Roll * Context.Config.Controller.Limits.MaxRollRateDegreesPerSec;
-	float DesiredPitchRate = -PilotInput.Pitch * Context.Config.Controller.Limits.MaxPitchRateDegreesPerSec;
+	float DesiredRollRate = Context.MovementIntent.DesiredBodyRatesDegPerSec.X;
+	float DesiredPitchRate = Context.MovementIntent.DesiredBodyRatesDegPerSec.Y;
 	// 角速度前馈（第 3 批：由参考模型导数产生，供角速度环 Kff 通道消费）
 	float RollRateFF = 0.0f;
 	float PitchRateFF = 0.0f;
@@ -362,13 +356,9 @@ FVector FFlightControlSolver::ComputeBodyTorqueCommand(FFlightControlSolverConte
 }
 
 
-FVector FFlightControlSolver::ComputeDesiredHorizontalVelocity(const FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput) const
+FVector FFlightControlSolver::ComputeDesiredHorizontalVelocity(const FFlightControlSolverContext& Context) const
 {
-	const FRotator FlatYawRotation(0.0f, Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw, 0.0f);
-	const FVector ForwardFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::X);
-	const FVector RightFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::Y);
-	const float MaxSpeed = Context.Config.Controller.Limits.MaxHorizontalSpeedCmPerSec;
-	const FVector DesiredVelocity = ForwardFlat * (PilotInput.Pitch * MaxSpeed) + RightFlat * (PilotInput.Roll * MaxSpeed);
+	const FVector DesiredVelocity = Context.MovementIntent.DesiredVelocityCmPerSec;
 	return FVector(DesiredVelocity.X, DesiredVelocity.Y, 0.0f);
 }
 
@@ -416,7 +406,7 @@ FVector FFlightControlSolver::ComputeVelocityPidAcceleration(
 }
 
 
-FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput, float DeltaSeconds)
+FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightControlSolverContext& Context, float DeltaSeconds)
 {
 	const FVector CurrentPosition = Context.Runtime.EstimatedState.State.PositionCm;
 
@@ -482,14 +472,15 @@ FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightContro
 	// ======================================================================
 
 	// 先计算摇杆对应的期望速度
-	FVector DesiredVelocity = ComputeDesiredHorizontalVelocity(Context, PilotInput);
+	FVector DesiredVelocity = ComputeDesiredHorizontalVelocity(Context);
 
 	// ---- 位置环（如果可用）----
 	if (Context.ModeCapabilities.CanUsePositionControl)
 	{
 		// 判断是否有手动水平摇杆指令
-		const bool bManualHorizontalCommand = FMath::Abs(PilotInput.Roll) > Context.Config.Input.HorizontalHoldStickDeadband
-			|| FMath::Abs(PilotInput.Pitch) > Context.Config.Input.HorizontalHoldStickDeadband;
+		const bool bManualHorizontalCommand = !FVector2D(
+			Context.MovementIntent.DesiredVelocityCmPerSec.X,
+			Context.MovementIntent.DesiredVelocityCmPerSec.Y).IsNearlyZero();
 
 		if (!Context.Runtime.HoldTargets.bPositionHoldInitialized)
 		{

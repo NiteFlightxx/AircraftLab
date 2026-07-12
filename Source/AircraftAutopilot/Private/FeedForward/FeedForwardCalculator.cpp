@@ -40,8 +40,8 @@ float UFeedForwardCalculator::ComputeThrustFF(const FProfiledSetpoint& Setpoint)
 	//   T_ff = HoverBase · |a + g·ẑ| / g
 	// 悬停推力基准优先用 EKF 在线估计（SetHoverThrustBaseline 注入），
 	// 未注入时回退到 Params.HoverCollective 死常数，保持向后兼容。
-	const float G = FMath::Max(Params.GravityCmPerSecSq, UE_SMALL_NUMBER);
-	const float HoverBase = (HoverThrustBaseline > 0.0f) ? HoverThrustBaseline : Params.HoverCollective;
+	const float G = GravityCmPerSecSq;
+	const float HoverBase = HoverThrustBaseline;
 
 	const float Ax = Setpoint.AccelerationCmPerSecSq.X;
 	const float Ay = Setpoint.AccelerationCmPerSecSq.Y;
@@ -53,5 +53,5 @@ float UFeedForwardCalculator::ComputeThrustFF(const FProfiledSetpoint& Setpoint)
 	const float Mag = FMath::Sqrt(HorizSq + Vert * Vert);
 
 	float ThrustFF = HoverBase * (Mag / G);
-	return FMath::Clamp(ThrustFF, 0.0f, Params.MaxThrustFF);
+	return FMath::Clamp(ThrustFF, 0.0f, 1.0f);
 }

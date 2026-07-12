@@ -6,7 +6,8 @@ UTurnBehavior::UTurnBehavior()
 {
 }
 
-FTurnCommand UTurnBehavior::Compute(const FVector& DesiredVelocityCmPerSec, const FVector& CurrentVelocityCmPerSec, float CurrentYawDegrees, float DeltaSeconds)
+FTurnCommand UTurnBehavior::Compute(const FVector& DesiredVelocityCmPerSec, const FVector& CurrentVelocityCmPerSec,
+	float CurrentYawDegrees, float MaxYawRateDegPerSec, float DeltaSeconds)
 {
 	FTurnCommand Cmd;
 	Cmd.bValid = false;
@@ -59,7 +60,7 @@ FTurnCommand UTurnBehavior::Compute(const FVector& DesiredVelocityCmPerSec, cons
 		{
 			CoordYawRate = FMath::RadiansToDegrees(G * FMath::Tan(FMath::DegreesToRadians(BankAngle)) / CurrSpeed);
 		}
-		CoordYawRate = FMath::Clamp(CoordYawRate, -Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
+		CoordYawRate = FMath::Clamp(CoordYawRate, -MaxYawRateDegPerSec, MaxYawRateDegPerSec);
 
 		// 滚转符号约定：右转（顺时针，偏航角速度<0）→ 右倾（Roll>0）
 		// atan2(LateralAccel, G)：LateralAccel>0（左转）→ φ>0，与约定相反，取负
@@ -76,7 +77,7 @@ FTurnCommand UTurnBehavior::Compute(const FVector& DesiredVelocityCmPerSec, cons
 		// 历史上此处用 YawError×增益 反推角速度并注入前馈，与 Yaw PID 双重闭合
 		// 航向误差 → 正反馈自旋（与 MotionProfile Yaw bug 同类）。
 		Cmd.DesiredRollDegrees = 0.0f;
-		Cmd.DesiredYawRateDegPerSec = FMath::Clamp(DesiredYawRate, -Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
+		Cmd.DesiredYawRateDegPerSec = FMath::Clamp(DesiredYawRate, -MaxYawRateDegPerSec, MaxYawRateDegPerSec);
 		Cmd.bCoordinatedTurn = false;
 	}
 

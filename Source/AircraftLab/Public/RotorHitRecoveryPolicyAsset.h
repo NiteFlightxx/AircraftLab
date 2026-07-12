@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "DroneTypes.h"
+#include "AircraftMovementIntent.h"
 
 #include "RotorHitRecoveryPolicyAsset.generated.h"
 
@@ -48,8 +49,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Recovery", meta = (ClampMin = "0.01"))
 	float EffectivenessUpdateIntervalSeconds = 0.05f;
 
+	/** 恢复阶段提交给飞控的统一 MovementIntent；默认 Hold。 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Recovery")
-	EDroneFlightMode RecoveryFlightMode = EDroneFlightMode::Angle;
+	FAutopilotMovementIntent RecoveryMovementIntent;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Recovery")
 	bool bRestorePreviousFlightMode = true;

@@ -163,7 +163,8 @@ void URotorHitRecoveryComponent::ApplyRecoveryModeIfNeeded()
 	{
 		FlightController->ResetFailurePolicyLatch();
 	}
-	FlightController->SetFlightMode(PolicyAsset->RecoveryFlightMode);
+	FlightController->SetMovementIntentOverride(PolicyAsset->RecoveryMovementIntent);
+	FlightController->SetFlightMode(EDroneFlightMode::PositionHold);
 	if (PolicyAsset->bAutomaticallyRearmForRecovery && bWasArmedBeforeDamage
 		&& FlightController->GetArmState() != EDroneArmState::Armed)
 	{
@@ -199,6 +200,7 @@ void URotorHitRecoveryComponent::FinishRecovery()
 		FlightController->Arm();
 	}
 	FlightController->SetFailurePolicyEvaluationSuspended(false);
+	FlightController->ClearMovementIntentOverride();
 	bRecoveryModeApplied = false;
 	StableDurationSeconds = 0.0f;
 	SetRecoveryState(ERotorHitRecoveryState::CombatReady);

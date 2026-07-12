@@ -112,7 +112,6 @@ private:
 	void ResolveFlightController();
 	void ApplyProfile();
 	void ApplyIntentMotionLimits();
-	FAutopilotMovementIntent ResolveIntentConstraints(const FAutopilotMovementIntent& Intent) const;
 	void SetPathFollowingStrategy(EPathFollowingStrategy Strategy);
 	bool CaptureSnapshot(struct FAutopilotVehicleSnapshot& OutSnapshot) const;
 	void BroadcastIntentEvents();

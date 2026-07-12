@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AircraftMovementIntent.h"
 
 #include "AutopilotTrajectoryTypes.generated.h"
 
@@ -48,30 +49,6 @@ enum class ETrajectoryType : uint8
 	FollowPath UMETA(DisplayName = "Follow Path"),
 	/** Seventh-order, time-parameterized minimum-snap trajectory through path points. */
 	MinimumSnap UMETA(DisplayName = "Minimum Snap"),
-};
-
-/** Physically meaningful limits used to time-parameterize a finite path. */
-USTRUCT(BlueprintType)
-struct AIRCRAFTAUTOPILOT_API FTrajectoryMotionConstraints
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float CruiseSpeedCmPerSec = 800.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float MaxAccelerationCmPerSecSq = 400.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float MaxDecelerationCmPerSecSq = 400.0f;
-
-	/** Desired speed at the target. Zero means stop at the target. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float TargetSpeedCmPerSec = 0.0f;
-
-	/** Zero uses the profile limit. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float MaxJerkCmPerSecCubed = 0.0f;
 };
 
 /**

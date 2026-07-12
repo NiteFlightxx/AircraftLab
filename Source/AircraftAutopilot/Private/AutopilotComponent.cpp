@@ -100,6 +100,7 @@ void UAutopilotComponent::TickComponent(
 			NominalSetpoint.VelocityCmPerSec,
 			Snapshot.VelocityCmPerSec,
 			Snapshot.YawDegrees,
+			MovementExecutor->GetActiveIntent().MotionConstraints.MaxYawRateDegPerSec,
 			DeltaTime);
 	}
 
@@ -194,8 +195,7 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitMovementIntent(const FAutopilo
 	{
 		RejectionReason = EAutopilotIntentFailureReason::AutopilotInactive;
 	}
-	const FAutopilotMovementIntent ResolvedIntent = ResolveIntentConstraints(Intent);
-	const FAutopilotIntentHandle Handle = MovementExecutor->Submit(ResolvedIntent, Snapshot, RejectionReason);
+	const FAutopilotIntentHandle Handle = MovementExecutor->Submit(Intent, Snapshot, RejectionReason);
 	ApplyIntentMotionLimits();
 	BroadcastIntentEvents();
 	return Handle;
@@ -205,7 +205,7 @@ bool UAutopilotComponent::UpdateMovementIntent(
 	FAutopilotIntentHandle Handle,
 	const FAutopilotMovementIntent& Intent)
 {
-	const bool bUpdated = MovementExecutor->Update(Handle, ResolveIntentConstraints(Intent));
+	const bool bUpdated = MovementExecutor->Update(Handle, Intent);
 	if (bUpdated) ApplyIntentMotionLimits();
 	return bUpdated;
 }
@@ -240,10 +240,7 @@ float UAutopilotComponent::GetTrajectoryProgress() const
 
 float UAutopilotComponent::GetEstimatedHoverThrust() const
 {
-	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
-	return HoverThrustEstimator.IsInitialized()
-		? HoverThrustEstimator.GetHoverThrust()
-		: EffectiveProfile->HoverThrustEstimator.InitialHoverThrust;
+	return HoverThrustEstimator.GetHoverThrust();
 }
 
 void UAutopilotComponent::CreateRuntimeObjects()
@@ -271,70 +268,32 @@ void UAutopilotComponent::ResolveFlightController()
 void UAutopilotComponent::ApplyProfile()
 {
 	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
-	MotionProfile->SetLimits(EffectiveProfile->MotionLimits);
 	FeedForwardCalculator->SetParams(EffectiveProfile->FeedForward);
 	TurnBehavior->SetLimits(EffectiveProfile->TurnLimits);
-	HoverThrustEstimator.Configure(EffectiveProfile->HoverThrustEstimator);
+	const float InitialHoverThrust = FlightController
+		? FlightController->GetHoverCollectiveCommand() : 0.5f;
+	HoverThrustEstimator.Configure(EffectiveProfile->HoverThrustEstimator, InitialHoverThrust);
 	SetPathFollowingStrategy(EffectiveProfile->GuidanceStrategy);
 }
 
 void UAutopilotComponent::ApplyIntentMotionLimits()
 {
 	if (!MovementExecutor || !MotionProfile) return;
-	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
-	FMotionProfileLimits Limits = EffectiveProfile->MotionLimits;
 	const FTrajectoryMotionConstraints& Requested = MovementExecutor->GetActiveIntent().MotionConstraints;
-	if (Requested.CruiseSpeedCmPerSec > 0.0f)
-	{
-		Limits.MaxHorizontalSpeedCmPerSec = FMath::Min(
-			Limits.MaxHorizontalSpeedCmPerSec, Requested.CruiseSpeedCmPerSec);
-	}
-	if (Requested.MaxAccelerationCmPerSecSq > 0.0f)
-	{
-		Limits.MaxHorizontalAccelCmPerSecSq = FMath::Min(
-			Limits.MaxHorizontalAccelCmPerSecSq, Requested.MaxAccelerationCmPerSecSq);
-		Limits.MaxVerticalAccelCmPerSecSq = FMath::Min(
-			Limits.MaxVerticalAccelCmPerSecSq, Requested.MaxAccelerationCmPerSecSq);
-	}
-	if (Requested.MaxJerkCmPerSecCubed > 0.0f)
-	{
-		Limits.MaxHorizontalJerkCmPerSecCubed = FMath::Min(
-			Limits.MaxHorizontalJerkCmPerSecCubed, Requested.MaxJerkCmPerSecCubed);
-		Limits.MaxVerticalJerkCmPerSecCubed = FMath::Min(
-			Limits.MaxVerticalJerkCmPerSecCubed, Requested.MaxJerkCmPerSecCubed);
-	}
+	FMotionProfileLimits Limits;
+	Limits.MaxHorizontalSpeedCmPerSec = Requested.CruiseSpeedCmPerSec;
+	Limits.MaxHorizontalAccelCmPerSecSq = Requested.MaxAccelerationCmPerSecSq;
+	Limits.MaxHorizontalJerkCmPerSecCubed = Requested.MaxJerkCmPerSecCubed;
+	Limits.MaxClimbRateCmPerSec = Requested.MaxClimbRateCmPerSec;
+	Limits.MaxDescentRateCmPerSec = Requested.MaxDescentRateCmPerSec;
+	Limits.MaxVerticalAccelCmPerSecSq = Requested.MaxVerticalAccelerationCmPerSecSq;
+	Limits.MaxVerticalJerkCmPerSecCubed = Requested.MaxVerticalJerkCmPerSecCubed;
+	Limits.MaxYawRateDegPerSec = Requested.MaxYawRateDegPerSec;
+	Limits.MaxYawAccelDegPerSecSq = Requested.MaxYawAccelerationDegPerSecSq;
+	Limits.MaxYawJerkDegPerSecCubed = Requested.MaxYawJerkDegPerSecCubed;
+	Limits.MaxRollRateDegPerSec = Requested.MaxRollRateDegPerSec;
+	Limits.MaxPitchRateDegPerSec = Requested.MaxPitchRateDegPerSec;
 	MotionProfile->SetLimits(Limits);
-}
-
-FAutopilotMovementIntent UAutopilotComponent::ResolveIntentConstraints(
-	const FAutopilotMovementIntent& Intent) const
-{
-	FAutopilotMovementIntent Resolved = Intent;
-	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
-	const FMotionProfileLimits& Limits = EffectiveProfile->MotionLimits;
-	Resolved.MotionConstraints.CruiseSpeedCmPerSec = FMath::Min(
-		Resolved.MotionConstraints.CruiseSpeedCmPerSec, Limits.MaxHorizontalSpeedCmPerSec);
-	const float ProfileAcceleration = FMath::Min(
-		Limits.MaxHorizontalAccelCmPerSecSq, Limits.MaxVerticalAccelCmPerSecSq);
-	Resolved.MotionConstraints.MaxAccelerationCmPerSecSq = FMath::Min(
-		Resolved.MotionConstraints.MaxAccelerationCmPerSecSq, ProfileAcceleration);
-	Resolved.MotionConstraints.MaxDecelerationCmPerSecSq = FMath::Min(
-		Resolved.MotionConstraints.MaxDecelerationCmPerSecSq, ProfileAcceleration);
-	const float ProfileJerk = FMath::Min(
-		Limits.MaxHorizontalJerkCmPerSecCubed, Limits.MaxVerticalJerkCmPerSecCubed);
-	if (Resolved.MotionConstraints.MaxJerkCmPerSecCubed <= UE_SMALL_NUMBER)
-	{
-		Resolved.MotionConstraints.MaxJerkCmPerSecCubed = ProfileJerk;
-	}
-	else if (ProfileJerk > UE_SMALL_NUMBER)
-	{
-		Resolved.MotionConstraints.MaxJerkCmPerSecCubed = FMath::Min(
-			Resolved.MotionConstraints.MaxJerkCmPerSecCubed, ProfileJerk);
-	}
-	Resolved.MotionConstraints.TargetSpeedCmPerSec = FMath::Min(
-		Resolved.MotionConstraints.TargetSpeedCmPerSec,
-		Resolved.MotionConstraints.CruiseSpeedCmPerSec);
-	return Resolved;
 }
 
 void UAutopilotComponent::SetPathFollowingStrategy(EPathFollowingStrategy Strategy)
@@ -410,15 +369,23 @@ void UAutopilotComponent::BuildInjection(FAutopilotInjection& OutInjection) cons
 void UAutopilotComponent::UpdateHoverThrustEstimate(float DeltaSeconds)
 {
 	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
-	if (!EffectiveProfile->bEnableHoverThrustEstimator || !FlightController)
+	if (!FlightController)
 	{
-		FeedForwardCalculator->SetHoverThrustBaseline(-1.0f);
+		return;
+	}
+	const float GravityCmPerSecSq = FlightController->GetGravityMagnitudeCmPerSecSq();
+	float HoverThrust = FlightController->GetHoverCollectiveCommand();
+	if (!EffectiveProfile->bEnableHoverThrustEstimator)
+	{
+		FeedForwardCalculator->SetPhysicalReference(GravityCmPerSecSq, HoverThrust);
 		return;
 	}
 	const float AccelerationMpsSq = FlightController->GetEstimatedState()
 		.State.AccelerationWorldCmPerSecSq.Z * 0.01f;
 	const float CollectiveThrust = FlightController->GetControlOutput()
 		.Targets.Attitude.CollectiveThrust;
-	HoverThrustEstimator.Update(DeltaSeconds, AccelerationMpsSq, CollectiveThrust);
-	FeedForwardCalculator->SetHoverThrustBaseline(HoverThrustEstimator.GetHoverThrust());
+	HoverThrustEstimator.Update(
+		DeltaSeconds, AccelerationMpsSq, CollectiveThrust, GravityCmPerSecSq * 0.01f);
+	HoverThrust = HoverThrustEstimator.GetHoverThrust();
+	FeedForwardCalculator->SetPhysicalReference(GravityCmPerSecSq, HoverThrust);
 }

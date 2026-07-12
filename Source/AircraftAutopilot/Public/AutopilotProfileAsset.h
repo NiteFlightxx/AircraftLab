@@ -6,7 +6,6 @@
 #include "Engine/DataAsset.h"
 #include "FeedForward/FeedForwardCalculator.h"
 #include "HoverThrust/HoverThrustEstimator.h"
-#include "MotionProfile/MotionProfileTypes.h"
 #include "PathFollowing/PathFollowingTypes.h"
 #include "PathFollowing/PurePursuitGuidance.h"
 #include "PathFollowing/VectorFieldGuidance.h"
@@ -19,9 +18,6 @@ class AIRCRAFTAUTOPILOT_API UAutopilotProfileAsset : public UPrimaryDataAsset
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Motion")
-	FMotionProfileLimits MotionLimits;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|FeedForward")
 	FFeedForwardParams FeedForward;
 

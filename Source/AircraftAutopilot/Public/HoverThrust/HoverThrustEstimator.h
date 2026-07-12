@@ -44,9 +44,6 @@ struct AIRCRAFTAUTOPILOT_API FHoverThrustEstimatorConfig
 	GENERATED_BODY()
 
 	/** 初始悬停推力估计（归一化 0~1）。应接近真实悬停总距以加速收敛 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.1", ClampMax = "0.9"))
-	float InitialHoverThrust = 0.5f;
-
 	/** 初始状态方差（thrust²）。越大首帧越激进，越小越保守 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.0"))
 	float InitialStateVariance = 0.01f;
@@ -72,8 +69,6 @@ struct AIRCRAFTAUTOPILOT_API FHoverThrustEstimatorConfig
 	float MaxHoverThrust = 0.9f;
 
 	/** 重力加速度（m/s²）。与 AircraftLab 的 981 cm/s² 自洽（÷100） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.1"))
-	float GravityMpsSq = 9.81f;
 };
 
 /**
@@ -89,7 +84,7 @@ public:
 	FHoverThrustEstimator();
 
 	/** 应用配置并重置到 InitialHoverThrust */
-	void Configure(const FHoverThrustEstimatorConfig& InConfig);
+	void Configure(const FHoverThrustEstimatorConfig& InConfig, float InitialHoverThrust);
 
 	/** 重置状态到初始估计（保留当前配置） */
 	void Reset();
@@ -100,7 +95,7 @@ public:
 	 * @param AccZMpsSq          世界系垂直加速度（m/s²，+Z 向上），悬停≈0
 	 * @param ThrustNormalized    当前施加的归一化总推力（0~1）
 	 */
-	void Update(float DeltaSeconds, float AccZMpsSq, float ThrustNormalized);
+	void Update(float DeltaSeconds, float AccZMpsSq, float ThrustNormalized, float GravityMpsSq);
 
 	/** 当前悬停推力估计（0~1） */
 	float GetHoverThrust() const { return HoverThrust; }
@@ -122,6 +117,7 @@ public:
 
 private:
 	FHoverThrustEstimatorConfig Config;
+	float InitialHoverThrust = 0.5f;
 
 	/** 待估状态：悬停推力（归一化 0~1） */
 	float HoverThrust = 0.5f;

@@ -13,6 +13,7 @@ struct FFlightControlSolverContext
 	const FPhysicsCache& PhysicsCache;
 	const FModeCapabilities& ModeCapabilities;
 	const FFlightControllerRuntimeConfig& Config;
+	const FAutopilotMovementIntent& MovementIntent;
 	const FAutopilotInjection& AutopilotInjection;
 	const struct FControlAllocator& AllocationFeedback;
 	bool bUseAutopilotSetpoint = false;
@@ -60,17 +61,16 @@ struct AIRCRAFTLAB_API FFlightControlSolver
 	FVector LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
 	FVector LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 
-	float ComputeVerticalControl(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput,
+	float ComputeVerticalControl(FFlightControlSolverContext& Context,
 		float DeltaSeconds, float& OutDesiredVerticalVelocity);
-	FRotator ComputeDesiredAttitude(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput, float DeltaSeconds);
-	float ComputeDesiredYawRate(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput, float DeltaSeconds);
-	FVector ComputeDesiredBodyRates(FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput,
+	FRotator ComputeDesiredAttitude(FFlightControlSolverContext& Context, float DeltaSeconds);
+	float ComputeDesiredYawRate(FFlightControlSolverContext& Context, float DeltaSeconds);
+	FVector ComputeDesiredBodyRates(FFlightControlSolverContext& Context,
 		const FRotator& DesiredAttitude, float DesiredYawRate, float DeltaSeconds);
 	FVector ComputeBodyTorqueCommand(FFlightControlSolverContext& Context,
 		const FVector& DesiredBodyRatesDegreesPerSec, float DeltaSeconds);
-	FVector ComputeDesiredHorizontalVelocity(const FFlightControlSolverContext& Context, const FDronePilotInput& PilotInput) const;
-	FVector ComputeDesiredHorizontalAcceleration(FFlightControlSolverContext& Context,
-		const FDronePilotInput& PilotInput, float DeltaSeconds);
+	FVector ComputeDesiredHorizontalVelocity(const FFlightControlSolverContext& Context) const;
+	FVector ComputeDesiredHorizontalAcceleration(FFlightControlSolverContext& Context, float DeltaSeconds);
 	FVector ComputeVelocityPidAcceleration(FFlightControlSolverContext& Context,
 		const FVector& DesiredVelocityCmPerSec, const FVector& TrajectoryAccelerationFeedForwardCmPerSecSq,
 		float DeltaSeconds);

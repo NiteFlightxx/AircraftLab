@@ -37,10 +37,11 @@ bool FAircraftVelocityPidMaintainsTargetSpeedTest::RunTest(const FString& Parame
 	FModeCapabilities Capabilities;
 	FFlightControllerRuntimeConfig Config;
 	FlightControllerConfig::InitializeDefaults(Config.Controller);
+	FAutopilotMovementIntent MovementIntent;
 	FAutopilotInjection Injection;
 	FControlAllocator Allocator;
 	FFlightControlSolverContext Context{
-		Runtime, PhysicsCache, Capabilities, Config, Injection, Allocator, false };
+		Runtime, PhysicsCache, Capabilities, Config, MovementIntent, Injection, Allocator, false };
 	FFlightControlSolver Solver;
 
 	const FVector Acceleration = Solver.ComputeVelocityPidAcceleration(

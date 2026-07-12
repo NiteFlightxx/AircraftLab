@@ -114,6 +114,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController|Autopilot")
 	void SetAutopilotProvider(UObject* Provider);
 
+	/** GameplayPolicy 临时覆盖玩家/Autopilot MovementIntent。 */
+	void SetMovementIntentOverride(const FAutopilotMovementIntent& Intent);
+	void ClearMovementIntentOverride();
+
 	// ========================================================================
 	// 旋翼失效与容错接口
 	// ========================================================================
@@ -202,6 +206,8 @@ public:
 	const FAllocationDiagnostics& GetAllocationDiagnostics() const { return ControlAllocator.Diagnostics; }
 	const FModeCapabilities& GetModeCapabilities() const { return ModeCapabilities; }
 	const FAllocationCache& GetAllocationCache() const { return ControlAllocator.Cache; }
+	float GetGravityMagnitudeCmPerSecSq() const { return PhysicsCache.GravityMagnitudeCmPerSecSq; }
+	float GetHoverCollectiveCommand() const { return RuntimeConfig.Controller.Limits.HoverCollectiveCommand; }
 
 	FVector GetHeldPosition() const { return Runtime.HoldTargets.HeldPositionCm; }
 	float GetHeldAltitude() const { return Runtime.HoldTargets.HeldAltitudeCm; }
@@ -217,6 +223,7 @@ protected:
 
 	/** 更新请求的飞行模式和解锁状态 */
 	void UpdateRequestedModeAndArmState(const FDronePilotInput& PilotInput);
+	FAutopilotMovementIntent BuildManualMovementIntent(const FDronePilotInput& PilotInput) const;
 
 	/** 更新Home点状态 */
 	void UpdateHomeState(bool bForceResetHome = false);
@@ -381,6 +388,9 @@ private:
 	 * 与 CachedPilotInput 相同的无锁跨线程模式。
 	 */
 	FAutopilotInjection CachedAutopilotInjection;
+	FAutopilotMovementIntent CachedManualMovementIntent;
+	FAutopilotMovementIntent CachedMovementIntentOverride;
+	bool bMovementIntentOverrideActive = false;
 
 	/** 注入拉取点静默失败已警告标志（防刷屏：Provider 缺失/接口失败时首次提示） */
 	bool bWarnedAutopilotProviderMissing = false;

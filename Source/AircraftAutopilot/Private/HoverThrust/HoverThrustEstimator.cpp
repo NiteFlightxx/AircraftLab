@@ -4,19 +4,20 @@
 
 FHoverThrustEstimator::FHoverThrustEstimator()
 {
-	HoverThrust = Config.InitialHoverThrust;
+	HoverThrust = InitialHoverThrust;
 	StateVariance = Config.InitialStateVariance;
 }
 
-void FHoverThrustEstimator::Configure(const FHoverThrustEstimatorConfig& InConfig)
+void FHoverThrustEstimator::Configure(const FHoverThrustEstimatorConfig& InConfig, float InInitialHoverThrust)
 {
 	Config = InConfig;
+	InitialHoverThrust = FMath::Clamp(InInitialHoverThrust, Config.MinHoverThrust, Config.MaxHoverThrust);
 	Reset();
 }
 
 void FHoverThrustEstimator::Reset()
 {
-	HoverThrust = Config.InitialHoverThrust;
+	HoverThrust = InitialHoverThrust;
 	HoverThrustDelta = 0.0f;
 	StateVariance = Config.InitialStateVariance;
 	LastInnovation = 0.0f;
@@ -24,7 +25,7 @@ void FHoverThrustEstimator::Reset()
 	bInitialized = false;
 }
 
-void FHoverThrustEstimator::Update(float DeltaSeconds, float AccZMpsSq, float ThrustNormalized)
+void FHoverThrustEstimator::Update(float DeltaSeconds, float AccZMpsSq, float ThrustNormalized, float GravityMpsSq)
 {
 	if (DeltaSeconds <= UE_SMALL_NUMBER)
 	{
@@ -38,7 +39,7 @@ void FHoverThrustEstimator::Update(float DeltaSeconds, float AccZMpsSq, float Th
 	}
 	const float ThrustClamped = FMath::Clamp(ThrustNormalized, 0.0f, 1.0f);
 
-	const float G = FMath::Max(Config.GravityMpsSq, UE_SMALL_NUMBER);
+	const float G = FMath::Max(GravityMpsSq, UE_SMALL_NUMBER);
 	const float Ht = FMath::Max(HoverThrust, UE_SMALL_NUMBER); // 防除零
 
 	// ---- 预测（零阶随机游走）----

@@ -71,16 +71,18 @@ prerequisite.
 
 ## Configuration
 
-`UAutopilotProfileAsset` is the authored configuration source. It contains:
+`UAutopilotProfileAsset` contains algorithm tuning only:
 
-- MotionProfile limits;
-- feed-forward parameters;
+- feed-forward gains;
 - coordinated-turn limits and enable flag;
 - path-guidance strategy and enable flag;
 - hover-thrust estimator parameters and enable flag.
 
-Intent constraints can only reduce the profile's speed and acceleration
-limits. They cannot raise the vehicle capability declared by the profile.
+Every movement command carries its own `MotionConstraints`. These constraints
+are the sole source used by TrajectoryGenerator and MotionProfile. The
+FlightController profile remains the independent hard physical safety limit.
+Mass, gravity and hover collective are read from FlightController at runtime
+and are not duplicated in the Autopilot profile.
 
 ## External navigation contract
 

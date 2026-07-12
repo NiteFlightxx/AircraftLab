@@ -103,6 +103,8 @@ void UFlightControllerComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
 	// 跨线程数据传递：游戏线程写入，物理线程读取
 	CachedPilotInput = PilotInput;
+	CachedManualMovementIntent = bMovementIntentOverrideActive
+		? CachedMovementIntentOverride : BuildManualMovementIntent(PilotInput);
 
 	// Autopilot 注入拉取：通过 IAutopilotProvider 接口获取本周期设定值（游戏线程写，物理线程读）
 	// 链路三处静默失败点：①开关未开 ②Provider 未注册 ③GetAutopilotInjection 返回 false。
@@ -440,6 +442,20 @@ void UFlightControllerComponent::SetAutopilotProvider(UObject* Provider)
 }
 
 
+void UFlightControllerComponent::SetMovementIntentOverride(const FAutopilotMovementIntent& Intent)
+{
+	CachedMovementIntentOverride = Intent;
+	bMovementIntentOverrideActive = true;
+}
+
+
+void UFlightControllerComponent::ClearMovementIntentOverride()
+{
+	bMovementIntentOverrideActive = false;
+	CachedMovementIntentOverride = FAutopilotMovementIntent();
+}
+
+
 void UFlightControllerComponent::UpdateModeCapabilities()
 {
 	const EDroneFlightMode Mode = Runtime.ActiveFlightMode;
@@ -537,6 +553,63 @@ void UFlightControllerComponent::UpdateRequestedModeAndArmState(const FDronePilo
 }
 
 
+FAutopilotMovementIntent UFlightControllerComponent::BuildManualMovementIntent(
+	const FDronePilotInput& PilotInput) const
+{
+	FAutopilotMovementIntent Intent;
+	const bool bHasHorizontalInput = FMath::Abs(PilotInput.Roll) > RuntimeConfig.Input.HorizontalHoldStickDeadband
+		|| FMath::Abs(PilotInput.Pitch) > RuntimeConfig.Input.HorizontalHoldStickDeadband;
+	const bool bHasVerticalInput = FMath::Abs(PilotInput.Throttle) > RuntimeConfig.Input.VerticalHoldStickDeadband;
+	const bool bHasYawInput = FMath::Abs(PilotInput.Yaw) > RuntimeConfig.Input.YawHoldStickDeadband;
+	Intent.Type = bHasHorizontalInput || bHasVerticalInput || bHasYawInput
+		? EAutopilotMovementIntentType::MoveWithVelocity
+		: EAutopilotMovementIntentType::Hold;
+
+	const FRotator FlatYaw(0.0f, Runtime.EstimatedState.State.AttitudeDegrees.Yaw, 0.0f);
+	const FVector Forward = FRotationMatrix(FlatYaw).GetUnitAxis(EAxis::X);
+	const FVector Right = FRotationMatrix(FlatYaw).GetUnitAxis(EAxis::Y);
+	const FDroneControlLimits& Limits = RuntimeConfig.Controller.Limits;
+	if (bHasHorizontalInput)
+	{
+		Intent.DesiredVelocityCmPerSec = Forward * (PilotInput.Pitch * Limits.MaxHorizontalSpeedCmPerSec)
+			+ Right * (PilotInput.Roll * Limits.MaxHorizontalSpeedCmPerSec);
+	}
+	if (bHasVerticalInput)
+	{
+		const float Magnitude = (FMath::Abs(PilotInput.Throttle) - RuntimeConfig.Input.VerticalHoldStickDeadband)
+			/ FMath::Max(1.0f - RuntimeConfig.Input.VerticalHoldStickDeadband, UE_SMALL_NUMBER);
+		const float SignedInput = Magnitude * FMath::Sign(PilotInput.Throttle);
+		Intent.DesiredVelocityCmPerSec.Z = SignedInput >= 0.0f
+			? SignedInput * Limits.MaxClimbRateCmPerSec
+			: SignedInput * Limits.MaxDescentRateCmPerSec;
+	}
+	Intent.DesiredYawRateDegPerSec = bHasYawInput
+		? PilotInput.Yaw * Limits.MaxYawRateDegreesPerSec : 0.0f;
+	Intent.DesiredAttitudeDegrees = FRotator(
+		-PilotInput.Pitch * Limits.MaxTiltAngleDegrees,
+		Runtime.EstimatedState.State.AttitudeDegrees.Yaw,
+		PilotInput.Roll * Limits.MaxTiltAngleDegrees);
+	Intent.DesiredBodyRatesDegPerSec = FVector(
+		PilotInput.Roll * Limits.MaxRollRateDegreesPerSec,
+		-PilotInput.Pitch * Limits.MaxPitchRateDegreesPerSec,
+		Intent.DesiredYawRateDegPerSec);
+	Intent.HeadingMode = EAutopilotHeadingMode::KeepCurrent;
+	Intent.FixedYawDegrees = Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
+	Intent.TargetPositionCm = Runtime.EstimatedState.State.PositionCm;
+
+	Intent.MotionConstraints.CruiseSpeedCmPerSec = Limits.MaxHorizontalSpeedCmPerSec;
+	Intent.MotionConstraints.MaxAccelerationCmPerSecSq = Limits.MaxHorizontalAccelerationCmPerSecSq;
+	Intent.MotionConstraints.MaxDecelerationCmPerSecSq = Limits.MaxHorizontalAccelerationCmPerSecSq;
+	Intent.MotionConstraints.MaxClimbRateCmPerSec = Limits.MaxClimbRateCmPerSec;
+	Intent.MotionConstraints.MaxDescentRateCmPerSec = Limits.MaxDescentRateCmPerSec;
+	Intent.MotionConstraints.MaxVerticalAccelerationCmPerSecSq = Limits.MaxVerticalAccelerationCmPerSecSq;
+	Intent.MotionConstraints.MaxYawRateDegPerSec = Limits.MaxYawRateDegreesPerSec;
+	Intent.MotionConstraints.MaxRollRateDegPerSec = Limits.MaxRollRateDegreesPerSec;
+	Intent.MotionConstraints.MaxPitchRateDegPerSec = Limits.MaxPitchRateDegreesPerSec;
+	return Intent;
+}
+
+
 void UFlightControllerComponent::UpdateHomeState(bool bForceResetHome)
 {
 	if (!BodyPrimitive) return;
@@ -564,19 +637,20 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 		PhysicsCache,
 		ModeCapabilities,
 		RuntimeConfig,
+		CachedManualMovementIntent,
 		CachedAutopilotInjection,
 		ControlAllocator,
-		bUseAutopilotSetpoint
+		bUseAutopilotSetpoint && !bMovementIntentOverrideActive
 	};
 	float DesiredVerticalVelocity = 0.0f;
 	// 步骤1: 垂直控制 — 高度保持/手动油门 → 总距指令 c ∈ [0,1]
-	const float CollectiveCommand = FlightControlSolver.ComputeVerticalControl(SolverContext, PilotInput, DeltaSeconds, DesiredVerticalVelocity);
+	const float CollectiveCommand = FlightControlSolver.ComputeVerticalControl(SolverContext, DeltaSeconds, DesiredVerticalVelocity);
 	// 步骤2: 期望姿态角 — 位置/速度PID 或 手动映射 → (φ_des, θ_des, ψ̇_des)
-	const FRotator DesiredAttitude = FlightControlSolver.ComputeDesiredAttitude(SolverContext, PilotInput, DeltaSeconds);
+	const FRotator DesiredAttitude = FlightControlSolver.ComputeDesiredAttitude(SolverContext, DeltaSeconds);
 	// 步骤3: 期望偏航角速率 — 偏航保持/手动 → ψ̇_des
-	const float DesiredYawRate = FlightControlSolver.ComputeDesiredYawRate(SolverContext, PilotInput, DeltaSeconds);
+	const float DesiredYawRate = FlightControlSolver.ComputeDesiredYawRate(SolverContext, DeltaSeconds);
 	// 步骤4: 期望机体角速率 — 角度环或直通 → (p_des, q_des, r_des)
-	const FVector DesiredBodyRates = FlightControlSolver.ComputeDesiredBodyRates(SolverContext, PilotInput, DesiredAttitude, DesiredYawRate, DeltaSeconds);
+	const FVector DesiredBodyRates = FlightControlSolver.ComputeDesiredBodyRates(SolverContext, DesiredAttitude, DesiredYawRate, DeltaSeconds);
 	// 步骤5: 归一化力矩指令 — 角速率环 → (u_roll, u_pitch, u_yaw) ∈ [-1,1]
 	const FVector AxisCommands = FlightControlSolver.ComputeBodyTorqueCommand(SolverContext, DesiredBodyRates, DeltaSeconds);
 

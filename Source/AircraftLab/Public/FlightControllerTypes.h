@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AircraftMovementIntent.h"
 #include "DroneTypes.h"
 
 #include "FlightControllerTypes.generated.h"

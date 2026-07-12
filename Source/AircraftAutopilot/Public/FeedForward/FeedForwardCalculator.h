@@ -21,22 +21,6 @@ struct AIRCRAFTAUTOPILOT_API FFeedForwardParams
 	GENERATED_BODY()
 
 	/** 无人机质量（g）。诊断与未来模型基前馈用 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0"))
-	float MassGrams = 1000.0f;
-
-	/** 重力加速度（cm/s²）。地球默认 981 cm/s² */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0"))
-	float GravityCmPerSecSq = 981.0f;
-
-	/** 悬停总推力比（归一化 0~1）：刚好抵消重力所需的 collective。
-	 *  quad 约为 0.4~0.6，由 FlightController 的 HoverCollectiveCommand 注入 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float HoverCollective = 0.5f;
-
-	/** 推力前馈输出上限（归一化） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float MaxThrustFF = 1.0f;
-
 	/** 速度前馈增益（注入位置环 Kff 通道） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0"))
 	float VelocityFFGain = 1.0f;
@@ -107,7 +91,11 @@ public:
 	 * 传入 <=0 时回退到 Params.HoverCollective（兼容无估计器的旧路径）。
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|FeedForward")
-	void SetHoverThrustBaseline(float InHoverThrustBaseline) { HoverThrustBaseline = InHoverThrustBaseline; }
+	void SetPhysicalReference(float InGravityCmPerSecSq, float InHoverThrustBaseline)
+	{
+		GravityCmPerSecSq = FMath::Max(InGravityCmPerSecSq, UE_SMALL_NUMBER);
+		HoverThrustBaseline = FMath::Clamp(InHoverThrustBaseline, 0.0f, 1.0f);
+	}
 
 	/** 取当前生效的悬停推力基准（>0 为 EKF 估计，<=0 表示回退配置值） */
 	UFUNCTION(BlueprintPure, Category = "Autopilot|FeedForward")
@@ -124,7 +112,8 @@ protected:
 	 * >0 时作为推力前馈的归一化基准，替代死常数。
 	 * 由 UAutopilotComponent::Tick 每帧在 Compute 之前刷新。
 	 */
-	float HoverThrustBaseline = -1.0f;
+	float GravityCmPerSecSq = 981.0f;
+	float HoverThrustBaseline = 0.5f;
 
 	/** 计算推力前馈（含重力补偿 + 加速度耦合） */
 	float ComputeThrustFF(const FProfiledSetpoint& Setpoint) const;
