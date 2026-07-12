@@ -63,7 +63,7 @@ struct AIRCRAFTAUTOPILOT_API FGuidanceCommand
 };
 
 /** 制导策略枚举 */
-UENUM(BlueprintType)
+UENUM(BlueprintType, meta = (ScriptName = "AutopilotGuidanceStrategy"))
 enum class EPathFollowingStrategy : uint8
 {
 	/** 纯追踪：朝路径上的前瞻点飞 */

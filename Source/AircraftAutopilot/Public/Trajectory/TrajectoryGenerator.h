@@ -12,7 +12,7 @@
 /**
  * 轨迹生成器（Trajectory Generator）
  *
- * 职责：把 Behavior 下发的 FTrajectoryRequest 转成【时间参数化的设定值序列】。
+ * Converts an FTrajectoryRequest into a time-parameterized setpoint sequence.
  *   它是"上层决策"与"下层跟踪"之间的运动学桥梁。
  *
  * 输入：FTrajectoryRequest（描述想要怎样的轨迹）+ 当前 P/V/A
@@ -102,6 +102,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Autopilot|Trajectory")
 	float GetTotalArcLength() const;
 
+	UFUNCTION(BlueprintPure, Category = "Autopilot|Trajectory")
+	bool IsLoopingTrajectory() const { return IsCurrentSegmentInfiniteLoop(); }
+
 	// -----------------------------------------------------------------------
 	// Look Ahead（第五部分完整化，本部分提供基础接口）
 	// -----------------------------------------------------------------------
@@ -155,6 +158,11 @@ protected:
 	/** 当前名义速度（cm/s，梯形剖面当前值） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Trajectory")
 	float CurrentSpeedCmPerSec = 0.0f;
+
+	/** Native trajectory clock, used only by time-parameterized segments. */
+	float CurrentTimeSeconds = 0.0f;
+	float TotalDurationSeconds = 0.0f;
+	bool bUsesNativeTimeParameterization = false;
 
 	/** 最近输出的设定值 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Trajectory")

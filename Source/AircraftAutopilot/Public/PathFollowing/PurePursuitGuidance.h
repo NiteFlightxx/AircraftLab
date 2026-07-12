@@ -8,6 +8,21 @@
 
 #include "PurePursuitGuidance.generated.h"
 
+USTRUCT(BlueprintType)
+struct AIRCRAFTAUTOPILOT_API FPurePursuitGuidanceConfig
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	float LookAheadGain = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	float MinLookAheadCm = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	float MaxLookAheadCm = 1000.0f;
+};
+
 /**
  * 纯追踪制导（Pure Pursuit）
  *
@@ -33,21 +48,12 @@ class AIRCRAFTAUTOPILOT_API UPurePursuitGuidance : public UPathFollowingStrategy
 
 public:
 	UPurePursuitGuidance();
+	void SetConfig(const FPurePursuitGuidanceConfig& InConfig) { Config = InConfig; }
 
 	// UPathFollowingStrategy
 	virtual bool Update(const FVector& CurrentPositionCm, const FVector& CurrentVelocityCmPerSec, float DeltaSeconds, FGuidanceCommand& OutCommand) override;
 	virtual EPathFollowingStrategy GetStrategyType() const override { return EPathFollowingStrategy::PurePursuit; }
 
 protected:
-	/** 前瞻距离速度增益：L_la += LookAheadGain·|v| */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing|PurePursuit", meta = (ClampMin = "0.0"))
-	float LookAheadGain = 0.5f;
-
-	/** 最小前瞻距离（cm）—— 悬停时也保证有前瞻点 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing|PurePursuit", meta = (ClampMin = "0.0"))
-	float MinLookAheadCm = 100.0f;
-
-	/** 最大前瞻距离（cm）—— 高速限幅，避免前瞻过远导致切角 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing|PurePursuit", meta = (ClampMin = "0.0"))
-	float MaxLookAheadCm = 1000.0f;
+	FPurePursuitGuidanceConfig Config;
 };

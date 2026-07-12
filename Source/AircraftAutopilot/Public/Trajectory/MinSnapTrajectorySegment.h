@@ -4,24 +4,16 @@
 
 #include "CoreMinimal.h"
 #include "Trajectory/TrajectorySegment.h"
-
 #include "MinSnapTrajectorySegment.generated.h"
 
 /**
- * Minimum Snap 轨迹段（接口预留，尚未实现）
+ * Globally optimized, piecewise seventh-order minimum-snap trajectory.
  *
- * 理论：Minimum Snap 最小化加加速度的平方积分（snap = d⁴x/dt⁴），
- *   在给定航点与边界条件（位置/速度/加速度连续）下求最优多项式轨迹，
- *   是动态可行的最平滑轨迹。常用于穿越多个航点的高速飞行。
- *
- * 求解：对每段构造 7 次多项式，建立 QP（二次规划），
- *   约束 = 航点位置 + 段间 P/V/A/Jerk 连续 + 边界条件。
- *
- * 当前状态：仅占位接口，BuildSegment 返回 false 并提示未实现。
- *   计划在第四部分（FeedForward）之后、控制器可消费复杂设定值时实现。
- *
- * 扩展钩子：将来实现时只需补全 BuildSegment / Sample / GetFrenet 三个函数，
- *   不影响 Generator 与下游控制器接口。
+ * Position is fixed at every waypoint. Start/end velocity and acceleration are
+ * taken from FTrajectoryRequest; endpoint jerk is zero. Velocity,
+ * acceleration and jerk are continuous at every internal waypoint. Segment
+ * time is allocated from path length and iteratively scaled to satisfy the
+ * requested velocity, acceleration and optional jerk limits.
  */
 UCLASS(BlueprintType, Blueprintable, EditInlineNew, DefaultToInstanced)
 class AIRCRAFTAUTOPILOT_API UMinSnapTrajectorySegment : public UTrajectorySegment
@@ -29,13 +21,43 @@ class AIRCRAFTAUTOPILOT_API UMinSnapTrajectorySegment : public UTrajectorySegmen
 	GENERATED_BODY()
 
 public:
-	UMinSnapTrajectorySegment();
-
 	virtual bool BuildSegment_Implementation(const FTrajectoryRequest& Request, FString& OutError) override;
 	virtual FTrajectoryPoint SampleAtArcLength(float S, float SpeedCmPerSec) const override;
 	virtual FFrenetFrame GetFrenetAtArcLength(float S) const override;
+	virtual bool UsesNativeTimeParameterization() const override { return true; }
+	virtual FTrajectoryPoint SampleAtTime(float TimeSeconds) const override;
+	virtual float GetArcLengthAtTime(float TimeSeconds) const override;
 
-	/** 预留：航点序列（实现后用于构造多项式段） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
+	/** Derivative order 0..4 at global trajectory time; intended for diagnostics/tests. */
+	FVector EvaluateDerivativeAtTime(float TimeSeconds, int32 DerivativeOrder) const;
+	float GetWaypointTimeSeconds(int32 WaypointIndex) const;
+	int32 GetWaypointCount() const { return Waypoints.Num(); }
+
+protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|Trajectory")
 	TArray<FVector> Waypoints;
+
+private:
+	struct FPolynomialSegment
+	{
+		float StartTimeSeconds = 0.0f;
+		float DurationSeconds = 0.0f;
+		TArray<FVector> Coefficients;
+	};
+
+	TArray<FPolynomialSegment> PolynomialSegments;
+	TArray<float> WaypointTimes;
+	TArray<float> ArcLookupTimes;
+	TArray<float> ArcLookupLengths;
+
+	bool SolvePolynomials(const FTrajectoryRequest& Request, FString& OutError);
+	bool SolveAxis(int32 Axis, const FTrajectoryRequest& Request, FString& OutError);
+	void AllocateInitialTimes(float CruiseSpeedCmPerSec);
+	bool ScaleTimesToLimits(const FTrajectoryRequest& Request, FString& OutError);
+	void BuildArcLengthLookup();
+	int32 FindSegmentAtTime(float TimeSeconds, float& OutLocalTimeSeconds) const;
+	float FindTimeAtArcLength(float S) const;
+	FVector EvaluateSegmentDerivative(int32 SegmentIndex, float LocalTimeSeconds, int32 Order) const;
+	void MeasureDerivativePeaks(float& OutMaxSpeed, float& OutMaxAcceleration, float& OutMaxJerk) const;
 };
+

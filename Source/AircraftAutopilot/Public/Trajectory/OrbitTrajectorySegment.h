@@ -14,7 +14,7 @@
  *   按 OrbitAngularRateDegPerSec 持续旋转。与 Circle 的区别：
  *   - Circle 是有限弧段（到 EndAngle 终止）。
  *   - Orbit 是连续盘旋：s 超过一圈后环绕回 0 继续，IsComplete 默认返回 false
- *     （由 Behavior 主动取消，而非自动到点结束）。
+ *     (the movement intent owns cancellation).
  *
  * 起始角由 Build 时根据当前位置相对圆心的方位自动计算，保证从当前位置平滑接入圆周。
  *
@@ -34,7 +34,7 @@ public:
 	virtual FTrajectoryPoint SampleAtArcLength(float S, float SpeedCmPerSec) const override;
 	virtual FFrenetFrame GetFrenetAtArcLength(float S) const override;
 
-	/** 环绕不自动完成（除非 Behavior 取消），覆写为 false */
+	/** Orbit remains active until its movement intent is cancelled. */
 	virtual bool IsComplete(float CurrentS) const override { return bLoopLimitEnabled && Super::IsComplete(CurrentS); }
 
 	/** 无圈数上限时为无限循环段，生成器不做完成判定/不 clamp 游标 */

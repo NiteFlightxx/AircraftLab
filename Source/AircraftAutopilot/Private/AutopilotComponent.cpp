@@ -2,23 +2,16 @@
 
 #include "AutopilotComponent.h"
 
-#include "Trajectory/TrajectoryGenerator.h"
-#include "MotionProfile/MotionProfile.h"
+#include "AutopilotDebugDraw.h"
+#include "AutopilotMovementExecutor.h"
+#include "DroneTypes.h"
 #include "FeedForward/FeedForwardCalculator.h"
-#include "PathFollowing/PathFollowingStrategy.h"
+#include "FlightControllerComponent.h"
+#include "MotionProfile/MotionProfile.h"
 #include "PathFollowing/DirectGuidance.h"
 #include "PathFollowing/PurePursuitGuidance.h"
 #include "PathFollowing/VectorFieldGuidance.h"
-#include "Turn/TurnBehavior.h"
-#include "Behavior/BehaviorPlanner.h"
-#include "Mission/MissionPlanner.h"
-#include "HoverThrust/HoverThrustEstimator.h"
-#include "AutopilotDebugDraw.h"
-
-// AircraftLab 依赖（Phase 4+ 单向依赖）
-#include "FlightControllerComponent.h"
-#include "FlightGameplayPolicyComponent.h"
-#include "DroneTypes.h"
+#include "Trajectory/TrajectoryGenerator.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogAutopilot, Log, All);
 
@@ -26,281 +19,114 @@ UAutopilotComponent::UAutopilotComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
-	bAutoActivate = true;
 }
-
-// ---------------------------------------------------------------------------
-// 生命周期
-// ---------------------------------------------------------------------------
 
 void UAutopilotComponent::OnRegister()
 {
 	Super::OnRegister();
-	CreateSubobjects();
+	CreateRuntimeObjects();
 }
 
 void UAutopilotComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	CreateRuntimeObjects();
 	ResolveFlightController();
-	CreateSubobjects();
-
-	// 确保 Autopilot 在 FlightController 之前 tick，使 FlightController 拉取的是本帧最新注入
+	ApplyProfile();
 	if (FlightController)
 	{
 		FlightController->AddTickPrerequisiteComponent(this);
-
-		TInlineComponentArray<UFlightGameplayPolicyComponent*> Policies(GetOwner());
-		for (UFlightGameplayPolicyComponent* Policy : Policies)
-		{
-			if (Policy) AddTickPrerequisiteComponent(Policy);
-		}
-
-		// 初始化 MotionProfile 用真实位置，避免从零拉起
-		const FDroneEstimatedState& EstState = FlightController->GetEstimatedState();
-		if (MotionProfile)
-		{
-			MotionProfile->Initialize(EstState.State.PositionCm, EstState.State.AttitudeDegrees.Yaw);
-		}
-
-		// 配置悬停推力 EKF（应用详情面板的 HoverThrustConfig 并重置到 InitialHoverThrust）
-		HoverThrustEstimator.Configure(HoverThrustConfig);
-	}
-
-	if (bAutopilotActive)
-	{
-		bAutopilotActive = false;
-		SetAutopilotActive(true);
+		const FDroneKinematicState& State = FlightController->GetEstimatedState().State;
+		MotionProfile->Initialize(
+			State.PositionCm,
+			State.VelocityCmPerSec,
+			State.AccelerationWorldCmPerSecSq,
+			State.AttitudeDegrees.Yaw,
+			State.AngularVelocityBodyDegreesPerSec.Z);
 	}
 }
 
-void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void UAutopilotComponent::TickComponent(
+	float DeltaTime,
+	ELevelTick TickType,
+	FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	// Keep edit-time/Blueprint direct writes coherent with the setter semantics.
-	if (!bAutopilotActive && bActivationInitialized)
-	{
-		SetAutopilotActive(false);
-	}
-	// When Autopilot is disabled during a gameplay takeover, keep observing the
-	// policy until it releases authority so its restored Mission mode can be
-	// replaced by the mode that existed before Autopilot was activated.
-	if (FlightController && (bActivationInitialized || bPausedByGameplayPolicy))
-	{
-		UpdateGameplayPolicyPause();
-	}
-
-	// 静默失败守卫：未激活或无 FlightController 时整条管线跳过，
-	// 历史上此分支无任何输出导致"调了 Command 却无反应"无从诊断。
-	// 首次进入此分支打一条 Warning（防刷屏），激活后复位标志以便下次再触发。
-	if (!bAutopilotActive || !FlightController)
-	{
-		if (!bWarnedTickSkipped)
-		{
-			UE_LOG(LogAutopilot, Warning,
-				TEXT("Tick skipped: bAutopilotActive=%d FlightController=%s. "
-				     "Autopilot 管线（Behavior/Trajectory/PathFollowing/FeedForward/Injection）全部跳过。"
-				     "若已下发 Command* 却无反应，请先调用 SetAutopilotActive(true)。"),
-				bAutopilotActive, FlightController ? TEXT("valid") : TEXT("NULL"));
-			bWarnedTickSkipped = true;
-		}
-		return;
-	}
-	bWarnedTickSkipped = false; // 激活且 FlightController 有效 → 复位，下次失活再提示
-	if (DeltaTime <= UE_SMALL_NUMBER) return;
-
-	// 防御：bAutopilotActive 是 EditAnywhere，可在详情面板直接勾选，绕过 SetAutopilotActive()。
-	// 此时注入开关/FlightMode/Provider 未初始化，管线虽跑但产出无法到达控制环。
-	// 检测到此不一致状态时自动补做激活副作用（SetAutopilotActive 内部有幂等保护）。
-	if (bAutopilotActive && !bActivationInitialized)
-	{
-		UE_LOG(LogAutopilot, Warning,
-			TEXT("检测到 bAutopilotActive=true 但 SetAutopilotActive() 未被调用（可能在详情面板直接勾选）。"
-			     "自动补做激活初始化（开注入开关 + 切 Mission 模式）。"
-			     "建议改用 SetAutopilotActive(true) 节点以获得完整激活语义。"));
-		SetAutopilotActive(true);
-	}
-
-	if (bPausedByGameplayPolicy)
+	if (!bAutopilotActive || DeltaTime <= UE_SMALL_NUMBER)
 	{
 		return;
 	}
 
-	// -----------------------------------------------------------------------
-	// 1) 采集状态快照
-	// -----------------------------------------------------------------------
-	FBehaviorStateInput BehaviorInput;
-	FillBehaviorInput(BehaviorInput);
-
-	// -----------------------------------------------------------------------
-	// 2) Mission 层（低频，10Hz 累加器）
-	// -----------------------------------------------------------------------
-	const float MissionStep = 1.0f / FMath::Max(MissionUpdateRateHz, 1.0f);
-	MissionAccumulatorSeconds += DeltaTime;
-	constexpr int32 MaxMissionStepsPerFrame = 4;
-	int32 MissionSteps = 0;
-	while (MissionPlanner && MissionAccumulatorSeconds + UE_SMALL_NUMBER >= MissionStep
-		&& MissionSteps < MaxMissionStepsPerFrame)
+	FAutopilotVehicleSnapshot Snapshot;
+	if (!CaptureSnapshot(Snapshot))
 	{
-		MissionPlanner->Update(BehaviorInput, MissionStep);
-		MissionAccumulatorSeconds -= MissionStep;
-		++MissionSteps;
-	}
-	if (MissionSteps == MaxMissionStepsPerFrame && MissionAccumulatorSeconds >= MissionStep)
-	{
-		MissionAccumulatorSeconds = FMath::Fmod(MissionAccumulatorSeconds, MissionStep);
+		InvalidateOutputs();
+		return;
 	}
 
-	// -----------------------------------------------------------------------
-	// 3) Behavior 层（中频，每帧）
-	// -----------------------------------------------------------------------
-	FBehaviorOutput BehaviorOutput;
-	if (BehaviorPlanner && BehaviorPlanner->Update(BehaviorInput, DeltaTime, BehaviorOutput) && BehaviorOutput.bValid)
+	ApplyIntentMotionLimits();
+	FTrajectoryPoint NominalSetpoint;
+	if (!MovementExecutor->BuildSetpoint(
+		Snapshot, DeltaTime, CachedProfiledSetpoint, NominalSetpoint))
 	{
-		// 仅当轨迹请求真正变化（语义不同）时才调 SetRequest，
-		// 避免每帧重置游标导致轨迹永远卡在起点
-		if (TrajectoryGen)
+		InvalidateOutputs();
+		BroadcastIntentEvents();
+		return;
+	}
+
+	UTrajectoryGenerator* Trajectory = MovementExecutor->GetTrajectoryGenerator();
+	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
+	const EAutopilotMovementIntentType IntentType = MovementExecutor->GetActiveIntent().Type;
+	const bool bPathIntent = IntentType == EAutopilotMovementIntentType::FollowPath
+		|| IntentType == EAutopilotMovementIntentType::Orbit;
+	FGuidanceCommand Guidance;
+	if (EffectiveProfile->bEnablePathFollowing && bPathIntent && PathFollowing
+		&& Trajectory && Trajectory->IsValid())
+	{
+		PathFollowing->Update(Snapshot.PositionCm, Snapshot.VelocityCmPerSec, DeltaTime, Guidance);
+		if (Guidance.bValid)
 		{
-			const bool bRequestChanged = !bHasLastTrajectoryRequest
-				|| !LastTrajectoryRequest.IsSameTrajectoryAs(BehaviorOutput.TrajectoryRequest);
-			if (bRequestChanged)
-			{
-				// Hover 每帧生成 TargetPositionCm=当前位置 的请求，会因微动每帧判变。
-				// 但 Hover 是驻留态（零弧长），无需重建轨迹也无需重置 MotionProfile。
-				// 仅当真正切换到新轨迹（非零长度）时才 SetRequest + Initialize。
-				const float StartToTarget = FVector::Dist(
-					BehaviorOutput.TrajectoryRequest.StartPositionCm,
-					BehaviorOutput.TrajectoryRequest.TargetPositionCm);
-				const bool bIsHoverRequest = StartToTarget <= 1.0f;
-
-				TrajectoryGen->SetRequest(BehaviorOutput.TrajectoryRequest);
-				LastTrajectoryRequest = BehaviorOutput.TrajectoryRequest;
-				bHasLastTrajectoryRequest = true;
-				// 仅非 Hover（真实轨迹）时重新初始化 MotionProfile，避免 Hover 微动每帧重置速度整形
-				if (MotionProfile && !bIsHoverRequest)
-				{
-					MotionProfile->Initialize(BehaviorInput.PositionCm, BehaviorInput.YawDegrees);
-				}
-			}
+			NominalSetpoint.VelocityCmPerSec.X = Guidance.DesiredVelocityCmPerSec.X;
+			NominalSetpoint.VelocityCmPerSec.Y = Guidance.DesiredVelocityCmPerSec.Y;
 		}
 	}
+	CachedGuidanceCommand = Guidance;
+	MovementExecutor->ApplyHeading(Snapshot, NominalSetpoint);
 
-	// -----------------------------------------------------------------------
-	// 4) Trajectory 层
-	// -----------------------------------------------------------------------
-	FTrajectoryPoint NominalSP;
-	if (TrajectoryGen && TrajectoryGen->IsValid())
+	CachedTurnCommand = FTurnCommand();
+	if (EffectiveProfile->bEnableCoordinatedTurns && TurnBehavior)
 	{
-		TrajectoryGen->UpdateSetpoint(DeltaTime, BehaviorInput.PositionCm, BehaviorInput.VelocityCmPerSec, NominalSP);
+		CachedTurnCommand = TurnBehavior->Compute(
+			NominalSetpoint.VelocityCmPerSec,
+			Snapshot.VelocityCmPerSec,
+			Snapshot.YawDegrees,
+			DeltaTime);
 	}
 
-	// -----------------------------------------------------------------------
-	// 5) Path Following（制导律，替换名义速度/航向）
-	// -----------------------------------------------------------------------
-	FGuidanceCommand GuidanceCmd;
-	if (bUsePathFollowing && PathFollowing && TrajectoryGen && TrajectoryGen->IsValid())
-	{
-		PathFollowing->Update(BehaviorInput.PositionCm, BehaviorInput.VelocityCmPerSec, DeltaTime, GuidanceCmd);
-		if (GuidanceCmd.bValid)
-		{
-			// 用制导速度替换名义速度（保留垂直分量跟随轨迹）
-			NominalSP.VelocityCmPerSec.X = GuidanceCmd.DesiredVelocityCmPerSec.X;
-			NominalSP.VelocityCmPerSec.Y = GuidanceCmd.DesiredVelocityCmPerSec.Y;
-			// 航向由制导律决定
-			NominalSP.YawDegrees = GuidanceCmd.DesiredYawDegrees;
-		}
-	}
-	CachedGuidanceCommand = GuidanceCmd;
-
-	// -----------------------------------------------------------------------
-	// 6) Turn Behavior（协调/压坡转弯）
-	// -----------------------------------------------------------------------
-	FTurnCommand TurnCmd;
-	if (bUseTurnBehavior && TurnBehavior)
-	{
-		FVector DesVel = GuidanceCmd.bValid ? GuidanceCmd.DesiredVelocityCmPerSec : NominalSP.VelocityCmPerSec;
-		TurnCmd = TurnBehavior->Compute(DesVel, BehaviorInput.VelocityCmPerSec, BehaviorInput.YawDegrees, DeltaTime);
-	}
-	CachedTurnCommand = TurnCmd;
-
-	// -----------------------------------------------------------------------
-	// 7) Motion Profile（整形为物理可达设定值）
-	// -----------------------------------------------------------------------
-	FProfiledSetpoint ProfiledSP;
-	if (MotionProfile && NominalSP.bValid)
-	{
-		ProfiledSP = MotionProfile->Update(NominalSP, DeltaTime);
-	}
-	CachedProfiledSetpoint = ProfiledSP;
-
-	// -----------------------------------------------------------------------
-	// 7.5) Hover Thrust EKF（第 1 批：在线估计悬停推力基准，注入 FeedForward）
-	//      在 FeedForward.Compute 之前更新，使本帧推力前馈即用最新估计。
-	// -----------------------------------------------------------------------
+	CachedProfiledSetpoint = MotionProfile->Update(NominalSetpoint, DeltaTime);
 	UpdateHoverThrustEstimate(DeltaTime);
-
-	// -----------------------------------------------------------------------
-	// 8) Feed Forward（前馈计算）
-	// -----------------------------------------------------------------------
-	FFeedForward FF;
-	if (FeedForwardCalc && ProfiledSP.bValid)
+	CachedFeedForward = FFeedForward();
+	if (CachedProfiledSetpoint.bValid)
 	{
-		FeedForwardCalc->Compute(ProfiledSP, FF);
+		FeedForwardCalculator->Compute(CachedProfiledSetpoint, CachedFeedForward);
 	}
-	CachedFeedForward = FF;
 
-	// -----------------------------------------------------------------------
-	// 9) 调试绘制（受 ENABLE_DRAW_DEBUG + 控制台 CVar 开关控制）
-	//    在编辑器 ~ 控制台输入 Autopilot.DebugDrawTrajectory 1 等命令启用。
-	//    详见 AutopilotDebugDraw.h。每物理帧重绘，Shipping 自动剔除。
-	// -----------------------------------------------------------------------
-	FAutopilotDebugDraw::DrawAll(GetWorld(), TrajectoryGen, NominalSP, GuidanceCmd, BehaviorInput.PositionCm);
+	MovementExecutor->UpdateCompletion(Snapshot, DeltaTime, CachedProfiledSetpoint);
+	BroadcastIntentEvents();
+	FAutopilotDebugDraw::DrawAll(
+		GetWorld(), Trajectory, NominalSetpoint, Guidance, Snapshot.PositionCm);
 }
-
-// ---------------------------------------------------------------------------
-// IAutopilotProvider 实现
-// ---------------------------------------------------------------------------
 
 bool UAutopilotComponent::GetAutopilotInjection(FAutopilotInjection& OutInjection) const
 {
-	if (!bAutopilotActive || bPausedByGameplayPolicy || !AreGameplayPoliciesReady()
-		|| !CachedProfiledSetpoint.bValid)
+	if (!bAutopilotActive || !CachedProfiledSetpoint.bValid)
 	{
-		OutInjection.bValid = false;
-		// 不每帧打日志（每物理子步都会拉），仅靠 FlightController 侧的一次性 Warning 提示。
-		// 此处 Verbose 仅供深度诊断时开启。
-		UE_LOG(LogAutopilot, Verbose, TEXT("GetAutopilotInjection 返回无效：bAutopilotActive=%d CachedProfiledSetpoint.bValid=%d"),
-			bAutopilotActive, CachedProfiledSetpoint.bValid);
+		OutInjection = FAutopilotInjection();
 		return false;
 	}
 	BuildInjection(OutInjection);
 	return OutInjection.bValid;
 }
-
-void UAutopilotComponent::BuildInjection(FAutopilotInjection& OutInjection) const
-{
-	const FProfiledSetpoint& SP = CachedProfiledSetpoint;
-	const FFeedForward& FF = CachedFeedForward;
-	const FTurnCommand& TC = CachedTurnCommand;
-
-	OutInjection.PositionSetpointCm = SP.PositionCm;
-	// 速度/加速度前馈走 FeedForward 版本（含 VelocityFFGain/AccelFFGain 增益，默认 1.0）
-	OutInjection.VelocitySetpointCmPerSec = FF.VelocityFFCmPerSec;
-	OutInjection.AccelerationSetpointCmPerSecSq = FF.AccelFFCmPerSecSq;
-	OutInjection.AltitudeSetpointCm = SP.PositionCm.Z;
-	OutInjection.VerticalVelocitySetpointCmPerSec = SP.VelocityCmPerSec.Z;
-	OutInjection.ThrustFeedForward = FF.ThrustFF;
-	OutInjection.YawSetpointDegrees = SP.YawDegrees;
-	// 偏航角速度 = MotionProfile 输出 + 协调转弯所需偏航角速度
-	OutInjection.YawRateSetpointDegPerSec = SP.YawRateDegreesPerSec + TC.DesiredYawRateDegPerSec;
-	OutInjection.TurnRollDegrees = TC.DesiredRollDegrees;
-	OutInjection.bValid = true;
-}
-
-// ---------------------------------------------------------------------------
-// 激活控制
-// ---------------------------------------------------------------------------
 
 void UAutopilotComponent::SetAutopilotActive(bool bActive)
 {
@@ -308,432 +134,291 @@ void UAutopilotComponent::SetAutopilotActive(bool bActive)
 	{
 		return;
 	}
+	if (!FlightController) ResolveFlightController();
+	if (!FlightController)
+	{
+		UE_LOG(LogAutopilot, Error, TEXT("Cannot change Autopilot state without FlightController."));
+		return;
+	}
 
 	bAutopilotActive = bActive;
-
-	if (FlightController)
+	if (bActive)
 	{
-		if (bActive)
+		if (!bFlightModeBeforeActivationCaptured)
 		{
-			if (!bFlightModeBeforeActivationCaptured)
-			{
-				FlightModeBeforeActivation = static_cast<uint8>(FlightController->GetFlightMode());
-				bFlightModeBeforeActivationCaptured = true;
-			}
-
-			bPausedByGameplayPolicy = !AreGameplayPoliciesReady();
-			InvalidateOutputCaches();
-			RebasePipelineOnCurrentState();
-			if (!bPausedByGameplayPolicy)
-			{
-				FlightController->SetFlightMode(EDroneFlightMode::Mission);
-				FlightController->SetUseAutopilotSetpoint(true);
-			}
-			else
-			{
-				FlightController->SetUseAutopilotSetpoint(false);
-			}
-
-			bActivationInitialized = true; // 副作用完成，防 Tick 重复补做
+			FlightModeBeforeActivation = static_cast<uint8>(FlightController->GetFlightMode());
+			bFlightModeBeforeActivationCaptured = true;
 		}
-		else
+		FlightController->SetFlightMode(EDroneFlightMode::Mission);
+		FlightController->SetUseAutopilotSetpoint(true);
+		bActivationInitialized = true;
+		FAutopilotVehicleSnapshot Snapshot;
+		if (CaptureSnapshot(Snapshot))
 		{
-			const bool bWaitForGameplayPolicyRelease = bPausedByGameplayPolicy
-				&& !AreGameplayPoliciesReady();
-			FlightController->SetUseAutopilotSetpoint(false);
-			InvalidateOutputCaches();
-			if (bFlightModeBeforeActivationCaptured
-				&& FlightController->GetFlightMode() == EDroneFlightMode::Mission)
-			{
-				FlightController->SetFlightMode(static_cast<EDroneFlightMode>(FlightModeBeforeActivation));
-			}
-			if (!bWaitForGameplayPolicyRelease)
-			{
-				bFlightModeBeforeActivationCaptured = false;
-			}
-			bPausedByGameplayPolicy = bWaitForGameplayPolicyRelease;
-			bActivationInitialized = false; // 失活后复位，允许下次重新激活
+			MotionProfile->Initialize(
+				Snapshot.PositionCm,
+				Snapshot.VelocityCmPerSec,
+				Snapshot.AccelerationCmPerSecSq,
+				Snapshot.YawDegrees,
+				0.0f);
+			MovementExecutor->EnterHold(Snapshot);
 		}
 	}
 	else
 	{
-		UE_LOG(LogAutopilot, Warning, TEXT("SetAutopilotActive(%d) 失败：FlightController 为空。"
-			"请确认 Owner 上挂有 UFlightControllerComponent（BeginPlay 时 ResolveFlightController 解析）。"), bActive);
+		MovementExecutor->CancelActive(EAutopilotIntentFailureReason::CancelledByCaller);
+		BroadcastIntentEvents();
+		FlightController->SetUseAutopilotSetpoint(false);
+		if (bFlightModeBeforeActivationCaptured
+			&& FlightController->GetFlightMode() == EDroneFlightMode::Mission)
+		{
+			FlightController->SetFlightMode(static_cast<EDroneFlightMode>(FlightModeBeforeActivation));
+		}
+		bFlightModeBeforeActivationCaptured = false;
+		bActivationInitialized = false;
+		MovementExecutor->GetTrajectoryGenerator()->Clear();
+		InvalidateOutputs();
 	}
-
-	UE_LOG(LogAutopilot, Log, TEXT("Autopilot %s (FlightController=%s)"),
-		bActive ? TEXT("ACTIVATED") : TEXT("DEACTIVATED"), FlightController ? TEXT("valid") : TEXT("NULL"));
 }
 
-// ---------------------------------------------------------------------------
-// 便捷指令
-// ---------------------------------------------------------------------------
-
-void UAutopilotComponent::CommandTakeOff(float AltitudeCm)
+FAutopilotIntentHandle UAutopilotComponent::SubmitMovementIntent(const FAutopilotMovementIntent& Intent)
 {
-	UE_LOG(LogAutopilot, Log, TEXT("CommandTakeOff Alt=%.1fcm Active=%d"), AltitudeCm, bAutopilotActive);
-	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandTakeOff 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
-	if (BehaviorPlanner) BehaviorPlanner->CommandTakeOff(AltitudeCm);
-}
-
-void UAutopilotComponent::CommandMoveTo(const FVector& TargetPositionCm, float TargetYawDegrees, float CruiseSpeedCmPerSec)
-{
-	UE_LOG(LogAutopilot, Log, TEXT("CommandMoveTo Target=%s Yaw=%.1f Cruise=%.1f Active=%d"),
-		*TargetPositionCm.ToString(), TargetYawDegrees, CruiseSpeedCmPerSec, bAutopilotActive);
-	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandMoveTo 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
-	if (BehaviorPlanner) BehaviorPlanner->CommandMoveTo(TargetPositionCm, TargetYawDegrees, CruiseSpeedCmPerSec);
-}
-
-void UAutopilotComponent::CommandMoveToWithConstraints(
-	const FVector& TargetPositionCm,
-	float TargetYawDegrees,
-	const FTrajectoryMotionConstraints& Constraints)
-{
-	if (!bAutopilotActive)
+	FAutopilotVehicleSnapshot Snapshot;
+	const bool bHasControllerState = CaptureSnapshot(Snapshot);
+	EAutopilotIntentFailureReason RejectionReason = EAutopilotIntentFailureReason::None;
+	if (!FlightController || !bHasControllerState)
 	{
-		UE_LOG(LogAutopilot, Warning, TEXT("CommandMoveToWithConstraints ignored: Autopilot is inactive."));
-		return;
+		RejectionReason = EAutopilotIntentFailureReason::FlightControllerUnavailable;
 	}
-	if (BehaviorPlanner)
+	else if (!bAutopilotActive)
 	{
-		BehaviorPlanner->CommandMoveToWithConstraints(TargetPositionCm, TargetYawDegrees, Constraints);
+		RejectionReason = EAutopilotIntentFailureReason::AutopilotInactive;
 	}
+	const FAutopilotMovementIntent ResolvedIntent = ResolveIntentConstraints(Intent);
+	const FAutopilotIntentHandle Handle = MovementExecutor->Submit(ResolvedIntent, Snapshot, RejectionReason);
+	ApplyIntentMotionLimits();
+	BroadcastIntentEvents();
+	return Handle;
 }
 
-void UAutopilotComponent::CommandFollowPath(const TArray<FVector>& PathPointsCm, float CruiseSpeedCmPerSec)
+bool UAutopilotComponent::UpdateMovementIntent(
+	FAutopilotIntentHandle Handle,
+	const FAutopilotMovementIntent& Intent)
 {
-	UE_LOG(LogAutopilot, Log, TEXT("CommandFollowPath Points=%d Cruise=%.1f Active=%d"), PathPointsCm.Num(), CruiseSpeedCmPerSec, bAutopilotActive);
-	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandFollowPath 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
-	if (BehaviorPlanner) BehaviorPlanner->CommandFollowPath(PathPointsCm, CruiseSpeedCmPerSec);
+	const bool bUpdated = MovementExecutor->Update(Handle, ResolveIntentConstraints(Intent));
+	if (bUpdated) ApplyIntentMotionLimits();
+	return bUpdated;
 }
 
-void UAutopilotComponent::CommandFollowPathWithConstraints(
-	const TArray<FVector>& PathPointsCm,
-	const FTrajectoryMotionConstraints& Constraints)
+bool UAutopilotComponent::CancelMovementIntent(FAutopilotIntentHandle Handle)
 {
-	if (!bAutopilotActive)
+	FAutopilotVehicleSnapshot Snapshot;
+	if (!CaptureSnapshot(Snapshot)) return false;
+	const bool bCancelled = MovementExecutor->Cancel(Handle, Snapshot);
+	if (bCancelled)
 	{
-		UE_LOG(LogAutopilot, Warning, TEXT("CommandFollowPathWithConstraints ignored: Autopilot is inactive."));
-		return;
+		ApplyIntentMotionLimits();
+		BroadcastIntentEvents();
 	}
-	if (BehaviorPlanner)
-	{
-		BehaviorPlanner->CommandFollowPathWithConstraints(PathPointsCm, Constraints);
-	}
+	return bCancelled;
 }
 
-void UAutopilotComponent::CommandOrbit(const FVector& CenterCm, float RadiusCm, float AngularRateDegPerSec)
+FAutopilotIntentResult UAutopilotComponent::GetIntentResult(FAutopilotIntentHandle Handle) const
 {
-	UE_LOG(LogAutopilot, Log, TEXT("CommandOrbit Center=%s R=%.1f Rate=%.1f Active=%d"),
-		*CenterCm.ToString(), RadiusCm, AngularRateDegPerSec, bAutopilotActive);
-	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandOrbit 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
-	if (BehaviorPlanner) BehaviorPlanner->CommandOrbit(CenterCm, RadiusCm, AngularRateDegPerSec);
+	return MovementExecutor ? MovementExecutor->GetResult(Handle) : FAutopilotIntentResult();
 }
 
-void UAutopilotComponent::CommandReturnHome(float ReturnAltitudeCm)
+FAutopilotIntentResult UAutopilotComponent::GetCurrentIntentResult() const
 {
-	UE_LOG(LogAutopilot, Log, TEXT("CommandReturnHome Alt=%.1f Active=%d"), ReturnAltitudeCm, bAutopilotActive);
-	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandReturnHome 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
-	if (BehaviorPlanner)
-	{
-		BehaviorPlanner->CommandReturnHome(ReturnAltitudeCm);
-	}
-}
-
-void UAutopilotComponent::CommandLand()
-{
-	UE_LOG(LogAutopilot, Log, TEXT("CommandLand Active=%d"), bAutopilotActive);
-	if (!bAutopilotActive) { UE_LOG(LogAutopilot, Warning, TEXT("CommandLand 被忽略：Autopilot 未激活。请先调用 SetAutopilotActive(true)。")); return; }
-	if (BehaviorPlanner) BehaviorPlanner->CommandLand();
-}
-
-void UAutopilotComponent::SetHomePosition(const FVector& HomeCm)
-{
-	bHomePositionInitialized = true;
-	if (BehaviorPlanner) BehaviorPlanner->SetHomePosition(HomeCm);
-	if (MissionPlanner) MissionPlanner->SetHomePosition(HomeCm);
-}
-
-void UAutopilotComponent::RequestBehaviorState(EBehaviorState NewState)
-{
-	if (BehaviorPlanner) BehaviorPlanner->RequestState(NewState);
-}
-
-// ---------------------------------------------------------------------------
-// 任务加载
-// ---------------------------------------------------------------------------
-
-void UAutopilotComponent::LoadWaypointMission(const TArray<FVector>& WaypointsCm, float CruiseSpeedCmPerSec)
-{
-	if (MissionPlanner) MissionPlanner->LoadWaypointMission(WaypointsCm, CruiseSpeedCmPerSec);
-}
-
-void UAutopilotComponent::LoadPatrolMission(const TArray<FVector>& PatrolPointsCm, float CruiseSpeedCmPerSec, bool bLoop)
-{
-	if (MissionPlanner) MissionPlanner->LoadPatrolMission(PatrolPointsCm, CruiseSpeedCmPerSec, bLoop);
-}
-
-void UAutopilotComponent::LoadInspectionMission(const TArray<FVector>& WaypointsCm, const FVector& InspectTargetCm, float OrbitRadiusCm, float OrbitDurationSeconds)
-{
-	if (MissionPlanner) MissionPlanner->LoadInspectionMission(WaypointsCm, InspectTargetCm, OrbitRadiusCm, OrbitDurationSeconds);
-}
-
-void UAutopilotComponent::LoadReturnHomeMission(float ReturnAltitudeCm)
-{
-	if (MissionPlanner) MissionPlanner->LoadReturnHomeMission(ReturnAltitudeCm);
-}
-
-void UAutopilotComponent::LoadLandingMission()
-{
-	if (MissionPlanner) MissionPlanner->LoadLandingMission();
-}
-
-void UAutopilotComponent::AbortMission()
-{
-	if (MissionPlanner) MissionPlanner->Abort();
-}
-
-int32 UAutopilotComponent::GetMissionCurrentItem() const
-{
-	return MissionPlanner ? MissionPlanner->GetCurrentItemIndex() : 0;
-}
-
-int32 UAutopilotComponent::GetMissionItemCount() const
-{
-	return MissionPlanner ? MissionPlanner->GetItemCount() : 0;
-}
-
-// ---------------------------------------------------------------------------
-// 制导策略切换
-// ---------------------------------------------------------------------------
-
-void UAutopilotComponent::SetPathFollowingStrategy(EPathFollowingStrategy Strategy)
-{
-	if (!TrajectoryGen) return;
-
-	UPathFollowingStrategy* NewStrategy = nullptr;
-	switch (Strategy)
-	{
-	case EPathFollowingStrategy::PurePursuit:
-		NewStrategy = NewObject<UPurePursuitGuidance>(this);
-		break;
-	case EPathFollowingStrategy::VectorField:
-		NewStrategy = NewObject<UVectorFieldGuidance>(this);
-		break;
-	case EPathFollowingStrategy::Direct:
-	default:
-		NewStrategy = NewObject<UDirectGuidance>(this);
-		break;
-	}
-
-	if (NewStrategy)
-	{
-		NewStrategy->SetTrajectory(TrajectoryGen);
-		PathFollowing = NewStrategy;
-	}
-}
-
-// ---------------------------------------------------------------------------
-// 状态查询
-// ---------------------------------------------------------------------------
-
-EBehaviorState UAutopilotComponent::GetCurrentBehaviorState() const
-{
-	return BehaviorPlanner ? BehaviorPlanner->GetCurrentState() : EBehaviorState::Idle;
+	return MovementExecutor ? MovementExecutor->GetCurrentResult() : FAutopilotIntentResult();
 }
 
 float UAutopilotComponent::GetTrajectoryProgress() const
 {
-	return TrajectoryGen ? TrajectoryGen->GetProgress() : 0.0f;
+	return MovementExecutor ? MovementExecutor->GetTrajectoryProgress() : 0.0f;
 }
 
-// ---------------------------------------------------------------------------
-// 内部方法
-// ---------------------------------------------------------------------------
-
-void UAutopilotComponent::CreateSubobjects()
+float UAutopilotComponent::GetEstimatedHoverThrust() const
 {
-	if (!TrajectoryGen) TrajectoryGen = NewObject<UTrajectoryGenerator>(this);
+	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
+	return HoverThrustEstimator.IsInitialized()
+		? HoverThrustEstimator.GetHoverThrust()
+		: EffectiveProfile->HoverThrustEstimator.InitialHoverThrust;
+}
+
+void UAutopilotComponent::CreateRuntimeObjects()
+{
+	if (!MovementExecutor)
+	{
+		MovementExecutor = NewObject<UAutopilotMovementExecutor>(this);
+		MovementExecutor->Initialize();
+	}
 	if (!MotionProfile) MotionProfile = NewObject<UMotionProfile>(this);
-	if (!FeedForwardCalc) FeedForwardCalc = NewObject<UFeedForwardCalculator>(this);
+	if (!FeedForwardCalculator) FeedForwardCalculator = NewObject<UFeedForwardCalculator>(this);
 	if (!TurnBehavior) TurnBehavior = NewObject<UTurnBehavior>(this);
-	if (!BehaviorPlanner)
-	{
-		BehaviorPlanner = NewObject<UBehaviorPlanner>(this);
-		if (BehaviorPlanner) BehaviorPlanner->Initialize();
-	}
-	if (!MissionPlanner) MissionPlanner = NewObject<UMissionPlanner>(this);
-	if (MissionPlanner && BehaviorPlanner)
-	{
-		MissionPlanner->SetBehaviorPlanner(BehaviorPlanner);
-	}
-
-	// 默认制导策略
-	if (!PathFollowing) SetPathFollowingStrategy(DefaultStrategy);
+	if (!PathFollowing) SetPathFollowingStrategy(EPathFollowingStrategy::PurePursuit);
 }
 
-bool UAutopilotComponent::AreGameplayPoliciesReady() const
+void UAutopilotComponent::ResolveFlightController()
 {
-	const AActor* Owner = GetOwner();
-	if (!Owner) return true;
-
-	TInlineComponentArray<UFlightGameplayPolicyComponent*> Policies(Owner);
-	for (const UFlightGameplayPolicyComponent* Policy : Policies)
+	if (AActor* Owner = GetOwner())
 	{
-		if (IsValid(Policy) && !Policy->IsPolicyReady()) return false;
+		FlightController = Owner->FindComponentByClass<UFlightControllerComponent>();
+		if (FlightController) FlightController->SetAutopilotProvider(this);
 	}
+}
+
+void UAutopilotComponent::ApplyProfile()
+{
+	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
+	MotionProfile->SetLimits(EffectiveProfile->MotionLimits);
+	FeedForwardCalculator->SetParams(EffectiveProfile->FeedForward);
+	TurnBehavior->SetLimits(EffectiveProfile->TurnLimits);
+	HoverThrustEstimator.Configure(EffectiveProfile->HoverThrustEstimator);
+	SetPathFollowingStrategy(EffectiveProfile->GuidanceStrategy);
+}
+
+void UAutopilotComponent::ApplyIntentMotionLimits()
+{
+	if (!MovementExecutor || !MotionProfile) return;
+	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
+	FMotionProfileLimits Limits = EffectiveProfile->MotionLimits;
+	const FTrajectoryMotionConstraints& Requested = MovementExecutor->GetActiveIntent().MotionConstraints;
+	if (Requested.CruiseSpeedCmPerSec > 0.0f)
+	{
+		Limits.MaxHorizontalSpeedCmPerSec = FMath::Min(
+			Limits.MaxHorizontalSpeedCmPerSec, Requested.CruiseSpeedCmPerSec);
+	}
+	if (Requested.MaxAccelerationCmPerSecSq > 0.0f)
+	{
+		Limits.MaxHorizontalAccelCmPerSecSq = FMath::Min(
+			Limits.MaxHorizontalAccelCmPerSecSq, Requested.MaxAccelerationCmPerSecSq);
+		Limits.MaxVerticalAccelCmPerSecSq = FMath::Min(
+			Limits.MaxVerticalAccelCmPerSecSq, Requested.MaxAccelerationCmPerSecSq);
+	}
+	if (Requested.MaxJerkCmPerSecCubed > 0.0f)
+	{
+		Limits.MaxHorizontalJerkCmPerSecCubed = FMath::Min(
+			Limits.MaxHorizontalJerkCmPerSecCubed, Requested.MaxJerkCmPerSecCubed);
+		Limits.MaxVerticalJerkCmPerSecCubed = FMath::Min(
+			Limits.MaxVerticalJerkCmPerSecCubed, Requested.MaxJerkCmPerSecCubed);
+	}
+	MotionProfile->SetLimits(Limits);
+}
+
+FAutopilotMovementIntent UAutopilotComponent::ResolveIntentConstraints(
+	const FAutopilotMovementIntent& Intent) const
+{
+	FAutopilotMovementIntent Resolved = Intent;
+	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
+	const FMotionProfileLimits& Limits = EffectiveProfile->MotionLimits;
+	Resolved.MotionConstraints.CruiseSpeedCmPerSec = FMath::Min(
+		Resolved.MotionConstraints.CruiseSpeedCmPerSec, Limits.MaxHorizontalSpeedCmPerSec);
+	const float ProfileAcceleration = FMath::Min(
+		Limits.MaxHorizontalAccelCmPerSecSq, Limits.MaxVerticalAccelCmPerSecSq);
+	Resolved.MotionConstraints.MaxAccelerationCmPerSecSq = FMath::Min(
+		Resolved.MotionConstraints.MaxAccelerationCmPerSecSq, ProfileAcceleration);
+	Resolved.MotionConstraints.MaxDecelerationCmPerSecSq = FMath::Min(
+		Resolved.MotionConstraints.MaxDecelerationCmPerSecSq, ProfileAcceleration);
+	const float ProfileJerk = FMath::Min(
+		Limits.MaxHorizontalJerkCmPerSecCubed, Limits.MaxVerticalJerkCmPerSecCubed);
+	if (Resolved.MotionConstraints.MaxJerkCmPerSecCubed <= UE_SMALL_NUMBER)
+	{
+		Resolved.MotionConstraints.MaxJerkCmPerSecCubed = ProfileJerk;
+	}
+	else if (ProfileJerk > UE_SMALL_NUMBER)
+	{
+		Resolved.MotionConstraints.MaxJerkCmPerSecCubed = FMath::Min(
+			Resolved.MotionConstraints.MaxJerkCmPerSecCubed, ProfileJerk);
+	}
+	Resolved.MotionConstraints.TargetSpeedCmPerSec = FMath::Min(
+		Resolved.MotionConstraints.TargetSpeedCmPerSec,
+		Resolved.MotionConstraints.CruiseSpeedCmPerSec);
+	return Resolved;
+}
+
+void UAutopilotComponent::SetPathFollowingStrategy(EPathFollowingStrategy Strategy)
+{
+	switch (Strategy)
+	{
+	case EPathFollowingStrategy::PurePursuit:
+		PathFollowing = NewObject<UPurePursuitGuidance>(this);
+		break;
+	case EPathFollowingStrategy::VectorField:
+		PathFollowing = NewObject<UVectorFieldGuidance>(this);
+		break;
+	default:
+		PathFollowing = NewObject<UDirectGuidance>(this);
+		break;
+	}
+	if (!PathFollowing || !MovementExecutor) return;
+	PathFollowing->SetTrajectory(MovementExecutor->GetTrajectoryGenerator());
+	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
+	if (UPurePursuitGuidance* PurePursuit = Cast<UPurePursuitGuidance>(PathFollowing))
+	{
+		PurePursuit->SetConfig(EffectiveProfile->PurePursuit);
+	}
+	else if (UVectorFieldGuidance* VectorField = Cast<UVectorFieldGuidance>(PathFollowing))
+	{
+		VectorField->SetConfig(EffectiveProfile->VectorField);
+	}
+}
+
+bool UAutopilotComponent::CaptureSnapshot(FAutopilotVehicleSnapshot& OutSnapshot) const
+{
+	if (!FlightController) return false;
+	const FDroneKinematicState& State = FlightController->GetEstimatedState().State;
+	OutSnapshot.PositionCm = State.PositionCm;
+	OutSnapshot.VelocityCmPerSec = State.VelocityCmPerSec;
+	OutSnapshot.AccelerationCmPerSecSq = State.AccelerationWorldCmPerSecSq;
+	OutSnapshot.YawDegrees = State.AttitudeDegrees.Yaw;
 	return true;
 }
 
-void UAutopilotComponent::UpdateGameplayPolicyPause()
+void UAutopilotComponent::BroadcastIntentEvents()
 {
-	const bool bShouldPause = !AreGameplayPoliciesReady();
-	if (bShouldPause && !bPausedByGameplayPolicy) EnterGameplayPolicyPause();
-	else if (!bShouldPause && bPausedByGameplayPolicy) ExitGameplayPolicyPause();
+	TArray<FAutopilotIntentResult> Started;
+	TArray<FAutopilotIntentResult> Finished;
+	MovementExecutor->DrainEvents(Started, Finished);
+	for (const FAutopilotIntentResult& Result : Started) OnIntentStarted.Broadcast(Result);
+	for (const FAutopilotIntentResult& Result : Finished) OnIntentFinished.Broadcast(Result);
 }
 
-void UAutopilotComponent::EnterGameplayPolicyPause()
-{
-	bPausedByGameplayPolicy = true;
-	MissionAccumulatorSeconds = 0.0f;
-	InvalidateOutputCaches();
-	if (TrajectoryGen) TrajectoryGen->Clear();
-	if (FlightController) FlightController->SetUseAutopilotSetpoint(false);
-	UE_LOG(LogAutopilot, Log, TEXT("Autopilot pipeline paused: gameplay policy owns flight control."));
-}
-
-void UAutopilotComponent::ExitGameplayPolicyPause()
-{
-	bPausedByGameplayPolicy = false;
-	InvalidateOutputCaches();
-	if (FlightController && bAutopilotActive)
-	{
-		RebasePipelineOnCurrentState();
-		FlightController->SetFlightMode(EDroneFlightMode::Mission);
-		FlightController->SetUseAutopilotSetpoint(true);
-	}
-	else if (FlightController && bFlightModeBeforeActivationCaptured
-		&& FlightController->GetFlightMode() == EDroneFlightMode::Mission)
-	{
-		FlightController->SetFlightMode(static_cast<EDroneFlightMode>(FlightModeBeforeActivation));
-		bFlightModeBeforeActivationCaptured = false;
-	}
-	UE_LOG(LogAutopilot, Log, TEXT("Autopilot pipeline resumed from current aircraft state."));
-}
-
-void UAutopilotComponent::InvalidateOutputCaches()
+void UAutopilotComponent::InvalidateOutputs()
 {
 	CachedProfiledSetpoint = FProfiledSetpoint();
 	CachedFeedForward = FFeedForward();
 	CachedGuidanceCommand = FGuidanceCommand();
 	CachedTurnCommand = FTurnCommand();
-	bHasLastTrajectoryRequest = false;
 }
 
-void UAutopilotComponent::RebasePipelineOnCurrentState()
+void UAutopilotComponent::BuildInjection(FAutopilotInjection& OutInjection) const
 {
-	if (!FlightController) return;
-	if (TrajectoryGen)
-	{
-		TrajectoryGen->Clear();
-	}
-	const FDroneEstimatedState& Est = FlightController->GetEstimatedState();
-	if (MotionProfile)
-	{
-		MotionProfile->Initialize(Est.State.PositionCm, Est.State.AttitudeDegrees.Yaw);
-	}
-	if (!bHomePositionInitialized && BehaviorPlanner)
-	{
-		SetHomePosition(Est.State.PositionCm);
-	}
-}
-
-void UAutopilotComponent::ResolveFlightController()
-{
-	const AActor* Owner = GetOwner();
-	if (!Owner)
-	{
-		UE_LOG(LogAutopilot, Warning, TEXT("ResolveFlightController 失败：Owner 为空"));
-		return;
-	}
-	FlightController = Owner->FindComponentByClass<UFlightControllerComponent>();
-	UE_LOG(LogAutopilot, Log, TEXT("ResolveFlightController: Owner=%s FlightController=%s"),
-		*Owner->GetName(), FlightController ? TEXT("valid") : TEXT("NULL — 请确认 Owner 挂有 UFlightControllerComponent"));
-
-	// 自注册为 Provider：避免依赖外部（如 AAircraftPawn::BeginPlay）显式调用
-	// SetAutopilotProvider。若 Owner 非 AircraftPawn 派生（如纯 BP 蓝图），此步骤是
-	// 注入链路打通的唯一途径，否则 FlightController 拉取注入时 Provider 为空。
-	if (FlightController)
-	{
-		FlightController->SetAutopilotProvider(this);
-	}
-}
-
-void UAutopilotComponent::FillBehaviorInput(FBehaviorStateInput& OutInput) const
-{
-	if (!FlightController)
-	{
-		return;
-	}
-
-	const FDroneEstimatedState& Est = FlightController->GetEstimatedState();
-	OutInput.PositionCm = Est.State.PositionCm;
-	OutInput.VelocityCmPerSec = Est.State.VelocityCmPerSec;
-	OutInput.YawDegrees = Est.State.AttitudeDegrees.Yaw;
-	OutInput.bArmed = (FlightController->GetArmState() == EDroneArmState::Armed);
-
-	// 地面判断：速度极低且高度接近零（粗判，集成时可接地面传感器）
-	OutInput.bOnGround = (Est.State.PositionCm.Z < 20.0f && Est.State.VelocityCmPerSec.SizeSquared() < 100.0f);
-
-	// 传感器值：从 UPROPERTY 成员读取（由外部传感器组件通过 Setter 写入）
-	OutInput.BatteryLevel = BatteryLevel;
-	OutInput.bLinkHealthy = bLinkHealthy;
-	OutInput.NearestObstacleDistanceCm = NearestObstacleDistanceCm;
-
-	// 第 6 批：推力感知着陆检测所需的两路推力信号
-	//   CollectiveThrustNormalized —— 上一帧控制循环输出的归一化总推力
-	//   HoverThrustEstimateNormalized —— EKF 估计的悬停推力（未初始化回退到配置初值）
-	OutInput.CollectiveThrustNormalized = FlightController->GetControlOutput().Targets.Attitude.CollectiveThrust;
-	OutInput.HoverThrustEstimateNormalized = HoverThrustEstimator.IsInitialized()
-		? HoverThrustEstimator.GetHoverThrust()
-		: HoverThrustConfig.InitialHoverThrust;
-}
-
-// ---------------------------------------------------------------------------
-// 悬停推力自适应估计（第 1 批）
-// ---------------------------------------------------------------------------
-
-float UAutopilotComponent::GetEstimatedHoverThrust() const
-{
-	return HoverThrustEstimator.GetHoverThrust();
+	OutInjection.PositionSetpointCm = CachedProfiledSetpoint.PositionCm;
+	OutInjection.VelocitySetpointCmPerSec = CachedFeedForward.VelocityFFCmPerSec;
+	OutInjection.AccelerationSetpointCmPerSecSq = CachedFeedForward.AccelFFCmPerSecSq;
+	OutInjection.AltitudeSetpointCm = CachedProfiledSetpoint.PositionCm.Z;
+	OutInjection.VerticalVelocitySetpointCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec.Z;
+	OutInjection.ThrustFeedForward = CachedFeedForward.ThrustFF;
+	OutInjection.YawSetpointDegrees = CachedProfiledSetpoint.YawDegrees;
+	OutInjection.YawRateSetpointDegPerSec = CachedProfiledSetpoint.YawRateDegreesPerSec
+		+ CachedTurnCommand.DesiredYawRateDegPerSec;
+	OutInjection.TurnRollDegrees = CachedTurnCommand.DesiredRollDegrees;
+	OutInjection.bValid = true;
 }
 
 void UAutopilotComponent::UpdateHoverThrustEstimate(float DeltaSeconds)
 {
-	if (!bUseHoverThrustEstimator || !FeedForwardCalc || !FlightController)
+	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
+	if (!EffectiveProfile->bEnableHoverThrustEstimator || !FlightController)
 	{
-		// 未启用或缺失依赖：确保 FeedForward 回退到配置值（基准置负即触发回退分支）
-		if (FeedForwardCalc)
-		{
-			FeedForwardCalc->SetHoverThrustBaseline(-1.0f);
-		}
+		FeedForwardCalculator->SetHoverThrustBaseline(-1.0f);
 		return;
 	}
-
-	// 输入1：垂直加速度（世界系 cm/s² → m/s²）。+Z 向上，悬停≈0，与 EKF 模型自洽。
-	const float AccZCmPerSecSq = FlightController->GetEstimatedState().State.AccelerationWorldCmPerSecSq.Z;
-	const float AccZMpsSq = AccZCmPerSecSq * 0.01f; // cm/s² → m/s²
-
-	// 输入2：当前施加的归一化总推力（上一帧控制循环输出，Targets.Attitude.CollectiveThrust）。
-	// 首帧（控制器尚未产出）CollectiveThrust=0，EKF 会以悬停模型预测 acc=-g 并被门限拒绝，
-	// 不影响估计稳定性；待控制器产出有效推力后即正常融合。
-	const float ThrustNormalized = FlightController->GetControlOutput().Targets.Attitude.CollectiveThrust;
-
-	HoverThrustEstimator.Update(DeltaSeconds, AccZMpsSq, ThrustNormalized);
-
-	// 把估计值注入推力前馈基准（>0 生效，替代 Params.HoverCollective 死常数）
-	if (HoverThrustEstimator.IsInitialized())
-	{
-		FeedForwardCalc->SetHoverThrustBaseline(HoverThrustEstimator.GetHoverThrust());
-	}
+	const float AccelerationMpsSq = FlightController->GetEstimatedState()
+		.State.AccelerationWorldCmPerSecSq.Z * 0.01f;
+	const float CollectiveThrust = FlightController->GetControlOutput()
+		.Targets.Attitude.CollectiveThrust;
+	HoverThrustEstimator.Update(DeltaSeconds, AccelerationMpsSq, CollectiveThrust);
+	FeedForwardCalculator->SetHoverThrustBaseline(HoverThrustEstimator.GetHoverThrust());
 }

@@ -8,6 +8,18 @@
 
 #include "VectorFieldGuidance.generated.h"
 
+USTRUCT(BlueprintType)
+struct AIRCRAFTAUTOPILOT_API FVectorFieldGuidanceConfig
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	float CrossTrackGain = 0.01f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	float MaxCrossTrackCorrectionCm = 500.0f;
+};
+
 /**
  * 向量场制导（Vector Field Guidance）
  *
@@ -32,17 +44,12 @@ class AIRCRAFTAUTOPILOT_API UVectorFieldGuidance : public UPathFollowingStrategy
 
 public:
 	UVectorFieldGuidance();
+	void SetConfig(const FVectorFieldGuidanceConfig& InConfig) { Config = InConfig; }
 
 	// UPathFollowingStrategy
 	virtual bool Update(const FVector& CurrentPositionCm, const FVector& CurrentVelocityCmPerSec, float DeltaSeconds, FGuidanceCommand& OutCommand) override;
 	virtual EPathFollowingStrategy GetStrategyType() const override { return EPathFollowingStrategy::VectorField; }
 
 protected:
-	/** 横向误差反馈增益（1/cm）。典型 0.005~0.02 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing|VectorField", meta = (ClampMin = "0.0"))
-	float CrossTrackGain = 0.01f;
-
-	/** 横向误差硬限幅（cm），超过此值不继续增大回正项，防过冲 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing|VectorField", meta = (ClampMin = "0.0"))
-	float MaxCrossTrackCorrectionCm = 500.0f;
+	FVectorFieldGuidanceConfig Config;
 };

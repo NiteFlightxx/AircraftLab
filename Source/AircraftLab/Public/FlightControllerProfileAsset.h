@@ -137,10 +137,7 @@ class AIRCRAFTLAB_API UFlightControllerProfileAsset : public UPrimaryDataAsset
 
 public:
 	UFlightControllerProfileAsset();
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile", meta = (ClampMin = "1"))
-	int32 ConfigVersion = 1;
-
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile")
 	FDroneFlightControllerConfig Controller;
 

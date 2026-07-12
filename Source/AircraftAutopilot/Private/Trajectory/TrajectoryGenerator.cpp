@@ -87,6 +87,10 @@ bool UTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 		bIsValid = false;
 		return false;
 	}
+	bUsesNativeTimeParameterization = Segments.Num() == 1
+		&& Segments[0] && Segments[0]->UsesNativeTimeParameterization();
+	TotalDurationSeconds = bUsesNativeTimeParameterization
+		? Segments[0]->GetTotalDurationSeconds() : 0.0f;
 
 	// 缓存速度剖面参数
 	CruiseSpeedCmPerSec = FMath::Max(Request.CruiseSpeedCmPerSec, UE_SMALL_NUMBER);
@@ -111,6 +115,7 @@ bool UTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 		0.0f);
 
 	CurrentArcLength = 0.0f;
+	CurrentTimeSeconds = 0.0f;
 	CurrentSpeedCmPerSec = InitialSpeedCmPerSec;
 	bIsValid = true;
 
@@ -128,6 +133,9 @@ void UTrajectoryGenerator::Clear()
 	TotalArcLengthCm = 0.0f;
 	CurrentArcLength = 0.0f;
 	CurrentSpeedCmPerSec = 0.0f;
+	CurrentTimeSeconds = 0.0f;
+	TotalDurationSeconds = 0.0f;
+	bUsesNativeTimeParameterization = false;
 	CurrentSetpoint.Reset();
 	bIsValid = false;
 }
@@ -135,6 +143,10 @@ void UTrajectoryGenerator::Clear()
 bool UTrajectoryGenerator::IsComplete() const
 {
 	if (!bIsValid) return true;
+	if (bUsesNativeTimeParameterization)
+	{
+		return CurrentTimeSeconds + UE_SMALL_NUMBER >= TotalDurationSeconds;
+	}
 	// 无限循环段（如 Orbit 持续盘旋）永不自动完成
 	if (IsCurrentSegmentInfiniteLoop()) return false;
 	return CurrentArcLength + UE_SMALL_NUMBER >= TotalArcLengthCm
@@ -157,6 +169,10 @@ bool UTrajectoryGenerator::IsCurrentSegmentInfiniteLoop() const
 float UTrajectoryGenerator::GetProgress() const
 {
 	if (!bIsValid || TotalArcLengthCm <= UE_SMALL_NUMBER) return 0.0f;
+	if (bUsesNativeTimeParameterization && TotalDurationSeconds > UE_SMALL_NUMBER)
+	{
+		return FMath::Clamp(CurrentTimeSeconds / TotalDurationSeconds, 0.0f, 1.0f);
+	}
 	return FMath::Clamp(CurrentArcLength / TotalArcLengthCm, 0.0f, 1.0f);
 }
 
@@ -181,6 +197,17 @@ bool UTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVector& Cur
 	{
 		OutSetpoint = CurrentSetpoint;
 		return true;
+	}
+
+	if (bUsesNativeTimeParameterization && Segments.Num() == 1 && Segments[0])
+	{
+		CurrentTimeSeconds = FMath::Clamp(
+			CurrentTimeSeconds + DeltaSeconds, 0.0f, TotalDurationSeconds);
+		OutSetpoint = Segments[0]->SampleAtTime(CurrentTimeSeconds);
+		CurrentSetpoint = OutSetpoint;
+		CurrentArcLength = Segments[0]->GetArcLengthAtTime(CurrentTimeSeconds);
+		CurrentSpeedCmPerSec = OutSetpoint.VelocityCmPerSec.Size();
+		return OutSetpoint.bValid;
 	}
 
 	const bool bInfinite = IsCurrentSegmentInfiniteLoop();
@@ -345,7 +372,7 @@ void UTrajectoryGenerator::RecomputeArcLengths()
 // 冷启动死锁修复：
 //   纯公式 v=sqrt(2·a·s) 在 s=0 处 v=0 → 游标推进 0 → 设定点不动 →
 //   MotionProfile 位置闭合误差为 0 → 输出速度 0 → 无人机不动 → 投影游标不增长 →
-//   死锁，仅靠物理扰动缓慢打破。表现为"下发了 CommandMoveTo 却纹丝不动"。
+//   deadlock in which only an external disturbance starts the trajectory.
 //   修复：加速段给一个起步保底速度 MinStartSpeed，使游标自推进、设定点前移，
 //   位置环产生误差拉动无人机前进。保底速度由加速度推导（sqrt(2·a·dt_planning)），
 //   dt_planning 取游戏线程典型帧时（0.02s=50Hz），保证起步即有可观测位移。
@@ -468,10 +495,17 @@ float UTrajectoryGenerator::ProjectToArcLength(const FVector& WorldPosition) con
 		if (bInfinite && (SegStart + SegLen < SearchWindowMin || SegStart > SearchWindowMax))
 			continue;
 
-		const float Step = FMath::Max(SegLen / 8.0f, 1.0f); // 每段 8 个采样点
+		const int32 ProjectionSamples = Seg->UsesNativeTimeParameterization() ? 128 : 8;
+		const float Step = FMath::Max(SegLen / ProjectionSamples, 1.0f);
 		for (float LocalS = 0.0f; LocalS <= SegLen; LocalS += Step)
 		{
-			const float GlobalS = SegStart + LocalS;
+			float GlobalS = SegStart + LocalS;
+			if (bInfinite && SegLen > UE_SMALL_NUMBER)
+			{
+				const float NearestLap = FMath::Max(
+					FMath::RoundToFloat((CurrentArcLength - GlobalS) / SegLen), 0.0f);
+				GlobalS += NearestLap * SegLen;
+			}
 			// 无限段：跳过窗口外的采样点
 			if (bInfinite && (GlobalS < SearchWindowMin || GlobalS > SearchWindowMax))
 				continue;

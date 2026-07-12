@@ -20,12 +20,14 @@ bool UPurePursuitGuidance::Update(const FVector& CurrentPositionCm, const FVecto
 
 	// 2) 自适应前瞻距离
 	const float Speed = CurrentVelocityCmPerSec.Size();
-	float LookAhead = LookAheadGain * Speed + MinLookAheadCm;
-	LookAhead = FMath::Clamp(LookAhead, MinLookAheadCm, MaxLookAheadCm);
+	float LookAhead = Config.LookAheadGain * Speed + Config.MinLookAheadCm;
+	LookAhead = FMath::Clamp(LookAhead, Config.MinLookAheadCm, Config.MaxLookAheadCm);
 
 	// 3) 前瞻点（弧长 S0 + L_la；越界则取终点）
 	const float TotalArc = Trajectory->GetTotalArcLength();
-	const float LookAheadArc = FMath::Min(S0 + LookAhead, TotalArc);
+	const float LookAheadArc = Trajectory->IsLoopingTrajectory()
+		? S0 + LookAhead
+		: FMath::Min(S0 + LookAhead, TotalArc);
 	const FTrajectoryPoint LA = Trajectory->SampleAtGlobalArc(LookAheadArc, Speed);
 	if (!LA.bValid)
 	{
@@ -47,7 +49,7 @@ bool UPurePursuitGuidance::Update(const FVector& CurrentPositionCm, const FVecto
 			OutCommand.bValid = false;
 			return false;
 		}
-		ToLA = Tangent.GetSafeNormal() * MinLookAheadCm;
+		ToLA = Tangent.GetSafeNormal() * Config.MinLookAheadCm;
 	}
 	else
 	{
@@ -56,8 +58,7 @@ bool UPurePursuitGuidance::Update(const FVector& CurrentPositionCm, const FVecto
 
 	// 速度幅值沿用轨迹梯形剖面（保留提前减速），高度跟随名义
 	const FTrajectoryPoint Nominal = Trajectory->GetCurrentSetpoint();
-	const float SpeedMag = Nominal.bValid ? Nominal.VelocityCmPerSec.Size() : CruiseSpeedCmPerSec;
-	const float DesiredSpeed = FMath::Min(SpeedMag, CruiseSpeedCmPerSec);
+	const float DesiredSpeed = Nominal.bValid ? Nominal.VelocityCmPerSec.Size() : 0.0f;
 
 	FVector DesiredVel = ToLA * DesiredSpeed;
 	// 垂直分量跟随名义（保持爬升/下降剖面）

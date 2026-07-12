@@ -57,7 +57,12 @@ public:
 	 * @param CurrentYawDegrees  当前真实航向（°）
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|MotionProfile")
-	void Initialize(const FVector& CurrentPositionCm, float CurrentYawDegrees);
+	void Initialize(
+		const FVector& CurrentPositionCm,
+		const FVector& CurrentVelocityCmPerSec,
+		const FVector& CurrentAccelerationCmPerSecSq,
+		float CurrentYawDegrees,
+		float CurrentYawRateDegreesPerSec);
 
 	/** 复位到未初始化状态（下一帧需重新 Initialize） */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|MotionProfile")

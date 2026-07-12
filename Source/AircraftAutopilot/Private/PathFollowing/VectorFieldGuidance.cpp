@@ -29,7 +29,9 @@ bool UVectorFieldGuidance::Update(const FVector& CurrentPositionCm, const FVecto
 	if (Tangent.IsNearlyZero())
 	{
 		// 速度为零时用位置差近似切向
-		const float S1 = FMath::Min(S0 + 10.0f, Trajectory->GetTotalArcLength());
+		const float S1 = Trajectory->IsLoopingTrajectory()
+			? S0 + 10.0f
+			: FMath::Min(S0 + 10.0f, Trajectory->GetTotalArcLength());
 		const FTrajectoryPoint Ahead = Trajectory->SampleAtGlobalArc(S1, 0.0f);
 		Tangent = Ahead.PositionCm - Closest.PositionCm;
 		Tangent.Z = 0.0f;
@@ -47,10 +49,11 @@ bool UVectorFieldGuidance::Update(const FVector& CurrentPositionCm, const FVecto
 	FVector ToCurrent = CurrentPositionCm - Closest.PositionCm;
 	ToCurrent.Z = 0.0f;
 	const float CrossTrack = FVector::DotProduct(ToCurrent, Normal);
-	const float ClampedCTE = FMath::Clamp(CrossTrack, -MaxCrossTrackCorrectionCm, MaxCrossTrackCorrectionCm);
+	const float ClampedCTE = FMath::Clamp(
+		CrossTrack, -Config.MaxCrossTrackCorrectionCm, Config.MaxCrossTrackCorrectionCm);
 
 	// 3) 构造期望速度场方向 = 切向 − K·CTE·法向（CTE>0 时往法向负侧偏 = 回路径）
-	FVector FieldDir = Tangent - Normal * (CrossTrackGain * ClampedCTE);
+	FVector FieldDir = Tangent - Normal * (Config.CrossTrackGain * ClampedCTE);
 	FieldDir.Z = 0.0f;
 	if (FieldDir.IsNearlyZero())
 	{
@@ -60,8 +63,7 @@ bool UVectorFieldGuidance::Update(const FVector& CurrentPositionCm, const FVecto
 
 	// 4) 速度幅值：沿用轨迹梯形剖面（保留提前减速），垂直分量跟随名义
 	const FTrajectoryPoint Nominal = Trajectory->GetCurrentSetpoint();
-	const float SpeedMag = Nominal.bValid ? Nominal.VelocityCmPerSec.Size() : CruiseSpeedCmPerSec;
-	const float DesiredSpeed = FMath::Min(SpeedMag, CruiseSpeedCmPerSec);
+	const float DesiredSpeed = Nominal.bValid ? Nominal.VelocityCmPerSec.Size() : 0.0f;
 
 	FVector DesiredVel = FieldDir * DesiredSpeed;
 	DesiredVel.Z = Nominal.bValid ? Nominal.VelocityCmPerSec.Z : 0.0f;

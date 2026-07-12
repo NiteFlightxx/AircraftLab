@@ -58,10 +58,6 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|PathFollowing")
 	TObjectPtr<UTrajectoryGenerator> Trajectory = nullptr;
 
-	/** 名义巡航速度（cm/s）—— 制导律输出的速度幅值基准 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
-	float CruiseSpeedCmPerSec = 800.0f;
-
 	/** Direct 策略：直接用轨迹当前设定值作为制导指令 */
 	bool UpdateDirect(const FVector& CurrentPositionCm, FGuidanceCommand& OutCommand) const;
 };

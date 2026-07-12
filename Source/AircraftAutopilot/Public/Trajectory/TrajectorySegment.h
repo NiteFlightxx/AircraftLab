@@ -26,7 +26,7 @@
  *
  * 扩展性：
  *   - 新增轨迹类型只需继承本类并实现 3 个纯虚函数（Build / Sample / GetFrenet）。
- *   - 未来 MinimumSnap / 样条 / Dubins / Reeds-Shepp 均按此接口扩展。
+ *   - Additional trajectory geometry can implement the same interface.
  */
 UCLASS(Abstract, BlueprintType, Blueprintable, EditInlineNew, DefaultToInstanced)
 class AIRCRAFTAUTOPILOT_API UTrajectorySegment : public UObject
@@ -42,7 +42,7 @@ public:
 
 	/**
 	 * 根据请求构建本段轨迹的几何参数。
-	 * @param Request    Behavior 下发的轨迹请求
+	 * @param Request    Movement executor trajectory request
 	 * @param OutError    构建失败时的诊断信息
 	 * @return 是否构建成功（几何参数合法且可用）
 	 */
@@ -93,6 +93,15 @@ public:
 	 * 速度用恒定巡航速。由 Orbit 等持续段覆写为 true。
 	 */
 	virtual bool IsInfiniteLoop() const { return false; }
+
+	/** Native time trajectories bypass TrajectoryGenerator's trapezoidal re-timing. */
+	virtual bool UsesNativeTimeParameterization() const { return false; }
+
+	/** Sample a native time trajectory. Non-time-parameterized segments return invalid. */
+	virtual FTrajectoryPoint SampleAtTime(float TimeSeconds) const { return FTrajectoryPoint(); }
+
+	/** Arc length reached at native trajectory time. */
+	virtual float GetArcLengthAtTime(float TimeSeconds) const { return 0.0f; }
 
 	// -----------------------------------------------------------------------
 	// Look Ahead —— 路径跟踪的前瞻采样

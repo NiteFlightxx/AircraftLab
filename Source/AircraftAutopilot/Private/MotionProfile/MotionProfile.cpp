@@ -6,24 +6,33 @@ UMotionProfile::UMotionProfile()
 {
 }
 
-void UMotionProfile::Initialize(const FVector& CurrentPositionCm, float CurrentYawDegrees)
+void UMotionProfile::Initialize(
+	const FVector& CurrentPositionCm,
+	const FVector& CurrentVelocityCmPerSec,
+	const FVector& CurrentAccelerationCmPerSecSq,
+	float CurrentYawDegrees,
+	float CurrentYawRateDegreesPerSec)
 {
 	ProfiledPosition = CurrentPositionCm;
 	ProfiledYaw = CurrentYawDegrees;
-	PrevProfiledVelocity = FVector::ZeroVector;
-	ProfiledAcceleration = FVector::ZeroVector;
+	PrevProfiledVelocity = CurrentVelocityCmPerSec;
+	ProfiledAcceleration = CurrentAccelerationCmPerSecSq;
 
-	VelocitySlew.Reset(FVector::ZeroVector);
-	YawRateSlew.Reset(0.0f);
+	VelocitySlew.Reset(CurrentVelocityCmPerSec);
+	VelocitySlew.X.bInitialized = true;
+	VelocitySlew.Y.bInitialized = true;
+	VelocitySlew.Z.bInitialized = true;
+	YawRateSlew.Reset(CurrentYawRateDegreesPerSec);
+	YawRateSlew.bInitialized = true;
 
 	// 首次 Update 时 VelocitySlew/YawRateSlew 会直接吸附到目标速度，避免从 0 拉起
 	bInitialized = true;
 
 	CurrentSetpoint.PositionCm = CurrentPositionCm;
-	CurrentSetpoint.VelocityCmPerSec = FVector::ZeroVector;
-	CurrentSetpoint.AccelerationCmPerSecSq = FVector::ZeroVector;
+	CurrentSetpoint.VelocityCmPerSec = CurrentVelocityCmPerSec;
+	CurrentSetpoint.AccelerationCmPerSecSq = CurrentAccelerationCmPerSecSq;
 	CurrentSetpoint.YawDegrees = CurrentYawDegrees;
-	CurrentSetpoint.YawRateDegreesPerSec = 0.0f;
+	CurrentSetpoint.YawRateDegreesPerSec = CurrentYawRateDegreesPerSec;
 	CurrentSetpoint.bValid = true;
 }
 
@@ -109,10 +118,13 @@ FProfiledSetpoint UMotionProfile::Update(const FTrajectoryPoint& Nominal, float 
 	//          （直线段=0，曲线段=几何角速度），经 Slew 做 Jerk 限幅后输出。
 	//          姿态环用 Yaw PID 闭合 YawSetpoint→currentYaw，前馈只用真实几何角速度。
 	// -----------------------------------------------------------------------
-	const float TargetYawRate = Nominal.bValid ? Nominal.YawRateDegreesPerSec : 0.0f;
+	const float TargetYawRate = Nominal.bValid
+		? FMath::Clamp(Nominal.YawRateDegreesPerSec,
+			-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec)
+		: 0.0f;
 	const float ProfiledYawRate = YawRateSlew.Update(
 		TargetYawRate, DeltaSeconds,
-		Limits.MaxYawRateDegPerSec, Limits.MaxYawJerkDegPerSecCubed);
+		Limits.MaxYawAccelDegPerSecSq, Limits.MaxYawJerkDegPerSecCubed);
 	// 航向设定值透传（不积分），由姿态环 PID 闭合
 	ProfiledYaw = Nominal.bValid ? FMath::UnwindDegrees(Nominal.YawDegrees) : 0.0f;
 

@@ -44,10 +44,10 @@ enum class ETrajectoryType : uint8
 	Circle UMETA(DisplayName = "Circle"),
 	/** 环绕段（绕中心点持续盘旋，不自动终止） */
 	Orbit UMETA(DisplayName = "Orbit"),
-	/** 沿路径飞行：将 Nav3D 给出的折线点串平滑为可飞轨迹 */
+	/** Follow collision-free world-space points supplied by an external navigator. */
 	FollowPath UMETA(DisplayName = "Follow Path"),
-	/** Minimum Snap 轨迹（接口预留，第三部分之后实现） */
-	MinimumSnap UMETA(DisplayName = "Minimum Snap")
+	/** Seventh-order, time-parameterized minimum-snap trajectory through path points. */
+	MinimumSnap UMETA(DisplayName = "Minimum Snap"),
 };
 
 /** Physically meaningful limits used to time-parameterize a finite path. */
@@ -69,8 +69,9 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryMotionConstraints
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
 	float TargetSpeedCmPerSec = 0.0f;
 
+	/** Zero uses the profile limit. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float AcceptanceRadiusCm = 50.0f;
+	float MaxJerkCmPerSecCubed = 0.0f;
 };
 
 /**
@@ -194,17 +195,16 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryPoint
 };
 
 /**
- * 轨迹请求（Behavior Layer → Trajectory Generator 的输入）
+ * Trajectory Generator input built by the movement-intent executor.
  *
- * Behavior 不输出控制量，只输出 FTrajectoryRequest 描述"想要怎样的轨迹"。
- * Trajectory Generator 据此构建具体的轨迹段并产出设定值序列。
+ * The request describes geometry and timing without containing controller output.
  *
  * 字段语义按 ETrajectoryType 取用：
  *   - Waypoint/Line：用 StartPositionCm → TargetPositionCm
  *   - Bezier：PathPointsCm 为控制点（含起止），BezierDegree 决定阶数
  *   - Circle：OrbitCenterCm + OrbitRadiusCm + 起止角
  *   - Orbit：OrbitCenterCm + OrbitRadiusCm + OrbitAngularRateDegPerSec
- *   - FollowPath：PathPointsCm 为 Nav3D 折线点串（含起止）
+ *   - FollowPath: PathPointsCm contains external world-space path points.
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTAUTOPILOT_API FTrajectoryRequest
@@ -255,6 +255,10 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryRequest
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
 	float PlanningDecelerationCmPerSecSq = 400.0f;
 
+	/** Native trajectory jerk limit. Zero disables jerk-based time scaling. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
+	float PlanningJerkCmPerSecCubed = 0.0f;
+
 	/** 到达容差（cm）—— 距终点小于此值视为完成 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
 	float AcceptanceRadiusCm = 50.0f;
@@ -303,6 +307,7 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryRequest
 			&& CruiseSpeedCmPerSec == Other.CruiseSpeedCmPerSec
 			&& PlanningAccelerationCmPerSecSq == Other.PlanningAccelerationCmPerSecSq
 			&& PlanningDecelerationCmPerSecSq == Other.PlanningDecelerationCmPerSecSq
+			&& PlanningJerkCmPerSecCubed == Other.PlanningJerkCmPerSecCubed
 			&& TargetVelocityCmPerSec.Equals(Other.TargetVelocityCmPerSec, 0.1f)
 			&& AcceptanceRadiusCm == Other.AcceptanceRadiusCm
 			&& PathPointsCm == Other.PathPointsCm
