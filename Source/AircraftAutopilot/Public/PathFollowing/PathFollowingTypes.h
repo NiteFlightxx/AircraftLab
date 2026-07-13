@@ -67,9 +67,9 @@ UENUM(BlueprintType, meta = (ScriptName = "AutopilotGuidanceStrategy"))
 enum class EPathFollowingStrategy : uint8
 {
 	/** 纯追踪：朝路径上的前瞻点飞 */
-	PurePursuit UMETA(DisplayName = "Pure Pursuit"),
+	PurePursuit UMETA(DisplayName = "纯追踪"),
 	/** 向量场：用切向 + 横向误差反馈构造期望速度场 */
-	VectorField UMETA(DisplayName = "Vector Field"),
+	VectorField UMETA(DisplayName = "向量场"),
 	/** 直接跟踪：用轨迹名义设定值（无额外制导修正） */
-	Direct UMETA(DisplayName = "Direct")
+	Direct UMETA(DisplayName = "直接跟踪")
 };

@@ -13,13 +13,13 @@ struct AIRCRAFTAUTOPILOT_API FPurePursuitGuidanceConfig
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0", DisplayName = "前瞻增益"))
 	float LookAheadGain = 0.5f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0", DisplayName = "最小前瞻距离（厘米）"))
 	float MinLookAheadCm = 100.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0", DisplayName = "最大前瞻距离（厘米）"))
 	float MaxLookAheadCm = 1000.0f;
 };
 

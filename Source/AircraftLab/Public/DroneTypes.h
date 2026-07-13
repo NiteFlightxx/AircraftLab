@@ -310,7 +310,7 @@ struct AIRCRAFTLAB_API FDroneFirstOrderFilterConfig
 	GENERATED_BODY()
 
 	/** 截止频率（Hz），0 表示不滤波 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Filter", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Filter", meta = (ClampMin = "0.0", DisplayName = "截止频率（Hz）"))
 	float CutoffFrequencyHz = 0.0f;
 };
 
@@ -416,35 +416,35 @@ struct AIRCRAFTLAB_API FDronePidGains
 	}
 
 	/** 比例系数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "比例系数 Kp"))
 	float Kp = 0.0f;
 
 	/** 积分系数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "积分系数 Ki"))
 	float Ki = 0.0f;
 
 	/** 微分系数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "微分系数 Kd"))
 	float Kd = 0.0f;
 
 	/** 前馈系数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "前馈系数 Kff"))
 	float Kff = 0.0f;
 
 	/** 积分限幅（绝对值），0 表示无限幅 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0", DisplayName = "积分限幅"))
 	float IntegralLimit = 0.0f;
 
 	/** 输出限幅（绝对值），0 表示无限幅 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0", DisplayName = "输出限幅"))
 	float OutputLimit = 0.0f;
 
 	/** 微分项低通滤波截止频率（Hz），0 表示不滤波 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0", DisplayName = "微分截止频率（Hz）"))
 	float DerivativeCutoffHz = 0.0f;
 
 	/** 输出饱和时是否冻结积分累加（防止积分饱和） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "饱和时冻结积分"))
 	bool bFreezeIntegralWhenSaturated = true;
 };
 
@@ -637,15 +637,15 @@ struct AIRCRAFTLAB_API FDroneEulerPidGains
 	GENERATED_BODY()
 
 	/** 滚转通道 PID */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "滚转通道"))
 	FDronePidGains Roll;
 
 	/** 俯仰通道 PID */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "俯仰通道"))
 	FDronePidGains Pitch;
 
 	/** 偏航通道 PID */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "偏航通道"))
 	FDronePidGains Yaw;
 };
 
@@ -658,15 +658,15 @@ struct AIRCRAFTLAB_API FDroneCartesianPidGains
 	GENERATED_BODY()
 
 	/** X轴（通常为北/前）PID */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "X 轴"))
 	FDronePidGains X;
 
 	/** Y轴（通常为东/右）PID */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "Y 轴"))
 	FDronePidGains Y;
 
 	/** Z轴（高度）PID */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "Z 轴"))
 	FDronePidGains Z;
 };
 
@@ -737,51 +737,51 @@ struct AIRCRAFTLAB_API FDroneControlLimits
 	GENERATED_BODY()
 
 	/** 最大倾斜角度（度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "最大倾斜角（度）"))
 	float MaxTiltAngleDegrees = 35.0f;
 
 	/** 最大偏航角速率（度/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "最大偏航角速率（度/秒）"))
 	float MaxYawRateDegreesPerSec = 180.0f;
 
 	/** 最大滚转角速率（度/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "最大滚转角速率（度/秒）"))
 	float MaxRollRateDegreesPerSec = 360.0f;
 
 	/** 最大俯仰角速率（度/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "最大俯仰角速率（度/秒）"))
 	float MaxPitchRateDegreesPerSec = 360.0f;
 
 	/** 最大上升速率（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "最大爬升率（厘米/秒）"))
 	float MaxClimbRateCmPerSec = 400.0f;
 
 	/** 最大下降速率（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "最大下降率（厘米/秒）"))
 	float MaxDescentRateCmPerSec = 250.0f;
 
 	/** 最大水平速度（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "最大水平速度（厘米/秒）"))
 	float MaxHorizontalSpeedCmPerSec = 1200.0f;
 
 	/** 最大水平加速度（厘米/秒²） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "最大水平加速度（厘米/秒²）"))
 	float MaxHorizontalAccelerationCmPerSecSq = 1200.0f;
 
 	/** 最大垂直加速度（厘米/秒²） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "最大垂直加速度（厘米/秒²）"))
 	float MaxVerticalAccelerationCmPerSecSq = 1000.0f;
 
 	/** 最小总距指令（归一化） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0", DisplayName = "最小总距指令"))
 	float MinCollectiveCommand = 0.0f;
 
 	/** 悬停总距指令（归一化，无风情况维持高度的油门） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0", DisplayName = "悬停总距指令"))
 	float HoverCollectiveCommand = 0.5f;
 
 	/** 最大总距指令（归一化） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0", DisplayName = "最大总距指令"))
 	float MaxCollectiveCommand = 1.0f;
 };
 
@@ -794,15 +794,15 @@ struct AIRCRAFTLAB_API FDroneAttitudeControllerConfig
 	GENERATED_BODY()
 
 	/** 角度外环 PID 参数（Roll/Pitch/Yaw） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "角度环 PID 参数"))
 	FDroneEulerPidGains AngleGains;
 
 	/** 角速率内环 PID 参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "角速率环 PID 参数"))
 	FDroneEulerPidGains RateGains;
 
 	/** 角速率反馈的一阶低通滤波配置 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "角速率滤波配置"))
 	FDroneFirstOrderFilterConfig RateFilter;
 
 	// -----------------------------------------------------------------------
@@ -810,18 +810,18 @@ struct AIRCRAFTLAB_API FDroneAttitudeControllerConfig
 	// -----------------------------------------------------------------------
 
 	/** 是否启用 Roll/Pitch 设定值 2 阶参考模型平滑（关闭则保留原始直通行为） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "启用姿态参考模型"))
 	bool bEnableAttitudeRefModel = true;
 
 	/** 参考模型自然频率 ω（rad/s）。临界阻尼 ζ=1，时间常数 τ=1/ω。
 	 *  ω 越大跟踪越快但越接近阶跃（前馈越激进）；越小越平滑。
 	 *  默认 6.0（τ≈0.17s），与 AngleGains Kp 量级匹配。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.5", ClampMax = "30.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.5", ClampMax = "30.0", DisplayName = "参考模型自然频率（rad/s）"))
 	float RefModelNaturalFrequency = 6.0f;
 
 	/** 角速度前馈限幅（°/s）。防止参考模型在设定值大跳变时输出过大的 rate_ff。
 	 *  对标 PX4 MC_REF_FF_MAX（默认 100°/s）。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", DisplayName = "角速度前馈限幅（度/秒）"))
 	float RefModelRateFFLimitDegPerSec = 100.0f;
 
 	// -----------------------------------------------------------------------
@@ -831,13 +831,13 @@ struct AIRCRAFTLAB_API FDroneAttitudeControllerConfig
 	/** 是否启用四元数姿态误差（取代欧拉角线性误差）。
 	 *  开启后用 Q_err = Q_cur⁻¹·Q_des 提取机体角速度设定值，消除欧拉角耦合。
 	 *  关闭则保留第 3 批的欧拉角+参考模型路径（向后兼容）。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "启用四元数姿态"))
 	bool bEnableQuaternionAttitude = true;
 
 	/** 偏航权重 [0,1]。推力方向（Roll/Pitch）优先对齐，Yaw 用此权重缩放。
 	 *  默认 0.4（PX4 默认）：偏航响应较姿态慢，优先保推力方向。
 	 *  1.0 = 全权偏航（与欧拉角行为一致），0 = 完全忽略偏航误差。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0", DisplayName = "偏航权重"))
 	float YawWeight = 0.4f;
 };
 
@@ -850,20 +850,20 @@ struct AIRCRAFTLAB_API FDronePositionControllerConfig
 	GENERATED_BODY()
 
 	/** 位置外环 PID（产生期望速度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "位置环 PID 参数"))
 	FDroneCartesianPidGains PositionGains;
 
 	/** 速度内环 PID（产生期望倾斜角度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "速度环 PID 参数"))
 	FDroneCartesianPidGains VelocityGains;
 
 	/** 使用 Chaos 当前线性阻尼预测维持目标速度所需的水平加速度。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|VelocityFeedForward")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|VelocityFeedForward", meta = (DisplayName = "启用线性阻尼前馈"))
 	bool bEnableLinearDampingFeedForward = true;
 
 	/** 线性阻尼模型前馈比例；1 表示完整补偿运行时实际阻尼。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|VelocityFeedForward",
-		meta = (ClampMin = "0.0"))
+		meta = (ClampMin = "0.0", DisplayName = "线性阻尼前馈比例"))
 	float LinearDampingFeedForwardScale = 1.0f;
 };
 
@@ -876,11 +876,11 @@ struct AIRCRAFTLAB_API FDroneAltitudeControllerConfig
 	GENERATED_BODY()
 
 	/** 高度外环 PID（产生期望垂直速度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "高度环 PID 参数"))
 	FDronePidGains AltitudeGains = { 2.0f, 0.0f, 0.0f, 0.0f, 500.0f };
 
 	/** 垂直速度内环 PID（产生总距指令） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "垂直速度环 PID 参数"))
 	FDronePidGains VerticalVelocityGains = { 3.0f, 0.5f, 0.1f, 400.0f, 1000.0f };
 };
 
@@ -1555,7 +1555,7 @@ struct AIRCRAFTLAB_API FDroneControlAllocationConfig
 	GENERATED_BODY()
 
 	/** 阻尼最小二乘伪逆的阻尼系数，越大越稳定但控制跟踪越软 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (ClampMin = "0.0", DisplayName = "阻尼伪逆系数"))
 	float DampedPseudoInverseLambda = 0.05f;
 
 	// -----------------------------------------------------------------------
@@ -1565,18 +1565,18 @@ struct AIRCRAFTLAB_API FDroneControlAllocationConfig
 	/** 是否启用总距倾斜补偿（cos_tilt compensation）。
 	 *  开启后机体倾斜时总距自动除以 cos(tilt) 以维持垂直升力，
 	 *  消除"倾斜掉高度"。关闭则保留原始行为。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (DisplayName = "启用倾斜补偿"))
 	bool bEnableTiltCompensation = true;
 
 	/** cos(tilt) 下限，防止接近 90° 倾角时除零 / 推力爆炸 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (ClampMin = "0.05", ClampMax = "1.0", DisplayName = "最小 cos(倾斜角)"))
 	float MinCosTilt = 0.1f;
 
 	/** 法矩阵行权重（垂直优先分配的加权伪逆近似，对标 PX4 sequential desaturation）。
 	 *  行0=总距、行1=滚转、行2=俯仰、行3=偏航。
 	 *  权重大者优先保留，权重小者饱和时先被牺牲。
-	 *  默认 roll/pitch 最高、thrust 次之、yaw 最低 → 饱和时先牺牲偏航保姿态/升力。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator")
+	 *  默认 roll/pitch 最高、thrust 次之、yaw 最低 -> 饱和时先牺牲偏航保姿态/升力。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Actuator", meta = (DisplayName = "轴权重（总距/滚转/俯仰/偏航）"))
 	FVector4 AxisWeights = FVector4(0.7f, 1.0f, 1.0f, 0.4f); // (Thrust, Roll, Pitch, Yaw)
 };
 
@@ -1647,23 +1647,23 @@ struct AIRCRAFTLAB_API FDroneFlightControllerConfig
 	GENERATED_BODY()
 
 	/** 控制限幅 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "运动限制"))
 	FDroneControlLimits Limits;
 
 	/** 姿态控制器参数（角度环+角速率环） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "姿态控制器"))
 	FDroneAttitudeControllerConfig Attitude;
 
 	/** 位置控制器参数（位置环+速度环） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "位置控制器"))
 	FDronePositionControllerConfig Position;
 
 	/** 高度控制器参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "高度控制器"))
 	FDroneAltitudeControllerConfig Altitude;
 
 	/** 控制分配器参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "控制分配器"))
 	FDroneControlAllocationConfig Allocator;
 };
 

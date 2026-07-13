@@ -13,10 +13,10 @@ struct AIRCRAFTAUTOPILOT_API FVectorFieldGuidanceConfig
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0", DisplayName = "横向误差增益"))
 	float CrossTrackGain = 0.01f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|PathFollowing", meta = (ClampMin = "0.0", DisplayName = "最大横向修正（厘米）"))
 	float MaxCrossTrackCorrectionCm = 500.0f;
 };
 

@@ -22,15 +22,15 @@ struct AIRCRAFTAUTOPILOT_API FFeedForwardParams
 
 	/** 无人机质量（g）。诊断与未来模型基前馈用 */
 	/** 速度前馈增益（注入位置环 Kff 通道） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0", DisplayName = "速度前馈增益"))
 	float VelocityFFGain = 1.0f;
 
 	/** 加速度前馈增益（注入速度环 Kff 通道） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0", DisplayName = "加速度前馈增益"))
 	float AccelFFGain = 1.0f;
 
 	/** 偏航角速度前馈增益（注入姿态 Yaw 通道） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0", DisplayName = "偏航角速度前馈增益"))
 	float YawRateFFGain = 1.0f;
 };
 

@@ -45,27 +45,27 @@ struct AIRCRAFTAUTOPILOT_API FHoverThrustEstimatorConfig
 
 	/** 初始悬停推力估计（归一化 0~1）。应接近真实悬停总距以加速收敛 */
 	/** 初始状态方差（thrust²）。越大首帧越激进，越小越保守 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.0", DisplayName = "初始状态方差"))
 	float InitialStateVariance = 0.01f;
 
 	/** 过程噪声方差（每秒，thrust²/s）。越大跟踪越快但越噪；PX4 默认 12.5e-6 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.0", DisplayName = "过程噪声方差"))
 	float ProcessNoiseVariance = 12.5e-6f;
 
 	/** 加速度测量噪声方差（m/s²）²。差分加速度噪声较大，PX4 默认 5.0 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.001"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.001", DisplayName = "加速度噪声方差"))
 	float AccelNoiseVariance = 5.0f;
 
 	/** 新息门限（σ 倍数）。innov 超过 gate·σ 则判为异常、不融合；PX4 默认 3.0 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "1.0", DisplayName = "新息门限（σ倍数）"))
 	float GateSize = 3.0f;
 
 	/** 悬停推力估计下限（防除零与极端值） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.0", ClampMax = "1.0", DisplayName = "悬停推力下限"))
 	float MinHoverThrust = 0.1f;
 
 	/** 悬停推力估计上限 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|HoverThrust", meta = (ClampMin = "0.0", ClampMax = "1.0", DisplayName = "悬停推力上限"))
 	float MaxHoverThrust = 0.9f;
 
 	/** 重力加速度（m/s²）。与 AircraftLab 的 981 cm/s² 自洽（÷100） */

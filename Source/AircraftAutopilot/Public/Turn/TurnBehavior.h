@@ -44,20 +44,20 @@ struct AIRCRAFTAUTOPILOT_API FTurnLimits
 	GENERATED_BODY()
 
 	/** 协调转弯启用速度阈值（cm/s）：|v| < 此值用偏航跟踪，≥ 此值用滚转协调转弯 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0", DisplayName = "协调转弯速度阈值（厘米/秒）"))
 	float CoordinatedTurnSpeedThresholdCmPerSec = 300.0f;
 
-	/** 最大滚转角（°）—— bank turn 上限 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0", ClampMax = "60.0"))
+	/** 最大滚转角（°）-- bank turn 上限 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0", ClampMax = "60.0", DisplayName = "最大滚转角（度）"))
 	float MaxBankAngleDegrees = 35.0f;
 
-	/** 最大横向加速度（cm/s²）—— 向心加速度上限，限制转弯烈度 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0"))
+	/** 最大横向加速度（cm/s²）-- 向心加速度上限，限制转弯烈度 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0", DisplayName = "最大横向加速度（厘米/秒²）"))
 	float MaxLateralAccelCmPerSecSq = 500.0f;
 
-	/** 最大偏航角速度（°/s）—— 低速偏航跟踪上限 */
+	/** 最大偏航角速度（°/s）-- 低速偏航跟踪上限 */
 	/** 偏航跟踪增益（低速：机体转向速度方向的比例增益，1/s） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0", DisplayName = "偏航跟踪增益"))
 	float YawFollowGain = 2.0f;
 };
 
