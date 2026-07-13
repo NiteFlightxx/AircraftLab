@@ -112,7 +112,7 @@ protected:
 	 * >0 时作为推力前馈的归一化基准，替代死常数。
 	 * 由 UAutopilotComponent::Tick 每帧在 Compute 之前刷新。
 	 */
-	float GravityCmPerSecSq = 981.0f;
+	float GravityCmPerSecSq = 980.0f;
 	float HoverThrustBaseline = 0.5f;
 
 	/** 计算推力前馈（含重力补偿 + 加速度耦合） */

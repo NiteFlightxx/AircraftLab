@@ -44,10 +44,10 @@ void UFlightControllerComponent::BeginPlay()
 	// 注意：这里不预先设置 Runtime.ActiveFlightMode，让 SetFlightMode 能正确执行
 	// SetFlightMode 内部有 early-return guard: if (Active == New) return;
 	// 如果在调用前就把 Active 设成 New，则初始化链（UpdateModeCapabilities + ResetControllerState）会被跳过
-	SetFlightMode(RuntimeConfig.Execution.InitialFlightMode);
+	SetFlightMode(EDroneFlightMode::PositionHold);
 
 	// 解锁状态：初始是否解锁取决于 Profile
-	Runtime.ArmState = RuntimeConfig.Execution.bStartArmed ? EDroneArmState::Armed : EDroneArmState::Disarmed;
+	Runtime.ArmState = EDroneArmState::Armed;
 	UpdateHomeState(true);
 	ResetControllerState();
 }

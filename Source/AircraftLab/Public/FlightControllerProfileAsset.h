@@ -31,13 +31,7 @@ struct AIRCRAFTLAB_API FFlightControllerExecutionConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "1.0"))
 	float ControlLoopRateHz = 250.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
-	EDroneFlightMode InitialFlightMode = EDroneFlightMode::Angle;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
-	bool bStartArmed = false;
-
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
 	bool bControllerEnabledByDefault = true;
 

@@ -49,8 +49,8 @@ FTurnCommand UTurnBehavior::Compute(const FVector& DesiredVelocityCmPerSec, cons
 		LateralAccel = FMath::Clamp(LateralAccel, -Limits.MaxLateralAccelCmPerSecSq, Limits.MaxLateralAccelCmPerSecSq);
 
 		// 滚转角 φ = atan2(a_c, g)
-		// 注：这里用 981 cm/s²，集成时由 FlightController 注入真实重力
-		const float G = 981.0f;
+		// 注：这里用 980 cm/s²，集成时由 FlightController 注入真实重力
+		const float G = 980.0f;
 		float BankAngle = FMath::RadiansToDegrees(FMath::Atan2(LateralAccel, G));
 		BankAngle = FMath::Clamp(BankAngle, -Limits.MaxBankAngleDegrees, Limits.MaxBankAngleDegrees);
 

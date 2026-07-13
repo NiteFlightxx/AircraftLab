@@ -127,17 +127,17 @@ Mixer → FDroneControlOutput → Rotor → AddForce/AddTorque → Chaos
 
 全栈统一，与 AircraftLab 的 `FDroneKinematicState` 约定一致，集成时零转换。
 
-| 物理量 | 单位 | 备注 |
-|---|---|---|
-| 位置 / 距离 | cm | UE 默认单位，FVector |
-| 速度 | cm/s | |
-| 加速度 | cm/s² | |
-| Jerk（加加速度） | cm/s³ | |
-| 角度 | ° | 欧拉角 |
-| 角速度 | °/s | |
+| 物理量 | 单位 | 备注                              |
+|---|---|---------------------------------|
+| 位置 / 距离 | cm | UE 默认单位，FVector                 |
+| 速度 | cm/s |                                 |
+| 加速度 | cm/s² |                                 |
+| Jerk（加加速度） | cm/s³ |                                 |
+| 角度 | ° | 欧拉角                             |
+| 角速度 | °/s |                                 |
 | 质量 | g | `FFeedForwardParams::MassGrams` |
-| 重力加速度 | cm/s² | 默认 981 |
-| 推力 / collective | 归一化 0~1 | |
+| 重力加速度 | cm/s² | 默认 980                          |
+| 推力 / collective | 归一化 0~1 |                                 |
 
 | 坐标系 | 使用位置 |
 |---|---|
@@ -511,7 +511,7 @@ Kp 可显著降低，平顺性提升。
 ```cpp
 struct FFeedForwardParams {
     float MassGrams = 1000.0f;       // 质量（g）
-    float GravityCmPerSecSq = 981.0f;// 重力
+    float GravityCmPerSecSq = 980.0f;// 重力
     float HoverCollective = 0.5f;    // 悬停总推力比（由 FlightController 注入）
     float MaxThrustFF = 1.0f;        // 推力前馈上限
     float VelocityFFGain = 1.0f;     // 速度前馈增益
