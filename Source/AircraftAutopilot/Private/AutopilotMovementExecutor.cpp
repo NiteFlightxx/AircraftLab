@@ -223,9 +223,12 @@ void UAutopilotMovementExecutor::ApplyHeading(
 		break;
 	case EAutopilotHeadingMode::FaceTarget:
 		{
-			const FVector HeadingTarget = ActiveIntent.Type == EAutopilotMovementIntentType::FollowPath
-				? ActiveIntent.PathPointsCm.Last()
-				: ResolveTargetPosition(ActiveIntent);
+			FVector HeadingTarget;
+			if (!ResolveHeadingTarget(ActiveIntent, HeadingTarget))
+			{
+				InOutSetpoint.YawRateDegreesPerSec = 0.0f;
+				break;
+			}
 			const FVector ToTarget = HeadingTarget - Snapshot.PositionCm;
 			if (!ToTarget.IsNearlyZero())
 			{
@@ -333,7 +336,10 @@ void UAutopilotMovementExecutor::DrainEvents(
 bool UAutopilotMovementExecutor::ValidateIntent(const FAutopilotMovementIntent& Intent) const
 {
 	if ((Intent.TargetActor && !IsValid(Intent.TargetActor))
+		|| (Intent.bUseIndependentHeadingTarget
+			&& Intent.HeadingTargetActor && !IsValid(Intent.HeadingTargetActor))
 		|| Intent.TargetPositionCm.ContainsNaN()
+		|| Intent.HeadingTargetPositionCm.ContainsNaN()
 		|| Intent.DesiredVelocityCmPerSec.ContainsNaN()
 		|| Intent.MotionConstraints.CruiseSpeedCmPerSec < 0.0f
 		|| Intent.MotionConstraints.MaxAccelerationCmPerSecSq <= 0.0f
@@ -387,6 +393,33 @@ FVector UAutopilotMovementExecutor::ResolveTargetPosition(const FAutopilotMoveme
 	return IsValid(Intent.TargetActor)
 		? Intent.TargetActor->GetActorLocation() + Intent.TargetPositionCm
 		: Intent.TargetPositionCm;
+}
+
+bool UAutopilotMovementExecutor::ResolveHeadingTarget(
+	const FAutopilotMovementIntent& Intent, FVector& OutTargetPosition) const
+{
+	if (Intent.bUseIndependentHeadingTarget)
+	{
+		if (Intent.HeadingTargetActor)
+		{
+			if (!IsValid(Intent.HeadingTargetActor)) return false;
+			OutTargetPosition = Intent.HeadingTargetActor->GetActorLocation()
+				+ Intent.HeadingTargetPositionCm;
+		}
+		else
+		{
+			OutTargetPosition = Intent.HeadingTargetPositionCm;
+		}
+		return true;
+	}
+	if (Intent.Type == EAutopilotMovementIntentType::FollowPath)
+	{
+		if (Intent.PathPointsCm.IsEmpty()) return false;
+		OutTargetPosition = Intent.PathPointsCm.Last();
+		return true;
+	}
+	OutTargetPosition = ResolveTargetPosition(Intent);
+	return true;
 }
 
 FVector UAutopilotMovementExecutor::ResolveCompletionTarget(const FAutopilotMovementIntent& Intent) const

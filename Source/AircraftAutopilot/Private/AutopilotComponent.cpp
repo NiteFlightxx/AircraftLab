@@ -202,6 +202,167 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitMovementIntent(const FAutopilo
 	return Handle;
 }
 
+void UAutopilotComponent::ApplyHeadingOptions(
+	FAutopilotMovementIntent& Intent, const FAutopilotHeadingOptions& Heading)
+{
+	Intent.HeadingMode = Heading.Mode;
+	Intent.FixedYawDegrees = Heading.FixedYawDegrees;
+	Intent.bUseIndependentHeadingTarget = Heading.bUseLookAtTarget;
+	Intent.HeadingTargetPositionCm = Heading.LookAtPositionCm;
+	Intent.HeadingTargetActor = Heading.LookAtActor;
+}
+
+void UAutopilotComponent::ApplyFiniteOptions(
+	FAutopilotMovementIntent& Intent, const FAutopilotFiniteCommandOptions& Options)
+{
+	Intent.MotionConstraints = Options.MotionConstraints;
+	ApplyHeadingOptions(Intent, Options.Heading);
+	Intent.ArrivalMode = Options.ArrivalMode;
+	Intent.ArrivalCriteria = Options.ArrivalCriteria;
+	Intent.TimeoutSeconds = Options.TimeoutSeconds;
+}
+
+FAutopilotIntentHandle UAutopilotComponent::SubmitMoveTo(const FAutopilotMoveToCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::MoveToPosition;
+	Intent.TargetPositionCm = Command.TargetPositionCm;
+	Intent.TargetActor = Command.TargetActor;
+	ApplyFiniteOptions(Intent, Command.Options);
+	return SubmitMovementIntent(Intent);
+}
+
+FAutopilotIntentHandle UAutopilotComponent::SubmitFollowPath(const FAutopilotFollowPathCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::FollowPath;
+	Intent.PathPointsCm = Command.PathPointsCm;
+	Intent.PathTrajectoryMode = Command.TrajectoryMode;
+	ApplyFiniteOptions(Intent, Command.Options);
+	return SubmitMovementIntent(Intent);
+}
+
+FAutopilotIntentHandle UAutopilotComponent::SubmitOrbit(const FAutopilotOrbitCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::Orbit;
+	Intent.TargetPositionCm = Command.CenterPositionCm;
+	Intent.TargetActor = Command.CenterActor;
+	Intent.OrbitRadiusCm = Command.RadiusCm;
+	Intent.OrbitAngularRateDegPerSec = Command.AngularRateDegPerSec;
+	Intent.MotionConstraints = Command.MotionConstraints;
+	ApplyHeadingOptions(Intent, Command.Heading);
+	Intent.TimeoutSeconds = Command.TimeoutSeconds;
+	return SubmitMovementIntent(Intent);
+}
+
+FAutopilotIntentHandle UAutopilotComponent::SubmitCircleArc(const FAutopilotCircleArcCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::CircleArc;
+	Intent.TargetPositionCm = Command.CenterPositionCm;
+	Intent.TargetActor = Command.CenterActor;
+	Intent.OrbitRadiusCm = Command.RadiusCm;
+	Intent.ArcStartAngleDegrees = Command.StartAngleDegrees;
+	Intent.ArcEndAngleDegrees = Command.EndAngleDegrees;
+	ApplyFiniteOptions(Intent, Command.Options);
+	return SubmitMovementIntent(Intent);
+}
+
+FAutopilotIntentHandle UAutopilotComponent::SubmitVelocity(const FAutopilotVelocityCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::MoveWithVelocity;
+	Intent.DesiredVelocityCmPerSec = Command.DesiredVelocityCmPerSec;
+	Intent.MotionConstraints = Command.MotionConstraints;
+	ApplyHeadingOptions(Intent, Command.Heading);
+	Intent.TimeoutSeconds = Command.TimeoutSeconds;
+	return SubmitMovementIntent(Intent);
+}
+
+FAutopilotIntentHandle UAutopilotComponent::SubmitHold(const FAutopilotHeadingOptions& Heading)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::Hold;
+	ApplyHeadingOptions(Intent, Heading);
+	return SubmitMovementIntent(Intent);
+}
+
+bool UAutopilotComponent::UpdateMoveTo(
+	FAutopilotIntentHandle Handle, const FAutopilotMoveToCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::MoveToPosition;
+	Intent.TargetPositionCm = Command.TargetPositionCm;
+	Intent.TargetActor = Command.TargetActor;
+	ApplyFiniteOptions(Intent, Command.Options);
+	return UpdateMovementIntent(Handle, Intent);
+}
+
+bool UAutopilotComponent::UpdateFollowPath(
+	FAutopilotIntentHandle Handle, const FAutopilotFollowPathCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::FollowPath;
+	Intent.PathPointsCm = Command.PathPointsCm;
+	Intent.PathTrajectoryMode = Command.TrajectoryMode;
+	ApplyFiniteOptions(Intent, Command.Options);
+	return UpdateMovementIntent(Handle, Intent);
+}
+
+bool UAutopilotComponent::UpdateOrbit(
+	FAutopilotIntentHandle Handle, const FAutopilotOrbitCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::Orbit;
+	Intent.TargetPositionCm = Command.CenterPositionCm;
+	Intent.TargetActor = Command.CenterActor;
+	Intent.OrbitRadiusCm = Command.RadiusCm;
+	Intent.OrbitAngularRateDegPerSec = Command.AngularRateDegPerSec;
+	Intent.MotionConstraints = Command.MotionConstraints;
+	ApplyHeadingOptions(Intent, Command.Heading);
+	Intent.TimeoutSeconds = Command.TimeoutSeconds;
+	return UpdateMovementIntent(Handle, Intent);
+}
+
+bool UAutopilotComponent::UpdateCircleArc(
+	FAutopilotIntentHandle Handle, const FAutopilotCircleArcCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::CircleArc;
+	Intent.TargetPositionCm = Command.CenterPositionCm;
+	Intent.TargetActor = Command.CenterActor;
+	Intent.OrbitRadiusCm = Command.RadiusCm;
+	Intent.ArcStartAngleDegrees = Command.StartAngleDegrees;
+	Intent.ArcEndAngleDegrees = Command.EndAngleDegrees;
+	ApplyFiniteOptions(Intent, Command.Options);
+	return UpdateMovementIntent(Handle, Intent);
+}
+
+bool UAutopilotComponent::UpdateVelocity(
+	FAutopilotIntentHandle Handle, const FAutopilotVelocityCommand& Command)
+{
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::MoveWithVelocity;
+	Intent.DesiredVelocityCmPerSec = Command.DesiredVelocityCmPerSec;
+	Intent.MotionConstraints = Command.MotionConstraints;
+	ApplyHeadingOptions(Intent, Command.Heading);
+	Intent.TimeoutSeconds = Command.TimeoutSeconds;
+	return UpdateMovementIntent(Handle, Intent);
+}
+
+bool UAutopilotComponent::UpdateHeadingTarget(
+	FAutopilotIntentHandle Handle, const FAutopilotHeadingOptions& Heading)
+{
+	if (!MovementExecutor || MovementExecutor->GetCurrentResult().Handle != Handle)
+	{
+		return false;
+	}
+	FAutopilotMovementIntent UpdatedIntent = MovementExecutor->GetActiveIntent();
+	ApplyHeadingOptions(UpdatedIntent, Heading);
+	return UpdateMovementIntent(Handle, UpdatedIntent);
+}
+
 bool UAutopilotComponent::UpdateMovementIntent(
 	FAutopilotIntentHandle Handle,
 	const FAutopilotMovementIntent& Intent)

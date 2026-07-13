@@ -44,6 +44,45 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Intent")
 	FAutopilotIntentHandle SubmitMovementIntent(const FAutopilotMovementIntent& Intent);
 
+	/** Preferred typed command APIs: each exposes only fields valid for that action. */
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	FAutopilotIntentHandle SubmitMoveTo(const FAutopilotMoveToCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	FAutopilotIntentHandle SubmitFollowPath(const FAutopilotFollowPathCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	FAutopilotIntentHandle SubmitOrbit(const FAutopilotOrbitCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	FAutopilotIntentHandle SubmitCircleArc(const FAutopilotCircleArcCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	FAutopilotIntentHandle SubmitVelocity(const FAutopilotVelocityCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	FAutopilotIntentHandle SubmitHold(const FAutopilotHeadingOptions& Heading);
+
+	/** Typed in-place updates preserve the handle and current motion-profile state. */
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	bool UpdateMoveTo(FAutopilotIntentHandle Handle, const FAutopilotMoveToCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	bool UpdateFollowPath(FAutopilotIntentHandle Handle, const FAutopilotFollowPathCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	bool UpdateOrbit(FAutopilotIntentHandle Handle, const FAutopilotOrbitCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	bool UpdateCircleArc(FAutopilotIntentHandle Handle, const FAutopilotCircleArcCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	bool UpdateVelocity(FAutopilotIntentHandle Handle, const FAutopilotVelocityCommand& Command);
+
+	/** Retarget heading without rebuilding or replacing the active movement trajectory. */
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	bool UpdateHeadingTarget(FAutopilotIntentHandle Handle, const FAutopilotHeadingOptions& Heading);
+
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Intent")
 	bool UpdateMovementIntent(FAutopilotIntentHandle Handle, const FAutopilotMovementIntent& Intent);
 
@@ -118,4 +157,6 @@ private:
 	void InvalidateOutputs();
 	void BuildInjection(FAutopilotInjection& OutInjection) const;
 	void UpdateHoverThrustEstimate(float DeltaSeconds);
+	static void ApplyHeadingOptions(FAutopilotMovementIntent& Intent, const FAutopilotHeadingOptions& Heading);
+	static void ApplyFiniteOptions(FAutopilotMovementIntent& Intent, const FAutopilotFiniteCommandOptions& Options);
 };

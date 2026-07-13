@@ -79,6 +79,7 @@ private:
 
 	bool ValidateIntent(const FAutopilotMovementIntent& Intent) const;
 	FVector ResolveTargetPosition(const FAutopilotMovementIntent& Intent) const;
+	bool ResolveHeadingTarget(const FAutopilotMovementIntent& Intent, FVector& OutTargetPosition) const;
 	FVector ResolveCompletionTarget(const FAutopilotMovementIntent& Intent) const;
 	bool RebuildTrajectory(const FAutopilotVehicleSnapshot& Snapshot);
 	void FinishActive(EAutopilotIntentStatus Status, EAutopilotIntentFailureReason Reason);

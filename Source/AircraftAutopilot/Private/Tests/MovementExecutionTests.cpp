@@ -357,4 +357,44 @@ bool FAutopilotMoveToProfileBrakesBeforeTargetTest::RunTest(const FString& Param
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAutopilotIndependentHeadingTargetTest,
+	"AircraftAutopilot.Movement.IndependentHeadingDoesNotReplaceDestination",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAutopilotIndependentHeadingTargetTest::RunTest(const FString& Parameters)
+{
+	UAutopilotMovementExecutor* Executor = NewObject<UAutopilotMovementExecutor>();
+	Executor->Initialize();
+	FAutopilotVehicleSnapshot Snapshot;
+
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::MoveToPosition;
+	Intent.TargetPositionCm = FVector(2000.0f, 0.0f, 0.0f);
+	Intent.HeadingMode = EAutopilotHeadingMode::FaceTarget;
+	Intent.bUseIndependentHeadingTarget = true;
+	Intent.HeadingTargetPositionCm = FVector(0.0f, 2000.0f, 0.0f);
+	const FAutopilotIntentHandle Handle = Executor->Submit(
+		Intent, Snapshot, EAutopilotIntentFailureReason::None);
+
+	FTrajectoryPoint Setpoint;
+	TestTrue(TEXT("Move-to with an independent heading target builds"), Executor->BuildSetpoint(
+		Snapshot, 0.02f, FProfiledSetpoint(), Setpoint));
+	Executor->ApplyHeading(Snapshot, Setpoint);
+	TestTrue(TEXT("Vehicle faces the look-at point instead of its destination"),
+		FMath::IsNearlyEqual(Setpoint.YawDegrees, 90.0f, 0.1f));
+
+	FAutopilotMovementIntent Updated = Executor->GetActiveIntent();
+	Updated.HeadingTargetPositionCm = FVector(0.0f, -2000.0f, 0.0f);
+	TestTrue(TEXT("Heading can be updated under the same movement handle"),
+		Executor->Update(Handle, Updated));
+	Executor->ApplyHeading(Snapshot, Setpoint);
+	TestTrue(TEXT("Updated heading is applied while the move-to destination remains unchanged"),
+		FMath::IsNearlyEqual(Setpoint.YawDegrees, -90.0f, 0.1f)
+		&& Executor->GetActiveIntent().TargetPositionCm.Equals(Intent.TargetPositionCm));
+	TestEqual(TEXT("Heading update keeps the original intent handle"),
+		Executor->GetCurrentResult().Handle.Id, Handle.Id);
+	return true;
+}
+
 #endif

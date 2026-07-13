@@ -25,7 +25,27 @@ Navigation / gameplay system
 
 ## Movement intents
 
-`FAutopilotMovementIntent` is the only public movement command.
+Gameplay and Blueprint code should use the typed command facade. Each command
+contains only fields meaningful to that action:
+
+- `SubmitMoveTo` / `UpdateMoveTo`
+- `SubmitFollowPath` / `UpdateFollowPath`
+- `SubmitOrbit` / `UpdateOrbit`
+- `SubmitCircleArc` / `UpdateCircleArc`
+- `SubmitVelocity` / `UpdateVelocity`
+- `SubmitHold`
+
+`SubmitMovementIntent` and `UpdateMovementIntent` remain available as low-level
+compatibility APIs. New gameplay code does not need to populate the union-like
+`FAutopilotMovementIntent` directly.
+
+Every typed command composes a separate `FAutopilotHeadingOptions`. Movement can
+face its velocity, keep its current yaw, use a fixed yaw, face the movement
+destination, or face an independent world position/Actor. An Actor heading
+target is sampled every tick. `UpdateHeadingTarget` changes only heading policy,
+preserving the active movement handle and trajectory.
+
+The supported movement primitives are:
 
 - `Hold`: retain the position and heading captured when submitted.
 - `MoveToPosition`: fly to a fixed position or an actor-relative position.
@@ -94,6 +114,13 @@ does not alter a path to avoid obstacles and does not infer obstacle state.
 When navigation replans, it calls `UpdateMovementIntent` with the active
 handle. A changed path rebuilds trajectory geometry while MotionProfile keeps
 its current position, velocity and acceleration state.
+
+For new code, navigation should call `UpdateMoveTo` or `UpdateFollowPath` instead
+of the low-level update API. Patrol sequencing, random/loop route selection,
+wait times, perception, investigation, pursuit, attack windows, line-of-sight,
+weapon firing, retreat and formation decisions belong to gameplay. The plugin
+only executes the selected movement primitive and reports lifecycle/progress
+through the intent handle, `OnIntentStarted`, and `OnIntentFinished`.
 
 ## Completion contract
 
