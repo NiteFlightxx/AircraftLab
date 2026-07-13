@@ -9,7 +9,18 @@ UOrbitTrajectorySegment::UOrbitTrajectorySegment()
 bool UOrbitTrajectorySegment::BuildSegment_Implementation(const FTrajectoryRequest& Request, FString& OutError)
 {
 	CenterCm = Request.OrbitCenterCm;
-	RadiusCm = FMath::Max(Request.OrbitRadiusCm, UE_SMALL_NUMBER);
+	if (!FMath::IsFinite(Request.OrbitRadiusCm) || Request.OrbitRadiusCm <= UE_SMALL_NUMBER)
+	{
+		OutError = TEXT("OrbitSegment: radius must be positive and finite.");
+		return false;
+	}
+	if (!FMath::IsFinite(Request.OrbitAngularRateDegPerSec)
+		|| FMath::IsNearlyZero(Request.OrbitAngularRateDegPerSec))
+	{
+		OutError = TEXT("OrbitSegment: angular rate must be finite and non-zero.");
+		return false;
+	}
+	RadiusCm = Request.OrbitRadiusCm;
 	SpinSign = (Request.OrbitAngularRateDegPerSec >= 0.0f) ? 1.0f : -1.0f;
 
 	// 起始角：由当前位置相对圆心的方位自动计算，保证平滑接入圆周

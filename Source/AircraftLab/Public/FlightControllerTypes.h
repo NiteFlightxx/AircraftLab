@@ -277,6 +277,9 @@ struct AIRCRAFTLAB_API FHoldTargets
 	/** 位置保持是否已初始化 */
 	bool bPositionHoldInitialized = false;
 
+	/** 水平摇杆刚释放：先以零速度制动，速度足够低后再锁定位置。 */
+	bool bHorizontalBrakeBeforeHold = false;
+
 	/** 高度保持是否已初始化 */
 	bool bAltitudeHoldInitialized = false;
 
@@ -286,6 +289,7 @@ struct AIRCRAFTLAB_API FHoldTargets
 	void ResetHoldFlags()
 	{
 		bPositionHoldInitialized = false;
+		bHorizontalBrakeBeforeHold = false;
 		bAltitudeHoldInitialized = false;
 		bYawHoldInitialized = false;
 	}

@@ -132,9 +132,19 @@ struct AIRCRAFTAUTOPILOT_API FSlewLimiter
 			return Value;
 		}
 
-		// 期望变化率 = (Target - Value) / dt，限幅到 MaxRate
-		float DesiredRate = (Target - Value) / DeltaSeconds;
-		DesiredRate = FMath::Clamp(DesiredRate, -MaxRate, MaxRate);
+		const float Error = Target - Value;
+		float DesiredRate = 0.0f;
+		if (MaxJerk > UE_SMALL_NUMBER)
+		{
+			// Select a rate that can itself return to zero before Value crosses
+			// Target. Previously the residual rate drove velocity through zero.
+			const float StoppingRate = FMath::Sqrt(2.0f * MaxJerk * FMath::Abs(Error));
+			DesiredRate = FMath::Sign(Error) * FMath::Min(MaxRate, StoppingRate);
+		}
+		else
+		{
+			DesiredRate = FMath::Clamp(Error / DeltaSeconds, -MaxRate, MaxRate);
+		}
 
 		// Jerk 限幅：限制 |dRate/dt| ≤ MaxJerk
 		if (MaxJerk > UE_SMALL_NUMBER)
@@ -146,6 +156,11 @@ struct AIRCRAFTAUTOPILOT_API FSlewLimiter
 
 		Rate = DesiredRate;
 		Value += Rate * DeltaSeconds;
+		if (!FMath::IsNearlyZero(Error) && Error * (Target - Value) <= 0.0f)
+		{
+			Value = Target;
+			Rate = 0.0f;
+		}
 		return Value;
 	}
 };

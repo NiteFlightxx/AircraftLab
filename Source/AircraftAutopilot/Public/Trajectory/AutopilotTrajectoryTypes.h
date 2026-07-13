@@ -291,6 +291,9 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryRequest
 			&& OrbitCenterCm.Equals(Other.OrbitCenterCm, PosTol)
 			&& OrbitRadiusCm == Other.OrbitRadiusCm
 			&& OrbitAngularRateDegPerSec == Other.OrbitAngularRateDegPerSec
+			&& ArcStartAngleDegrees == Other.ArcStartAngleDegrees
+			&& ArcEndAngleDegrees == Other.ArcEndAngleDegrees
+			&& BezierDegree == Other.BezierDegree
 			&& bYawFollowPath == Other.bYawFollowPath;
 	}
 };

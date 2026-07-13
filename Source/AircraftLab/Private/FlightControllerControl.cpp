@@ -494,7 +494,24 @@ FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightContro
 		if (bManualHorizontalCommand)
 		{
 			Context.Runtime.HoldTargets.HeldPositionCm = CurrentPosition;
+			Context.Runtime.HoldTargets.bHorizontalBrakeBeforeHold = true;
 			PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();
+		}
+		else if (Context.Runtime.HoldTargets.bHorizontalBrakeBeforeHold)
+		{
+			// Stick release is a velocity-to-zero transition, not an immediate
+			// request to return to the release point. Keep moving the anchor with
+			// the aircraft while braking, then latch where it actually stops.
+			Context.Runtime.HoldTargets.HeldPositionCm = CurrentPosition;
+			PidStates.Position.X.Reset(); PidStates.Position.Y.Reset();
+			const float HorizontalSpeed = FVector2D(
+				Context.Runtime.EstimatedState.State.VelocityCmPerSec.X,
+				Context.Runtime.EstimatedState.State.VelocityCmPerSec.Y).Size();
+			if (HorizontalSpeed <= Context.Config.Input.HorizontalBrakeToHoldSpeedCmPerSec)
+			{
+				Context.Runtime.HoldTargets.bHorizontalBrakeBeforeHold = false;
+			}
+			DesiredVelocity = FVector::ZeroVector;
 		}
 		else
 		{

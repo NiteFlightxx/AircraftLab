@@ -176,6 +176,7 @@ protected:
 	float CruiseSpeedCmPerSec = 800.0f;
 	float PlanningAccelCmPerSecSq = 400.0f;
 	float PlanningDecelCmPerSecSq = 400.0f;
+	float PlanningJerkCmPerSecCubed = 0.0f;
 	float InitialSpeedCmPerSec = 0.0f;
 	float TargetEndSpeedCmPerSec = 0.0f;
 	float AcceptanceRadiusCm = 50.0f;
@@ -208,6 +209,9 @@ protected:
 
 	/** 根据当前弧长和剩余距离，用梯形剖面计算名义速度（从静止启动） */
 	float ComputeTrapezoidalSpeed(float CurrentS, float TotalS, float DeltaSeconds) const;
+
+	float ComputeBrakingDistance(float StartSpeedCmPerSec, float EndSpeedCmPerSec) const;
+	float ComputeBrakingSpeedLimit(float RemainingDistanceCm) const;
 
 	/** 当前游标所在段是否为无限循环段（如 Orbit 持续盘旋） */
 	bool IsCurrentSegmentInfiniteLoop() const;

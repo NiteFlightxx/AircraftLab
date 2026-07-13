@@ -78,7 +78,8 @@ void UAutopilotComponent::TickComponent(
 	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
 	const EAutopilotMovementIntentType IntentType = MovementExecutor->GetActiveIntent().Type;
 	const bool bPathIntent = IntentType == EAutopilotMovementIntentType::FollowPath
-		|| IntentType == EAutopilotMovementIntentType::Orbit;
+		|| IntentType == EAutopilotMovementIntentType::Orbit
+		|| IntentType == EAutopilotMovementIntentType::CircleArc;
 	FGuidanceCommand Guidance;
 	if (EffectiveProfile->bEnablePathFollowing && bPathIntent && PathFollowing
 		&& Trajectory && Trajectory->IsValid())
@@ -280,9 +281,25 @@ void UAutopilotComponent::ApplyIntentMotionLimits()
 {
 	if (!MovementExecutor || !MotionProfile) return;
 	const FTrajectoryMotionConstraints& Requested = MovementExecutor->GetActiveIntent().MotionConstraints;
+	float HardHorizontalSpeed = TNumericLimits<float>::Max();
+	float HardHorizontalAcceleration = TNumericLimits<float>::Max();
+	if (FlightController)
+	{
+		const FDroneControlLimits& HardLimits = FlightController->GetRuntimeConfig().Controller.Limits;
+		HardHorizontalSpeed = HardLimits.MaxHorizontalSpeedCmPerSec;
+		const float TiltLimitedAcceleration = FlightController->GetGravityMagnitudeCmPerSecSq()
+			* FMath::Tan(FMath::DegreesToRadians(HardLimits.MaxTiltAngleDegrees));
+		HardHorizontalAcceleration = FMath::Min(
+			HardLimits.MaxHorizontalAccelerationCmPerSecSq, TiltLimitedAcceleration);
+	}
+	MovementExecutor->SetPhysicalMotionLimits(HardHorizontalSpeed, HardHorizontalAcceleration);
 	FMotionProfileLimits Limits;
-	Limits.MaxHorizontalSpeedCmPerSec = Requested.CruiseSpeedCmPerSec;
-	Limits.MaxHorizontalAccelCmPerSecSq = Requested.MaxAccelerationCmPerSecSq;
+	Limits.MaxHorizontalSpeedCmPerSec = FMath::Min(
+		Requested.CruiseSpeedCmPerSec, HardHorizontalSpeed);
+	Limits.MaxHorizontalAccelCmPerSecSq = FMath::Min3(
+		Requested.MaxAccelerationCmPerSecSq,
+		Requested.MaxDecelerationCmPerSecSq,
+		HardHorizontalAcceleration);
 	Limits.MaxHorizontalJerkCmPerSecCubed = Requested.MaxJerkCmPerSecCubed;
 	Limits.MaxClimbRateCmPerSec = Requested.MaxClimbRateCmPerSec;
 	Limits.MaxDescentRateCmPerSec = Requested.MaxDescentRateCmPerSec;

@@ -32,13 +32,16 @@ Navigation / gameplay system
 - `MoveWithVelocity`: continuously track a world-space velocity.
 - `FollowPath`: follow collision-free world-space points supplied externally.
 - `Orbit`: continuously orbit a fixed position or actor-relative position.
+- `CircleArc`: follow a finite horizontal arc around a fixed position or
+  actor-relative position.
 
-FollowPath supports two trajectory modes:
+FollowPath supports three trajectory modes:
 
 - `PiecewiseLinear`: exact polyline following with the existing trapezoidal timing.
 - `MinimumSnap`: a native-time, piecewise seventh-order trajectory with globally
   minimized squared snap, waypoint P/V/A/Jerk continuity and iterative time
   scaling for speed, acceleration and jerk limits.
+- `Bezier`: treat the supplied world-space points as Bezier control points.
 
 MinimumSnap accepts at most 16 path points in one synchronous solve. Longer
 paths must be submitted in overlapping sections or moved to a future
@@ -58,7 +61,7 @@ Every `TG_PrePhysics` tick performs exactly this sequence:
 1. Capture one immutable vehicle snapshot from FlightController.
 2. Resolve moving target changes and rebuild trajectory only when required.
 3. Produce the nominal setpoint for the active intent.
-4. Apply path guidance for FollowPath and Orbit.
+4. Apply path guidance for FollowPath, CircleArc and Orbit.
 5. Resolve heading mode.
 6. Compute coordinated-turn feed-forward.
 7. Apply MotionProfile velocity, acceleration, jerk and yaw limits.

@@ -61,6 +61,7 @@ bool UTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 		CruiseSpeedCmPerSec = 0.0f;
 		PlanningAccelCmPerSecSq = FMath::Max(Request.PlanningAccelerationCmPerSecSq, UE_SMALL_NUMBER);
 		PlanningDecelCmPerSecSq = FMath::Max(Request.PlanningDecelerationCmPerSecSq, UE_SMALL_NUMBER);
+		PlanningJerkCmPerSecCubed = FMath::Max(Request.PlanningJerkCmPerSecCubed, 0.0f);
 		InitialSpeedCmPerSec = 0.0f;
 		TargetEndSpeedCmPerSec = 0.0f;
 		AcceptanceRadiusCm = FMath::Max(Request.AcceptanceRadiusCm, 1.0f);
@@ -96,6 +97,7 @@ bool UTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 	CruiseSpeedCmPerSec = FMath::Max(Request.CruiseSpeedCmPerSec, UE_SMALL_NUMBER);
 	PlanningAccelCmPerSecSq = FMath::Max(Request.PlanningAccelerationCmPerSecSq, UE_SMALL_NUMBER);
 	PlanningDecelCmPerSecSq = FMath::Max(Request.PlanningDecelerationCmPerSecSq, UE_SMALL_NUMBER);
+	PlanningJerkCmPerSecCubed = FMath::Max(Request.PlanningJerkCmPerSecCubed, 0.0f);
 	// 目标终点速度取 TargetVelocityCmPerSec 的水平幅值（默认 0 = 停在终点）
 	TargetEndSpeedCmPerSec = FMath::Clamp(
 		FVector2D(Request.TargetVelocityCmPerSec.X, Request.TargetVelocityCmPerSec.Y).Size(),
@@ -109,10 +111,8 @@ bool UTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 		? 0.0f
 		: FMath::Clamp(FVector::DotProduct(Request.StartVelocityCmPerSec, StartTangent), 0.0f, CruiseSpeedCmPerSec);
 
-	// 减速触发距离 s_dec = (Vc² − V_end²)/(2a)
-	DecelTriggerDistanceCm = FMath::Max(
-		(CruiseSpeedCmPerSec * CruiseSpeedCmPerSec - TargetEndSpeedCmPerSec * TargetEndSpeedCmPerSec) / (2.0f * PlanningDecelCmPerSecSq),
-		0.0f);
+	DecelTriggerDistanceCm = ComputeBrakingDistance(
+		CruiseSpeedCmPerSec, TargetEndSpeedCmPerSec);
 
 	CurrentArcLength = 0.0f;
 	CurrentTimeSeconds = 0.0f;
@@ -386,8 +386,7 @@ float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS
 	if (DeltaSeconds <= UE_SMALL_NUMBER || TotalS <= UE_SMALL_NUMBER) return VEnd;
 
 	const float RemainingForBraking = FMath::Max(TotalS - CurrentS, 0.0f);
-	const float BrakingSpeedLimit = FMath::Sqrt(FMath::Max(
-		VEnd * VEnd + 2.0f * D * RemainingForBraking, 0.0f));
+	const float BrakingSpeedLimit = ComputeBrakingSpeedLimit(RemainingForBraking);
 	const float TargetSpeed = FMath::Min(Vc, BrakingSpeedLimit);
 	if (TargetSpeed >= CurrentSpeedCmPerSec)
 	{
@@ -395,6 +394,55 @@ float UTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS
 	}
 	return FMath::Max(CurrentSpeedCmPerSec - D * DeltaSeconds, TargetSpeed);
 
+}
+
+float UTrajectoryGenerator::ComputeBrakingDistance(
+	float StartSpeedCmPerSec, float EndSpeedCmPerSec) const
+{
+	const float StartSpeed = FMath::Max(StartSpeedCmPerSec, 0.0f);
+	const float EndSpeed = FMath::Clamp(EndSpeedCmPerSec, 0.0f, StartSpeed);
+	const float DeltaSpeed = StartSpeed - EndSpeed;
+	const float Deceleration = FMath::Max(PlanningDecelCmPerSecSq, UE_SMALL_NUMBER);
+	if (DeltaSpeed <= UE_SMALL_NUMBER) return 0.0f;
+	if (PlanningJerkCmPerSecCubed <= UE_SMALL_NUMBER)
+	{
+		return (StartSpeed * StartSpeed - EndSpeed * EndSpeed)
+			/ (2.0f * Deceleration);
+	}
+
+	const float Jerk = PlanningJerkCmPerSecCubed;
+	const float SpeedChangeInRamps = Deceleration * Deceleration / Jerk;
+	float TotalBrakingTime = 0.0f;
+	if (DeltaSpeed >= SpeedChangeInRamps)
+	{
+		TotalBrakingTime = 2.0f * Deceleration / Jerk
+			+ (DeltaSpeed - SpeedChangeInRamps) / Deceleration;
+	}
+	else
+	{
+		TotalBrakingTime = 2.0f * FMath::Sqrt(DeltaSpeed / Jerk);
+	}
+	return 0.5f * (StartSpeed + EndSpeed) * TotalBrakingTime;
+}
+
+float UTrajectoryGenerator::ComputeBrakingSpeedLimit(float RemainingDistanceCm) const
+{
+	const float Remaining = FMath::Max(RemainingDistanceCm, 0.0f);
+	float Low = TargetEndSpeedCmPerSec;
+	float High = CruiseSpeedCmPerSec;
+	for (int32 Iteration = 0; Iteration < 20; ++Iteration)
+	{
+		const float Candidate = 0.5f * (Low + High);
+		if (ComputeBrakingDistance(Candidate, TargetEndSpeedCmPerSec) <= Remaining)
+		{
+			Low = Candidate;
+		}
+		else
+		{
+			High = Candidate;
+		}
+	}
+	return Low;
 }
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,11 @@ struct AIRCRAFTLAB_API FFlightControllerInputConfig
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (ClampMin = "0.0", ClampMax = "1.0", DisplayName = "偏航保持死区"))
 	float YawHoldStickDeadband = 0.05f;
 
+	/** 松开水平摇杆后，低于此速度才锁定最终悬停位置。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input",
+		meta = (ClampMin = "0.0", DisplayName = "水平制动转位置保持速度（厘米/秒）"))
+	float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
+
 };
 
 /** 组件固定时序与启动策略。 */

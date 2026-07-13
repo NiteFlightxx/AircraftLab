@@ -12,7 +12,9 @@ enum class EAutopilotMovementIntentType : uint8
 	MoveToPosition,
 	MoveWithVelocity,
 	FollowPath,
-	Orbit
+	Orbit,
+	/** Follow a finite horizontal circular arc around TargetPositionCm/TargetActor. */
+	CircleArc
 };
 
 UENUM(BlueprintType)
@@ -36,7 +38,9 @@ UENUM(BlueprintType)
 enum class EAutopilotPathTrajectoryMode : uint8
 {
 	PiecewiseLinear,
-	MinimumSnap
+	MinimumSnap,
+	/** Treat PathPointsCm as Bezier control points. */
+	Bezier
 };
 
 /** MovementIntent 独占拥有的运动整形约束；Profile 不再重复声明这些字段。 */
@@ -147,6 +151,12 @@ struct AIRCRAFTLAB_API FAutopilotMovementIntent
 	float OrbitRadiusCm = 500.0f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent")
 	float OrbitAngularRateDegPerSec = 45.0f;
+	/** CircleArc start angle around +Z; 0 degrees points along world +X. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent")
+	float ArcStartAngleDegrees = 0.0f;
+	/** CircleArc end angle. Greater values sweep CCW, smaller values sweep CW. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent")
+	float ArcEndAngleDegrees = 90.0f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (ClampMin = "0.0"))
 	float TimeoutSeconds = 0.0f;
 };

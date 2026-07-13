@@ -49,7 +49,8 @@ FAutopilotIntentHandle UAutopilotMovementExecutor::Submit(
 	LastResolvedTargetCm = ResolveTargetPosition(Intent);
 	bTrajectoryDirty = Intent.Type == EAutopilotMovementIntentType::MoveToPosition
 		|| Intent.Type == EAutopilotMovementIntentType::FollowPath
-		|| Intent.Type == EAutopilotMovementIntentType::Orbit;
+		|| Intent.Type == EAutopilotMovementIntentType::Orbit
+		|| Intent.Type == EAutopilotMovementIntentType::CircleArc;
 	StartedEvents.Add(ActiveResult);
 	return Handle;
 }
@@ -70,6 +71,8 @@ bool UAutopilotMovementExecutor::Update(
 		|| ActiveIntent.PathTrajectoryMode != Intent.PathTrajectoryMode
 		|| ActiveIntent.OrbitRadiusCm != Intent.OrbitRadiusCm
 		|| ActiveIntent.OrbitAngularRateDegPerSec != Intent.OrbitAngularRateDegPerSec
+		|| ActiveIntent.ArcStartAngleDegrees != Intent.ArcStartAngleDegrees
+		|| ActiveIntent.ArcEndAngleDegrees != Intent.ArcEndAngleDegrees
 		|| ActiveIntent.MotionConstraints.CruiseSpeedCmPerSec != Intent.MotionConstraints.CruiseSpeedCmPerSec
 		|| ActiveIntent.MotionConstraints.MaxAccelerationCmPerSecSq != Intent.MotionConstraints.MaxAccelerationCmPerSecSq
 		|| ActiveIntent.MotionConstraints.MaxDecelerationCmPerSecSq != Intent.MotionConstraints.MaxDecelerationCmPerSecSq
@@ -157,7 +160,8 @@ bool UAutopilotMovementExecutor::BuildSetpoint(
 			if (!ResolvedTarget.Equals(LastResolvedTargetCm, 1.0f))
 			{
 				bTrajectoryDirty = ActiveIntent.Type == EAutopilotMovementIntentType::MoveToPosition
-					|| ActiveIntent.Type == EAutopilotMovementIntentType::Orbit;
+					|| ActiveIntent.Type == EAutopilotMovementIntentType::Orbit
+					|| ActiveIntent.Type == EAutopilotMovementIntentType::CircleArc;
 				LastResolvedTargetCm = ResolvedTarget;
 			}
 		}
@@ -258,15 +262,18 @@ void UAutopilotMovementExecutor::UpdateCompletion(
 		return;
 	}
 
-	const FVector Target = ActiveIntent.Type == EAutopilotMovementIntentType::FollowPath
-		? ActiveIntent.PathPointsCm.Last() : ResolveTargetPosition(ActiveIntent);
+	const FVector Target = ResolveCompletionTarget(ActiveIntent);
 	const FVector Error = Target - Snapshot.PositionCm;
 	const FAutopilotArrivalCriteria& Criteria = ActiveIntent.ArrivalCriteria;
 	const bool bPositionReached = FVector2D(Error.X, Error.Y).Size() <= Criteria.HorizontalToleranceCm
 		&& FMath::Abs(Error.Z) <= Criteria.VerticalToleranceCm;
+	const bool bTrajectoryReached = TrajectoryGenerator->IsComplete();
+	const bool bCircleArc = ActiveIntent.Type == EAutopilotMovementIntentType::CircleArc;
 	if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
 	{
-		if (TrajectoryGenerator->IsComplete() || bPositionReached)
+		// A full/multi-lap circle can have its endpoint at the start position;
+		// position alone must not complete it before the requested sweep is flown.
+		if (bTrajectoryReached || (!bCircleArc && bPositionReached))
 		{
 			const FVector ExitVelocity = ProfiledSetpoint.VelocityCmPerSec;
 			FinishActive(EAutopilotIntentStatus::Succeeded, EAutopilotIntentFailureReason::None);
@@ -285,7 +292,8 @@ void UAutopilotMovementExecutor::UpdateCompletion(
 	const bool bYawReached = FMath::Abs(FMath::FindDeltaAngleDegrees(
 		Snapshot.YawDegrees, HeadingProbe.YawDegrees)) <= Criteria.YawToleranceDegrees;
 	const bool bSpeedReached = Snapshot.VelocityCmPerSec.Size() <= Criteria.SpeedToleranceCmPerSec;
-	StableTimeSeconds = bPositionReached && bSpeedReached && bYawReached
+	StableTimeSeconds = bPositionReached && (!bCircleArc || bTrajectoryReached)
+		&& bSpeedReached && bYawReached
 		? StableTimeSeconds + DeltaSeconds : 0.0f;
 	if (StableTimeSeconds >= Criteria.StableTimeSeconds)
 	{
@@ -350,9 +358,28 @@ bool UAutopilotMovementExecutor::ValidateIntent(const FAutopilotMovementIntent& 
 			if (Point.ContainsNaN()) return false;
 		}
 	}
-	return Intent.Type != EAutopilotMovementIntentType::Orbit
-		|| (Intent.OrbitRadiusCm > UE_SMALL_NUMBER
-			&& !FMath::IsNearlyZero(Intent.OrbitAngularRateDegPerSec));
+	if (Intent.Type == EAutopilotMovementIntentType::Orbit)
+	{
+		return Intent.OrbitRadiusCm > UE_SMALL_NUMBER
+			&& !FMath::IsNearlyZero(Intent.OrbitAngularRateDegPerSec);
+	}
+	if (Intent.Type == EAutopilotMovementIntentType::CircleArc)
+	{
+		return Intent.OrbitRadiusCm > UE_SMALL_NUMBER
+			&& FMath::IsFinite(Intent.ArcStartAngleDegrees)
+			&& FMath::IsFinite(Intent.ArcEndAngleDegrees)
+			&& !FMath::IsNearlyZero(Intent.ArcEndAngleDegrees - Intent.ArcStartAngleDegrees);
+	}
+	return true;
+}
+
+void UAutopilotMovementExecutor::SetPhysicalMotionLimits(
+	float MaxHorizontalSpeedCmPerSec,
+	float MaxHorizontalAccelerationCmPerSecSq)
+{
+	PhysicalMaxHorizontalSpeedCmPerSec = FMath::Max(MaxHorizontalSpeedCmPerSec, UE_SMALL_NUMBER);
+	PhysicalMaxHorizontalAccelerationCmPerSecSq = FMath::Max(
+		MaxHorizontalAccelerationCmPerSecSq, UE_SMALL_NUMBER);
 }
 
 FVector UAutopilotMovementExecutor::ResolveTargetPosition(const FAutopilotMovementIntent& Intent) const
@@ -360,6 +387,24 @@ FVector UAutopilotMovementExecutor::ResolveTargetPosition(const FAutopilotMoveme
 	return IsValid(Intent.TargetActor)
 		? Intent.TargetActor->GetActorLocation() + Intent.TargetPositionCm
 		: Intent.TargetPositionCm;
+}
+
+FVector UAutopilotMovementExecutor::ResolveCompletionTarget(const FAutopilotMovementIntent& Intent) const
+{
+	if (Intent.Type == EAutopilotMovementIntentType::FollowPath)
+	{
+		return Intent.PathPointsCm.Last();
+	}
+	if (Intent.Type == EAutopilotMovementIntentType::CircleArc)
+	{
+		const FVector Center = ResolveTargetPosition(Intent);
+		const float EndAngleRadians = FMath::DegreesToRadians(Intent.ArcEndAngleDegrees);
+		return Center + FVector(
+			Intent.OrbitRadiusCm * FMath::Cos(EndAngleRadians),
+			Intent.OrbitRadiusCm * FMath::Sin(EndAngleRadians),
+			0.0f);
+	}
+	return ResolveTargetPosition(Intent);
 }
 
 bool UAutopilotMovementExecutor::RebuildTrajectory(const FAutopilotVehicleSnapshot& Snapshot)
@@ -370,9 +415,14 @@ bool UAutopilotMovementExecutor::RebuildTrajectory(const FAutopilotVehicleSnapsh
 	Request.StartPositionCm = Snapshot.PositionCm;
 	Request.StartVelocityCmPerSec = Snapshot.VelocityCmPerSec;
 	Request.StartAccelerationCmPerSecSq = Snapshot.AccelerationCmPerSecSq;
-	Request.CruiseSpeedCmPerSec = ActiveIntent.MotionConstraints.CruiseSpeedCmPerSec;
-	Request.PlanningAccelerationCmPerSecSq = ActiveIntent.MotionConstraints.MaxAccelerationCmPerSecSq;
-	Request.PlanningDecelerationCmPerSecSq = ActiveIntent.MotionConstraints.MaxDecelerationCmPerSecSq;
+	Request.CruiseSpeedCmPerSec = FMath::Min(
+		ActiveIntent.MotionConstraints.CruiseSpeedCmPerSec, PhysicalMaxHorizontalSpeedCmPerSec);
+	Request.PlanningAccelerationCmPerSecSq = FMath::Min(
+		ActiveIntent.MotionConstraints.MaxAccelerationCmPerSecSq,
+		PhysicalMaxHorizontalAccelerationCmPerSecSq);
+	Request.PlanningDecelerationCmPerSecSq = FMath::Min(
+		ActiveIntent.MotionConstraints.MaxDecelerationCmPerSecSq,
+		PhysicalMaxHorizontalAccelerationCmPerSecSq);
 	Request.PlanningJerkCmPerSecCubed = ActiveIntent.MotionConstraints.MaxJerkCmPerSecCubed;
 	Request.AcceptanceRadiusCm = ActiveIntent.ArrivalCriteria.HorizontalToleranceCm;
 	Request.bYawFollowPath = false;
@@ -389,9 +439,20 @@ bool UAutopilotMovementExecutor::RebuildTrajectory(const FAutopilotVehicleSnapsh
 		}
 		break;
 	case EAutopilotMovementIntentType::FollowPath:
-		Request.Type = ActiveIntent.PathTrajectoryMode == EAutopilotPathTrajectoryMode::MinimumSnap
-			? ETrajectoryType::MinimumSnap
-			: ETrajectoryType::FollowPath;
+		switch (ActiveIntent.PathTrajectoryMode)
+		{
+		case EAutopilotPathTrajectoryMode::MinimumSnap:
+			Request.Type = ETrajectoryType::MinimumSnap;
+			break;
+		case EAutopilotPathTrajectoryMode::Bezier:
+			Request.Type = ETrajectoryType::Bezier;
+			Request.BezierDegree = ActiveIntent.PathPointsCm.Num() - 1;
+			break;
+		case EAutopilotPathTrajectoryMode::PiecewiseLinear:
+		default:
+			Request.Type = ETrajectoryType::FollowPath;
+			break;
+		}
 		Request.PathPointsCm = ActiveIntent.PathPointsCm;
 		Request.TargetPositionCm = ActiveIntent.PathPointsCm.Last();
 		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
@@ -406,8 +467,27 @@ bool UAutopilotMovementExecutor::RebuildTrajectory(const FAutopilotVehicleSnapsh
 		Request.OrbitCenterCm = ResolveTargetPosition(ActiveIntent);
 		Request.OrbitRadiusCm = ActiveIntent.OrbitRadiusCm;
 		Request.OrbitAngularRateDegPerSec = ActiveIntent.OrbitAngularRateDegPerSec;
-		Request.CruiseSpeedCmPerSec = FMath::Abs(
-			FMath::DegreesToRadians(ActiveIntent.OrbitAngularRateDegPerSec) * ActiveIntent.OrbitRadiusCm);
+		Request.CruiseSpeedCmPerSec = FMath::Min(FMath::Abs(
+			FMath::DegreesToRadians(ActiveIntent.OrbitAngularRateDegPerSec) * ActiveIntent.OrbitRadiusCm),
+			PhysicalMaxHorizontalSpeedCmPerSec);
+		break;
+	case EAutopilotMovementIntentType::CircleArc:
+		Request.Type = ETrajectoryType::Circle;
+		Request.OrbitCenterCm = ResolveTargetPosition(ActiveIntent);
+		Request.OrbitRadiusCm = ActiveIntent.OrbitRadiusCm;
+		Request.ArcStartAngleDegrees = ActiveIntent.ArcStartAngleDegrees;
+		Request.ArcEndAngleDegrees = ActiveIntent.ArcEndAngleDegrees;
+		Request.TargetPositionCm = ResolveCompletionTarget(ActiveIntent);
+		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
+		{
+			const float EndAngleRadians = FMath::DegreesToRadians(ActiveIntent.ArcEndAngleDegrees);
+			const float SpinSign = FMath::Sign(
+				ActiveIntent.ArcEndAngleDegrees - ActiveIntent.ArcStartAngleDegrees);
+			Request.TargetVelocityCmPerSec = FVector(
+				-FMath::Sin(EndAngleRadians) * SpinSign,
+				FMath::Cos(EndAngleRadians) * SpinSign,
+				0.0f) * ActiveIntent.MotionConstraints.TargetSpeedCmPerSec;
+		}
 		break;
 	default:
 		return true;

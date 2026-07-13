@@ -53,4 +53,55 @@ bool FAircraftVelocityPidMaintainsTargetSpeedTest::RunTest(const FString& Parame
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftManualReleaseBrakesBeforeHoldingTest,
+	"AircraftLab.Control.PositionHold.ManualReleaseBrakesBeforeHolding",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftManualReleaseBrakesBeforeHoldingTest::RunTest(const FString& Parameters)
+{
+	FControllerRuntimeState Runtime;
+	Runtime.EstimatedState.State.PositionCm = FVector(100.0f, 0.0f, 0.0f);
+	Runtime.EstimatedState.State.VelocityCmPerSec = FVector(200.0f, 0.0f, 0.0f);
+	Runtime.HoldTargets.HeldPositionCm = FVector::ZeroVector;
+	Runtime.HoldTargets.bPositionHoldInitialized = true;
+	Runtime.HoldTargets.bHorizontalBrakeBeforeHold = true;
+	FPhysicsCache PhysicsCache;
+	FModeCapabilities Capabilities;
+	Capabilities.CanUsePositionControl = true;
+	Capabilities.CanUseVelocityControl = true;
+	FFlightControllerRuntimeConfig Config;
+	FlightControllerConfig::InitializeDefaults(Config.Controller);
+	Config.Input.HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
+	FAutopilotMovementIntent MovementIntent;
+	FAutopilotInjection Injection;
+	FControlAllocator Allocator;
+	FFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, MovementIntent, Injection, Allocator, false };
+	FFlightControlSolver Solver;
+
+	Solver.ComputeDesiredHorizontalAcceleration(Context, 0.004f);
+	TestTrue(TEXT("Release braking keeps the hold anchor on the moving aircraft"),
+		Runtime.HoldTargets.HeldPositionCm.Equals(Runtime.EstimatedState.State.PositionCm));
+	TestTrue(TEXT("Release braking commands zero horizontal velocity"),
+		Solver.LastDesiredHorizontalVelocityCmPerSec.IsNearlyZero());
+	TestTrue(TEXT("Position hold remains deferred while the aircraft is moving"),
+		Runtime.HoldTargets.bHorizontalBrakeBeforeHold);
+
+	Runtime.EstimatedState.State.PositionCm = FVector(180.0f, 0.0f, 0.0f);
+	Runtime.EstimatedState.State.VelocityCmPerSec = FVector(10.0f, 0.0f, 0.0f);
+	Solver.ComputeDesiredHorizontalAcceleration(Context, 0.004f);
+	TestFalse(TEXT("Low speed latches the final hold position"),
+		Runtime.HoldTargets.bHorizontalBrakeBeforeHold);
+	TestTrue(TEXT("Final hold position is where braking actually finished"),
+		Runtime.HoldTargets.HeldPositionCm.Equals(FVector(180.0f, 0.0f, 0.0f)));
+
+	Runtime.EstimatedState.State.PositionCm = FVector(230.0f, 0.0f, 0.0f);
+	Runtime.EstimatedState.State.VelocityCmPerSec = FVector::ZeroVector;
+	Solver.ComputeDesiredHorizontalAcceleration(Context, 0.004f);
+	TestTrue(TEXT("After latching, external drift is corrected back to the stop point"),
+		Solver.LastDesiredHorizontalVelocityCmPerSec.X < 0.0f);
+	return true;
+}
+
 #endif

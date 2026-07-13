@@ -61,7 +61,11 @@ FProfiledSetpoint UMotionProfile::Update(const FTrajectoryPoint& Nominal, float 
 	//    修正速度被限幅到 PositionCorrectionFraction·MaxSpeed，避免阶跃。
 	// -----------------------------------------------------------------------
 	FVector PosError = Nominal.PositionCm - ProfiledPosition;
-	FVector Correction = PosError * PositionCorrectionGain;
+	// The moving trajectory velocity already transports ProfiledPosition.
+	// A simultaneous position-closing velocity races ahead during braking,
+	// so closure is applied only to stationary/terminal setpoints.
+	FVector Correction = Nominal.VelocityCmPerSec.IsNearlyZero(1.0f)
+		? PosError * PositionCorrectionGain : FVector::ZeroVector;
 
 	// 水平修正速度限幅
 	const float MaxHCorrection = Limits.MaxHorizontalSpeedCmPerSec * PositionCorrectionFraction;

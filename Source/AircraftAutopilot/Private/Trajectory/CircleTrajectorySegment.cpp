@@ -9,9 +9,19 @@ UCircleTrajectorySegment::UCircleTrajectorySegment()
 bool UCircleTrajectorySegment::BuildSegment_Implementation(const FTrajectoryRequest& Request, FString& OutError)
 {
 	CenterCm = Request.OrbitCenterCm;
-	RadiusCm = FMath::Max(Request.OrbitRadiusCm, UE_SMALL_NUMBER);
+	if (!FMath::IsFinite(Request.OrbitRadiusCm) || Request.OrbitRadiusCm <= UE_SMALL_NUMBER)
+	{
+		OutError = TEXT("CircleSegment: radius must be positive and finite.");
+		return false;
+	}
+	RadiusCm = Request.OrbitRadiusCm;
 	StartAngleDeg = Request.ArcStartAngleDegrees;
 	EndAngleDeg = Request.ArcEndAngleDegrees;
+	if (!FMath::IsFinite(StartAngleDeg) || !FMath::IsFinite(EndAngleDeg))
+	{
+		OutError = TEXT("CircleSegment: start and end angles must be finite.");
+		return false;
+	}
 
 	// 计算扫角与方向。允许 EndAngle < StartAngle 表示顺时针。
 	float SweepDeg = EndAngleDeg - StartAngleDeg;

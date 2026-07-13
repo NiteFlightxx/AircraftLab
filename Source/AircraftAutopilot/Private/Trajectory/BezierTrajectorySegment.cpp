@@ -105,10 +105,6 @@ FFrenetFrame UBezierTrajectorySegment::GetFrenetAtArcLength(float S) const
 	Frame.Tangent = EvaluateTangent(U);
 	Frame.ArcLengthCm = ClampArcLength(S);
 
-	// 法向：水平面内切向左转 90°
-	Frame.Normal = FVector(-Frame.Tangent.Y, Frame.Tangent.X, 0.0f).GetSafeNormal();
-	Frame.Up = FVector::UpVector;
-
 	// 曲率 κ：数值差分 |dT/ds|。用相邻两个 u 的切向夹角 / 弧长差
 	const float Du = 2.0f / static_cast<float>(ArcTableResolution);
 	const FVector T1 = EvaluateTangent(FMath::Clamp(U - Du, 0.0f, 1.0f));
@@ -118,6 +114,16 @@ FFrenetFrame UBezierTrajectorySegment::GetFrenetAtArcLength(float S) const
 	const float DS = FVector::Dist(EvaluatePosition(FMath::Clamp(U + Du, 0.0f, 1.0f)),
 		EvaluatePosition(FMath::Clamp(U - Du, 0.0f, 1.0f)));
 	Frame.Curvature = DS > UE_SMALL_NUMBER ? (DT.Size() / DS) : 0.0f;
+	// Principal normal must follow dT/ds. The previous fixed left normal
+	// accelerated away from right-hand bends and was also wrong for 3D curves.
+	Frame.Normal = DT.GetSafeNormal();
+	if (Frame.Normal.IsNearlyZero())
+	{
+		Frame.Normal = FVector(-Frame.Tangent.Y, Frame.Tangent.X, 0.0f).GetSafeNormal();
+		if (Frame.Normal.IsNearlyZero()) Frame.Normal = FVector::ForwardVector;
+	}
+	Frame.Up = FVector::CrossProduct(Frame.Tangent, Frame.Normal).GetSafeNormal();
+	if (Frame.Up.IsNearlyZero()) Frame.Up = FVector::UpVector;
 	return Frame;
 }
 
@@ -136,8 +142,13 @@ FTrajectoryPoint UBezierTrajectorySegment::SampleAtArcLength(float S, float Spee
 	// 向心加速度 a_n = v²·κ·N（指向曲率圆心）
 	Point.AccelerationCmPerSecSq = Frame.Normal * (SpeedCmPerSec * SpeedCmPerSec * Frame.Curvature);
 	Point.YawDegrees = Frame.GetYawDegrees();
-	// 偏航角速度 ω = κ·v（rad/s → deg/s）
-	Point.YawRateDegreesPerSec = FMath::RadiansToDegrees(Frame.Curvature * SpeedCmPerSec);
+	// Yaw rate is signed in the horizontal plane; right-hand bends are negative.
+	const float HorizontalTurnCrossZ = FVector::CrossProduct(
+		Frame.Tangent.GetSafeNormal2D(), Frame.Normal.GetSafeNormal2D()).Z;
+	const float HorizontalTurnSign = FMath::IsNearlyZero(HorizontalTurnCrossZ)
+		? 0.0f : FMath::Sign(HorizontalTurnCrossZ);
+	Point.YawRateDegreesPerSec = FMath::RadiansToDegrees(
+		Frame.Curvature * SpeedCmPerSec * HorizontalTurnSign);
 	Point.ArcLengthCm = Frame.ArcLengthCm;
 	Point.Curvature = Frame.Curvature;
 	Point.bValid = true;

@@ -25,6 +25,8 @@ class UAutopilotMovementExecutor : public UObject
 
 public:
 	void Initialize();
+	void SetPhysicalMotionLimits(float MaxHorizontalSpeedCmPerSec,
+		float MaxHorizontalAccelerationCmPerSecSq);
 	FAutopilotIntentHandle Submit(
 		const FAutopilotMovementIntent& Intent,
 		const FAutopilotVehicleSnapshot& Snapshot,
@@ -72,9 +74,12 @@ private:
 	float HoldYawDegrees = 0.0f;
 	FVector LastResolvedTargetCm = FVector::ZeroVector;
 	float StableTimeSeconds = 0.0f;
+	float PhysicalMaxHorizontalSpeedCmPerSec = TNumericLimits<float>::Max();
+	float PhysicalMaxHorizontalAccelerationCmPerSecSq = TNumericLimits<float>::Max();
 
 	bool ValidateIntent(const FAutopilotMovementIntent& Intent) const;
 	FVector ResolveTargetPosition(const FAutopilotMovementIntent& Intent) const;
+	FVector ResolveCompletionTarget(const FAutopilotMovementIntent& Intent) const;
 	bool RebuildTrajectory(const FAutopilotVehicleSnapshot& Snapshot);
 	void FinishActive(EAutopilotIntentStatus Status, EAutopilotIntentFailureReason Reason);
 	void StoreTerminalResult(const FAutopilotIntentResult& Result);

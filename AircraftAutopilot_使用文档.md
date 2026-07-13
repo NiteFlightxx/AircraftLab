@@ -162,7 +162,7 @@ Source/AircraftAutopilot/
 │   │   ├── BezierTrajectorySegment.h       贝塞尔曲线段（de Casteljau）
 │   │   ├── CircleTrajectorySegment.h       圆弧段
 │   │   ├── OrbitTrajectorySegment.h        环绕段（持续盘旋）
-│   │   ├── MinSnapTrajectorySegment.h      Minimum Snap（STUB 预留）
+│   │   ├── MinSnapTrajectorySegment.h      七阶分段 Minimum Snap 轨迹
 │   │   └── TrajectoryGenerator.h           ★轨迹生成器
 │   ├── MotionProfile/
 │   │   ├── MotionProfileTypes.h            FMotionProfileLimits / FSlewLimiter / FVecSlewLimiter
@@ -313,7 +313,12 @@ s_dec = (Vc² - V_end²) / (2a)  ← 减速段长度（距终点的提前减速�
 | `Circle` | 圆弧段 | `OrbitCenterCm`, `OrbitRadiusCm`, `ArcStartAngleDegrees`, `ArcEndAngleDegrees` |
 | `Orbit` | 持续环绕（不自动终止） | `OrbitCenterCm`, `OrbitRadiusCm`, `OrbitAngularRateDegPerSec` |
 | `FollowPath` | 沿折线飞行（Nav3D 路径） | `PathPointsCm`（折线点串） |
-| `MinimumSnap` | 最优 Snap（STUB 预留） | 待实现 |
+| `MinimumSnap` | 七阶分段 Minimum Snap（原生时间参数化） | `PathPointsCm`、速度/加速度/Jerk 约束 |
+
+通过 `UAutopilotComponent::SubmitMovementIntent` 使用时：`MoveToPosition` 和
+`PiecewiseLinear` 路径会使用 Line 段；`FollowPath + Bezier` 使用贝塞尔段；
+`FollowPath + MinimumSnap` 使用 Minimum Snap 段；`CircleArc` 和 `Orbit`
+分别使用有限圆弧段与持续环绕段。
 
 #### API
 

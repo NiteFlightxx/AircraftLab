@@ -176,4 +176,185 @@ bool FAutopilotGuidanceSpeedTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAutopilotBezierIntentIntegrationTest,
+	"AircraftAutopilot.Movement.BezierPathIntentIsConnected",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAutopilotBezierIntentIntegrationTest::RunTest(const FString& Parameters)
+{
+	UAutopilotMovementExecutor* Executor = NewObject<UAutopilotMovementExecutor>();
+	Executor->Initialize();
+	FAutopilotVehicleSnapshot Snapshot;
+
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::FollowPath;
+	Intent.PathTrajectoryMode = EAutopilotPathTrajectoryMode::Bezier;
+	Intent.PathPointsCm = {
+		FVector(0.0f, 0.0f, 0.0f),
+		FVector(100.0f, 100.0f, 0.0f),
+		FVector(200.0f, 0.0f, 0.0f)
+	};
+	Intent.MotionConstraints.CruiseSpeedCmPerSec = 100.0f;
+	Intent.MotionConstraints.MaxAccelerationCmPerSecSq = 1000.0f;
+	Intent.MotionConstraints.MaxDecelerationCmPerSecSq = 1000.0f;
+
+	const FAutopilotIntentHandle Handle = Executor->Submit(
+		Intent, Snapshot, EAutopilotIntentFailureReason::None);
+	TestEqual(TEXT("Bezier intent is accepted"), Executor->GetResult(Handle).Status,
+		EAutopilotIntentStatus::Accepted);
+
+	FTrajectoryPoint Setpoint;
+	TestTrue(TEXT("Executor builds the Bezier trajectory"), Executor->BuildSetpoint(
+		Snapshot, 0.02f, FProfiledSetpoint(), Setpoint));
+	UTrajectoryGenerator* Generator = Executor->GetTrajectoryGenerator();
+	TestTrue(TEXT("Bezier trajectory is valid"), Generator && Generator->IsValid());
+	if (!Generator || !Generator->IsValid()) return false;
+
+	const FTrajectoryPoint Midpoint = Generator->SampleAtGlobalArc(
+		Generator->GetTotalArcLength() * 0.5f, 100.0f);
+	const FTrajectoryPoint Endpoint = Generator->SampleAtGlobalArc(
+		Generator->GetTotalArcLength(), 0.0f);
+	TestTrue(TEXT("Bezier midpoint follows the curved control polygon"), Midpoint.PositionCm.Y > 40.0f);
+	TestTrue(TEXT("Right-hand Bezier bend accelerates toward the curve"),
+		Midpoint.AccelerationCmPerSecSq.Y < 0.0f && Midpoint.YawRateDegreesPerSec < 0.0f);
+	TestTrue(TEXT("Bezier endpoint matches the last control point"),
+		Endpoint.PositionCm.Equals(Intent.PathPointsCm.Last(), 0.1f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAutopilotCircleArcIntentIntegrationTest,
+	"AircraftAutopilot.Movement.CircleArcIntentIsConnected",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAutopilotCircleArcIntentIntegrationTest::RunTest(const FString& Parameters)
+{
+	UAutopilotMovementExecutor* Executor = NewObject<UAutopilotMovementExecutor>();
+	Executor->Initialize();
+	FAutopilotVehicleSnapshot Snapshot;
+	Snapshot.PositionCm = FVector(100.0f, 0.0f, 0.0f);
+
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::CircleArc;
+	Intent.TargetPositionCm = FVector::ZeroVector;
+	Intent.OrbitRadiusCm = 100.0f;
+	Intent.ArcStartAngleDegrees = 0.0f;
+	Intent.ArcEndAngleDegrees = 90.0f;
+	Intent.MotionConstraints.CruiseSpeedCmPerSec = 100.0f;
+	Intent.MotionConstraints.MaxAccelerationCmPerSecSq = 1000.0f;
+	Intent.MotionConstraints.MaxDecelerationCmPerSecSq = 1000.0f;
+
+	const FAutopilotIntentHandle Handle = Executor->Submit(
+		Intent, Snapshot, EAutopilotIntentFailureReason::None);
+	TestEqual(TEXT("Circle arc intent is accepted"), Executor->GetResult(Handle).Status,
+		EAutopilotIntentStatus::Accepted);
+
+	FTrajectoryPoint Setpoint;
+	TestTrue(TEXT("Executor builds the circle trajectory"), Executor->BuildSetpoint(
+		Snapshot, 0.02f, FProfiledSetpoint(), Setpoint));
+	UTrajectoryGenerator* Generator = Executor->GetTrajectoryGenerator();
+	TestTrue(TEXT("Circle trajectory is valid"), Generator && Generator->IsValid());
+	if (!Generator || !Generator->IsValid()) return false;
+
+	const FTrajectoryPoint Endpoint = Generator->SampleAtGlobalArc(
+		Generator->GetTotalArcLength(), 0.0f);
+	TestTrue(TEXT("Circle endpoint is derived from center, radius and end angle"),
+		Endpoint.PositionCm.Equals(FVector(0.0f, 100.0f, 0.0f), 0.1f));
+
+	FAutopilotMovementIntent FullCircle = Intent;
+	FullCircle.ArcEndAngleDegrees = 360.0f;
+	const FAutopilotIntentHandle FullCircleHandle = Executor->Submit(
+		FullCircle, Snapshot, EAutopilotIntentFailureReason::None);
+	TestTrue(TEXT("Executor builds a full circle"), Executor->BuildSetpoint(
+		Snapshot, 0.02f, FProfiledSetpoint(), Setpoint));
+	Executor->UpdateCompletion(Snapshot, 1.0f, FProfiledSetpoint());
+	TestEqual(TEXT("A full circle does not complete immediately at its coincident endpoint"),
+		Executor->GetResult(FullCircleHandle).Status, EAutopilotIntentStatus::Executing);
+
+	FAutopilotMovementIntent Invalid = Intent;
+	Invalid.ArcEndAngleDegrees = Invalid.ArcStartAngleDegrees;
+	const FAutopilotIntentHandle InvalidHandle = Executor->Submit(
+		Invalid, Snapshot, EAutopilotIntentFailureReason::None);
+	TestEqual(TEXT("Zero-sweep circle arc is rejected"), Executor->GetResult(InvalidHandle).Status,
+		EAutopilotIntentStatus::Rejected);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAutopilotJerkLimitedStopDoesNotReverseTest,
+	"AircraftAutopilot.MotionProfile.JerkLimitedStopDoesNotReverse",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAutopilotJerkLimitedStopDoesNotReverseTest::RunTest(const FString& Parameters)
+{
+	FSlewLimiter Limiter;
+	Limiter.Reset(800.0f);
+	Limiter.bInitialized = true;
+	float MinimumValue = Limiter.Value;
+	for (int32 Step = 0; Step < 1000; ++Step)
+	{
+		MinimumValue = FMath::Min(MinimumValue,
+			Limiter.Update(0.0f, 0.01f, 400.0f, 2000.0f));
+	}
+	TestTrue(TEXT("Jerk-limited velocity never reverses through the stop target"), MinimumValue >= -UE_SMALL_NUMBER);
+	TestTrue(TEXT("Jerk-limited velocity settles at zero"), FMath::IsNearlyZero(Limiter.Value, 0.01f));
+	TestTrue(TEXT("Acceleration also settles at zero"), FMath::IsNearlyZero(Limiter.Rate, 0.01f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAutopilotMoveToProfileBrakesBeforeTargetTest,
+	"AircraftAutopilot.Movement.MoveToProfileBrakesBeforeTarget",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAutopilotMoveToProfileBrakesBeforeTargetTest::RunTest(const FString& Parameters)
+{
+	UTrajectoryGenerator* Generator = NewObject<UTrajectoryGenerator>();
+	FTrajectoryRequest Request;
+	Request.Type = ETrajectoryType::Waypoint;
+	Request.StartPositionCm = FVector::ZeroVector;
+	Request.TargetPositionCm = FVector(2000.0f, 0.0f, 0.0f);
+	Request.CruiseSpeedCmPerSec = 800.0f;
+	Request.PlanningAccelerationCmPerSecSq = 400.0f;
+	Request.PlanningDecelerationCmPerSecSq = 400.0f;
+	Request.PlanningJerkCmPerSecCubed = 2000.0f;
+	Request.AcceptanceRadiusCm = 1.0f;
+	TestTrue(TEXT("Move-to trajectory builds"), Generator->SetRequest(Request));
+
+	UMotionProfile* Profile = NewObject<UMotionProfile>();
+	FMotionProfileLimits Limits;
+	Limits.MaxHorizontalSpeedCmPerSec = 800.0f;
+	Limits.MaxHorizontalAccelCmPerSecSq = 400.0f;
+	Limits.MaxHorizontalJerkCmPerSecCubed = 2000.0f;
+	Profile->SetLimits(Limits);
+	Profile->Initialize(FVector::ZeroVector, FVector::ZeroVector, FVector::ZeroVector, 0.0f, 0.0f);
+
+	constexpr float DeltaSeconds = 0.01f;
+	FProfiledSetpoint Profiled = Profile->GetCurrentSetpoint();
+	float MaximumProfiledX = Profiled.PositionCm.X;
+	for (int32 Step = 0; Step < 3000; ++Step)
+	{
+		FTrajectoryPoint Nominal;
+		TestTrue(TEXT("Move-to trajectory keeps producing setpoints"), Generator->UpdateSetpoint(
+			DeltaSeconds, Profiled.PositionCm, Profiled.VelocityCmPerSec, Nominal));
+		Profiled = Profile->Update(Nominal, DeltaSeconds);
+		MaximumProfiledX = FMath::Max(MaximumProfiledX, Profiled.PositionCm.X);
+		if (Generator->IsComplete()
+			&& Profiled.PositionCm.Equals(Request.TargetPositionCm, 0.1f)
+			&& Profiled.VelocityCmPerSec.IsNearlyZero(0.1f))
+		{
+			break;
+		}
+	}
+
+	TestTrue(TEXT("Profiled setpoint does not pass the move-to target"),
+		MaximumProfiledX <= Request.TargetPositionCm.X + 1.0f);
+	TestTrue(TEXT("Profiled setpoint settles on the target"),
+		Profiled.PositionCm.Equals(Request.TargetPositionCm, 0.2f));
+	TestTrue(TEXT("Profiled setpoint is stopped at the target"),
+		Profiled.VelocityCmPerSec.IsNearlyZero(0.2f));
+	return true;
+}
+
 #endif
