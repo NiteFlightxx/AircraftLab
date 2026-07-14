@@ -110,13 +110,12 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 		OutDesiredVerticalVelocity = FMath::Clamp(OutDesiredVerticalVelocity,
 			-Context.Config.Controller.Limits.MaxDescentRateCmPerSec, Context.Config.Controller.Limits.MaxClimbRateCmPerSec);
 		const FDroneAltitudeControllerConfig& AltitudeConfig = Context.Config.Controller.Altitude;
-		LastVerticalDampingCollectiveFeedForward = AltitudeConfig.bEnableVerticalDampingFeedForward
-			? FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
+		LastVerticalDampingCollectiveFeedForward =
+			FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
 				OutDesiredVerticalVelocity, Context.PhysicsCache.LinearDampingPerSecond,
 				Context.PhysicsCache.GravityMagnitudeCmPerSecSq,
 				Context.Config.Controller.Limits.HoverCollectiveCommand,
-				AltitudeConfig.VerticalDampingFeedForwardScale)
-			: 0.0f;
+				AltitudeConfig.VerticalDampingFeedForwardScale);
 		// 垂直速度内环；轨迹推力前馈作为基准，阻尼前馈补偿稳态阻力。
 		const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
 			OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds,
@@ -156,12 +155,11 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 	// PID_vz: Δc = Kp·(v_z_des − v_z) + Ki·∫(v_z_des − v_z)dt + Kd·d(v_z_des − v_z)/dt
 	// 输出 Δc 是总距偏移量，加在悬停点上
 	const FDroneAltitudeControllerConfig& AltitudeConfig = Context.Config.Controller.Altitude;
-	LastVerticalDampingCollectiveFeedForward = AltitudeConfig.bEnableVerticalDampingFeedForward
-		? FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
+	LastVerticalDampingCollectiveFeedForward =
+		FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
 			OutDesiredVerticalVelocity, Context.PhysicsCache.LinearDampingPerSecond,
 			Context.PhysicsCache.GravityMagnitudeCmPerSecSq, HoverCollective,
-			AltitudeConfig.VerticalDampingFeedForwardScale)
-		: 0.0f;
+			AltitudeConfig.VerticalDampingFeedForwardScale);
 	const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
 		OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds, Context.Config.Controller.Altitude.VerticalVelocityGains);
 	// 最终总距 = 悬停总距 + PID偏移，限制在 [Min, Max]
@@ -422,7 +420,7 @@ FVector FFlightControlSolver::ComputeBodyTorqueCommand(FFlightControlSolverConte
 	FDronePidGains YawGains   = MakeAntiWindupGains(Context.Config.Controller.Attitude.RateGains.Yaw,   Context.AllocationFeedback.bSaturatedPositive[2], Context.AllocationFeedback.bSaturatedNegative[2], YawError);
 
 	const FDroneAttitudeControllerConfig& AttitudeConfig = Context.Config.Controller.Attitude;
-	if (AttitudeConfig.bEnableAngularDampingFeedForward)
+	if (AttitudeConfig.AngularDampingFeedForwardScale > UE_SMALL_NUMBER)
 	{
 		const FVector PositiveAuthority(
 			Context.AllocationFeedback.Cache.PositiveTorqueAuthority[0],
@@ -467,11 +465,10 @@ FVector FFlightControlSolver::ComputeVelocityPidAcceleration(
 {
 	const FDronePositionControllerConfig& PositionConfig = Context.Config.Controller.Position;
 	const FVector CurrentVelocity = Context.Runtime.EstimatedState.State.VelocityCmPerSec;
-	const FVector DragFeedForward = PositionConfig.bEnableLinearDampingFeedForward
-		? FlightControlDynamics::ComputeLinearDampingFeedForward(
+	const FVector DragFeedForward =
+		FlightControlDynamics::ComputeLinearDampingFeedForward(
 			DesiredVelocityCmPerSec, Context.PhysicsCache.LinearDampingPerSecond,
-			PositionConfig.LinearDampingFeedForwardScale)
-		: FVector::ZeroVector;
+			PositionConfig.LinearDampingFeedForwardScale);
 	const FVector TrajectoryFeedForward(
 		TrajectoryAccelerationFeedForwardCmPerSecSq.X,
 		TrajectoryAccelerationFeedForwardCmPerSecSq.Y,

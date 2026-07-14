@@ -18,13 +18,13 @@ void UFeedForwardCalculator::Compute(const FProfiledSetpoint& Setpoint, FFeedFor
 	}
 
 	// 速度前馈 → 位置环
-	OutFF.VelocityFFCmPerSec = Setpoint.VelocityCmPerSec * Params.VelocityFFGain;
+	OutFF.VelocityFFCmPerSec = Setpoint.VelocityCmPerSec;
 
 	// 加速度前馈 → 速度环
-	OutFF.AccelFFCmPerSecSq = Setpoint.AccelerationCmPerSecSq * Params.AccelFFGain;
+	OutFF.AccelFFCmPerSecSq = Setpoint.AccelerationCmPerSecSq;
 
 	// 偏航角速度前馈 → 姿态 Yaw
-	OutFF.YawRateFFDegPerSec = Setpoint.YawRateDegreesPerSec * Params.YawRateFFGain;
+	OutFF.YawRateFFDegPerSec = Setpoint.YawRateDegreesPerSec;
 
 	// 推力前馈 → 加速度环/collective（含重力补偿）
 	OutFF.ThrustFF = ComputeThrustFF(Setpoint);

@@ -9,32 +9,6 @@
 #include "FeedForwardCalculator.generated.h"
 
 /**
- * 前馈物理参数（第四部分）
- *
- * AircraftAutopilot 在 Phase 1 不依赖 AircraftLab，因此质量/重力/悬停推力比
- * 等物理量以可调参数形式注入。集成时由 FlightControllerComponent 把
- * AircraftLab 的实测值（Mass、HoverCollectiveCommand、推力映射）填进来。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTAUTOPILOT_API FFeedForwardParams
-{
-	GENERATED_BODY()
-
-	/** 无人机质量（g）。诊断与未来模型基前馈用 */
-	/** 速度前馈增益（注入位置环 Kff 通道） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0", DisplayName = "速度前馈增益"))
-	float VelocityFFGain = 1.0f;
-
-	/** 加速度前馈增益（注入速度环 Kff 通道） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0", DisplayName = "加速度前馈增益"))
-	float AccelFFGain = 1.0f;
-
-	/** 偏航角速度前馈增益（注入姿态 Yaw 通道） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward", meta = (ClampMin = "0.0", DisplayName = "偏航角速度前馈增益"))
-	float YawRateFFGain = 1.0f;
-};
-
-/**
  * 前馈计算器（Feed Forward Calculator）
  *
  * 职责：把 Motion Profile 输出的【物理可达设定值】转为各环前馈量，
@@ -59,7 +33,8 @@ struct AIRCRAFTAUTOPILOT_API FFeedForwardParams
  *   学习型前馈（神经网络），只需 override Compute()。
  *
  * 频率：与 Motion Profile 同频（50~100Hz）。
- * 依赖：仅 FProfiledSetpoint / FFeedForward / FFeedForwardParams，无 AircraftLab 依赖。
+ * 前馈增益只在 FlightController Profile 的各 PID Kff 中配置；这里按 1:1 传递，
+ * 避免 Autopilot 增益与 PID Kff 串联后出现两个等价调节点。
  */
 UCLASS(BlueprintType, Blueprintable, ClassGroup = (AircraftAutopilot))
 class AIRCRAFTAUTOPILOT_API UFeedForwardCalculator : public UObject
@@ -68,14 +43,6 @@ class AIRCRAFTAUTOPILOT_API UFeedForwardCalculator : public UObject
 
 public:
 	UFeedForwardCalculator();
-
-	/** 设置物理参数 */
-	UFUNCTION(BlueprintCallable, Category = "Autopilot|FeedForward")
-	void SetParams(const FFeedForwardParams& InParams) { Params = InParams; }
-
-	/** 取物理参数 */
-	UFUNCTION(BlueprintPure, Category = "Autopilot|FeedForward")
-	const FFeedForwardParams& GetParams() const { return Params; }
 
 	/**
 	 * 计算前馈。
@@ -102,10 +69,6 @@ public:
 	float GetHoverThrustBaseline() const { return HoverThrustBaseline; }
 
 protected:
-	/** 物理参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward")
-	FFeedForwardParams Params;
-
 	/**
 	 * 悬停推力基准（EKF 估计注入）。
 	 * <=0 表示未注入，ComputeThrustFF 回退到 Params.HoverCollective；

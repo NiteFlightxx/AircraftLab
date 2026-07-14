@@ -30,8 +30,7 @@ UENUM(BlueprintType)
 enum class EAutopilotArrivalMode : uint8
 {
 	StopAndComplete UMETA(DisplayName = "停止并完成"),
-	PassThrough UMETA(DisplayName = "穿过不停"),
-	HoldAtTarget UMETA(DisplayName = "在目标处悬停")
+	PassThrough UMETA(DisplayName = "穿过不停")
 };
 
 UENUM(BlueprintType)
@@ -58,9 +57,6 @@ struct AIRCRAFTLAB_API FTrajectoryMotionConstraints
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大减速度（厘米/秒²）"))
 	float MaxDecelerationCmPerSecSq = 400.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "目标速度（厘米/秒）"))
-	float TargetSpeedCmPerSec = 0.0f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大加加速度（厘米/秒³）"))
 	float MaxJerkCmPerSecCubed = 2000.0f;
 
@@ -85,11 +81,44 @@ struct AIRCRAFTLAB_API FTrajectoryMotionConstraints
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航加加速度（度/秒³）"))
 	float MaxYawJerkDegPerSecCubed = 600.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大滚转角速度（度/秒）"))
-	float MaxRollRateDegPerSec = 120.0f;
+};
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大俯仰角速度（度/秒）"))
-	float MaxPitchRateDegPerSec = 120.0f;
+/**
+ * 速度移动和持续环绕使用的约束。
+ * 这两类命令没有“终点制动”，其巡航速度分别由期望速度和半径×角速度唯一决定，
+ * 因此不暴露有限轨迹中的巡航/减速/终点速度，避免同一件事由多个参数控制。
+ */
+USTRUCT(BlueprintType)
+struct AIRCRAFTLAB_API FContinuousMotionConstraints
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大水平加速度（厘米/秒²）"))
+	float MaxAccelerationCmPerSecSq = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大水平加加速度（厘米/秒³）"))
+	float MaxJerkCmPerSecCubed = 2000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大爬升率（厘米/秒）"))
+	float MaxClimbRateCmPerSec = 300.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大下降率（厘米/秒）"))
+	float MaxDescentRateCmPerSec = 200.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大垂直加速度（厘米/秒²）"))
+	float MaxVerticalAccelerationCmPerSecSq = 500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大垂直加加速度（厘米/秒³）"))
+	float MaxVerticalJerkCmPerSecCubed = 1500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航角速度（度/秒）"))
+	float MaxYawRateDegPerSec = 90.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航角加速度（度/秒²）"))
+	float MaxYawAccelerationDegPerSecSq = 180.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航加加速度（度/秒³）"))
+	float MaxYawJerkDegPerSecCubed = 600.0f;
 };
 
 USTRUCT(BlueprintType)
@@ -154,6 +183,11 @@ struct AIRCRAFTLAB_API FAutopilotMovementIntent
 	float ThrustFeedForward = 0.0f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "到达模式"))
 	EAutopilotArrivalMode ArrivalMode = EAutopilotArrivalMode::StopAndComplete;
+	/** 仅 PassThrough 使用；表示穿过有限轨迹终点时保留的速度。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent",
+		meta = (ClampMin = "0.0", EditCondition = "ArrivalMode == EAutopilotArrivalMode::PassThrough", EditConditionHides,
+			DisplayName = "穿越终点速度（厘米/秒）"))
+	float PassThroughSpeedCmPerSec = 0.0f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "到达判据"))
 	FAutopilotArrivalCriteria ArrivalCriteria;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (ClampMin = "0.0", DisplayName = "环绕半径（厘米）"))

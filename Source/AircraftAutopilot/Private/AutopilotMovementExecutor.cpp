@@ -76,7 +76,7 @@ bool UAutopilotMovementExecutor::Update(
 		|| ActiveIntent.MotionConstraints.CruiseSpeedCmPerSec != Intent.MotionConstraints.CruiseSpeedCmPerSec
 		|| ActiveIntent.MotionConstraints.MaxAccelerationCmPerSecSq != Intent.MotionConstraints.MaxAccelerationCmPerSecSq
 		|| ActiveIntent.MotionConstraints.MaxDecelerationCmPerSecSq != Intent.MotionConstraints.MaxDecelerationCmPerSecSq
-		|| ActiveIntent.MotionConstraints.TargetSpeedCmPerSec != Intent.MotionConstraints.TargetSpeedCmPerSec
+		|| ActiveIntent.PassThroughSpeedCmPerSec != Intent.PassThroughSpeedCmPerSec
 		|| ActiveIntent.MotionConstraints.MaxJerkCmPerSecCubed != Intent.MotionConstraints.MaxJerkCmPerSecCubed;
 
 	ActiveIntent = Intent;
@@ -344,7 +344,7 @@ bool UAutopilotMovementExecutor::ValidateIntent(const FAutopilotMovementIntent& 
 		|| Intent.MotionConstraints.CruiseSpeedCmPerSec < 0.0f
 		|| Intent.MotionConstraints.MaxAccelerationCmPerSecSq <= 0.0f
 		|| Intent.MotionConstraints.MaxDecelerationCmPerSecSq <= 0.0f
-		|| Intent.MotionConstraints.TargetSpeedCmPerSec < 0.0f
+		|| Intent.PassThroughSpeedCmPerSec < 0.0f
 		|| Intent.MotionConstraints.MaxJerkCmPerSecCubed < 0.0f
 		|| Intent.ArrivalCriteria.HorizontalToleranceCm < 0.0f
 		|| Intent.ArrivalCriteria.VerticalToleranceCm < 0.0f
@@ -459,6 +459,8 @@ bool UAutopilotMovementExecutor::RebuildTrajectory(const FAutopilotVehicleSnapsh
 	Request.PlanningJerkCmPerSecCubed = ActiveIntent.MotionConstraints.MaxJerkCmPerSecCubed;
 	Request.AcceptanceRadiusCm = ActiveIntent.ArrivalCriteria.HorizontalToleranceCm;
 	Request.bYawFollowPath = false;
+	const float EffectivePassThroughSpeedCmPerSec = FMath::Min(
+		ActiveIntent.PassThroughSpeedCmPerSec, Request.CruiseSpeedCmPerSec);
 
 	switch (ActiveIntent.Type)
 	{
@@ -468,7 +470,7 @@ bool UAutopilotMovementExecutor::RebuildTrajectory(const FAutopilotVehicleSnapsh
 		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
 		{
 			Request.TargetVelocityCmPerSec = (Request.TargetPositionCm - Snapshot.PositionCm).GetSafeNormal()
-				* ActiveIntent.MotionConstraints.TargetSpeedCmPerSec;
+				* EffectivePassThroughSpeedCmPerSec;
 		}
 		break;
 	case EAutopilotMovementIntentType::FollowPath:
@@ -492,7 +494,7 @@ bool UAutopilotMovementExecutor::RebuildTrajectory(const FAutopilotVehicleSnapsh
 		{
 			Request.TargetVelocityCmPerSec = (ActiveIntent.PathPointsCm.Last()
 				- ActiveIntent.PathPointsCm[ActiveIntent.PathPointsCm.Num() - 2]).GetSafeNormal()
-				* ActiveIntent.MotionConstraints.TargetSpeedCmPerSec;
+				* EffectivePassThroughSpeedCmPerSec;
 		}
 		break;
 	case EAutopilotMovementIntentType::Orbit:
@@ -519,7 +521,7 @@ bool UAutopilotMovementExecutor::RebuildTrajectory(const FAutopilotVehicleSnapsh
 			Request.TargetVelocityCmPerSec = FVector(
 				-FMath::Sin(EndAngleRadians) * SpinSign,
 				FMath::Cos(EndAngleRadians) * SpinSign,
-				0.0f) * ActiveIntent.MotionConstraints.TargetSpeedCmPerSec;
+				0.0f) * EffectivePassThroughSpeedCmPerSec;
 		}
 		break;
 	default:

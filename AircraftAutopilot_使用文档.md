@@ -1,5 +1,9 @@
 # AircraftAutopilot 使用文档
 
+> **参数说明更新提示（2026-07-14）**：本文保留架构和算法背景，但其中旧参数示例可能已过时。
+> Submit、`UAutopilotProfileAsset` 和 `UFlightControllerProfileAsset` 的当前权威说明请查看
+> [Autopilot与FlightController参数调节指南.md](./Autopilot与FlightController参数调节指南.md)。
+
 > 工业级无人机 Autopilot 框架 —— 基于 Chaos Physics 的全栈飞控系统
 >
 > 模块位置：`Plugins/AircraftLab/Source/AircraftAutopilot/`

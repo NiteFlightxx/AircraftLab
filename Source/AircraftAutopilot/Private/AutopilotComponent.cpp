@@ -81,7 +81,8 @@ void UAutopilotComponent::TickComponent(
 		|| IntentType == EAutopilotMovementIntentType::Orbit
 		|| IntentType == EAutopilotMovementIntentType::CircleArc;
 	FGuidanceCommand Guidance;
-	if (EffectiveProfile->bEnablePathFollowing && bPathIntent && PathFollowing
+	if (EffectiveProfile->GuidanceStrategy != EPathFollowingStrategy::Direct
+		&& bPathIntent && PathFollowing
 		&& Trajectory && Trajectory->IsValid())
 	{
 		PathFollowing->Update(Snapshot.PositionCm, Snapshot.VelocityCmPerSec, DeltaTime, Guidance);
@@ -218,8 +219,29 @@ void UAutopilotComponent::ApplyFiniteOptions(
 	Intent.MotionConstraints = Options.MotionConstraints;
 	ApplyHeadingOptions(Intent, Options.Heading);
 	Intent.ArrivalMode = Options.ArrivalMode;
+	Intent.PassThroughSpeedCmPerSec = Options.PassThroughSpeedCmPerSec;
 	Intent.ArrivalCriteria = Options.ArrivalCriteria;
 	Intent.TimeoutSeconds = Options.TimeoutSeconds;
+}
+
+void UAutopilotComponent::ApplyContinuousConstraints(
+	FAutopilotMovementIntent& Intent,
+	const FContinuousMotionConstraints& Constraints,
+	float CommandedHorizontalSpeedCmPerSec)
+{
+	FTrajectoryMotionConstraints& Out = Intent.MotionConstraints;
+	Out.CruiseSpeedCmPerSec = FMath::Max(CommandedHorizontalSpeedCmPerSec, 0.0f);
+	Out.MaxAccelerationCmPerSecSq = Constraints.MaxAccelerationCmPerSecSq;
+	// Continuous commands use one symmetric slew limit; they have no terminal braking phase.
+	Out.MaxDecelerationCmPerSecSq = Constraints.MaxAccelerationCmPerSecSq;
+	Out.MaxJerkCmPerSecCubed = Constraints.MaxJerkCmPerSecCubed;
+	Out.MaxClimbRateCmPerSec = Constraints.MaxClimbRateCmPerSec;
+	Out.MaxDescentRateCmPerSec = Constraints.MaxDescentRateCmPerSec;
+	Out.MaxVerticalAccelerationCmPerSecSq = Constraints.MaxVerticalAccelerationCmPerSecSq;
+	Out.MaxVerticalJerkCmPerSecCubed = Constraints.MaxVerticalJerkCmPerSecCubed;
+	Out.MaxYawRateDegPerSec = Constraints.MaxYawRateDegPerSec;
+	Out.MaxYawAccelerationDegPerSecSq = Constraints.MaxYawAccelerationDegPerSecSq;
+	Out.MaxYawJerkDegPerSecCubed = Constraints.MaxYawJerkDegPerSecCubed;
 }
 
 FAutopilotIntentHandle UAutopilotComponent::SubmitMoveTo(const FAutopilotMoveToCommand& Command)
@@ -250,7 +272,8 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitOrbit(const FAutopilotOrbitCom
 	Intent.TargetActor = Command.CenterActor;
 	Intent.OrbitRadiusCm = Command.RadiusCm;
 	Intent.OrbitAngularRateDegPerSec = Command.AngularRateDegPerSec;
-	Intent.MotionConstraints = Command.MotionConstraints;
+	ApplyContinuousConstraints(Intent, Command.MotionConstraints,
+		FMath::Abs(FMath::DegreesToRadians(Command.AngularRateDegPerSec) * Command.RadiusCm));
 	ApplyHeadingOptions(Intent, Command.Heading);
 	Intent.TimeoutSeconds = Command.TimeoutSeconds;
 	return SubmitMovementIntent(Intent);
@@ -274,7 +297,8 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitVelocity(const FAutopilotVeloc
 	FAutopilotMovementIntent Intent;
 	Intent.Type = EAutopilotMovementIntentType::MoveWithVelocity;
 	Intent.DesiredVelocityCmPerSec = Command.DesiredVelocityCmPerSec;
-	Intent.MotionConstraints = Command.MotionConstraints;
+	ApplyContinuousConstraints(Intent, Command.MotionConstraints,
+		FVector2D(Command.DesiredVelocityCmPerSec.X, Command.DesiredVelocityCmPerSec.Y).Size());
 	ApplyHeadingOptions(Intent, Command.Heading);
 	Intent.TimeoutSeconds = Command.TimeoutSeconds;
 	return SubmitMovementIntent(Intent);
@@ -319,7 +343,8 @@ bool UAutopilotComponent::UpdateOrbit(
 	Intent.TargetActor = Command.CenterActor;
 	Intent.OrbitRadiusCm = Command.RadiusCm;
 	Intent.OrbitAngularRateDegPerSec = Command.AngularRateDegPerSec;
-	Intent.MotionConstraints = Command.MotionConstraints;
+	ApplyContinuousConstraints(Intent, Command.MotionConstraints,
+		FMath::Abs(FMath::DegreesToRadians(Command.AngularRateDegPerSec) * Command.RadiusCm));
 	ApplyHeadingOptions(Intent, Command.Heading);
 	Intent.TimeoutSeconds = Command.TimeoutSeconds;
 	return UpdateMovementIntent(Handle, Intent);
@@ -345,7 +370,8 @@ bool UAutopilotComponent::UpdateVelocity(
 	FAutopilotMovementIntent Intent;
 	Intent.Type = EAutopilotMovementIntentType::MoveWithVelocity;
 	Intent.DesiredVelocityCmPerSec = Command.DesiredVelocityCmPerSec;
-	Intent.MotionConstraints = Command.MotionConstraints;
+	ApplyContinuousConstraints(Intent, Command.MotionConstraints,
+		FVector2D(Command.DesiredVelocityCmPerSec.X, Command.DesiredVelocityCmPerSec.Y).Size());
 	ApplyHeadingOptions(Intent, Command.Heading);
 	Intent.TimeoutSeconds = Command.TimeoutSeconds;
 	return UpdateMovementIntent(Handle, Intent);
@@ -430,7 +456,6 @@ void UAutopilotComponent::ResolveFlightController()
 void UAutopilotComponent::ApplyProfile()
 {
 	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
-	FeedForwardCalculator->SetParams(EffectiveProfile->FeedForward);
 	TurnBehavior->SetLimits(EffectiveProfile->TurnLimits);
 	const float InitialHoverThrust = FlightController
 		? FlightController->GetHoverCollectiveCommand() : 0.5f;
@@ -479,8 +504,6 @@ void UAutopilotComponent::ApplyIntentMotionLimits()
 	Limits.MaxYawRateDegPerSec = Requested.MaxYawRateDegPerSec;
 	Limits.MaxYawAccelDegPerSecSq = Requested.MaxYawAccelerationDegPerSecSq;
 	Limits.MaxYawJerkDegPerSecCubed = Requested.MaxYawJerkDegPerSecCubed;
-	Limits.MaxRollRateDegPerSec = Requested.MaxRollRateDegPerSec;
-	Limits.MaxPitchRateDegPerSec = Requested.MaxPitchRateDegPerSec;
 	MotionProfile->SetLimits(Limits);
 }
 

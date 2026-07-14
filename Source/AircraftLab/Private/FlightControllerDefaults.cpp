@@ -46,7 +46,6 @@ void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& Ou
 	OutConfig.Position.VelocityGains.Y = { 1.50f, 0.01f, 0.60f, 3000.0f, OutConfig.Limits.MaxHorizontalAccelerationCmPerSecSq };
 	OutConfig.Position.VelocityGains.X.Kff = 1.0f; // 加速度前馈（Autopilot 速度环）
 	OutConfig.Position.VelocityGains.Y.Kff = 1.0f;
-	OutConfig.Position.bEnableLinearDampingFeedForward = true;
 	OutConfig.Position.LinearDampingFeedForwardScale = 1.0f;
 	OutConfig.Position.DampingAccelerationReserveFraction = 0.2f;
 	OutConfig.Position.VelocityGains.Z = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
@@ -104,7 +103,6 @@ void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& Ou
 	// 对标 PX4：rate setpoint 已含 FF，rate controller 自身 Kff=0，仅 Kp 跟踪。
 	OutConfig.Attitude.RateGains.Roll.Kff = 0.0f;
 	OutConfig.Attitude.RateGains.Pitch.Kff = 0.0f;
-	OutConfig.Attitude.bEnableAngularDampingFeedForward = true;
 	OutConfig.Attitude.AngularDampingFeedForwardScale = 1.0f;
 	OutConfig.Attitude.RateGains.Roll.DerivativeCutoffHz = 18.0f;
 	OutConfig.Attitude.RateGains.Pitch.DerivativeCutoffHz = 18.0f;
@@ -124,7 +122,6 @@ void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& Ou
 	OutConfig.Altitude.AltitudeGains.Kff = 1.0f; // 垂直速度前馈（Autopilot 高度环）
 	OutConfig.Altitude.VerticalVelocityGains = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
 	OutConfig.Altitude.VerticalVelocityGains.DerivativeCutoffHz = 10.0f;
-	OutConfig.Altitude.bEnableVerticalDampingFeedForward = true;
 	OutConfig.Altitude.VerticalDampingFeedForwardScale = 1.0f;
 
 	// ========================================================================

@@ -604,8 +604,6 @@ FAutopilotMovementIntent UFlightControllerComponent::BuildManualMovementIntent(
 	Intent.MotionConstraints.MaxDescentRateCmPerSec = Limits.MaxDescentRateCmPerSec;
 	Intent.MotionConstraints.MaxVerticalAccelerationCmPerSecSq = Limits.MaxVerticalAccelerationCmPerSecSq;
 	Intent.MotionConstraints.MaxYawRateDegPerSec = Limits.MaxYawRateDegreesPerSec;
-	Intent.MotionConstraints.MaxRollRateDegPerSec = Limits.MaxRollRateDegreesPerSec;
-	Intent.MotionConstraints.MaxPitchRateDegPerSec = Limits.MaxPitchRateDegreesPerSec;
 	return Intent;
 }
 

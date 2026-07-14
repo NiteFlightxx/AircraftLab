@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
-#include "FeedForward/FeedForwardCalculator.h"
 #include "HoverThrust/HoverThrustEstimator.h"
 #include "PathFollowing/PathFollowingTypes.h"
 #include "PathFollowing/PurePursuitGuidance.h"
@@ -18,30 +17,28 @@ class AIRCRAFTAUTOPILOT_API UAutopilotProfileAsset : public UPrimaryDataAsset
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|FeedForward", meta = (DisplayName = "前馈参数"))
-	FFeedForwardParams FeedForward;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Turn", meta = (DisplayName = "转弯限幅"))
-	FTurnLimits TurnLimits;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Turn", meta = (DisplayName = "启用协调转弯"))
 	bool bEnableCoordinatedTurns = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Turn",
+		meta = (EditCondition = "bEnableCoordinatedTurns", EditConditionHides, DisplayName = "转弯限幅"))
+	FTurnLimits TurnLimits;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Path", meta = (DisplayName = "制导策略"))
 	EPathFollowingStrategy GuidanceStrategy = EPathFollowingStrategy::PurePursuit;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Path", meta = (DisplayName = "启用路径跟踪"))
-	bool bEnablePathFollowing = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Path", meta = (DisplayName = "纯追踪配置"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Path",
+		meta = (EditCondition = "GuidanceStrategy == EPathFollowingStrategy::PurePursuit", EditConditionHides, DisplayName = "纯追踪配置"))
 	FPurePursuitGuidanceConfig PurePursuit;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Path", meta = (DisplayName = "向量场配置"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|Path",
+		meta = (EditCondition = "GuidanceStrategy == EPathFollowingStrategy::VectorField", EditConditionHides, DisplayName = "向量场配置"))
 	FVectorFieldGuidanceConfig VectorField;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|HoverThrust", meta = (DisplayName = "悬停推力估计器"))
-	FHoverThrustEstimatorConfig HoverThrustEstimator;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|HoverThrust", meta = (DisplayName = "启用悬停推力估计器"))
 	bool bEnableHoverThrustEstimator = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot|HoverThrust",
+		meta = (EditCondition = "bEnableHoverThrustEstimator", EditConditionHides, DisplayName = "悬停推力估计器"))
+	FHoverThrustEstimatorConfig HoverThrustEstimator;
 };

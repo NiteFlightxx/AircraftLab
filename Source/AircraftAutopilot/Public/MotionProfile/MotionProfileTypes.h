@@ -66,13 +66,6 @@ struct AIRCRAFTAUTOPILOT_API FMotionProfileLimits
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|MotionProfile", meta = (ClampMin = "0.0"))
 	float MaxYawJerkDegPerSecCubed = 600.0f;
 
-	/** 最大滚转角速率（°/s）—— 姿态设定值整形 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|MotionProfile", meta = (ClampMin = "0.0"))
-	float MaxRollRateDegPerSec = 120.0f;
-
-	/** 最大俯仰角速率（°/s）—— 姿态设定值整形 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|MotionProfile", meta = (ClampMin = "0.0"))
-	float MaxPitchRateDegPerSec = 120.0f;
 };
 
 /**

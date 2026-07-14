@@ -82,18 +82,22 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotHeadingOptions
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading", meta = (DisplayName = "航向模式"))
 	EAutopilotHeadingMode Mode = EAutopilotHeadingMode::FaceVelocity;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading", meta = (DisplayName = "固定航向角（度）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading",
+		meta = (EditCondition = "Mode == EAutopilotHeadingMode::FixedYaw", EditConditionHides, DisplayName = "固定航向角（度）"))
 	float FixedYawDegrees = 0.0f;
 
 	/** Enable a look-at target distinct from the destination/path. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading", meta = (DisplayName = "使用注视目标"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading",
+		meta = (EditCondition = "Mode == EAutopilotHeadingMode::FaceTarget", EditConditionHides, DisplayName = "使用独立注视目标"))
 	bool bUseLookAtTarget = false;
 
 	/** World position, or actor-relative offset when LookAtActor is set. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading", meta = (DisplayName = "注视位置（厘米）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading",
+		meta = (EditCondition = "Mode == EAutopilotHeadingMode::FaceTarget && bUseLookAtTarget", EditConditionHides, DisplayName = "注视位置（厘米）"))
 	FVector LookAtPositionCm = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading", meta = (DisplayName = "注视目标 Actor"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading",
+		meta = (EditCondition = "Mode == EAutopilotHeadingMode::FaceTarget && bUseLookAtTarget", EditConditionHides, DisplayName = "注视目标 Actor"))
 	TObjectPtr<AActor> LookAtActor = nullptr;
 };
 
@@ -111,6 +115,12 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotFiniteCommandOptions
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Command", meta = (DisplayName = "到达模式"))
 	EAutopilotArrivalMode ArrivalMode = EAutopilotArrivalMode::StopAndComplete;
+
+	/** PassThrough 时在终点保留的速度；其他到达模式固定减速到 0。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Command",
+		meta = (ClampMin = "0.0", EditCondition = "ArrivalMode == EAutopilotArrivalMode::PassThrough", EditConditionHides,
+			DisplayName = "穿越终点速度（厘米/秒）"))
+	float PassThroughSpeedCmPerSec = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Command", meta = (DisplayName = "到达判据"))
 	FAutopilotArrivalCriteria ArrivalCriteria;
@@ -168,8 +178,8 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotOrbitCommand
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Orbit", meta = (DisplayName = "角速度（度/秒）"))
 	float AngularRateDegPerSec = 45.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Orbit", meta = (DisplayName = "运动约束"))
-	FTrajectoryMotionConstraints MotionConstraints;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Orbit", meta = (DisplayName = "持续运动约束"))
+	FContinuousMotionConstraints MotionConstraints;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Orbit", meta = (DisplayName = "航向选项"))
 	FAutopilotHeadingOptions Heading;
@@ -211,8 +221,8 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotVelocityCommand
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Velocity", meta = (DisplayName = "期望速度（厘米/秒）"))
 	FVector DesiredVelocityCmPerSec = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Velocity", meta = (DisplayName = "运动约束"))
-	FTrajectoryMotionConstraints MotionConstraints;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Velocity", meta = (DisplayName = "持续运动约束"))
+	FContinuousMotionConstraints MotionConstraints;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Velocity", meta = (DisplayName = "航向选项"))
 	FAutopilotHeadingOptions Heading;

@@ -55,10 +55,6 @@ struct AIRCRAFTAUTOPILOT_API FTurnLimits
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0", DisplayName = "最大横向加速度（厘米/秒²）"))
 	float MaxLateralAccelCmPerSecSq = 500.0f;
 
-	/** 最大偏航角速度（°/s）-- 低速偏航跟踪上限 */
-	/** 偏航跟踪增益（低速：机体转向速度方向的比例增益，1/s） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Turn", meta = (ClampMin = "0.0", DisplayName = "偏航跟踪增益"))
-	float YawFollowGain = 2.0f;
 };
 
 /**

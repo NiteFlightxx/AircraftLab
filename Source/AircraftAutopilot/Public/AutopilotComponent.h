@@ -41,7 +41,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Autopilot")
 	void SetAutopilotActive(bool bActive);
 
-	UFUNCTION(BlueprintCallable, Category = "Autopilot|Intent")
+	/** Low-level C++ escape hatch. Blueprints should use the typed Submit* functions below. */
 	FAutopilotIntentHandle SubmitMovementIntent(const FAutopilotMovementIntent& Intent);
 
 	/** Preferred typed command APIs: each exposes only fields valid for that action. */
@@ -83,7 +83,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
 	bool UpdateHeadingTarget(FAutopilotIntentHandle Handle, const FAutopilotHeadingOptions& Heading);
 
-	UFUNCTION(BlueprintCallable, Category = "Autopilot|Intent")
+	/** Low-level C++ escape hatch. Blueprints should use the typed Update* functions above. */
 	bool UpdateMovementIntent(FAutopilotIntentHandle Handle, const FAutopilotMovementIntent& Intent);
 
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Intent")
@@ -159,4 +159,8 @@ private:
 	void UpdateHoverThrustEstimate(float DeltaSeconds);
 	static void ApplyHeadingOptions(FAutopilotMovementIntent& Intent, const FAutopilotHeadingOptions& Heading);
 	static void ApplyFiniteOptions(FAutopilotMovementIntent& Intent, const FAutopilotFiniteCommandOptions& Options);
+	static void ApplyContinuousConstraints(
+		FAutopilotMovementIntent& Intent,
+		const FContinuousMotionConstraints& Constraints,
+		float CommandedHorizontalSpeedCmPerSec);
 };
