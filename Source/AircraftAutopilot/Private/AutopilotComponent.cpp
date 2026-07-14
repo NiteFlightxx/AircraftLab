@@ -446,12 +446,22 @@ void UAutopilotComponent::ApplyIntentMotionLimits()
 	float HardHorizontalAcceleration = TNumericLimits<float>::Max();
 	if (FlightController)
 	{
-		const FDroneControlLimits& HardLimits = FlightController->GetRuntimeConfig().Controller.Limits;
+		const FDroneFlightControllerConfig& ControllerConfig =
+			FlightController->GetRuntimeConfig().Controller;
+		const FDroneControlLimits& HardLimits = ControllerConfig.Limits;
 		HardHorizontalSpeed = HardLimits.MaxHorizontalSpeedCmPerSec;
 		const float TiltLimitedAcceleration = FlightController->GetGravityMagnitudeCmPerSecSq()
 			* FMath::Tan(FMath::DegreesToRadians(HardLimits.MaxTiltAngleDegrees));
 		HardHorizontalAcceleration = FMath::Min(
 			HardLimits.MaxHorizontalAccelerationCmPerSecSq, TiltLimitedAcceleration);
+		const FlightControlDynamics::FDampingAwareHorizontalLimits DampingAwareLimits =
+			FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
+				FMath::Min(HardHorizontalSpeed, Requested.CruiseSpeedCmPerSec),
+				HardHorizontalAcceleration,
+				FlightController->GetLinearDampingPerSecond(),
+				ControllerConfig.Position.DampingAccelerationReserveFraction);
+		HardHorizontalSpeed = DampingAwareLimits.MaxSpeedCmPerSec;
+		HardHorizontalAcceleration = DampingAwareLimits.MaxTrajectoryAccelerationCmPerSecSq;
 	}
 	MovementExecutor->SetPhysicalMotionLimits(HardHorizontalSpeed, HardHorizontalAcceleration);
 	FMotionProfileLimits Limits;

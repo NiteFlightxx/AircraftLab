@@ -148,8 +148,9 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 		FlightControlSolver.LastDesiredHorizontalAccelerationCmPerSecSq.Y);
 
 	UE_LOG(LogFlightControllerDebug, Log,
-		TEXT("[ThrustDiag] Collective=%.3f Hover(Config/Required)=%.3f/%.3f Thrust(Current/Weight/MaxVertical)=%.1f/%.1f/%.1fN MaxTWR=%.2f AxisCmd=(%.3f,%.3f,%.3f) Rate(Current/Desired)=(%.1f,%.1f,%.1f)/(%.1f,%.1f,%.1f) AllocResidual=%.4f Saturated=%d DesVz=%.1f"),
+		TEXT("[ThrustDiag] Collective=%.3f Hover(Config/Required)=%.3f/%.3f VzDampingFF=%+.4f Thrust(Current/Weight/MaxVertical)=%.1f/%.1f/%.1fN MaxTWR=%.2f AxisCmd=(%.3f,%.3f,%.3f) Rate(Current/Desired)=(%.1f,%.1f,%.1f)/(%.1f,%.1f,%.1f) AllocResidual=%.4f Saturated=%d DesVz=%.1f"),
 		CollectiveCommand, RuntimeConfig.Controller.Limits.HoverCollectiveCommand, RequiredHoverCollective,
+		FlightControlSolver.LastVerticalDampingCollectiveFeedForward,
 		CurrentTotalThrustN, WeightN, MaxVerticalThrustN, MaxTwr,
 		AxisCommands.X, AxisCommands.Y, AxisCommands.Z,
 		BodyRates.X, BodyRates.Y, BodyRates.Z, DesiredBodyRates.X, DesiredBodyRates.Y, DesiredYawRate,
@@ -192,8 +193,11 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 		- BodyRates * PhysicsCache.AngularDampingPerSecond;
 	const FVector MeasuredAngularAcceleration = Runtime.EstimatedState.State.AngularAccelerationBodyDegreesPerSecSq;
 	UE_LOG(LogFlightControllerDebug, Log,
-		TEXT("[TorqueDiag] Desired=(%+.2f,%+.2f,%+.2f)Nm Allocated=(%+.2f,%+.2f,%+.2f)Nm Applied=(%+.2f,%+.2f,%+.2f)Nm ForceBody=(%+.1f,%+.1f,%+.1f)N Inertia=(%.3f,%.3f,%.3f)kgm2 Alpha(Expected/Measured)=(%+.1f,%+.1f,%+.1f)/(%+.1f,%+.1f,%+.1f)deg/s2"),
+		TEXT("[TorqueDiag] Desired=(%+.2f,%+.2f,%+.2f)Nm AngularDampingFF=(%+.4f,%+.4f,%+.4f) Allocated=(%+.2f,%+.2f,%+.2f)Nm Applied=(%+.2f,%+.2f,%+.2f)Nm ForceBody=(%+.1f,%+.1f,%+.1f)N Inertia=(%.3f,%.3f,%.3f)kgm2 Alpha(Expected/Measured)=(%+.1f,%+.1f,%+.1f)/(%+.1f,%+.1f,%+.1f)deg/s2"),
 		DesiredTorqueControllerNm.X, DesiredTorqueControllerNm.Y, DesiredTorqueControllerNm.Z,
+		FlightControlSolver.LastAngularDampingFeedForward.X,
+		FlightControlSolver.LastAngularDampingFeedForward.Y,
+		FlightControlSolver.LastAngularDampingFeedForward.Z,
 		AllocatedTorqueControllerNm.X, AllocatedTorqueControllerNm.Y, AllocatedTorqueControllerNm.Z,
 		AppliedTorqueControllerNm.X, AppliedTorqueControllerNm.Y, AppliedTorqueControllerNm.Z,
 		AppliedForceBodyN.X, AppliedForceBodyN.Y, AppliedForceBodyN.Z,

@@ -36,9 +36,31 @@ struct FFlightControlReferenceModelState
 
 namespace FlightControlDynamics
 {
+	struct AIRCRAFTLAB_API FDampingAwareHorizontalLimits
+	{
+		float MaxSpeedCmPerSec = 0.0f;
+		float MaxTrajectoryAccelerationCmPerSecSq = 0.0f;
+	};
+
 	/** Chaos 线性阻尼 a_drag=-d*v 的逆模型：维持目标速度所需 a_ff=d*v_des。 */
 	AIRCRAFTLAB_API FVector ComputeLinearDampingFeedForward(
 		const FVector& DesiredVelocityCmPerSec, float LinearDampingPerSecond, float Scale);
+
+	/** 将垂直阻尼加速度换算为相对悬停总距的前馈偏移。 */
+	AIRCRAFTLAB_API float ComputeVerticalDampingCollectiveFeedForward(
+		float DesiredVerticalVelocityCmPerSec, float LinearDampingPerSecond,
+		float GravityCmPerSecSq, float HoverCollective, float Scale);
+
+	/** 将稳态角阻尼力矩换算成控制分配器使用的归一化轴指令。 */
+	AIRCRAFTLAB_API FVector ComputeAngularDampingFeedForward(
+		const FVector& DesiredBodyRatesDegPerSec, float AngularDampingPerSecond,
+		const FVector& InertiaDiagonalKgM2, const FVector& PositiveTorqueAuthorityNm,
+		const FVector& NegativeTorqueAuthorityNm, float Scale);
+
+	/** 计算扣除稳态阻尼需求并保留控制余量后的巡航速度与轨迹加速度权限。 */
+	AIRCRAFTLAB_API FDampingAwareHorizontalLimits ComputeDampingAwareHorizontalLimits(
+		float RequestedMaxSpeedCmPerSec, float PhysicalMaxAccelerationCmPerSecSq,
+		float LinearDampingPerSecond, float ReserveFraction);
 }
 
 /**
@@ -60,6 +82,8 @@ struct AIRCRAFTLAB_API FFlightControlSolver
 	FVector LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 	FVector LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
 	FVector LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
+	FVector LastAngularDampingFeedForward = FVector::ZeroVector;
+	float LastVerticalDampingCollectiveFeedForward = 0.0f;
 
 	float ComputeVerticalControl(FFlightControlSolverContext& Context,
 		float DeltaSeconds, float& OutDesiredVerticalVelocity);
@@ -86,6 +110,8 @@ struct AIRCRAFTLAB_API FFlightControlSolver
 		LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 		LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
 		LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
+		LastAngularDampingFeedForward = FVector::ZeroVector;
+		LastVerticalDampingCollectiveFeedForward = 0.0f;
 	}
 };
 

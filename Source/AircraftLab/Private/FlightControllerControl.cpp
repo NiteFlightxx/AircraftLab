@@ -10,6 +10,61 @@ FVector FlightControlDynamics::ComputeLinearDampingFeedForward(
 		DesiredVelocityCmPerSec.Y * EffectiveDamping, 0.0f);
 }
 
+float FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
+	float DesiredVerticalVelocityCmPerSec, float LinearDampingPerSecond,
+	float GravityCmPerSecSq, float HoverCollective, float Scale)
+{
+	const float Gravity = FMath::Max(GravityCmPerSecSq, UE_SMALL_NUMBER);
+	const float DampingAcceleration = DesiredVerticalVelocityCmPerSec
+		* FMath::Max(LinearDampingPerSecond, 0.0f) * FMath::Max(Scale, 0.0f);
+	return FMath::Max(HoverCollective, 0.0f) * DampingAcceleration / Gravity;
+}
+
+FVector FlightControlDynamics::ComputeAngularDampingFeedForward(
+	const FVector& DesiredBodyRatesDegPerSec, float AngularDampingPerSecond,
+	const FVector& InertiaDiagonalKgM2, const FVector& PositiveTorqueAuthorityNm,
+	const FVector& NegativeTorqueAuthorityNm, float Scale)
+{
+	const float EffectiveDamping = FMath::Max(AngularDampingPerSecond, 0.0f)
+		* FMath::Max(Scale, 0.0f);
+	const FVector DesiredBodyRatesRadPerSec = DesiredBodyRatesDegPerSec * (PI / 180.0f);
+	const FVector RequiredTorqueNm = DesiredBodyRatesRadPerSec
+		* InertiaDiagonalKgM2.ComponentMax(FVector::ZeroVector) * EffectiveDamping;
+	FVector Result = FVector::ZeroVector;
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		const float Authority = RequiredTorqueNm[Axis] >= 0.0f
+			? PositiveTorqueAuthorityNm[Axis] : NegativeTorqueAuthorityNm[Axis];
+		if (Authority > UE_SMALL_NUMBER)
+		{
+			Result[Axis] = RequiredTorqueNm[Axis] / Authority;
+		}
+	}
+	return Result;
+}
+
+FlightControlDynamics::FDampingAwareHorizontalLimits
+FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
+	float RequestedMaxSpeedCmPerSec, float PhysicalMaxAccelerationCmPerSecSq,
+	float LinearDampingPerSecond, float ReserveFraction)
+{
+	FDampingAwareHorizontalLimits Result;
+	const float RequestedSpeed = FMath::Max(RequestedMaxSpeedCmPerSec, 0.0f);
+	const float PhysicalAcceleration = FMath::Max(PhysicalMaxAccelerationCmPerSecSq, 0.0f);
+	const float Damping = FMath::Max(LinearDampingPerSecond, 0.0f);
+	const float Reserve = FMath::Clamp(ReserveFraction, 0.0f, 0.9f);
+	Result.MaxSpeedCmPerSec = RequestedSpeed;
+	if (Damping > UE_SMALL_NUMBER)
+	{
+		const float DampingLimitedSpeed = PhysicalAcceleration * (1.0f - Reserve) / Damping;
+		Result.MaxSpeedCmPerSec = FMath::Min(Result.MaxSpeedCmPerSec, DampingLimitedSpeed);
+	}
+	Result.MaxTrajectoryAccelerationCmPerSecSq = FMath::Max(
+		PhysicalAcceleration - Damping * Result.MaxSpeedCmPerSec,
+		PhysicalAcceleration * Reserve);
+	return Result;
+}
+
 float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& Context, float DeltaSeconds, float& OutDesiredVerticalVelocity)
 {
 	const float MinCollective = Context.Config.Controller.Limits.MinCollectiveCommand;
@@ -25,6 +80,7 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 		Context.Runtime.HoldTargets.bAltitudeHoldInitialized = false;
 		PidStates.Altitude.Reset();
 		PidStates.VerticalVelocity.Reset();
+		LastVerticalDampingCollectiveFeedForward = 0.0f;
 		// 油门杆 → 垂直速度（线性映射）
 		OutDesiredVerticalVelocity = Context.MovementIntent.DesiredVelocityCmPerSec.Z;
 		// 油门杆 → 总距（悬停点为中心的线性映射）
@@ -53,12 +109,21 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 			Context.Config.Controller.Altitude.AltitudeGains, AI.VerticalVelocitySetpointCmPerSec);
 		OutDesiredVerticalVelocity = FMath::Clamp(OutDesiredVerticalVelocity,
 			-Context.Config.Controller.Limits.MaxDescentRateCmPerSec, Context.Config.Controller.Limits.MaxClimbRateCmPerSec);
-		// 垂直速度内环（无前馈，推力前馈走基准偏移而非 Kff）
+		const FDroneAltitudeControllerConfig& AltitudeConfig = Context.Config.Controller.Altitude;
+		LastVerticalDampingCollectiveFeedForward = AltitudeConfig.bEnableVerticalDampingFeedForward
+			? FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
+				OutDesiredVerticalVelocity, Context.PhysicsCache.LinearDampingPerSecond,
+				Context.PhysicsCache.GravityMagnitudeCmPerSecSq,
+				Context.Config.Controller.Limits.HoverCollectiveCommand,
+				AltitudeConfig.VerticalDampingFeedForwardScale)
+			: 0.0f;
+		// 垂直速度内环；轨迹推力前馈作为基准，阻尼前馈补偿稳态阻力。
 		const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
 			OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds,
-			Context.Config.Controller.Altitude.VerticalVelocityGains);
+			AltitudeConfig.VerticalVelocityGains);
 		// 推力前馈作总距基准（含重力补偿），替代 HoverCollective
-		return FMath::Clamp(AI.ThrustFeedForward + CollectiveOffset, MinCollective, MaxCollective);
+		return FMath::Clamp(AI.ThrustFeedForward + LastVerticalDampingCollectiveFeedForward
+			+ CollectiveOffset, MinCollective, MaxCollective);
 	}
 
 	// ---- 路径 B（手动）：高度保持 ----
@@ -90,10 +155,18 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 	// ---- 垂直速度内环（手动路径）----
 	// PID_vz: Δc = Kp·(v_z_des − v_z) + Ki·∫(v_z_des − v_z)dt + Kd·d(v_z_des − v_z)/dt
 	// 输出 Δc 是总距偏移量，加在悬停点上
+	const FDroneAltitudeControllerConfig& AltitudeConfig = Context.Config.Controller.Altitude;
+	LastVerticalDampingCollectiveFeedForward = AltitudeConfig.bEnableVerticalDampingFeedForward
+		? FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
+			OutDesiredVerticalVelocity, Context.PhysicsCache.LinearDampingPerSecond,
+			Context.PhysicsCache.GravityMagnitudeCmPerSecSq, HoverCollective,
+			AltitudeConfig.VerticalDampingFeedForwardScale)
+		: 0.0f;
 	const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
 		OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds, Context.Config.Controller.Altitude.VerticalVelocityGains);
 	// 最终总距 = 悬停总距 + PID偏移，限制在 [Min, Max]
-	return FMath::Clamp(HoverCollective + CollectiveOffset, MinCollective, MaxCollective);
+	return FMath::Clamp(HoverCollective + LastVerticalDampingCollectiveFeedForward
+		+ CollectiveOffset, MinCollective, MaxCollective);
 }
 
 
@@ -344,15 +417,40 @@ FVector FFlightControlSolver::ComputeBodyTorqueCommand(FFlightControlSolverConte
 	const float PitchError = DesiredBodyRatesDegreesPerSec.Y - CurrentBodyRates.Y;
 	const float YawError   = DesiredBodyRatesDegreesPerSec.Z - CurrentBodyRates.Z;
 
-	const FDronePidGains RollGains  = MakeAntiWindupGains(Context.Config.Controller.Attitude.RateGains.Roll,  Context.AllocationFeedback.bSaturatedPositive[0], Context.AllocationFeedback.bSaturatedNegative[0], RollError);
-	const FDronePidGains PitchGains = MakeAntiWindupGains(Context.Config.Controller.Attitude.RateGains.Pitch, Context.AllocationFeedback.bSaturatedPositive[1], Context.AllocationFeedback.bSaturatedNegative[1], PitchError);
-	const FDronePidGains YawGains   = MakeAntiWindupGains(Context.Config.Controller.Attitude.RateGains.Yaw,   Context.AllocationFeedback.bSaturatedPositive[2], Context.AllocationFeedback.bSaturatedNegative[2], YawError);
+	FDronePidGains RollGains  = MakeAntiWindupGains(Context.Config.Controller.Attitude.RateGains.Roll,  Context.AllocationFeedback.bSaturatedPositive[0], Context.AllocationFeedback.bSaturatedNegative[0], RollError);
+	FDronePidGains PitchGains = MakeAntiWindupGains(Context.Config.Controller.Attitude.RateGains.Pitch, Context.AllocationFeedback.bSaturatedPositive[1], Context.AllocationFeedback.bSaturatedNegative[1], PitchError);
+	FDronePidGains YawGains   = MakeAntiWindupGains(Context.Config.Controller.Attitude.RateGains.Yaw,   Context.AllocationFeedback.bSaturatedPositive[2], Context.AllocationFeedback.bSaturatedNegative[2], YawError);
+
+	const FDroneAttitudeControllerConfig& AttitudeConfig = Context.Config.Controller.Attitude;
+	if (AttitudeConfig.bEnableAngularDampingFeedForward)
+	{
+		const FVector PositiveAuthority(
+			Context.AllocationFeedback.Cache.PositiveTorqueAuthority[0],
+			Context.AllocationFeedback.Cache.PositiveTorqueAuthority[1],
+			Context.AllocationFeedback.Cache.PositiveTorqueAuthority[2]);
+		const FVector NegativeAuthority(
+			Context.AllocationFeedback.Cache.NegativeTorqueAuthority[0],
+			Context.AllocationFeedback.Cache.NegativeTorqueAuthority[1],
+			Context.AllocationFeedback.Cache.NegativeTorqueAuthority[2]);
+		LastAngularDampingFeedForward = FlightControlDynamics::ComputeAngularDampingFeedForward(
+			DesiredBodyRatesDegreesPerSec, Context.PhysicsCache.AngularDampingPerSecond,
+			Context.PhysicsCache.InertiaDiagonalKgM2, PositiveAuthority, NegativeAuthority,
+			AttitudeConfig.AngularDampingFeedForwardScale);
+	}
+	else
+	{
+		LastAngularDampingFeedForward = FVector::ZeroVector;
+	}
+	// Damping FF 已是归一化轴指令；借用 PID Kff 通道可统一限幅和 anti-windup。
+	RollGains.Kff = 1.0f;
+	PitchGains.Kff = 1.0f;
+	YawGains.Kff = 1.0f;
 
 	// u = Kp·(ω_des − ω) + Ki·∫ + Kd·d(ω)/dt + Kff·rate_ff
 	return FVector(
-		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.X, CurrentBodyRates.X, DeltaSeconds, RollGains, RateFeedForwardDegPerSec.X),
-		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Y, CurrentBodyRates.Y, DeltaSeconds, PitchGains, RateFeedForwardDegPerSec.Y),
-		PidStates.Rate.Yaw.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Z, CurrentBodyRates.Z, DeltaSeconds, YawGains, RateFeedForwardDegPerSec.Z));
+		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.X, CurrentBodyRates.X, DeltaSeconds, RollGains, LastAngularDampingFeedForward.X),
+		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Y, CurrentBodyRates.Y, DeltaSeconds, PitchGains, LastAngularDampingFeedForward.Y),
+		PidStates.Rate.Yaw.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Z, CurrentBodyRates.Z, DeltaSeconds, YawGains, LastAngularDampingFeedForward.Z));
 }
 
 
@@ -389,7 +487,11 @@ FVector FFlightControlSolver::ComputeVelocityPidAcceleration(
 			PositionConfig.VelocityGains.Y, TotalFeedForward.Y),
 		0.0f);
 
-	const float MaxHorizontalAcceleration = Context.Config.Controller.Limits.MaxHorizontalAccelerationCmPerSecSq;
+	const FDroneControlLimits& ControlLimits = Context.Config.Controller.Limits;
+	const float TiltLimitedAcceleration = Context.PhysicsCache.GravityMagnitudeCmPerSecSq
+		* FMath::Tan(FMath::DegreesToRadians(ControlLimits.MaxTiltAngleDegrees));
+	const float MaxHorizontalAcceleration = FMath::Min(
+		ControlLimits.MaxHorizontalAccelerationCmPerSecSq, TiltLimitedAcceleration);
 	const FVector2D HorizontalAcceleration(DesiredAcceleration.X, DesiredAcceleration.Y);
 	if (HorizontalAcceleration.SizeSquared() > FMath::Square(MaxHorizontalAcceleration))
 	{
@@ -409,6 +511,17 @@ FVector FFlightControlSolver::ComputeVelocityPidAcceleration(
 FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightControlSolverContext& Context, float DeltaSeconds)
 {
 	const FVector CurrentPosition = Context.Runtime.EstimatedState.State.PositionCm;
+	const FDroneControlLimits& ControlLimits = Context.Config.Controller.Limits;
+	const float TiltLimitedAcceleration = Context.PhysicsCache.GravityMagnitudeCmPerSecSq
+		* FMath::Tan(FMath::DegreesToRadians(ControlLimits.MaxTiltAngleDegrees));
+	const float PhysicalHorizontalAcceleration = FMath::Min(
+		ControlLimits.MaxHorizontalAccelerationCmPerSecSq, TiltLimitedAcceleration);
+	const FlightControlDynamics::FDampingAwareHorizontalLimits DampingAwareLimits =
+		FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
+			ControlLimits.MaxHorizontalSpeedCmPerSec, PhysicalHorizontalAcceleration,
+			Context.PhysicsCache.LinearDampingPerSecond,
+			Context.Config.Controller.Position.DampingAccelerationReserveFraction);
+	const float ReachableHorizontalSpeed = DampingAwareLimits.MaxSpeedCmPerSec;
 
 	if (!Context.ModeCapabilities.CanUsePositionControl && !Context.ModeCapabilities.CanUseVelocityControl)
 	{
@@ -449,7 +562,7 @@ FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightContro
 
 		// 速度限幅
 		DesiredVelocity.Z = 0.0f;
-		const float MaxHSpeed = Context.Config.Controller.Limits.MaxHorizontalSpeedCmPerSec;
+		const float MaxHSpeed = ReachableHorizontalSpeed;
 		const FVector2D DV2D(DesiredVelocity.X, DesiredVelocity.Y);
 		if (DV2D.SizeSquared() > FMath::Square(MaxHSpeed))
 		{
@@ -536,7 +649,7 @@ FVector FFlightControlSolver::ComputeDesiredHorizontalAcceleration(FFlightContro
 
 	// ---- 速度限幅 ----
 	DesiredVelocity.Z = 0.0f;
-	const float MaxHorizontalSpeed = Context.Config.Controller.Limits.MaxHorizontalSpeedCmPerSec;
+	const float MaxHorizontalSpeed = ReachableHorizontalSpeed;
 	const FVector2D DesiredVelocity2D(DesiredVelocity.X, DesiredVelocity.Y);
 	if (DesiredVelocity2D.SizeSquared() > FMath::Square(MaxHorizontalSpeed))
 	{

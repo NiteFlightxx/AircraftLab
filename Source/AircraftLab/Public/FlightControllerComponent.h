@@ -46,6 +46,7 @@ public:
 
 	/** 获取本次运行使用的不可变配置快照。 */
 	const FFlightControllerRuntimeConfig& GetRuntimeConfig() const { return RuntimeConfig; }
+	float GetLinearDampingPerSecond() const { return PhysicsCache.LinearDampingPerSecond; }
 
 	/** 刷新组件引用 */
 	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")

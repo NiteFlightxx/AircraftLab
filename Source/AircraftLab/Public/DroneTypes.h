@@ -429,7 +429,7 @@ struct AIRCRAFTLAB_API FDronePidGains
 
 	/** 前馈系数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (DisplayName = "前馈系数 Kff"))
-	float Kff = 0.0f;
+	float Kff = 1.0f;
 
 	/** 积分限幅（绝对值），0 表示无限幅 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0", DisplayName = "积分限幅"))
@@ -801,6 +801,16 @@ struct AIRCRAFTLAB_API FDroneAttitudeControllerConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "角速率环 PID 参数"))
 	FDroneEulerPidGains RateGains;
 
+	/** 使用运行时 Chaos 角阻尼、惯量和分配器力矩权限补偿稳态角速度阻力。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|DampingFeedForward",
+		meta = (DisplayName = "启用角阻尼前馈"))
+	bool bEnableAngularDampingFeedForward = true;
+
+	/** 1 表示完整补偿运行时实际角阻尼。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|DampingFeedForward",
+		meta = (ClampMin = "0.0", DisplayName = "角阻尼前馈比例"))
+	float AngularDampingFeedForwardScale = 1.0f;
+
 	/** 角速率反馈的一阶低通滤波配置 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "角速率滤波配置"))
 	FDroneFirstOrderFilterConfig RateFilter;
@@ -865,6 +875,11 @@ struct AIRCRAFTLAB_API FDronePositionControllerConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|VelocityFeedForward",
 		meta = (ClampMin = "0.0", DisplayName = "线性阻尼前馈比例"))
 	float LinearDampingFeedForwardScale = 1.0f;
+
+	/** 为抗扰、转弯和模型误差保留的水平加速度权限比例。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|VelocityFeedForward",
+		meta = (ClampMin = "0.0", ClampMax = "0.9", DisplayName = "阻尼补偿后加速度权限保留比例"))
+	float DampingAccelerationReserveFraction = 0.2f;
 };
 
 /**
@@ -882,6 +897,16 @@ struct AIRCRAFTLAB_API FDroneAltitudeControllerConfig
 	/** 垂直速度内环 PID（产生总距指令） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (DisplayName = "垂直速度环 PID 参数"))
 	FDronePidGains VerticalVelocityGains = { 3.0f, 0.5f, 0.1f, 400.0f, 1000.0f };
+
+	/** 补偿 Chaos 线性阻尼对爬升/下降稳态速度的影响。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|DampingFeedForward",
+		meta = (DisplayName = "启用垂直阻尼前馈"))
+	bool bEnableVerticalDampingFeedForward = true;
+
+	/** 1 表示完整补偿运行时实际线性阻尼。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control|DampingFeedForward",
+		meta = (ClampMin = "0.0", DisplayName = "垂直阻尼前馈比例"))
+	float VerticalDampingFeedForwardScale = 1.0f;
 };
 
 /**

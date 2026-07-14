@@ -48,6 +48,7 @@ void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& Ou
 	OutConfig.Position.VelocityGains.Y.Kff = 1.0f;
 	OutConfig.Position.bEnableLinearDampingFeedForward = true;
 	OutConfig.Position.LinearDampingFeedForwardScale = 1.0f;
+	OutConfig.Position.DampingAccelerationReserveFraction = 0.2f;
 	OutConfig.Position.VelocityGains.Z = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
 	// 微分截止频率降低 → 更强滤波 → 减少角速率噪声引起的抖动
 	OutConfig.Position.VelocityGains.X.DerivativeCutoffHz = 12.0f;
@@ -76,7 +77,7 @@ void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& Ou
 
 	// ========================================================================
 	// Rate PID — 内环：角速率误差 → 归一化力矩指令
-	// 公式：u = Kp·(ω_des − ω_current) + Ki·∫(ω_des − ω)dt + Kd·d(ω_des − ω)/dt + Kff·rate_ff
+	// 公式：u = PID(ω_des − ω_current) + normalized angular-damping feed-forward
 	// 速率环用 UpdateFromMeasurement（导数对测量值），避免设定值阶跃时的 kick
 	// 输出限制 = 0.35（归一化，对应混合器中该轴最大权限的 35%）
 	// 第 6 批调参（Bug #5 修复后）：速率环增益提升 4×。
@@ -92,7 +93,8 @@ void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& Ou
 	OutConfig.Attitude.RateGains.Roll = { 0.0080f, 0.00100f, 0.00040f, 120.0f, 0.35f };
 	OutConfig.Attitude.RateGains.Pitch = { 0.0080f, 0.00100f, 0.00040f, 120.0f, 0.35f };
 	OutConfig.Attitude.RateGains.Yaw = { 0.0012f, 0.00015f, 0.00008f, 120.0f, 0.20f };
-	// 角速度环 Kff 必须为 0（修复双重前馈）。
+	// 资产中的角速度环 Kff 必须为 0（修复双重参考模型前馈）。运行时角阻尼补偿
+	// 使用独立的归一化力矩前馈，并通过 PID 内部同一限幅/anti-windup 路径合成。
 	// 参考模型导数 rate_ff（°/s，可达 ±100）已在角度环以 Kff=1.0 注入 DesiredRate（四元数路径
 	// 直接 +RollRateFF）。角速度环以 DesiredRate 为设定值，通过 Kp·(DesiredRate−ω) 跟踪即可——
 	// FF 已含在设定值中。若角速度环再开 Kff，则 rate_ff 被二次叠加：
@@ -102,6 +104,8 @@ void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& Ou
 	// 对标 PX4：rate setpoint 已含 FF，rate controller 自身 Kff=0，仅 Kp 跟踪。
 	OutConfig.Attitude.RateGains.Roll.Kff = 0.0f;
 	OutConfig.Attitude.RateGains.Pitch.Kff = 0.0f;
+	OutConfig.Attitude.bEnableAngularDampingFeedForward = true;
+	OutConfig.Attitude.AngularDampingFeedForwardScale = 1.0f;
 	OutConfig.Attitude.RateGains.Roll.DerivativeCutoffHz = 18.0f;
 	OutConfig.Attitude.RateGains.Pitch.DerivativeCutoffHz = 18.0f;
 	OutConfig.Attitude.RateGains.Yaw.DerivativeCutoffHz = 15.0f;
@@ -120,6 +124,8 @@ void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& Ou
 	OutConfig.Altitude.AltitudeGains.Kff = 1.0f; // 垂直速度前馈（Autopilot 高度环）
 	OutConfig.Altitude.VerticalVelocityGains = { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f };
 	OutConfig.Altitude.VerticalVelocityGains.DerivativeCutoffHz = 10.0f;
+	OutConfig.Altitude.bEnableVerticalDampingFeedForward = true;
+	OutConfig.Altitude.VerticalDampingFeedForwardScale = 1.0f;
 
 	// ========================================================================
 	// 控制分配参数

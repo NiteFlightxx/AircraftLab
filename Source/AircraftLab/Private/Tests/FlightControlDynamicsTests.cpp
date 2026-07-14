@@ -54,6 +54,68 @@ bool FAircraftVelocityPidMaintainsTargetSpeedTest::RunTest(const FString& Parame
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftVerticalDampingFeedForwardTest,
+	"AircraftLab.Control.Damping.VerticalCollectiveFeedForward",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftVerticalDampingFeedForwardTest::RunTest(const FString& Parameters)
+{
+	const float FeedForward = FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
+		200.0f, 0.3f, 1000.0f, 0.5f, 1.0f);
+	TestEqual(TEXT("Climb damping is converted from acceleration to collective"),
+		FeedForward, 0.03f, 1.e-5f);
+	TestEqual(TEXT("Descent damping reduces collective with the opposite sign"),
+		FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
+			-200.0f, 0.3f, 1000.0f, 0.5f, 1.0f), -0.03f, 1.e-5f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAngularDampingFeedForwardTest,
+	"AircraftLab.Control.Damping.AngularTorqueFeedForward",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAngularDampingFeedForwardTest::RunTest(const FString& Parameters)
+{
+	const FVector FeedForward = FlightControlDynamics::ComputeAngularDampingFeedForward(
+		FVector(90.0f, -180.0f, 0.0f), 2.0f,
+		FVector(1.0f, 2.0f, 3.0f), FVector(10.0f, 10.0f, 10.0f),
+		FVector(8.0f, 8.0f, 8.0f), 1.0f);
+	TestEqual(TEXT("Positive rate uses positive torque authority"),
+		FeedForward.X, static_cast<double>(PI) / 10.0, 1.e-5);
+	TestEqual(TEXT("Negative rate uses negative torque authority"),
+		FeedForward.Y, -static_cast<double>(PI) / 2.0, 1.e-5);
+	TestTrue(TEXT("Zero requested rate requires no damping torque"),
+		FMath::IsNearlyZero(FeedForward.Z));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftDampingAwareHorizontalLimitsTest,
+	"AircraftLab.Control.Damping.HorizontalMotionAuthority",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftDampingAwareHorizontalLimitsTest::RunTest(const FString& Parameters)
+{
+	const FlightControlDynamics::FDampingAwareHorizontalLimits Limited =
+		FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
+			800.0f, 500.0f, 1.0f, 0.2f);
+	TestEqual(TEXT("Cruise speed is capped before drag consumes reserved authority"),
+		Limited.MaxSpeedCmPerSec, 400.0f, 1.e-4f);
+	TestEqual(TEXT("Trajectory retains the configured acceleration reserve"),
+		Limited.MaxTrajectoryAccelerationCmPerSecSq, 100.0f, 1.e-4f);
+
+	const FlightControlDynamics::FDampingAwareHorizontalLimits NoDamping =
+		FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
+			800.0f, 500.0f, 0.0f, 0.2f);
+	TestEqual(TEXT("Without damping the requested speed remains available"),
+		NoDamping.MaxSpeedCmPerSec, 800.0f, 1.e-4f);
+	TestEqual(TEXT("Without damping all acceleration remains available"),
+		NoDamping.MaxTrajectoryAccelerationCmPerSecSq, 500.0f, 1.e-4f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftManualReleaseBrakesBeforeHoldingTest,
 	"AircraftLab.Control.PositionHold.ManualReleaseBrakesBeforeHolding",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

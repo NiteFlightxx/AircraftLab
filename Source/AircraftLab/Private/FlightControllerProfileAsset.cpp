@@ -49,6 +49,22 @@ bool UFlightControllerProfileAsset::ValidateProfile(TArray<FText>& OutErrors) co
 		OutErrors.Add(LOCTEXT("InvalidLinearDampingFeedForwardScale",
 			"LinearDampingFeedForwardScale cannot be negative."));
 	}
+	if (Controller.Position.DampingAccelerationReserveFraction < 0.0f
+		|| Controller.Position.DampingAccelerationReserveFraction > 0.9f)
+	{
+		OutErrors.Add(LOCTEXT("InvalidDampingAccelerationReserve",
+			"DampingAccelerationReserveFraction must be in [0, 0.9]."));
+	}
+	if (Controller.Altitude.VerticalDampingFeedForwardScale < 0.0f)
+	{
+		OutErrors.Add(LOCTEXT("InvalidVerticalDampingFeedForwardScale",
+			"VerticalDampingFeedForwardScale cannot be negative."));
+	}
+	if (Controller.Attitude.AngularDampingFeedForwardScale < 0.0f)
+	{
+		OutErrors.Add(LOCTEXT("InvalidAngularDampingFeedForwardScale",
+			"AngularDampingFeedForwardScale cannot be negative."));
+	}
 	if (FailurePolicy.MinimumHealthyRotorCount < 0)
 	{
 		OutErrors.Add(LOCTEXT("InvalidHealthyRotorCount", "MinimumHealthyRotorCount cannot be negative."));
