@@ -26,7 +26,7 @@ void UFlightControllerComponent::OnRegister()
 {
 	Super::OnRegister();
 	// 启用异步物理 Tick，使本组件能在物理线程执行控制循环
-	SetAsyncPhysicsTickEnabled(true);
+	SetAsyncPhysicsTickEnabled(bSimulationBudgetAllowsControl);
 }
 
 
@@ -41,6 +41,20 @@ void UFlightControllerComponent::BeginPlay()
 	}
 	RefreshReferences();
 
+	// 用 BodyPrimitive 当前 Transform 预填充 EstimatedState。
+	// 物理线程的 UpdateEstimatedState_PhysicsThread 要等第一次 AsyncPhysicsTickComponent 才会写入真值，
+	// 若不预填充，游戏刚启动时 EstimatedState 仍是默认值（PositionCm = 原点），
+	// 首次 SubmitMoveTo 会用原点当轨迹起点，导致起点蓝点画在原点。
+	if (BodyPrimitive)
+	{
+		Runtime.EstimatedState.State.PositionCm = BodyPrimitive->GetComponentLocation();
+		Runtime.EstimatedState.State.VelocityCmPerSec = BodyPrimitive->GetPhysicsLinearVelocity();
+		Runtime.EstimatedState.State.AttitudeDegrees = BodyPrimitive->GetComponentRotation();
+		Runtime.EstimatedState.AltitudeReference = EDroneAltitudeReference::WorldZ;
+		Runtime.EstimatedState.AttitudeConfidence = 1.0f;
+		Runtime.EstimatedState.PositionConfidence = 1.0f;
+	}
+	
 	// 注意：这里不预先设置 Runtime.ActiveFlightMode，让 SetFlightMode 能正确执行
 	// SetFlightMode 内部有 early-return guard: if (Active == New) return;
 	// 如果在调用前就把 Active 设成 New，则初始化链（UpdateModeCapabilities + ResetControllerState）会被跳过
@@ -377,6 +391,29 @@ void UFlightControllerComponent::SetControllerEnabled(bool bNewEnabled)
 {
 	bControllerEnabled = bNewEnabled;
 	if (!bControllerEnabled) StopAllRotors(true);
+	SetComponentTickEnabled(bControllerEnabled && bSimulationBudgetAllowsControl);
+	SetAsyncPhysicsTickEnabled(bControllerEnabled && bSimulationBudgetAllowsControl);
+}
+
+
+void UFlightControllerComponent::ApplyAircraftSimulationBudget_Implementation(
+	const FAircraftSimulationBudget& Budget)
+{
+	const bool bAllowControl = Budget.bRunFlightController && !Budget.bIsNetworkProxy;
+	if (bSimulationBudgetAllowsControl == bAllowControl) return;
+	bSimulationBudgetAllowsControl = bAllowControl;
+	if (!bAllowControl)
+	{
+		if (bRuntimeConfigInitialized) StopAllRotors(true);
+		SetComponentTickEnabled(false);
+		SetAsyncPhysicsTickEnabled(false);
+		return;
+	}
+
+	RefreshReferences();
+	if (bRuntimeConfigInitialized) ResetControllerState();
+	SetComponentTickEnabled(bControllerEnabled);
+	SetAsyncPhysicsTickEnabled(bControllerEnabled);
 }
 
 
@@ -603,7 +640,9 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 	if (Airscrews.IsEmpty() || !BodyPrimitive) return;
 
 	// 清空上帧的控制输出
-	Runtime.ControlOutput = FDroneControlOutput();
+	// Preserve RotorCommands capacity: this runs on every async physics step.
+	Runtime.ControlOutput.Targets = FDroneControlTargets();
+	Runtime.ControlOutput.Wrench = FDroneWrenchCommand();
 	Runtime.ControlOutput.Targets.FlightMode = Runtime.ActiveFlightMode;
 
 	// ---- 串级 PID 按固定顺序执行 ----
@@ -685,7 +724,8 @@ void UFlightControllerComponent::ResetControllerState()
 void UFlightControllerComponent::StopAllRotors(bool bResetController)
 {
 	if (bResetController) ResetControllerState();
-	Runtime.ControlOutput = FDroneControlOutput();
+	Runtime.ControlOutput.Targets = FDroneControlTargets();
+	Runtime.ControlOutput.Wrench = FDroneWrenchCommand();
 	Runtime.ControlOutput.Targets.FlightMode = Runtime.ActiveFlightMode;
 	Runtime.ControlOutput.RotorCommands.SetNum(Airscrews.Num());
 

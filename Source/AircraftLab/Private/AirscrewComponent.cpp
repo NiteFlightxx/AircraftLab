@@ -10,6 +10,7 @@
 UAirscrewComponent::UAirscrewComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 	bAutoActivate = true;
 }
@@ -71,6 +72,14 @@ void UAirscrewComponent::SetForceApplicationEnabled(bool bNewEnabled)
 void UAirscrewComponent::SetDebugDrawEnabled(bool bNewEnabled)
 {
 	bDrawDebug = bNewEnabled;
+	SetComponentTickEnabled(bDrawDebug && bSimulationBudgetAllowsDebug);
+}
+
+void UAirscrewComponent::ApplyAircraftSimulationBudget_Implementation(
+	const FAircraftSimulationBudget& Budget)
+{
+	bSimulationBudgetAllowsDebug = Budget.bAllowDebugDraw;
+	SetComponentTickEnabled(bDrawDebug && bSimulationBudgetAllowsDebug);
 }
 
 void UAirscrewComponent::SyncDefinitionFromComponentTransform()

@@ -14,22 +14,22 @@
 // 命名前缀 "Autopilot." 与 "a.AnimNode.PoseHistory." 同为点分式对象路径风格。
 // ---------------------------------------------------------------------------
 
-static bool GVarAutopilotDebugDrawTrajectory = true;
+static bool GVarAutopilotDebugDrawTrajectory = false;
 static FAutoConsoleVariableRef CVarAutopilotDebugDrawTrajectory(
 	TEXT("Autopilot.DebugDrawTrajectory"), GVarAutopilotDebugDrawTrajectory,
 	TEXT("Enable/Disable Autopilot trajectory path debug draw (0=off, 1=on)."));
 
-static bool GVarAutopilotDebugDrawSetpoint = true;
+static bool GVarAutopilotDebugDrawSetpoint = false;
 static FAutoConsoleVariableRef CVarAutopilotDebugDrawSetpoint(
 	TEXT("Autopilot.DebugDrawSetpoint"), GVarAutopilotDebugDrawSetpoint,
 	TEXT("Enable/Disable Autopilot current setpoint + yaw arrow debug draw (0=off, 1=on)."));
 
-static bool GVarAutopilotDebugDrawLookAhead = true;
+static bool GVarAutopilotDebugDrawLookAhead = false;
 static FAutoConsoleVariableRef CVarAutopilotDebugDrawLookAhead(
 	TEXT("Autopilot.DebugDrawLookAhead"), GVarAutopilotDebugDrawLookAhead,
 	TEXT("Enable/Disable Autopilot look-ahead point + cross-track error debug draw (0=off, 1=on)."));
 
-static bool GVarAutopilotDebugDrawVelocity = true;
+static bool GVarAutopilotDebugDrawVelocity = false;
 static FAutoConsoleVariableRef CVarAutopilotDebugDrawVelocity(
 	TEXT("Autopilot.DebugDrawVelocity"), GVarAutopilotDebugDrawVelocity,
 	TEXT("Enable/Disable Autopilot desired velocity vector debug draw (0=off, 1=on)."));

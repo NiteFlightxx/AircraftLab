@@ -236,6 +236,13 @@ void UFlightControllerComponent::UpdateRotorCache()
 		Airscrew->AddTickPrerequisiteComponent(this);
 		RotorFailureManager.HealthStates.Add(FRotorHealthState());
 	}
+	// Size all per-step arrays while references are refreshed on the game thread.
+	const int32 NumRotors = Airscrews.Num();
+	Runtime.ControlOutput.RotorCommands.SetNum(NumRotors);
+	ControlAllocator.CommandBuffer.SetNum(NumRotors);
+	ControlAllocator.RotorDefinitionBuffer.SetNum(NumRotors);
+	ControlAllocator.AllocatedThrustFractions.SetNum(NumRotors);
+	ControlAllocator.SolvedRotors.SetNum(NumRotors);
 
 	DebugState.bHasLoggedRotorLayout = false;
 	DebugState.LogAccumulatorSeconds = DebugLogIntervalSeconds;
@@ -427,7 +434,7 @@ void FControlAllocator::Allocate(const FFlightControllerRuntimeConfig& Config, c
 	const TArray<double>& MaxAllocatedThrusts = Cache.MaxAllocatedThrusts;
 	const TArray<bool>& FreeRotors = Cache.FreeRotors;
 	const double* RowScale = Cache.RowScale;
-	CommandBuffer.SetNumZeroed(NumRotors);
+	CommandBuffer.Init(0.0f, NumRotors);
 
 	// ---- 总距倾斜补偿（第 2 批：推力-姿态解耦）----
 	// 对标 PX4 thrust_ned_z / cos_ned_body（PositionControl.cpp:222）。
@@ -474,10 +481,8 @@ void FControlAllocator::Allocate(const FFlightControllerRuntimeConfig& Config, c
 	}
 
 	// ---- 迭代主动集求解 ----
-	TArray<double> AllocatedThrustFractions;
-	AllocatedThrustFractions.SetNumZeroed(NumRotors);
-	TArray<bool> SolvedRotors;
-	SolvedRotors.SetNumZeroed(NumRotors);
+	AllocatedThrustFractions.Init(0.0, NumRotors);
+	SolvedRotors.Init(false, NumRotors);
 
 	for (int32 Iteration = 0; Iteration < NumRotors; ++Iteration)
 	{

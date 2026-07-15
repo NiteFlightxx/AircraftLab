@@ -7,6 +7,7 @@
 #include "FlightControllerTypes.h"
 #include "FlightControllerProfileAsset.h"
 #include "FlightControllerRuntimeObjects.h"
+#include "AircraftSimulationLODConsumer.h"
 
 #include "FlightControllerComponent.generated.h"
 
@@ -32,7 +33,7 @@ namespace Chaos { class FRigidBodyHandle_Internal; }
  *   阻尼伪逆法（Damped Pseudo-Inverse）
  */
 UCLASS(ClassGroup = (AircraftLab), meta = (BlueprintSpawnableComponent))
-class AIRCRAFTLAB_API UFlightControllerComponent : public UActorComponent
+class AIRCRAFTLAB_API UFlightControllerComponent : public UActorComponent, public IAircraftSimulationLODConsumer
 {
 	GENERATED_BODY()
 
@@ -43,6 +44,7 @@ public:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void AsyncPhysicsTickComponent(float DeltaTime, float SimTime) override;
+	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
 
 	/** 获取本次运行使用的不可变配置快照。 */
 	const FFlightControllerRuntimeConfig& GetRuntimeConfig() const { return RuntimeConfig; }
@@ -298,19 +300,19 @@ protected:
 
 	/** 调试日志开关 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
-	bool bEnableDebugLog = true;
+	bool bEnableDebugLog = false;
 
 	/** 是否记录旋翼指令日志 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
-	bool bLogRotorCommands = true;
+	bool bLogRotorCommands = false;
 
 	/** 是否记录旋翼布局日志 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
-	bool bLogRotorLayout = true;
+	bool bLogRotorLayout = false;
 
 	/** 是否记录符号诊断日志 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
-	bool bLogSignDiagnostics = true;
+	bool bLogSignDiagnostics = false;
 
 	/** 调试日志输出间隔（秒） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug", meta = (ClampMin = "0.0"))
@@ -324,6 +326,7 @@ private:
 	bool bControllerEnabled = false;
 	bool bRuntimeConfigInitialized = false;
 	bool bFailurePolicyEvaluationSuspended = false;
+	bool bSimulationBudgetAllowsControl = true;
 
 	/** 机身Primitive组件 */
 	UPROPERTY(Transient)

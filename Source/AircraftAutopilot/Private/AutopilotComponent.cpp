@@ -44,6 +44,7 @@ void UAutopilotComponent::BeginPlay()
 			State.AttitudeDegrees.Yaw,
 			State.AngularVelocityBodyDegreesPerSec.Z);
 	}
+	RefreshSimulationTickEnabled();
 }
 
 void UAutopilotComponent::TickComponent(
@@ -182,6 +183,27 @@ void UAutopilotComponent::SetAutopilotActive(bool bActive)
 		MovementExecutor->GetTrajectoryGenerator()->Clear();
 		InvalidateOutputs();
 	}
+	RefreshSimulationTickEnabled();
+}
+
+void UAutopilotComponent::ApplyAircraftSimulationBudget_Implementation(
+	const FAircraftSimulationBudget& Budget)
+{
+	SimulationBudget = Budget;
+	PrimaryComponentTick.TickInterval = FMath::Max(Budget.SlowLogicIntervalSeconds, 0.0f);
+	RefreshSimulationTickEnabled();
+}
+
+bool UAutopilotComponent::GetAircraftKinematicTarget_Implementation(
+	FAircraftKinematicTarget& OutTarget) const
+{
+	OutTarget = FAircraftKinematicTarget();
+	if (!bAutopilotActive || !CachedProfiledSetpoint.bValid) return false;
+	OutTarget.PositionCm = CachedProfiledSetpoint.PositionCm;
+	OutTarget.VelocityCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec;
+	OutTarget.RotationDegrees = FRotator(0.0f, CachedProfiledSetpoint.YawDegrees, 0.0f);
+	OutTarget.bValid = true;
+	return true;
 }
 
 FAutopilotIntentHandle UAutopilotComponent::SubmitMovementIntent(const FAutopilotMovementIntent& Intent)
@@ -537,12 +559,30 @@ void UAutopilotComponent::SetPathFollowingStrategy(EPathFollowingStrategy Strate
 bool UAutopilotComponent::CaptureSnapshot(FAutopilotVehicleSnapshot& OutSnapshot) const
 {
 	if (!FlightController) return false;
+	if (SimulationBudget.bEnableKinematicMovement && GetOwner())
+	{
+		OutSnapshot.PositionCm = GetOwner()->GetActorLocation();
+		OutSnapshot.VelocityCmPerSec = CachedProfiledSetpoint.bValid
+			? CachedProfiledSetpoint.VelocityCmPerSec : FVector::ZeroVector;
+		OutSnapshot.AccelerationCmPerSecSq = CachedProfiledSetpoint.bValid
+			? CachedProfiledSetpoint.AccelerationCmPerSecSq : FVector::ZeroVector;
+		OutSnapshot.YawDegrees = GetOwner()->GetActorRotation().Yaw;
+		return true;
+	}
 	const FDroneKinematicState& State = FlightController->GetEstimatedState().State;
 	OutSnapshot.PositionCm = State.PositionCm;
 	OutSnapshot.VelocityCmPerSec = State.VelocityCmPerSec;
 	OutSnapshot.AccelerationCmPerSecSq = State.AccelerationWorldCmPerSecSq;
 	OutSnapshot.YawDegrees = State.AttitudeDegrees.Yaw;
 	return true;
+}
+
+void UAutopilotComponent::RefreshSimulationTickEnabled()
+{
+	const bool bBudgetAllowsTick = SimulationBudget.bRunSlowLogic
+		&& !SimulationBudget.bIsNetworkProxy
+		&& SimulationBudget.Tier != EAircraftSimulationTier::Dormant;
+	SetComponentTickEnabled(bAutopilotActive && bBudgetAllowsTick);
 }
 
 void UAutopilotComponent::BroadcastIntentEvents()

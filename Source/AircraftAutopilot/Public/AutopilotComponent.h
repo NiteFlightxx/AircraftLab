@@ -10,6 +10,7 @@
 #include "AutopilotSetpoints.h"
 #include "PathFollowing/PathFollowingTypes.h"
 #include "Turn/TurnBehavior.h"
+#include "AircraftSimulationLODConsumer.h"
 #include "AutopilotComponent.generated.h"
 
 class UFeedForwardCalculator;
@@ -24,7 +25,8 @@ class UPathFollowingStrategy;
  * deliberately outside this component.
  */
 UCLASS(ClassGroup = (AircraftAutopilot), meta = (BlueprintSpawnableComponent))
-class AIRCRAFTAUTOPILOT_API UAutopilotComponent : public UActorComponent, public IAutopilotProvider
+class AIRCRAFTAUTOPILOT_API UAutopilotComponent : public UActorComponent, public IAutopilotProvider,
+	public IAircraftSimulationLODConsumer
 {
 	GENERATED_BODY()
 
@@ -34,6 +36,8 @@ public:
 	virtual void OnRegister() override;
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
+	virtual bool GetAircraftKinematicTarget_Implementation(FAircraftKinematicTarget& OutTarget) const override;
 
 	virtual bool GetAutopilotInjection(FAutopilotInjection& OutInjection) const override;
 	virtual bool IsAutopilotActive() const override { return bAutopilotActive; }
@@ -146,6 +150,7 @@ private:
 	FGuidanceCommand CachedGuidanceCommand;
 	FTurnCommand CachedTurnCommand;
 	FHoverThrustEstimator HoverThrustEstimator;
+	FAircraftSimulationBudget SimulationBudget;
 
 	void CreateRuntimeObjects();
 	void ResolveFlightController();
@@ -157,6 +162,7 @@ private:
 	void InvalidateOutputs();
 	void BuildInjection(FAutopilotInjection& OutInjection) const;
 	void UpdateHoverThrustEstimate(float DeltaSeconds);
+	void RefreshSimulationTickEnabled();
 	static void ApplyHeadingOptions(FAutopilotMovementIntent& Intent, const FAutopilotHeadingOptions& Heading);
 	static void ApplyFiniteOptions(FAutopilotMovementIntent& Intent, const FAutopilotFiniteCommandOptions& Options);
 	static void ApplyContinuousConstraints(

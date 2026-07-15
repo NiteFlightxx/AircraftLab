@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/SceneComponent.h"
 #include "DroneTypes.h"
+#include "AircraftSimulationLODConsumer.h"
 
 #include "AirscrewComponent.generated.h"
 
@@ -19,7 +20,7 @@ namespace Chaos { class FRigidBodyHandle_Internal; }
  * 5. 调试可视化绘制
  */
 UCLASS(ClassGroup = (AircraftLab), meta = (BlueprintSpawnableComponent))
-class AIRCRAFTLAB_API UAirscrewComponent : public USceneComponent
+class AIRCRAFTLAB_API UAirscrewComponent : public USceneComponent, public IAircraftSimulationLODConsumer
 {
 	GENERATED_BODY()
 
@@ -29,6 +30,7 @@ public:
 	virtual void OnRegister() override;
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Drone|Airscrew")
 	void SetNormalizedCommand(float InNormalizedCommand);
@@ -133,10 +135,10 @@ protected:
 	float CommandScale = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
-	bool bDrawDebug = true;
+	bool bDrawDebug = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
-	bool bDrawDebugText = true;
+	bool bDrawDebugText = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug", meta = (ClampMin = "0.0"))
 	float DebugForceScale = 0.1f;
@@ -179,6 +181,8 @@ protected:
 	/** 当前反扭矩在世界坐标系下的向量 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Airscrew", meta = (AllowPrivateAccess = "true"))
 	FVector CurrentReactionTorqueVectorWorld = FVector::ZeroVector;
+
+	bool bSimulationBudgetAllowsDebug = false;
 
 	/** 旋翼相对于刚体组件原点的局部坐标（厘米）；物理边界再减去 Chaos 真实质心偏移。 */
 	FVector CachedRelativeLocationFromBody = FVector::ZeroVector;

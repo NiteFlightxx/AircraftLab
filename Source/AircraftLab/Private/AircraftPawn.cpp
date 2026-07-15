@@ -5,6 +5,7 @@
 #include "Engine/CollisionProfile.h"
 #include "FlightControllerComponent.h"
 #include "AutopilotProvider.h"
+#include "AircraftSimulationLODComponent.h"
 
 /**
  * 飞行器Pawn构造函数
@@ -12,12 +13,14 @@
  * - BodyMesh: 骨骼网格体，设为Root组件，开启物理模拟和重力
  * - DroneInput: 无人机输入处理组件
  * - FlightController: 飞行控制（PID + 混合器）组件
- * - AutoPossessPlayer = Player0: 自动接收第一个玩家的输入
+ * - 默认不由玩家自动占有；NPC由AI/Autopilot驱动，玩家控制玩法可在蓝图显式开启
  */
 AAircraftPawn::AAircraftPawn()
 {
+	bReplicates = true;
+	SetReplicateMovement(true);
 	// 在PrePhysics组Tick，确保在物理模拟之前完成控制计算
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
 	PrimaryActorTick.TickGroup = TG_PrePhysics;
 	
 	BodyMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("BodyMesh"));
@@ -30,13 +33,24 @@ AAircraftPawn::AAircraftPawn()
 
 	DroneInput = CreateDefaultSubobject<UDroneInputComponent>(TEXT("DroneInput"));
 	FlightController = CreateDefaultSubobject<UFlightControllerComponent>(TEXT("FlightController"));
-	AutoPossessPlayer = EAutoReceiveInput::Player0;
+	SimulationLOD = CreateDefaultSubobject<UAircraftSimulationLODComponent>(TEXT("SimulationLOD"));
+	AutoPossessPlayer = EAutoReceiveInput::Disabled;
 }
 
 /** 游戏开始时：应用输入映射，唤醒物理状态，发现 Autopilot 组件 */
 void AAircraftPawn::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Server-authoritative NPCs use UE physics replication without input history/resimulation.
+	// Enable the replication cache on the authority and predictive smoothing on remote proxies.
+	// Autonomous proxies are intentionally excluded until player-controlled aircraft get a
+	// dedicated network-physics prediction path.
+	if (GetNetMode() != NM_Standalone
+		&& (HasAuthority() || GetLocalRole() == ROLE_SimulatedProxy))
+	{
+		SetPhysicsReplicationMode(EPhysicsReplicationMode::PredictiveInterpolation);
+	}
 
 	// 应用Enhanced Input映射上下文
 	DroneInput->ApplyMappingContext();
@@ -59,11 +73,6 @@ void AAircraftPawn::BeginPlay()
 			break;
 		}
 	}
-}
-
-void AAircraftPawn::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
 }
 
 /** 绑定玩家输入到DroneInputComponent */

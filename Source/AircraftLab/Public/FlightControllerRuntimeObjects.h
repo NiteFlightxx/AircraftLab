@@ -122,6 +122,9 @@ struct AIRCRAFTLAB_API FControlAllocator
 	FAllocationDiagnostics Diagnostics;
 	TArray<float> CommandBuffer;
 	TArray<FDroneRotorDefinition> RotorDefinitionBuffer;
+	/** Reused active-set work buffers; the async physics path must not allocate every step. */
+	TArray<double> AllocatedThrustFractions;
+	TArray<bool> SolvedRotors;
 	bool bSaturatedPositive[3] = { false, false, false };
 	bool bSaturatedNegative[3] = { false, false, false };
 	bool bCacheDirty = true;
@@ -136,6 +139,8 @@ struct AIRCRAFTLAB_API FControlAllocator
 		Diagnostics.Reset();
 		CommandBuffer.Reset();
 		RotorDefinitionBuffer.Reset();
+		AllocatedThrustFractions.Reset();
+		SolvedRotors.Reset();
 		for (int32 Axis = 0; Axis < 3; ++Axis)
 		{
 			bSaturatedPositive[Axis] = false;

@@ -11,6 +11,7 @@ class UFlightControllerComponent;
 class USkeletalMeshComponent;
 class UActorComponent;
 class IAutopilotProvider;
+class UAircraftSimulationLODComponent;
 
 /**
  * 飞行器 Pawn - 可操控的无人机实体
@@ -35,7 +36,6 @@ public:
 	AAircraftPawn();
 
 	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
 	/** 获取机身骨骼网格体组件 */
@@ -54,6 +54,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Drone")
 	UActorComponent* GetAutopilotComponent() const { return AutopilotComponent; }
 
+	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
+	UAircraftSimulationLODComponent* GetSimulationLODComponent() const { return SimulationLOD; }
+
 private:
 	/** 机身骨骼网格体（同时也是Root组件和物理碰撞体） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone", meta = (AllowPrivateAccess = "true"))
@@ -66,6 +69,10 @@ private:
 	/** 飞行控制器组件（PID控制、混合器、状态估计） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UFlightControllerComponent> FlightController;
+
+	/** Optional data-driven simulation budget adapter; policy evaluation lives in the world subsystem. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAircraftSimulationLODComponent> SimulationLOD;
 
 	/**
 	 * Autopilot 组件（通过 IAutopilotProvider 接口发现）。
