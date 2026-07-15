@@ -11,10 +11,10 @@
 #include "PathFollowing/PathFollowingTypes.h"
 #include "Turn/TurnBehavior.h"
 #include "AircraftSimulationLODConsumer.h"
+#include "AircraftFlightControllerInterface.h"
 #include "AutopilotComponent.generated.h"
 
 class UFeedForwardCalculator;
-class UFlightControllerComponent;
 class UAutopilotMovementExecutor;
 class UMotionProfile;
 class UPathFollowingStrategy;
@@ -44,6 +44,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Autopilot")
 	void SetAutopilotActive(bool bActive);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot")
+	void SetProfileAsset(UAutopilotProfileAsset* InProfile);
+
+	UFUNCTION(BlueprintPure, Category = "Autopilot")
+	UAutopilotProfileAsset* GetProfileAsset() const { return Profile; }
 
 	/** Low-level C++ escape hatch. Blueprints should use the typed Submit* functions below. */
 	FAutopilotIntentHandle SubmitMovementIntent(const FAutopilotMovementIntent& Intent);
@@ -123,7 +129,10 @@ protected:
 	TObjectPtr<UAutopilotProfileAsset> Profile;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UFlightControllerComponent> FlightController;
+	TObjectPtr<UActorComponent> FlightControllerComponent;
+
+	UPROPERTY(Transient)
+	TScriptInterface<IAircraftFlightControllerInterface> FlightController;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAutopilotMovementExecutor> MovementExecutor;

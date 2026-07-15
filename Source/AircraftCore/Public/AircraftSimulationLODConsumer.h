@@ -8,12 +8,12 @@
 
 /** Small optional contract; the world subsystem never depends on concrete flight features. */
 UINTERFACE(BlueprintType)
-class AIRCRAFTLAB_API UAircraftSimulationLODConsumer : public UInterface
+class AIRCRAFTCORE_API UAircraftSimulationLODConsumer : public UInterface
 {
 	GENERATED_BODY()
 };
 
-class AIRCRAFTLAB_API IAircraftSimulationLODConsumer
+class AIRCRAFTCORE_API IAircraftSimulationLODConsumer
 {
 	GENERATED_BODY()
 

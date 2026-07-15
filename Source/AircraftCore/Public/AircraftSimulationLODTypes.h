@@ -24,7 +24,7 @@ enum class EAircraftSimulationCollisionMode : uint8
 
 /** Per-tier policy authored in UAircraftSimulationLODProfileAsset. */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FAircraftSimulationTierSettings
+struct AIRCRAFTCORE_API FAircraftSimulationTierSettings
 {
 	GENERATED_BODY()
 
@@ -59,7 +59,7 @@ struct AIRCRAFTLAB_API FAircraftSimulationTierSettings
 
 /** Gameplay importance is intentionally independent from flight-controller and AI types. */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FAircraftSimulationImportance
+struct AIRCRAFTCORE_API FAircraftSimulationImportance
 {
 	GENERATED_BODY()
 
@@ -96,7 +96,7 @@ struct AIRCRAFTLAB_API FAircraftSimulationImportance
 };
 
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FAircraftSimulationSnapshot
+struct AIRCRAFTCORE_API FAircraftSimulationSnapshot
 {
 	GENERATED_BODY()
 
@@ -112,7 +112,7 @@ struct AIRCRAFTLAB_API FAircraftSimulationSnapshot
 
 /** Generic budget consumed by optional aircraft features. */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FAircraftSimulationBudget
+struct AIRCRAFTCORE_API FAircraftSimulationBudget
 {
 	GENERATED_BODY()
 
@@ -149,7 +149,7 @@ struct AIRCRAFTLAB_API FAircraftSimulationBudget
 
 /** Optional target published by guidance and integrated by the LOD component in kinematic mode. */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FAircraftKinematicTarget
+struct AIRCRAFTCORE_API FAircraftKinematicTarget
 {
 	GENERATED_BODY()
 

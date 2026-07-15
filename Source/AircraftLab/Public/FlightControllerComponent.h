@@ -8,6 +8,7 @@
 #include "FlightControllerProfileAsset.h"
 #include "FlightControllerRuntimeObjects.h"
 #include "AircraftSimulationLODConsumer.h"
+#include "AircraftFlightControllerInterface.h"
 
 #include "FlightControllerComponent.generated.h"
 
@@ -33,7 +34,8 @@ namespace Chaos { class FRigidBodyHandle_Internal; }
  *   阻尼伪逆法（Damped Pseudo-Inverse）
  */
 UCLASS(ClassGroup = (AircraftLab), meta = (BlueprintSpawnableComponent))
-class AIRCRAFTLAB_API UFlightControllerComponent : public UActorComponent, public IAircraftSimulationLODConsumer
+class AIRCRAFTLAB_API UFlightControllerComponent : public UActorComponent,
+	public IAircraftSimulationLODConsumer, public IAircraftFlightControllerInterface
 {
 	GENERATED_BODY()
 
@@ -45,6 +47,19 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void AsyncPhysicsTickComponent(float DeltaTime, float SimTime) override;
 	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
+	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const override;
+	virtual void SetAircraftAutopilotProvider(UObject* Provider) override;
+	virtual uint8 ActivateAircraftAutopilotControl() override;
+	virtual void DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode) override;
+	virtual void GetAircraftAutopilotMotionLimits(
+		float RequestedCruiseSpeedCmPerSec,
+		float& OutMaxSpeedCmPerSec,
+		float& OutMaxAccelerationCmPerSecSq) const override;
+	virtual void GetAircraftAutopilotPhysicalState(
+		float& OutGravityCmPerSecSq,
+		float& OutHoverCollectiveCommand,
+		float& OutVerticalAccelerationMpsSq,
+		float& OutCollectiveThrustCommand) const override;
 
 	/** 获取本次运行使用的不可变配置快照。 */
 	const FFlightControllerRuntimeConfig& GetRuntimeConfig() const { return RuntimeConfig; }

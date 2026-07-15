@@ -8,13 +8,13 @@ public class AircraftAutopilot : ModuleRules
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicDependencyModuleNames.Add("Core");
-		PrivateDependencyModuleNames.AddRange(
+		PublicDependencyModuleNames.AddRange(
 			new[]
 			{
+				"Core",
 				"CoreUObject",
 				"Engine",
-				"AircraftLab"
+				"AircraftCore"
 			});
 	}
 }

@@ -17,12 +17,17 @@
 	],
 	"Modules": [
 		{
-			"Name": "AircraftLab",
+			"Name": "AircraftCore",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
 		},
 		{
 			"Name": "AircraftAutopilot",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "AircraftLab",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
 		}

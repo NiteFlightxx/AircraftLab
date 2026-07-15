@@ -44,7 +44,7 @@ enum class EAutopilotPathTrajectoryMode : uint8
 
 /** MovementIntent 独占拥有的运动整形约束；Profile 不再重复声明这些字段。 */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FTrajectoryMotionConstraints
+struct AIRCRAFTCORE_API FTrajectoryMotionConstraints
 {
 	GENERATED_BODY()
 
@@ -89,7 +89,7 @@ struct AIRCRAFTLAB_API FTrajectoryMotionConstraints
  * 因此不暴露有限轨迹中的巡航/减速/终点速度，避免同一件事由多个参数控制。
  */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FContinuousMotionConstraints
+struct AIRCRAFTCORE_API FContinuousMotionConstraints
 {
 	GENERATED_BODY()
 
@@ -122,7 +122,7 @@ struct AIRCRAFTLAB_API FContinuousMotionConstraints
 };
 
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FAutopilotArrivalCriteria
+struct AIRCRAFTCORE_API FAutopilotArrivalCriteria
 {
 	GENERATED_BODY()
 
@@ -140,7 +140,7 @@ struct AIRCRAFTLAB_API FAutopilotArrivalCriteria
 
 /** 玩家、Autopilot 和 GameplayPolicy 共用的唯一移动意图契约。 */
 USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FAutopilotMovementIntent
+struct AIRCRAFTCORE_API FAutopilotMovementIntent
 {
 	GENERATED_BODY()
 

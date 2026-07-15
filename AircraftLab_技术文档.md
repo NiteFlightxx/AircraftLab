@@ -1105,3 +1105,15 @@ $$
 ---
 
 *文档基于 AircraftLab 插件源码生成，对应代码版本为当前 `Source/AircraftLab/` 目录。如代码更新请同步修订引用行号。*
+# AircraftCore 模块边界（2026-07-15）
+
+飞行器公共契约已拆分到 `Source/AircraftCore`：
+
+- `AircraftMovementIntent.h`：玩家、GameplayPolicy 与 Autopilot 共用的移动意图。
+- `AutopilotProvider.h`：Autopilot 向飞控提交设定值的接口与数据结构。
+- `AircraftFlightControllerInterface.h`：Autopilot 读取飞控状态、能力限制和物理参考值的窄接口。
+- `AircraftSimulationLODTypes.h` / `AircraftSimulationLODConsumer.h`：与具体飞控和 Autopilot 无关的 LOD 契约。
+
+当前依赖方向为 `AircraftCore ← AircraftAutopilot ← AircraftLab`。`AAircraftPawn` 因此可以在 C++ 中创建
+`UAutopilotComponent`，同时 AircraftAutopilot 不再直接包含或链接 `UFlightControllerComponent`。
+旧脚本类型路径通过 `Config/DefaultAircraftLab.ini` 的 Core Redirect 保持资产兼容。

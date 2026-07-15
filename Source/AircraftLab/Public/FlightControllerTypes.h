@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "AircraftMovementIntent.h"
 #include "DroneTypes.h"
+#include "AutopilotProvider.h"
 
 #include "FlightControllerTypes.generated.h"
 
@@ -26,51 +27,6 @@
  *
  * 单位：位置 cm、速度 cm/s、加速度 cm/s²、角度 °、角速度 °/s（与 DroneTypes 一致）。
  */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FAutopilotInjection
-{
-	GENERATED_BODY()
-
-	/** 期望位置（cm，世界系）—— 位置环外环设定值 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	FVector PositionSetpointCm = FVector::ZeroVector;
-
-	/** 速度前馈（cm/s，世界系）—— 注入位置环 Kff 通道 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	FVector VelocitySetpointCmPerSec = FVector::ZeroVector;
-
-	/** 加速度前馈（cm/s²，世界系）—— 注入速度环 Kff 通道 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	FVector AccelerationSetpointCmPerSecSq = FVector::ZeroVector;
-
-	/** 期望高度（cm，世界系 Z）—— 高度环外环设定值 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	float AltitudeSetpointCm = 0.0f;
-
-	/** 垂直速度前馈（cm/s）—— 注入高度环 Kff 通道 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	float VerticalVelocitySetpointCmPerSec = 0.0f;
-
-	/** 推力前馈（归一化 0~1，含重力补偿）—— collective 基准，替代 HoverCollective */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	float ThrustFeedForward = 0.0f;
-
-	/** 期望航向（°，世界系）—— 偏航环设定值 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	float YawSetpointDegrees = 0.0f;
-
-	/** 偏航角速度前馈（°/s）—— 注入偏航环 Kff 通道 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	float YawRateSetpointDegPerSec = 0.0f;
-
-	/** 协调转弯滚转附加（°）—— 叠加到期望 Roll（bank turn） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	float TurnRollDegrees = 0.0f;
-
-	/** 是否有效（无效时控制器应回退到手动路径） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
-	bool bValid = false;
-};
 
 /**
  * 旋翼失效模式（预留扩展）

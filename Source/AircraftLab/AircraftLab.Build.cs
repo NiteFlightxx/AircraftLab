@@ -32,6 +32,8 @@ public class AircraftLab : ModuleRules
 			{
 				"Core",           // UE核心模块
 				"EnhancedInput",  // Enhanced Input系统（新版输入映射）
+				"AircraftCore",   // 飞行器公共数据与接口
+				"AircraftAutopilot", // C++ 自动驾驶组件组合
 			}
 			);
 			

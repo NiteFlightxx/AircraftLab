@@ -10,22 +10,24 @@ class UDroneInputComponent;
 class UFlightControllerComponent;
 class USkeletalMeshComponent;
 class UActorComponent;
-class IAutopilotProvider;
 class UAircraftSimulationLODComponent;
+class UAutopilotComponent;
 
 /**
  * 飞行器 Pawn - 可操控的无人机实体
  *
- * 包含三个核心组件：
+ * 包含五个核心组件：
  * 1. BodyMesh（骨骼网格体） - 飞行器的物理表现和碰撞体
  * 2. DroneInput（输入组件） - 处理玩家输入映射
  * 3. FlightController（飞控组件） - 运行PID控制循环和电机分配
+ * 4. AutopilotComponent（自动驾驶组件） - 轨迹与设定值生成
+ * 5. SimulationLOD（模拟LOD组件） - 应用集中式模拟预算
  *
  * 物理模拟由BodyMesh驱动（SetSimulatePhysics=true），飞控通过
  * 在物理线程施加推力/力矩来控制飞行器运动。
  *
- * Autopilot 集成：BeginPlay 时通过 IAutopilotProvider 接口发现
- * UAutopilotComponent（AircraftAutopilot 模块），不反向依赖该模块。
+ * 公共契约位于 AircraftCore，因此 AircraftLab 可以安全依赖
+ * AircraftAutopilot 并创建原生 UAutopilotComponent 默认子对象。
  */
 UCLASS()
 class AIRCRAFTLAB_API AAircraftPawn : public APawn
@@ -50,9 +52,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Drone")
 	UFlightControllerComponent* GetFlightControllerComponent() const { return FlightController; }
 
-	/** 获取 Autopilot 组件（通过接口发现，可能为空） */
+	/** 获取 C++ 原生 Autopilot 默认子对象。 */
 	UFUNCTION(BlueprintPure, Category = "Drone")
-	UActorComponent* GetAutopilotComponent() const { return AutopilotComponent; }
+	UAutopilotComponent* GetAutopilotComponent() const { return AutopilotComponent; }
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
 	UAircraftSimulationLODComponent* GetSimulationLODComponent() const { return SimulationLOD; }
@@ -73,12 +75,9 @@ private:
 	/** Optional data-driven simulation budget adapter; policy evaluation lives in the world subsystem. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAircraftSimulationLODComponent> SimulationLOD;
-
-	/**
-	 * Autopilot 组件（通过 IAutopilotProvider 接口发现）。
-	 * 用 UActorComponent* 持有，避免反向依赖 AircraftAutopilot 模块。
-	 * 由用户在 Blueprint 添加 UAutopilotComponent，BeginPlay 时自动发现。
-	 */
-	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Drone", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UActorComponent> AutopilotComponent;
+	
+	/** 自动驾驶组件（C++ 原生默认子对象）。 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAutopilotComponent> AutopilotComponent;
+	
 };

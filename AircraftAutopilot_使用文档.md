@@ -10,6 +10,11 @@
 > 适用引擎：Unreal Engine 5（Chaos Physics 源码版）
 > 文档版本：2026-07-09
 
+> **当前模块架构（2026-07-15）**：公共移动意图、Autopilot 注入、LOD 契约和飞控访问接口已迁移到
+> `AircraftCore`。依赖方向为 `AircraftCore ← AircraftAutopilot ← AircraftLab`，不存在循环依赖。
+> `AAircraftPawn` 现在会在 C++ 构造函数中创建原生 `UAutopilotComponent` 默认子对象；旧蓝图中手动添加的
+> Autopilot 组件需要删除，Profile 改为在继承的原生组件上配置。
+
 ---
 
 ## 目录
@@ -155,7 +160,7 @@ Mixer → FDroneControlOutput → Rotor → AddForce/AddTorque → Chaos
 
 ```
 Source/AircraftAutopilot/
-├── AircraftAutopilot.Build.cs              构建配置（Phase 1 零依赖）
+├── AircraftAutopilot.Build.cs              构建配置（仅依赖 AircraftCore，不依赖 AircraftLab）
 ├── Public/
 │   ├── AircraftAutopilot.h                 模块类
 │   ├── AutopilotSetpoints.h                全栈设定值结构（6 个 Setpoint + FFeedForward）

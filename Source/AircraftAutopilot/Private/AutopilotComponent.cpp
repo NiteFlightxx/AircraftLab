@@ -4,9 +4,7 @@
 
 #include "AutopilotDebugDraw.h"
 #include "AutopilotMovementExecutor.h"
-#include "DroneTypes.h"
 #include "FeedForward/FeedForwardCalculator.h"
-#include "FlightControllerComponent.h"
 #include "MotionProfile/MotionProfile.h"
 #include "PathFollowing/DirectGuidance.h"
 #include "PathFollowing/PurePursuitGuidance.h"
@@ -33,16 +31,19 @@ void UAutopilotComponent::BeginPlay()
 	CreateRuntimeObjects();
 	ResolveFlightController();
 	ApplyProfile();
-	if (FlightController)
+	if (FlightController && FlightControllerComponent)
 	{
-		FlightController->AddTickPrerequisiteComponent(this);
-		const FDroneKinematicState& State = FlightController->GetEstimatedState().State;
-		MotionProfile->Initialize(
-			State.PositionCm,
-			State.VelocityCmPerSec,
-			State.AccelerationWorldCmPerSecSq,
-			State.AttitudeDegrees.Yaw,
-			State.AngularVelocityBodyDegreesPerSec.Z);
+		FlightControllerComponent->AddTickPrerequisiteComponent(this);
+		FAircraftFlightKinematicState State;
+		if (FlightController->GetAircraftFlightKinematicState(State))
+		{
+			MotionProfile->Initialize(
+				State.PositionCm,
+				State.VelocityCmPerSec,
+				State.AccelerationWorldCmPerSecSq,
+				State.AttitudeDegrees.Yaw,
+				State.AngularVelocityBodyDegreesPerSec.Z);
+		}
 	}
 	RefreshSimulationTickEnabled();
 }
@@ -150,11 +151,9 @@ void UAutopilotComponent::SetAutopilotActive(bool bActive)
 	{
 		if (!bFlightModeBeforeActivationCaptured)
 		{
-			FlightModeBeforeActivation = static_cast<uint8>(FlightController->GetFlightMode());
+			FlightModeBeforeActivation = FlightController->ActivateAircraftAutopilotControl();
 			bFlightModeBeforeActivationCaptured = true;
 		}
-		FlightController->SetFlightMode(EDroneFlightMode::Mission);
-		FlightController->SetUseAutopilotSetpoint(true);
 		bActivationInitialized = true;
 		FAutopilotVehicleSnapshot Snapshot;
 		if (CaptureSnapshot(Snapshot))
@@ -172,11 +171,9 @@ void UAutopilotComponent::SetAutopilotActive(bool bActive)
 	{
 		MovementExecutor->CancelActive(EAutopilotIntentFailureReason::CancelledByCaller);
 		BroadcastIntentEvents();
-		FlightController->SetUseAutopilotSetpoint(false);
-		if (bFlightModeBeforeActivationCaptured
-			&& FlightController->GetFlightMode() == EDroneFlightMode::Mission)
+		if (bFlightModeBeforeActivationCaptured)
 		{
-			FlightController->SetFlightMode(static_cast<EDroneFlightMode>(FlightModeBeforeActivation));
+			FlightController->DeactivateAircraftAutopilotControl(FlightModeBeforeActivation);
 		}
 		bFlightModeBeforeActivationCaptured = false;
 		bActivationInitialized = false;
@@ -184,6 +181,16 @@ void UAutopilotComponent::SetAutopilotActive(bool bActive)
 		InvalidateOutputs();
 	}
 	RefreshSimulationTickEnabled();
+}
+
+void UAutopilotComponent::SetProfileAsset(UAutopilotProfileAsset* InProfile)
+{
+	Profile = InProfile;
+	if (HasBegunPlay())
+	{
+		ApplyProfile();
+		ApplyIntentMotionLimits();
+	}
 }
 
 void UAutopilotComponent::ApplyAircraftSimulationBudget_Implementation(
@@ -468,10 +475,29 @@ void UAutopilotComponent::CreateRuntimeObjects()
 
 void UAutopilotComponent::ResolveFlightController()
 {
+	FlightController = nullptr;
+	FlightControllerComponent = nullptr;
 	if (AActor* Owner = GetOwner())
 	{
-		FlightController = Owner->FindComponentByClass<UFlightControllerComponent>();
-		if (FlightController) FlightController->SetAutopilotProvider(this);
+		TArray<UActorComponent*> Components;
+		Owner->GetComponents(Components);
+		for (UActorComponent* Component : Components)
+		{
+			if (!Component || !Component->GetClass()->ImplementsInterface(
+				UAircraftFlightControllerInterface::StaticClass()))
+			{
+				continue;
+			}
+			if (IAircraftFlightControllerInterface* Interface =
+				Cast<IAircraftFlightControllerInterface>(Component))
+			{
+				FlightControllerComponent = Component;
+				FlightController.SetObject(Component);
+				FlightController.SetInterface(Interface);
+				FlightController->SetAircraftAutopilotProvider(this);
+				break;
+			}
+		}
 	}
 }
 
@@ -479,8 +505,16 @@ void UAutopilotComponent::ApplyProfile()
 {
 	const UAutopilotProfileAsset* EffectiveProfile = Profile ? Profile : GetDefault<UAutopilotProfileAsset>();
 	TurnBehavior->SetLimits(EffectiveProfile->TurnLimits);
-	const float InitialHoverThrust = FlightController
-		? FlightController->GetHoverCollectiveCommand() : 0.5f;
+	float GravityCmPerSecSq = 980.0f;
+	float InitialHoverThrust = 0.5f;
+	float VerticalAccelerationMpsSq = 0.0f;
+	float CollectiveThrustCommand = 0.0f;
+	if (FlightController)
+	{
+		FlightController->GetAircraftAutopilotPhysicalState(
+			GravityCmPerSecSq, InitialHoverThrust,
+			VerticalAccelerationMpsSq, CollectiveThrustCommand);
+	}
 	HoverThrustEstimator.Configure(EffectiveProfile->HoverThrustEstimator, InitialHoverThrust);
 	SetPathFollowingStrategy(EffectiveProfile->GuidanceStrategy);
 }
@@ -493,22 +527,10 @@ void UAutopilotComponent::ApplyIntentMotionLimits()
 	float HardHorizontalAcceleration = TNumericLimits<float>::Max();
 	if (FlightController)
 	{
-		const FDroneFlightControllerConfig& ControllerConfig =
-			FlightController->GetRuntimeConfig().Controller;
-		const FDroneControlLimits& HardLimits = ControllerConfig.Limits;
-		HardHorizontalSpeed = HardLimits.MaxHorizontalSpeedCmPerSec;
-		const float TiltLimitedAcceleration = FlightController->GetGravityMagnitudeCmPerSecSq()
-			* FMath::Tan(FMath::DegreesToRadians(HardLimits.MaxTiltAngleDegrees));
-		HardHorizontalAcceleration = FMath::Min(
-			HardLimits.MaxHorizontalAccelerationCmPerSecSq, TiltLimitedAcceleration);
-		const FlightControlDynamics::FDampingAwareHorizontalLimits DampingAwareLimits =
-			FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
-				FMath::Min(HardHorizontalSpeed, Requested.CruiseSpeedCmPerSec),
-				HardHorizontalAcceleration,
-				FlightController->GetLinearDampingPerSecond(),
-				ControllerConfig.Position.DampingAccelerationReserveFraction);
-		HardHorizontalSpeed = DampingAwareLimits.MaxSpeedCmPerSec;
-		HardHorizontalAcceleration = DampingAwareLimits.MaxTrajectoryAccelerationCmPerSecSq;
+		FlightController->GetAircraftAutopilotMotionLimits(
+			Requested.CruiseSpeedCmPerSec,
+			HardHorizontalSpeed,
+			HardHorizontalAcceleration);
 	}
 	MovementExecutor->SetPhysicalMotionLimits(HardHorizontalSpeed, HardHorizontalAcceleration);
 	FMotionProfileLimits Limits;
@@ -569,7 +591,8 @@ bool UAutopilotComponent::CaptureSnapshot(FAutopilotVehicleSnapshot& OutSnapshot
 		OutSnapshot.YawDegrees = GetOwner()->GetActorRotation().Yaw;
 		return true;
 	}
-	const FDroneKinematicState& State = FlightController->GetEstimatedState().State;
+	FAircraftFlightKinematicState State;
+	if (!FlightController->GetAircraftFlightKinematicState(State)) return false;
 	OutSnapshot.PositionCm = State.PositionCm;
 	OutSnapshot.VelocityCmPerSec = State.VelocityCmPerSec;
 	OutSnapshot.AccelerationCmPerSecSq = State.AccelerationWorldCmPerSecSq;
@@ -624,17 +647,17 @@ void UAutopilotComponent::UpdateHoverThrustEstimate(float DeltaSeconds)
 	{
 		return;
 	}
-	const float GravityCmPerSecSq = FlightController->GetGravityMagnitudeCmPerSecSq();
-	float HoverThrust = FlightController->GetHoverCollectiveCommand();
+	float GravityCmPerSecSq = 980.0f;
+	float HoverThrust = 0.5f;
+	float AccelerationMpsSq = 0.0f;
+	float CollectiveThrust = 0.0f;
+	FlightController->GetAircraftAutopilotPhysicalState(
+		GravityCmPerSecSq, HoverThrust, AccelerationMpsSq, CollectiveThrust);
 	if (!EffectiveProfile->bEnableHoverThrustEstimator)
 	{
 		FeedForwardCalculator->SetPhysicalReference(GravityCmPerSecSq, HoverThrust);
 		return;
 	}
-	const float AccelerationMpsSq = FlightController->GetEstimatedState()
-		.State.AccelerationWorldCmPerSecSq.Z * 0.01f;
-	const float CollectiveThrust = FlightController->GetControlOutput()
-		.Targets.Attitude.CollectiveThrust;
 	HoverThrustEstimator.Update(
 		DeltaSeconds, AccelerationMpsSq, CollectiveThrust, GravityCmPerSecSq * 0.01f);
 	HoverThrust = HoverThrustEstimator.GetHoverThrust();

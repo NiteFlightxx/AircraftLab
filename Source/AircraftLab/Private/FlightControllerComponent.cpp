@@ -456,6 +456,78 @@ void UFlightControllerComponent::SetAutopilotProvider(UObject* Provider)
 }
 
 
+bool UFlightControllerComponent::GetAircraftFlightKinematicState(
+	FAircraftFlightKinematicState& OutState) const
+{
+	const FDroneKinematicState& State = Runtime.EstimatedState.State;
+	OutState.PositionCm = State.PositionCm;
+	OutState.VelocityCmPerSec = State.VelocityCmPerSec;
+	OutState.AccelerationWorldCmPerSecSq = State.AccelerationWorldCmPerSecSq;
+	OutState.AttitudeDegrees = State.AttitudeDegrees;
+	OutState.AngularVelocityBodyDegreesPerSec = State.AngularVelocityBodyDegreesPerSec;
+	return true;
+}
+
+
+void UFlightControllerComponent::SetAircraftAutopilotProvider(UObject* Provider)
+{
+	SetAutopilotProvider(Provider);
+}
+
+
+uint8 UFlightControllerComponent::ActivateAircraftAutopilotControl()
+{
+	const uint8 PreviousMode = static_cast<uint8>(Runtime.ActiveFlightMode);
+	SetFlightMode(EDroneFlightMode::Mission);
+	SetUseAutopilotSetpoint(true);
+	return PreviousMode;
+}
+
+
+void UFlightControllerComponent::DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode)
+{
+	SetUseAutopilotSetpoint(false);
+	if (Runtime.ActiveFlightMode == EDroneFlightMode::Mission)
+	{
+		SetFlightMode(static_cast<EDroneFlightMode>(PreviousFlightMode));
+	}
+}
+
+
+void UFlightControllerComponent::GetAircraftAutopilotMotionLimits(
+	float RequestedCruiseSpeedCmPerSec,
+	float& OutMaxSpeedCmPerSec,
+	float& OutMaxAccelerationCmPerSecSq) const
+{
+	const FDroneControlLimits& HardLimits = RuntimeConfig.Controller.Limits;
+	const float TiltLimitedAcceleration = PhysicsCache.GravityMagnitudeCmPerSecSq
+		* FMath::Tan(FMath::DegreesToRadians(HardLimits.MaxTiltAngleDegrees));
+	const float PhysicalAcceleration = FMath::Min(
+		HardLimits.MaxHorizontalAccelerationCmPerSecSq, TiltLimitedAcceleration);
+	const FlightControlDynamics::FDampingAwareHorizontalLimits DampingAwareLimits =
+		FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
+			FMath::Min(HardLimits.MaxHorizontalSpeedCmPerSec, RequestedCruiseSpeedCmPerSec),
+			PhysicalAcceleration,
+			PhysicsCache.LinearDampingPerSecond,
+			RuntimeConfig.Controller.Position.DampingAccelerationReserveFraction);
+	OutMaxSpeedCmPerSec = DampingAwareLimits.MaxSpeedCmPerSec;
+	OutMaxAccelerationCmPerSecSq = DampingAwareLimits.MaxTrajectoryAccelerationCmPerSecSq;
+}
+
+
+void UFlightControllerComponent::GetAircraftAutopilotPhysicalState(
+	float& OutGravityCmPerSecSq,
+	float& OutHoverCollectiveCommand,
+	float& OutVerticalAccelerationMpsSq,
+	float& OutCollectiveThrustCommand) const
+{
+	OutGravityCmPerSecSq = PhysicsCache.GravityMagnitudeCmPerSecSq;
+	OutHoverCollectiveCommand = RuntimeConfig.Controller.Limits.HoverCollectiveCommand;
+	OutVerticalAccelerationMpsSq = Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq.Z * 0.01f;
+	OutCollectiveThrustCommand = Runtime.ControlOutput.Targets.Attitude.CollectiveThrust;
+}
+
+
 void UFlightControllerComponent::SetMovementIntentOverride(const FAutopilotMovementIntent& Intent)
 {
 	CachedMovementIntentOverride = Intent;
