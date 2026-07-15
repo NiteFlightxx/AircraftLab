@@ -34,7 +34,7 @@
  *   PositionControl 那种"估计跳变→同步平移速度环积分"的补偿——
  *   AircraftLab 的垂直速度环输出是归一化总距偏移（total = 基准 + 偏移），
  *   平移积分会阻止新基准生效并留下需长时间 unwind 的偏置。增量更新 +
- *   速度环 250Hz 自然响应已足够消除任何可见瞬态。
+ *   速度环随每个 Chaos 物理步自然响应，足以消除估计器增量更新的可见瞬态。
  *
  * 依赖：仅 CoreMinimal，无 AircraftLab 依赖（纯算法对象，由 AutopilotComponent 持有）。
  */

@@ -33,7 +33,7 @@ AircraftLab 是一个基于 Unreal Engine Chaos 物理引擎的多旋翼无人�
 - **物理真实**：用动量理论（$T \propto \omega^2$）和一阶电机动力学建模旋翼，用 Chaos 刚体积分真实受力。
 - **工程级飞控**：实现完整的级联 PID + 控制分配（混合器）管线，与真实开源飞控（PX4/ArduPilot）思想一致。
 - **故障容错**：支持单桨/多桨失效与降效，混合器自动重新分配控制权限。
-- **物理线程执行**：控制循环以 250 Hz 固定步长在物理线程运行，避免游戏线程帧率波动影响。
+- **物理线程执行**：控制循环与 Chaos 异步物理步一一对应，频率由项目的异步物理固定步长统一决定。
 
 ### 1.2 三组件架构
 
@@ -55,7 +55,7 @@ AAircraftPawn
 |---|---|---|
 | `USkeletalMeshComponent BodyMesh` | — | 唯一的物理刚体。`SetSimulatePhysics(true)`、`SetEnableGravity(true)`。质量/惯量来自物理资产 `SK_Drone_Physics*`。 |
 | `UDroneInputComponent` | `DroneInputComponent.h/cpp` | 事件驱动（不 Tick），把 Enhanced Input 的 `IA_Move`/`IA_Throttle`/`IA_Turn` 转成 `FDronePilotInput`（归一化 [-1,1]）。 |
-| `UFlightControllerComponent` | `FlightControllerComponent.h/cpp` | 飞控大脑：物理线程 250 Hz 固定步长级联 PID + 阻尼伪逆混合器。 |
+| `UFlightControllerComponent` | `FlightControllerComponent.h/cpp` | 飞控大脑：每个 Chaos 物理步执行一次级联 PID + 阻尼伪逆混合器。 |
 | `UAirscrewComponent` | `AirscrewComponent.h/cpp` | 单个旋翼的物理仿真：电机动力学、推力/反扭矩计算、对刚体施力。 |
 
 ### 1.3 双线程数据流
@@ -87,7 +87,7 @@ AAircraftPawn
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**为什么固定步长？** PID 的积分项和微分项依赖时间步长 Δt。变步长会导致积分漂移和微分噪声。固定 4 ms（250 Hz）保证控制器行为可预测，与真实飞控一致。
+**为什么跟随物理步？** PID 的积分项和微分项必须使用产生当前测量状态的同一个 Δt。飞控读取一次新物理状态、解算一次并立即施力，避免在冻结状态上重复积分。固定频率由 Chaos `AsyncFixedTimeStepSize` 统一配置。
 
 > 参考：`FlightControllerComponent.cpp:205-254`（Tick + AsyncPhysicsTick）、`RunControlLoop` `cpp:498-535`。
 
@@ -996,9 +996,7 @@ $$
 
 | 参数 | 默认值 | 含义 |
 |---|---|---|
-| `ControlLoopRateHz` | 250 | 控制循环频率 |
 | `bControllerEnabled` | true | 飞控使能 |
-| `bStartArmed` | false | 初始是否解锁 |
 | `InitialFlightMode` | Angle | 初始飞行模式 |
 | `HorizontalHoldStickDeadband` | 0.08 | 水平保持死区 |
 | `VerticalHoldStickDeadband` | 0.08 | 垂直保持死区 |
@@ -1008,27 +1006,50 @@ $$
 
 ---
 
-## 14. 已知限制与未来工作
+## 14. 未使用参数审计与未来工作
 
-### 14.1 `EDroneFrameType` 仅为标签
+### 14.1 已删除的无效定义
 
-`EDroneFrameType`（QuadX / QuadPlus / HexX / OctoX / Custom，`DroneTypes.h:82-99`）**当前不被任何运行时代码读取**。没有按机型查表的预设旋翼布局或混合矩阵。所有机型的混合都通过通用雅可比算法从各 `UAirscrewComponent` 的实时 transform 推导。选择 QuadX 还是 HexX 不会改变行为——真正决定混合的是实际挂载的旋翼数量、位置和旋向。
+以下定义没有任何运行时读取路径，而且已有明确的权威数据源，因此已经删除：
 
-### 14.2 `FDroneFlightConfig` 部分未启用
+| 已删除项 | 删除原因 | 当前权威路径 |
+|---|---|---|
+| `FDroneFlightConfig` | 从未实例化或传入飞控；只是把多个互不相连的配置再次聚合 | 飞控参数由 `UFlightControllerProfileAsset` 管理，Autopilot 参数由 `UAutopilotProfileAsset` 管理 |
+| `EDroneFrameType` | 只被 `FDroneFlightConfig` 引用，类型标签不会生成布局或改变混控 | 旋翼数量、位置、推力轴和旋向来自实际 `UAirscrewComponent`，控制分配由实时几何计算 |
+| `FAutopilotMovementIntent.DesiredAccelerationCmPerSecSq` | Submit/轨迹代码均不读取；轨迹加速度由 Motion Profile 产生 | `FProfiledSetpoint.AccelerationCmPerSecSq` → `FAutopilotInjection` |
+| `FAutopilotMovementIntent.ThrustFeedForward` | 与真正的飞控注入字段重名但从未读取 | `FFeedForward.ThrustFF` → `FAutopilotInjection.ThrustFeedForward` |
+| `FFeedForward.bEnabled` | 只被写为 `true`，从未参与分支判断 | `FProfiledSetpoint.bValid` 决定前馈是否有效 |
 
-`FDroneFlightConfig`（`DroneTypes.h:1608-1680`）是顶层聚合配置，但运行时飞控只消费其 `Controller` 子结构（`ControllerConfig`）。`Body`、`Aerodynamics`、`Sensors`、`Estimator`、`Rotors` 字段已定义但未被控制器读取——旋翼几何来自 `UAirscrewComponent` 实例，质量惯量来自物理资产。
+旧蓝图若拆分过 `FAutopilotMovementIntent` 引脚，首次打开时应刷新节点并重新编译。移除的两个字段以前没有进入控制链，因此刷新不会改变有效飞行行为。
 
-### 14.3 传感器模型仅有数据结构
+### 14.2 保留：物理与旋翼模型的预留参数
 
-`FDroneImuConfig`、`FDroneBarometerConfig`、`FDroneGpsConfig` 等（`DroneTypes.h:1127-1341`）和 `FDroneEstimatorConfig`（互补滤波/EKF 融合系数，`DroneTypes.h:1434-1470`）已完整定义，但 **没有任何实现代码**。状态估计当前是直接读 Chaos 真值，置信度硬编码 1.0。要实现真实传感器仿真需新增 IMU/气压计/GPS 噪声模型 + EKF/互补滤波融合代码。
+以下定义当前未被运行时消费，但含义明确，不能仅因“暂时未接线”而删除：
 
-### 14.4 空气动力学未应用
+| 保留项 | 预期作用 | 当前状态及未来影响 |
+|---|---|---|
+| `FDroneMassProperties` | 质量、质心偏移、惯量对角线 | 当前以 Chaos 物理资产为准；未来若支持纯数据驱动机体，质量影响加速度，质心影响耦合力矩，惯量影响角响应 |
+| `FDroneAerodynamicsConfig` | 分轴线性/角阻力、地效、风速 | 当前没有专用施力代码；接线后会影响极速、滑行衰减、转动阻尼、近地推力和抗风表现 |
+| `FDroneMotorModelConfig.MinRpm` | 电机允许维持的最低机械转速 | 当前停机使用 0、解锁使用 `IdleRpm`；未来若模拟 ESC 最低转速或空中停转保护，需要与怠速区分 |
+| `FDroneRotorDefinition.RadiusCm` | 桨盘面积及气动尺度 | 当前推力由 `MaxThrustForce` 标定；接入叶素/动量模型后会影响推力、功率、地效和桨间干扰 |
+| `FDroneRotorDefinition.bUseSocketTransform` | 在骨骼插槽布局和显式局部布局间选择 | 当前以组件实际 Transform 为权威；未来导入纯结构配置或自动生成旋翼组件时有用 |
+| `FDroneFirstOrderFilterState` | 保存低通滤波器历史值 | 当前传感器仿真未启用；接线后用于抑制 IMU 等高频噪声，同时会引入相位延迟 |
 
-`FDroneAerodynamicsConfig`（线性/角度阻力、地效、风）定义了但 **未被控制器或旋翼代码消费**。当前阻力/地效依赖 Chaos 默认物理或未实现。要启用需在 `ApplyThrustForce_PhysicsThread` 旁新增阻力施加逻辑。
+### 14.3 保留：传感器与状态估计配置
 
-### 14.5 `DroneInputComponent.bStartArmed` 孤立
+`FDroneScalarNoiseModel`、`FDroneVectorNoiseModel`、`FDroneImuConfig`、`FDroneBarometerConfig`、`FDroneGpsConfig`、`FDroneMagnetometerConfig`、`FDroneOpticalFlowConfig`、`FDroneRangefinderConfig`、`FDroneSensorSuiteConfig` 和 `FDroneEstimatorConfig` 当前没有运行时实现。飞控仍直接读取 Chaos 真值，而不是带采样率、延迟、量程、偏置和噪声的传感器输出。
 
-`DroneInputComponent.bStartArmed`（默认 true）未被任何代码引用——飞控使用自己的 `bStartArmed`（默认 false）。这是历史遗留的冗余属性。
+这些配置对物理无人机和后续网络预测仍有明确价值，因此保留：采样率和延迟决定反馈时效；噪声、偏置和滤波决定抖动及漂移；GPS/气压计/磁力计/光流融合权重决定位置、高度、航向的长期稳定性。正式接线前不应把它们开放给策划调参，因为修改它们目前不会产生任何效果。
+
+### 14.4 保留：安全启动与故障保护
+
+`UDroneInputComponent.bStartArmed` 当前未被读取，`UFlightControllerComponent::BeginPlay()` 会直接把运行时状态设为 `Armed`。它表达的“出生时是否解锁”是有效的安全策略，后续应迁移到统一的飞控/世界初始化流程，而不是简单删除。
+
+`FDroneFailsafeConfig` 中的指令丢失超时、GPS 丢失宽限、低电量返航、临界电量降落和最大倾角急停也尚未接线。它与当前只处理旋翼控制权不足的 `FFlightControllerFailurePolicyConfig` 不重复；接线后会直接决定失联、失定位和低电量时的行为，因此保留。
+
+### 14.5 保留：分层控制设定值契约
+
+`FVelocitySetpoint`、`FAccelerationSetpoint`、`FAttitudeThrustSetpoint`、`FBodyRateSetpoint` 和 `FAxisCommand` 当前没有实例化。它们描述位置环→速度环→加速度环→姿态环→角速率环之间的强类型数据边界，适合后续拆分控制器、遥测和单元测试。它们不是可调参数，保留不会影响运行时性能。
 
 ### 14.6 旋翼身份 = 数组下标
 

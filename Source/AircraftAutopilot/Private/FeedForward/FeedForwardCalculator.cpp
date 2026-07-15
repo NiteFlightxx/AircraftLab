@@ -28,8 +28,6 @@ void UFeedForwardCalculator::Compute(const FProfiledSetpoint& Setpoint, FFeedFor
 
 	// 推力前馈 → 加速度环/collective（含重力补偿）
 	OutFF.ThrustFF = ComputeThrustFF(Setpoint);
-
-	OutFF.bEnabled = true;
 }
 
 float UFeedForwardCalculator::ComputeThrustFF(const FProfiledSetpoint& Setpoint) const

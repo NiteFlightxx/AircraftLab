@@ -22,10 +22,6 @@ bool UFlightControllerProfileAsset::ValidateProfile(TArray<FText>& OutErrors) co
 	OutErrors.Reset();
 
 	const FDroneControlLimits& Limits = Controller.Limits;
-	if (Execution.ControlLoopRateHz < 1.0f)
-	{
-		OutErrors.Add(LOCTEXT("InvalidControlRate", "ControlLoopRateHz must be at least 1 Hz."));
-	}
 	if (Input.HorizontalBrakeToHoldSpeedCmPerSec < 0.0f)
 	{
 		OutErrors.Add(LOCTEXT("InvalidHorizontalBrakeToHoldSpeed",

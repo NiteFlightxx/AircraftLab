@@ -167,32 +167,9 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 	// 从 Chaos 刚体直接读取真值状态（无传感器噪声）
 	UpdateEstimatedState_PhysicsThread(DeltaTime, SimTime, BodyHandle);
 
-	// --- 固定步长累加器 ---
-	// 物理子步 DeltaTime 可能与控制步长不同，用累加器保证控制循环以固定频率执行。
-	// 上限 0.25s 防止长帧后一次性执行过多控制步。
-	//
-	//   ControlAccumulator += DeltaTime       （累加）
-	//   ControlStep = 1 / ControlLoopRateHz   （固定步长，默认 4ms = 250Hz）
-	//   while (Accumulator >= ControlStep):
-	//       RunControlLoop(ControlStep)
-	//       Accumulator -= ControlStep
-	//
-	Runtime.ControlAccumulatorSeconds = FMath::Min(Runtime.ControlAccumulatorSeconds + DeltaTime, 0.25f);
-	const float ControlStepSeconds = 1.0f / FMath::Max(RuntimeConfig.Execution.ControlLoopRateHz, 1.0f);
-	// 限制单帧最大控制步数，避免卡顿时雪崩式累积（62 步用冻结输入 → 积分饱和 → 恢复后过冲）
-	constexpr int32 MaxStepsPerFrame = 8;
-	int32 StepsThisFrame = 0;
-	while (Runtime.ControlAccumulatorSeconds + UE_SMALL_NUMBER >= ControlStepSeconds && StepsThisFrame < MaxStepsPerFrame)
-	{
-		RunControlLoop(ControlStepSeconds, CachedPilotInput);
-		Runtime.ControlAccumulatorSeconds -= ControlStepSeconds;
-		++StepsThisFrame;
-	}
-	// 超限则丢弃剩余累积，避免雪崩
-	if (Runtime.ControlAccumulatorSeconds >= ControlStepSeconds)
-	{
-		Runtime.ControlAccumulatorSeconds = 0.0f;
-	}
+	// 飞控与 Chaos 物理步保持一一对应。这里的状态是本物理步的新状态，
+	// 控制输出也会在下方立即施加；禁止在同一份冻结状态上重复运行 PID。
+	RunControlLoop(DeltaTime, CachedPilotInput);
 
 	// 控制循环已更新各旋翼指令，现在对刚体施力
 	const FVector AngularAccelerationBeforeWorldRad(BodyHandle->AngularAcceleration());
@@ -524,7 +501,7 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 
 	// 加速度由速度差分估计：
 	//   a = (v[n] − v[n-1]) / Δt
-	// 这是向后差分，延迟半步，但对于 250Hz 采样率误差可忽略
+	// 这是向后差分，延迟一个物理步；精度由 Chaos 异步固定步长决定。
 	const FVector CurrentAcceleration = (Runtime.bHasPreviousLinearVelocity && DeltaSeconds > UE_SMALL_NUMBER)
 		? (PhysicsCache.LinearVelocityCmPerSec - Runtime.PreviousLinearVelocityCmPerSec) / DeltaSeconds
 		: FVector::ZeroVector;
@@ -683,7 +660,6 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 void UFlightControllerComponent::ResetControllerState()
 {
 	FlightControlSolver.PidStates.ResetAll();
-	Runtime.ControlAccumulatorSeconds = 0.0f;
 	Runtime.bHasPreviousAngularVelocity = false;
 	Runtime.PreviousAngularVelocityBodyDegPerSec = FVector::ZeroVector;
 	// 第 3 批：重置姿态参考模型状态与角速度前馈缓存，避免模式切换后残留旧设定值

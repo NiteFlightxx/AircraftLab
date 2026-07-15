@@ -98,8 +98,8 @@ AircraftAutopilot 是一套工业级无人机自动驾驶框架，对标 PX4 / A
 | Mission | 1~10 Hz | 游戏线程 | 任务序列，最慢决策 |
 | Behavior | 10~50 Hz | 游戏线程 | 行为状态机 |
 | Trajectory / MotionProfile / FF / PF / Turn | 50~100 Hz | 游戏线程 | 运动学计算 |
-| 控制内环（Pos→Rate） | 250 Hz | **物理线程** | 固定步长累加器 |
-| Rotor / Physics | 物理步长 | 物理线程 | Chaos 刚体 |
+| 控制内环（Pos→Rate） | 物理步长 | **物理线程** | 每个 Chaos 物理步解算一次 |
+| Rotor / Physics | 物理步长 | 物理线程 | 与控制内环一一对应 |
 
 ### 数据流（严格自上而下）
 
@@ -981,7 +981,7 @@ const FProfiledSetpoint& Current = SetpointBuffer[1 - WriteIndex.load()];
 | 跟踪滞后明显 | `VelocityFFGain`、`AccelFFGain` 从 0 渐增到 1 |
 | 前馈过冲 | 降低增益到 0.5~0.8 |
 | 悬停 collective 不对 | 校准 `HoverCollective`（由 FlightController 的 HoverCollectiveCommand 注入） |
-| 纯反馈（关闭前馈） | 所有 Gain 设 0，或 `FFeedForward.bEnabled = false` |
+| 纯反馈（关闭前馈） | 将 FlightController Profile 中相关 PID 的 `Kff` 设为 0 |
 
 ### 8.4 Path Following 调优
 

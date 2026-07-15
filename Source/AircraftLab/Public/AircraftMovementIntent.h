@@ -152,8 +152,6 @@ struct AIRCRAFTLAB_API FAutopilotMovementIntent
 	TObjectPtr<AActor> TargetActor = nullptr;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "期望速度（厘米/秒）"))
 	FVector DesiredVelocityCmPerSec = FVector::ZeroVector;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "期望加速度（厘米/秒²）"))
-	FVector DesiredAccelerationCmPerSecSq = FVector::ZeroVector;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "期望姿态角（度）"))
 	FRotator DesiredAttitudeDegrees = FRotator::ZeroRotator;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "期望机体角速度（度/秒）"))
@@ -179,8 +177,6 @@ struct AIRCRAFTLAB_API FAutopilotMovementIntent
 	TObjectPtr<AActor> HeadingTargetActor = nullptr;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "期望偏航角速度（度/秒）"))
 	float DesiredYawRateDegPerSec = 0.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "推力前馈"))
-	float ThrustFeedForward = 0.0f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "到达模式"))
 	EAutopilotArrivalMode ArrivalMode = EAutopilotArrivalMode::StopAndComplete;
 	/** 仅 PassThrough 使用；表示穿过有限轨迹终点时保留的速度。 */

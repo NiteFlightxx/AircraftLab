@@ -159,9 +159,7 @@ struct AIRCRAFTAUTOPILOT_API FAxisCommand
 /**
  * 前馈汇总（第四部分）
  *
- * 把 Trajectory 名义量与重力补偿集中，统一注入各控制器 PID 的 Kff 通道。
- * 当前 AircraftLab 全代码 Kff=0（DroneTypes.h:432 定义但未用），
- * 本结构是激活前馈的数据载体。
+ * 把 Trajectory 名义量与重力补偿集中，并统一注入飞控控制链。
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTAUTOPILOT_API FFeedForward
@@ -184,7 +182,4 @@ struct AIRCRAFTAUTOPILOT_API FFeedForward
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Autopilot|FeedForward")
 	float ThrustFF = 0.0f;
 
-	/** 轨迹前馈开关（总开关，false=纯反馈） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|FeedForward")
-	bool bEnabled = true;
 };

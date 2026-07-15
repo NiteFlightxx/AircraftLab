@@ -77,28 +77,6 @@ enum class EDroneFlightMode : uint8
 };
 
 /**
- * 无人机机架类型枚举
- */
-UENUM(BlueprintType)
-enum class EDroneFrameType : uint8
-{
-	/** 四轴 X 型布局：四个旋翼呈 X 形分布，水平控制响应灵敏。最常用的小型多旋翼布局。 */
-	QuadX UMETA(DisplayName = "Quad X"),
-
-	/** 四轴 + 型布局：四个旋翼呈 + 形分布，前后方向控制更直观但滚转效率略低。 */
-	QuadPlus UMETA(DisplayName = "Quad Plus"),
-
-	/** 六轴 X 型布局：六个旋翼，提供更高推力和冗余，X 形布局兼具机动性。 */
-	HexX UMETA(DisplayName = "Hex X"),
-
-	/** 八轴 X 型布局：八个旋翼，用于重型载重或高可靠性要求，可承受单电机失效。 */
-	OctoX UMETA(DisplayName = "Octo X"),
-
-	/** 自定义布局：用户自己定义旋翼的数量、位置和混控矩阵。 */
-	Custom UMETA(DisplayName = "Custom")
-};
-
-/**
  * 螺旋桨旋转方向枚举
  */
 UENUM(BlueprintType)
@@ -1674,79 +1652,3 @@ struct AIRCRAFTLAB_API FDroneFlightControllerConfig
 	FDroneControlAllocationConfig Allocator;
 };
 
-/**
- * 无人机总体配置（物理、传感器、控制器等全部参数）
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTLAB_API FDroneFlightConfig
-{
-	GENERATED_BODY()
-
-	/** 机架类型 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	EDroneFrameType FrameType = EDroneFrameType::QuadX;
-
-	/** 启动时的默认飞行模式 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	EDroneFlightMode StartupFlightMode = EDroneFlightMode::Angle;
-
-	/** 控制循环频率（Hz） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config", meta = (ClampMin = "1.0"))
-	float ControlLoopRateHz = 250.0f;
-
-	/** 物理子步频率（Hz） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config", meta = (ClampMin = "1.0"))
-	float PhysicsSubstepRateHz = 250.0f;
-
-	/** 重力加速度（厘米/秒²） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config", meta = (ClampMin = "0.0"))
-	float GravityMagnitudeCmPerSecSq = 980.0f;
-
-	/** 质量与惯性参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	FDroneMassProperties Body;
-
-	/** 空气动力学参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	FDroneAerodynamicsConfig Aerodynamics;
-	
-	/** 旋翼定义数组（支持多旋翼） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config", meta = (TitleProperty = "RotorName"))
-	TArray<FDroneRotorDefinition> Rotors;
-
-	/** 传感器套件配置 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	FDroneSensorSuiteConfig Sensors;
-
-	/** 状态估计器配置 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	FDroneEstimatorConfig Estimator;
-
-	/** 飞控参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	FDroneFlightControllerConfig Controller;
-
-	/** 故障保护配置 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Config")
-	FDroneFailsafeConfig Failsafe;
-
-	/** 获取启用旋翼的数量 */
-	int32 GetEnabledRotorCount() const
-	{
-		int32 Count = 0;
-		for (const FDroneRotorDefinition& Rotor : Rotors)
-		{
-			if (Rotor.IsEnabled())
-			{
-				++Count;
-			}
-		}
-		return Count;
-	}
-
-	/** 检查是否有有效的旋翼布局（至少4个启用的旋翼） */
-	bool HasValidRotorLayout() const
-	{
-		return GetEnabledRotorCount() >= 4;
-	}
-};

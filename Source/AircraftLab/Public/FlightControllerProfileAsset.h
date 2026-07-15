@@ -34,9 +34,6 @@ struct AIRCRAFTLAB_API FFlightControllerExecutionConfig
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "1.0", DisplayName = "控制循环频率（Hz）"))
-	float ControlLoopRateHz = 250.0f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (DisplayName = "默认启用控制器"))
 	bool bControllerEnabledByDefault = true;
 

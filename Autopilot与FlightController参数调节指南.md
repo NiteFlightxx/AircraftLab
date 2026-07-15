@@ -205,8 +205,9 @@ Vector Field 参数：
 
 | 参数 | 用途 | 调大/切换影响 |
 |---|---|---|
-| `ControlLoopRateHz` | 控制器固定步长频率 | 更高可提高快速动态控制，但增加 CPU；修改后 PID 可能需要重调 |
 | `bControllerEnabledByDefault` | 开始运行时是否启用飞控 | 关闭用于外部系统接管，不是普通玩法开关 |
+
+飞控每个 Chaos 异步物理步执行一次。控制频率不在 Profile 中单独配置，而由项目物理设置的 `AsyncFixedTimeStepSize` 统一决定。
 
 ### 5.3 `Controller.Limits`
 
@@ -344,7 +345,7 @@ Vector Field 参数：
 ### 6.3 不应直接开放给普通策划
 
 - 全部 PID：Kp/Ki/Kd/Kff、积分和输出限幅
-- 控制循环频率
+- 项目级 Chaos 异步物理固定步长
 - 阻尼补偿比例、参考模型、四元数权重
 - 控制分配伪逆、轴权重、倾斜补偿下限
 - 悬停推力 EKF 噪声和门限
@@ -373,3 +374,22 @@ Vector Field 参数：
 | 悬停慢慢升降 | HoverCollective 不准或悬停推力估计器未收敛 |
 
 任何 PID 或硬限制修改都应保存独立 Profile 版本，并同时记录机体质量、惯量、Chaos 阻尼、旋翼数量/位置和最大推力；脱离这些物理条件比较 PID 数字没有意义。
+
+## 8. 当前未接线但保留的参数
+
+本轮审计没有删除“仅仅因为尚未实现”的物理/飞控能力。下表中的参数目前不会改变飞行结果，但对完整无人机模型有明确意义；在实现对应消费路径前，不应交给美术或策划调节。
+
+| 参数或结构 | 未来用途 | 调大/启用后的预期影响 |
+|---|---|---|
+| `FDroneMassProperties` | 数据驱动的质量、质心和惯量 | 质量增大使相同推力下加速度降低；惯量增大使姿态响应变慢；质心偏移会产生轴间耦合 |
+| `FDroneAerodynamicsConfig` | 分轴阻力、地效和风 | 阻力增大降低极速并增强自然衰减；地效增强会使近地悬停更敏感；风速改变外部扰动 |
+| `FDroneMotorModelConfig.MinRpm` | ESC/电机最低机械转速 | 提高后可避免过低转速，但会抬高最小可用推力；当前仍由 0 和 `IdleRpm` 控制 |
+| `FDroneRotorDefinition.RadiusCm` | 桨盘气动模型 | 半径增大会改变桨盘面积、推力和功率需求；当前使用标定的最大推力，不读取半径 |
+| `FDroneRotorDefinition.bUseSocketTransform` | 选择插槽布局或显式局部布局 | 接线后决定旋翼几何来源；当前以组件实际 Transform 为准 |
+| 传感器噪声、采样率、延迟和滤波 | IMU/GPS/气压计/磁力计/光流/测距仿真 | 噪声与延迟增大通常使控制更抖、更滞后；滤波增强可降噪但会增加响应延迟 |
+| `FDroneEstimatorConfig` | 多传感器状态融合 | 融合权重决定短期响应、长期漂移和对单传感器异常的敏感度 |
+| `FDroneFailsafeConfig` | 失联、GPS 丢失、低电量和过倾角策略 | 阈值越保守越早触发返航/降落/急停，但也更容易误触发 |
+| `UDroneInputComponent.bStartArmed` | 统一启动流程中的解锁策略 | `false` 更安全，`true` 可立即起转；当前 `BeginPlay()` 直接解锁，字段尚无效果 |
+| `FDroneFirstOrderFilterState` | 保存传感器低通滤波历史 | 更低截止频率会更平滑但延迟更大；当前没有传感器运行时消费它 |
+
+此外，`FVelocitySetpoint`、`FAccelerationSetpoint`、`FAttitudeThrustSetpoint`、`FBodyRateSetpoint`、`FAxisCommand` 是未来分层控制器和遥测使用的数据契约，不是策划参数，暂时保留。

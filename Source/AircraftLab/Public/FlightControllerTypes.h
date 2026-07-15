@@ -332,9 +332,6 @@ struct FControllerRuntimeState
 	/** 是否启用速度保持 */
 	bool bVelocityHoldEnabled = false;
 
-	/** 控制循环时间累加器 */
-	float ControlAccumulatorSeconds = 0.0f;
-
 	/** 上一帧线速度（用于计算加速度） */
 	FVector PreviousLinearVelocityCmPerSec = FVector::ZeroVector;
 
