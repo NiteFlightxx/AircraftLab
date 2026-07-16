@@ -61,6 +61,18 @@ bool UFlightControllerProfileAsset::ValidateProfile(TArray<FText>& OutErrors) co
 		OutErrors.Add(LOCTEXT("InvalidAngularDampingFeedForwardScale",
 			"AngularDampingFeedForwardScale cannot be negative."));
 	}
+	if (Controller.Attitude.QuaternionAttitudeGains.Roll < 0.0f
+		|| Controller.Attitude.QuaternionAttitudeGains.Pitch < 0.0f
+		|| Controller.Attitude.QuaternionAttitudeGains.Yaw < 0.0f)
+	{
+		OutErrors.Add(LOCTEXT("InvalidQuaternionAttitudeGains",
+			"Quaternion attitude gains cannot be negative."));
+	}
+	if (Controller.Attitude.YawWeight < 0.0f || Controller.Attitude.YawWeight > 1.0f)
+	{
+		OutErrors.Add(LOCTEXT("InvalidQuaternionYawWeight",
+			"Quaternion YawWeight must be in [0, 1]."));
+	}
 	if (FailurePolicy.MinimumHealthyRotorCount < 0)
 	{
 		OutErrors.Add(LOCTEXT("InvalidHealthyRotorCount", "MinimumHealthyRotorCount cannot be negative."));

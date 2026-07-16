@@ -86,6 +86,12 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotHeadingOptions
 		meta = (EditCondition = "Mode == EAutopilotHeadingMode::FixedYaw", EditConditionHides, DisplayName = "固定航向角（度）"))
 	float FixedYawDegrees = 0.0f;
 
+	/** FixedYaw: positive turn-speed limit used while rotating toward FixedYawDegrees. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading",
+		meta = (ClampMin = "0.0", EditCondition = "Mode == EAutopilotHeadingMode::FixedYaw",
+			EditConditionHides, DisplayName = "航向转动速度（度/秒）"))
+	float YawRateDegreesPerSec = 90.0f;
+
 	/** Enable a look-at target distinct from the destination/path. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Heading",
 		meta = (EditCondition = "Mode == EAutopilotHeadingMode::FaceTarget", EditConditionHides, DisplayName = "使用独立注视目标"))

@@ -71,6 +71,44 @@ bool FAircraftVerticalDampingFeedForwardTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftVerticalVelocitySetpointSlewTest,
+	"AircraftLab.Control.Altitude.VerticalVelocitySetpointSlewAccumulates",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftVerticalVelocitySetpointSlewTest::RunTest(const FString& Parameters)
+{
+	FControllerRuntimeState Runtime;
+	Runtime.EstimatedState.State.PositionCm.Z = 0.0f;
+	Runtime.EstimatedState.State.VelocityCmPerSec.Z = -100.0f;
+	Runtime.HoldTargets.HeldAltitudeCm = 1000.0f;
+	Runtime.HoldTargets.bAltitudeHoldInitialized = true;
+	FPhysicsCache PhysicsCache;
+	PhysicsCache.GravityMagnitudeCmPerSecSq = 980.0f;
+	FModeCapabilities Capabilities;
+	Capabilities.CanHoldAltitude = true;
+	FFlightControllerRuntimeConfig Config;
+	FlightControllerConfig::InitializeDefaults(Config.Controller);
+	Config.Controller.Limits.MaxVerticalAccelerationCmPerSecSq = 1000.0f;
+	FAutopilotMovementIntent MovementIntent;
+	FAutopilotInjection Injection;
+	FControlAllocator Allocator;
+	FFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, MovementIntent, Injection, Allocator, false };
+	FFlightControlSolver Solver;
+
+	float FirstDesiredVelocity = 0.0f;
+	Solver.ComputeVerticalControl(Context, 0.004f, FirstDesiredVelocity);
+	float SecondDesiredVelocity = 0.0f;
+	Solver.ComputeVerticalControl(Context, 0.004f, SecondDesiredVelocity);
+
+	TestEqual(TEXT("First step starts from measured velocity and respects acceleration"),
+		FirstDesiredVelocity, -96.0f, 1.e-4f);
+	TestEqual(TEXT("Subsequent steps accumulate from the previous setpoint, not measured velocity"),
+		SecondDesiredVelocity, -92.0f, 1.e-4f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftAngularDampingFeedForwardTest,
 	"AircraftLab.Control.Damping.AngularTorqueFeedForward",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -87,6 +125,44 @@ bool FAircraftAngularDampingFeedForwardTest::RunTest(const FString& Parameters)
 		FeedForward.Y, -static_cast<double>(PI) / 2.0, 1.e-5);
 	TestTrue(TEXT("Zero requested rate requires no damping torque"),
 		FMath::IsNearlyZero(FeedForward.Z));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftQuaternionAttitudeUsesRigidBodyRotationTest,
+	"AircraftLab.Control.Attitude.QuaternionUsesRigidBodyRotation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftQuaternionAttitudeUsesRigidBodyRotationTest::RunTest(const FString& Parameters)
+{
+	FControllerRuntimeState Runtime;
+	Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
+	// Deliberately stale display angles: the controller must use the rigid-body quaternion.
+	Runtime.EstimatedState.State.AttitudeDegrees = FRotator(0.0f, 0.0f, 90.0f);
+	FPhysicsCache PhysicsCache;
+	PhysicsCache.BodyTransform.SetRotation(FQuat::Identity);
+	FModeCapabilities Capabilities;
+	FFlightControllerRuntimeConfig Config;
+	FlightControllerConfig::InitializeDefaults(Config.Controller);
+	FAutopilotMovementIntent MovementIntent;
+	FAutopilotInjection Injection;
+	FControlAllocator Allocator;
+	FFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, MovementIntent, Injection, Allocator, false };
+	FFlightControlSolver Solver;
+	FFlightControlYawSetpoint YawSetpoint;
+	YawSetpoint.MaxRateDegPerSec = Config.Controller.Limits.MaxYawRateDegreesPerSec;
+
+	const FVector DesiredRates = Solver.ComputeDesiredBodyRates(
+		Context, FRotator::ZeroRotator, YawSetpoint, 0.004f);
+	TestTrue(TEXT("Identity rigid-body attitude has no Roll/Pitch quaternion error"),
+		FVector2D(DesiredRates.X, DesiredRates.Y).IsNearlyZero(1.e-4f));
+
+	YawSetpoint.TargetYawDegrees = 90.0f;
+	const FVector YawRates = Solver.ComputeDesiredBodyRates(
+		Context, FRotator::ZeroRotator, YawSetpoint, 0.004f);
+	TestTrue(TEXT("Target yaw is closed by the quaternion error, not a separate angle PID"),
+		FMath::Abs(YawRates.Z) > 1.0f);
 	return true;
 }
 

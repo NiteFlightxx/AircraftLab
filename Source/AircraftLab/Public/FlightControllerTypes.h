@@ -310,19 +310,15 @@ struct AIRCRAFTLAB_API FControllerPidStates
 
 	/** 位置环PID状态 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	FDroneCartesianPidState Position;
+	FDronePlanarPidState Position;
 
 	/** 速度环PID状态 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	FDroneCartesianPidState Velocity;
+	FDronePlanarPidState Velocity;
 
-	/** 角度环PID状态 */
+	/** 机体角速度环 PID 状态 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	FDroneEulerPidState Angle;
-
-	/** 角速度环PID状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	FDroneEulerPidState Rate;
+	FDroneBodyRatePidState Rate;
 
 	/** 高度环PID状态 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
@@ -336,7 +332,6 @@ struct AIRCRAFTLAB_API FControllerPidStates
 	{
 		Position.Reset();
 		Velocity.Reset();
-		Angle.Reset();
 		Rate.Reset();
 		Altitude.Reset();
 		VerticalVelocity.Reset();

@@ -72,6 +72,27 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 	const float MaxCollective = Context.Config.Controller.Limits.MaxCollectiveCommand;
 	const float CurrentAltitude = Context.Runtime.EstimatedState.State.PositionCm.Z;
 	const float CurrentVerticalVelocity = Context.Runtime.EstimatedState.State.VelocityCmPerSec.Z;
+	const auto SlewVerticalVelocitySetpoint = [&](float DesiredVelocity)
+	{
+		const float MaxAcceleration = FMath::Max(
+			Context.Config.Controller.Limits.MaxVerticalAccelerationCmPerSecSq, 0.0f);
+		if (!bVerticalVelocitySetpointInitialized)
+		{
+			LastDesiredVerticalVelocityCmPerSec = CurrentVerticalVelocity;
+			bVerticalVelocitySetpointInitialized = true;
+		}
+		if (MaxAcceleration <= UE_SMALL_NUMBER)
+		{
+			LastDesiredVerticalVelocityCmPerSec = DesiredVelocity;
+		}
+		else
+		{
+			LastDesiredVerticalVelocityCmPerSec = FMath::FInterpConstantTo(
+				LastDesiredVerticalVelocityCmPerSec, DesiredVelocity,
+				DeltaSeconds, MaxAcceleration);
+		}
+		return LastDesiredVerticalVelocityCmPerSec;
+	};
 
 	if (!Context.ModeCapabilities.CanHoldAltitude)
 	{
@@ -80,6 +101,7 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 		Context.Runtime.HoldTargets.bAltitudeHoldInitialized = false;
 		PidStates.Altitude.Reset();
 		PidStates.VerticalVelocity.Reset();
+		bVerticalVelocitySetpointInitialized = false;
 		LastVerticalDampingCollectiveFeedForward = 0.0f;
 		// 油门杆 → 垂直速度（线性映射）
 		OutDesiredVerticalVelocity = Context.MovementIntent.DesiredVelocityCmPerSec.Z;
@@ -109,6 +131,7 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 			Context.Config.Controller.Altitude.AltitudeGains, AI.VerticalVelocitySetpointCmPerSec);
 		OutDesiredVerticalVelocity = FMath::Clamp(OutDesiredVerticalVelocity,
 			-Context.Config.Controller.Limits.MaxDescentRateCmPerSec, Context.Config.Controller.Limits.MaxClimbRateCmPerSec);
+		OutDesiredVerticalVelocity = SlewVerticalVelocitySetpoint(OutDesiredVerticalVelocity);
 		const FDroneAltitudeControllerConfig& AltitudeConfig = Context.Config.Controller.Altitude;
 		LastVerticalDampingCollectiveFeedForward =
 			FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
@@ -119,7 +142,7 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 		// 垂直速度内环；轨迹推力前馈作为基准，阻尼前馈补偿稳态阻力。
 		const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
 			OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds,
-			AltitudeConfig.VerticalVelocityGains);
+			AltitudeConfig.VerticalVelocityGains.ToRuntimeGains());
 		// 推力前馈作总距基准（含重力补偿），替代 HoverCollective
 		return FMath::Clamp(AI.ThrustFeedForward + LastVerticalDampingCollectiveFeedForward
 			+ CollectiveOffset, MinCollective, MaxCollective);
@@ -152,6 +175,7 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 	}
 
 	// ---- 垂直速度内环（手动路径）----
+	OutDesiredVerticalVelocity = SlewVerticalVelocitySetpoint(OutDesiredVerticalVelocity);
 	// PID_vz: Δc = Kp·(v_z_des − v_z) + Ki·∫(v_z_des − v_z)dt + Kd·d(v_z_des − v_z)/dt
 	// 输出 Δc 是总距偏移量，加在悬停点上
 	const FDroneAltitudeControllerConfig& AltitudeConfig = Context.Config.Controller.Altitude;
@@ -161,7 +185,8 @@ float FFlightControlSolver::ComputeVerticalControl(FFlightControlSolverContext& 
 			Context.PhysicsCache.GravityMagnitudeCmPerSecSq, HoverCollective,
 			AltitudeConfig.VerticalDampingFeedForwardScale);
 	const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
-		OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds, Context.Config.Controller.Altitude.VerticalVelocityGains);
+		OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds,
+		Context.Config.Controller.Altitude.VerticalVelocityGains.ToRuntimeGains());
 	// 最终总距 = 悬停总距 + PID偏移，限制在 [Min, Max]
 	return FMath::Clamp(HoverCollective + LastVerticalDampingCollectiveFeedForward
 		+ CollectiveOffset, MinCollective, MaxCollective);
@@ -211,19 +236,27 @@ FRotator FFlightControlSolver::ComputeDesiredAttitude(FFlightControlSolverContex
 }
 
 
-float FFlightControlSolver::ComputeDesiredYawRate(FFlightControlSolverContext& Context, float DeltaSeconds)
+FFlightControlYawSetpoint FFlightControlSolver::ComputeYawSetpoint(FFlightControlSolverContext& Context)
 {
+	FFlightControlYawSetpoint Result;
+	const float CurrentYawDegrees = Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
+	Result.TargetYawDegrees = CurrentYawDegrees;
+	Result.MaxRateDegPerSec = Context.Config.Controller.Limits.MaxYawRateDegreesPerSec;
+
 	// ---- 路径 C：Autopilot 注入 ----
 	if (Context.bUseAutopilotSetpoint && Context.AutopilotInjection.bValid)
 	{
 		const FAutopilotInjection& AI = Context.AutopilotInjection;
-		// 偏航角 PID：设定值=YawSetpointDegrees，前馈=偏航角速度设定值（Kff 通道）
-		const float YawError = FRotator::NormalizeAxis(
-			AI.YawSetpointDegrees - Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw);
-		const float DesiredYawRate = PidStates.Angle.Yaw.UpdateFromError(
-			YawError, DeltaSeconds, Context.Config.Controller.Attitude.AngleGains.Yaw, AI.YawRateSetpointDegPerSec);
-		return FMath::Clamp(DesiredYawRate,
-			-Context.Config.Controller.Limits.MaxYawRateDegreesPerSec, Context.Config.Controller.Limits.MaxYawRateDegreesPerSec);
+		const float IntentYawRateLimit = AI.YawRateLimitDegPerSec > UE_SMALL_NUMBER
+			? AI.YawRateLimitDegPerSec
+			: Context.Config.Controller.Limits.MaxYawRateDegreesPerSec;
+		Result.MaxRateDegPerSec = FMath::Min(
+			Context.Config.Controller.Limits.MaxYawRateDegreesPerSec,
+			IntentYawRateLimit);
+		Result.TargetYawDegrees = FRotator::NormalizeAxis(AI.YawSetpointDegrees);
+		Result.FeedForwardRateDegPerSec = FMath::Clamp(
+			AI.YawRateSetpointDegPerSec, -Result.MaxRateDegPerSec, Result.MaxRateDegPerSec);
+		return Result;
 	}
 
 	// ---- 手动路径 ----
@@ -232,10 +265,11 @@ float FFlightControlSolver::ComputeDesiredYawRate(FFlightControlSolverContext& C
 
 	if (!Context.ModeCapabilities.CanHoldYaw)
 	{
-		// 无偏航保持：直接输出手动速率
+		// 无航向保持：目标姿态使用当前航向，摇杆只作为角速度前馈。
 		Context.Runtime.HoldTargets.bYawHoldInitialized = false;
-		PidStates.Angle.Yaw.Reset();
-		return ManualYawRate;
+		Result.FeedForwardRateDegPerSec = FMath::Clamp(
+			ManualYawRate, -Result.MaxRateDegPerSec, Result.MaxRateDegPerSec);
+		return Result;
 	}
 
 	// 摇杆超出死区 → 手动偏航率，同时重新锁定航向
@@ -243,8 +277,10 @@ float FFlightControlSolver::ComputeDesiredYawRate(FFlightControlSolverContext& C
 	{
 		Context.Runtime.HoldTargets.HeldYawDegrees = Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
 		Context.Runtime.HoldTargets.bYawHoldInitialized = true;
-		PidStates.Angle.Yaw.Reset();
-		return ManualYawRate;
+		Result.TargetYawDegrees = Context.Runtime.HoldTargets.HeldYawDegrees;
+		Result.FeedForwardRateDegPerSec = FMath::Clamp(
+			ManualYawRate, -Result.MaxRateDegPerSec, Result.MaxRateDegPerSec);
+		return Result;
 	}
 
 	// 初始化锁定航向
@@ -252,40 +288,30 @@ float FFlightControlSolver::ComputeDesiredYawRate(FFlightControlSolverContext& C
 	{
 		Context.Runtime.HoldTargets.HeldYawDegrees = Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
 		Context.Runtime.HoldTargets.bYawHoldInitialized = true;
-		PidStates.Angle.Yaw.Reset();
 	}
 
-	// 偏航角 PID 锁定航向
-	// ψ_err = NormalizeAxis(ψ_held − ψ_current)  映射到 [−180, 180]
-	// ψ̇_des = PID_yaw(ψ_err) — 使用 UpdateFromError，因为角度环设定值是阶跃的（手动改目标时已 Reset）
-	const float YawError = FRotator::NormalizeAxis(Context.Runtime.HoldTargets.HeldYawDegrees - Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw);
-	const float DesiredYawRate = PidStates.Angle.Yaw.UpdateFromError(YawError, DeltaSeconds, Context.Config.Controller.Attitude.AngleGains.Yaw);
-	return FMath::Clamp(DesiredYawRate, -Context.Config.Controller.Limits.MaxYawRateDegreesPerSec, Context.Config.Controller.Limits.MaxYawRateDegreesPerSec);
+	Result.TargetYawDegrees = FRotator::NormalizeAxis(Context.Runtime.HoldTargets.HeldYawDegrees);
+	return Result;
 }
 
 
-FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContext& Context, const FRotator& DesiredAttitude, float DesiredYawRate, float DeltaSeconds)
+FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContext& Context,
+	const FRotator& DesiredAttitude, const FFlightControlYawSetpoint& YawSetpoint, float DeltaSeconds)
 {
-	const FRotator CurrentAttitude = Context.Runtime.EstimatedState.State.AttitudeDegrees;
-	// 计算滚转/俯仰误差，NormalizeAxis 确保在 [−180, 180] 范围内
-	const float RollError = FRotator::NormalizeAxis(DesiredAttitude.Roll - CurrentAttitude.Roll);
-	const float PitchError = FRotator::NormalizeAxis(DesiredAttitude.Pitch - CurrentAttitude.Pitch);
-
 	// Acro/Manual 模式的默认值：摇杆直通
 	float DesiredRollRate = Context.MovementIntent.DesiredBodyRatesDegPerSec.X;
 	float DesiredPitchRate = Context.MovementIntent.DesiredBodyRatesDegPerSec.Y;
-	// 角速度前馈（第 3 批：由参考模型导数产生，供角速度环 Kff 通道消费）
+	float DesiredYawRate = YawSetpoint.FeedForwardRateDegPerSec;
+	// 角速度前馈由姿态参考模型导数产生。
 	float RollRateFF = 0.0f;
 	float PitchRateFF = 0.0f;
 
-	// Angle 模式：角度环覆盖默认值
+	// 非角速度直通模式统一使用四元数姿态误差。
 	if (Context.Runtime.AttitudeMode != EDroneAttitudeMode::Acro && Context.Runtime.AttitudeMode != EDroneAttitudeMode::Manual)
 	{
-		// ---- 第 3 批：2 阶临界阻尼参考模型（对标 PX4 AttitudeControl.cpp:82-129）----
+		// 2 阶临界阻尼参考模型（对标 PX4 AttitudeControl.cpp）。
 		// 对期望 Roll/Pitch 设定值做平滑：ẍ + 2ω·ẋ + ω²·(x − x_sp) = 0，ζ=1 临界阻尼。
-		// 输出平滑设定值 x_smooth 及其导数 v=ẋ（角速度前馈 rate_ff）。
-		// 角速度设定值 = Kp·(x_smooth − current) + rate_ff，前馈承担"已知运动学"部分，
-		// PID 只补模型误差，Kp 可降低、过冲减小。
+		// Roll/Pitch 角度仅作为可读命令参数；姿态误差不在欧拉角空间计算。
 		const FDroneAttitudeControllerConfig& AttCfg = Context.Config.Controller.Attitude;
 		float SmoothedRoll = DesiredAttitude.Roll;
 		float SmoothedPitch = DesiredAttitude.Pitch;
@@ -294,7 +320,7 @@ FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContex
 		{
 			const float Omega = FMath::Max(AttCfg.RefModelNaturalFrequency, UE_SMALL_NUMBER);
 			const float FFLimit = AttCfg.RefModelRateFFLimitDegPerSec;
-			// ZOH 离散积分（半隐式 Euler，稳定且简单）：
+			// ZOH 半隐式离散积分：
 			//   v += ω²·(x_sp − x)·dt − 2ω·v·dt
 			//   x += v·dt
 			auto StepRefModel = [Omega, DeltaSeconds](FFlightControlReferenceModelState& S, float Setpoint)
@@ -312,77 +338,33 @@ FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContex
 			PitchRateFF = FMath::Clamp(PitchReferenceModel.v, -FFLimit, FFLimit);
 		}
 
-		// 角度环 PID：误差基于【平滑后】设定值，前馈 = 参考模型导数（注入 Kff 通道）
-		// p_des = Kp·(x_smooth − current) + Kd·d(err)/dt + Kff·rate_ff
-		const float SmoothedRollError = FRotator::NormalizeAxis(SmoothedRoll - CurrentAttitude.Roll);
-		const float SmoothedPitchError = FRotator::NormalizeAxis(SmoothedPitch - CurrentAttitude.Pitch);
-
-		if (AttCfg.bEnableQuaternionAttitude)
+		// 直接使用 Chaos 刚体四元数，避免由姿态显示角反算当前姿态。
+		const FQuat QCur = Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized();
+		const FQuat QDes = FRotator(
+			SmoothedPitch, YawSetpoint.TargetYawDegrees, SmoothedRoll).Quaternion();
+		FQuat QErr = QCur.Inverse() * QDes;
+		if (QErr.W < 0.0f)
 		{
-			// ---- 第 5 批：四元数姿态误差 + 推力方向优先（对标 PX4 AttitudeControl.cpp:139-205）----
-			// Q_des = 由平滑后 Roll/Pitch + 当前 Yaw 构造（Yaw 由 DesiredYawRate 单独处理）
-			// Q_err = Q_cur⁻¹ · Q_des → 提取机体角速度设定值（消除欧拉角耦合）
-			// 推力方向优先：Roll/Pitch 误差全权，Yaw 误差按 YawWeight 缩放
-			const FQuat QCur = CurrentAttitude.Quaternion();
-			const FQuat QDes = FRotator(SmoothedPitch, CurrentAttitude.Yaw, SmoothedRoll).Quaternion();
-			FQuat QErr = QCur.Inverse() * QDes;
-			// 取最短路径（w<0 时取反，避免大角度冗余旋转）
-			if (QErr.W < 0.0f) QErr = FQuat(-QErr.X, -QErr.Y, -QErr.Z, -QErr.W);
-			QErr.Normalize();
+			QErr = FQuat(-QErr.X, -QErr.Y, -QErr.Z, -QErr.W);
+		}
+		QErr.Normalize();
 
-			// 小角度近似：ω_sp = 2 · q_err.imag · Kp（q_err 在机体系）
-			// 符号约定对齐（修复日志 Bug #3：俯仰符号翻转致前漂发散）：
-			//   q_err.imag 来自 QCur⁻¹·QDes，处于与 Chaos 相同的右手机体系——
-			//   绕 X 正向=左滚、绕 Y 正向=低头、绕 Z 正向=右偏。
-			//   但角速度【测量】在 UpdateEstimatedState_PhysicsThread 已对 X/Y 取负
-			//   （FVector(-X,-Y,Z)），转为飞控的 d(angle)/dt 约定（正向=右滚/抬头/右偏）。
-			//   因此期望角速率须同样对 X/Y 取负、Z 不取负，才能与测量同号、角速度环
-			//   形成负反馈。修复前用 +2·QErr.X/Y 致 Roll/Pitch 期望角速率符号翻转：
-			//   俯仰案例——期望俯仰 +25°(抬头制动前漂)，角度误差 +56°，QErr.Y 为负，
-			//   旧代码输出 -4.25°/s(低头)，无人机反而低头、前漂加速；符号修复后输出 +4.22°/s
-			//   （与日志 4.25 吻合）。注意：此仅验证【符号】正确——4.22°/s 本身比欧拉路径
-			//   4.5×56°=252°/s 小约 57 倍，是【量纲】缺陷（见下方 RadiansToDegrees 修复 Bug #5）。
-			//   偏航测量未取负 Z，故 QErr.Z 保持 +2 不变。
-			const float YawW = FMath::Clamp(AttCfg.YawWeight, 0.0f, 1.0f);
-			const float KpRoll  = Context.Config.Controller.Attitude.AngleGains.Roll.Kp;
-			const float KpPitch = Context.Config.Controller.Attitude.AngleGains.Pitch.Kp;
-			const float KpYaw   = Context.Config.Controller.Attitude.AngleGains.Yaw.Kp;
-			// Roll/Pitch：全权对齐推力方向 + 参考模型前馈。
-			// X/Y 取负（与角速度测量约定对齐，见上方块注释），Z 不取负。
-			//
-			// 量纲修正（Bug #5：四元数期望角速率量纲不符，纠偏偏弱 ~57× 致缓慢发散）：
-			//   2·q_err.imag 为无量纲量（小角度下 ≈ 误差弧度），× Kp(1/s) 得 rad/s。
-			//   但下游（角速度环、测量、限幅、RollRateFF/PitchRateFF）全部以 deg/s 为单位，
-			//   且 KpRoll/KpPitch=4.5 是按【欧拉路径】度数误差标定的（4.5×34°=153°/s）。
-			//   若直接把 2·QErr·Kp 当 deg/s，34° 误差仅得 2·sin(17°)·4.5≈2.63°/s，
-			//   比欧拉路径小 180/π≈57.3 倍，角速度环被严重"饿死"——表现为起飞旋翼起转
-			//   瞬态扰动后纠偏过慢、单调发散（俯仰持续低头、前漂累积、期望角速率偏小）。
-			//   修复：RadiansToDegrees 把四元数项转 deg/s，与前馈及下游量纲对齐。
-			//   符号（Bug #3 取负）不变——RadiansToDegrees 是正比例，不改变符号。
-			DesiredRollRate  = FMath::RadiansToDegrees(-2.0f * QErr.X * KpRoll)  + RollRateFF;
-			DesiredPitchRate = FMath::RadiansToDegrees(-2.0f * QErr.Y * KpPitch) + PitchRateFF;
-			// Yaw：四元数误差提供纠偏项，按 YawWeight 缩放叠加到外部给定偏航率。
-			// 偏航测量未取负 Z（见 UpdateEstimatedState_PhysicsThread），故 QErr.Z 保持 +2。
-			// （推力方向优先：YawWeight 小→偏航纠偏弱→优先保 Roll/Pitch）
-			// 量纲同 Roll/Pitch：2·QErr·Kp 为 rad/s，需 RadiansToDegrees 转 deg/s。
-			DesiredYawRate += FMath::RadiansToDegrees(2.0f * QErr.Z * KpYaw * YawW);
-			// 注：四元数路径直接产出角速度设定值，不经角度 PID（避免冗余积分累积）。
-			//   角度 PID 状态在此路径下保持冻结（ResetControllerState 时清零），仅欧拉路径推进。
-		}
-		else
-		{
-			// 欧拉角线性误差路径（第 3 批原始路径，向后兼容）
-			DesiredRollRate = PidStates.Angle.Roll.UpdateFromError(SmoothedRollError, DeltaSeconds, Context.Config.Controller.Attitude.AngleGains.Roll, RollRateFF);
-			DesiredPitchRate = PidStates.Angle.Pitch.UpdateFromError(SmoothedPitchError, DeltaSeconds, Context.Config.Controller.Attitude.AngleGains.Pitch, PitchRateFF);
-		}
+		// 2*q_err.imag 近似机体系姿态误差（rad）。X/Y 取负以匹配飞控
+		// Roll/Pitch 角速度符号约定；转换到 deg/s 后叠加参考模型前馈。
+		DesiredRollRate = FMath::RadiansToDegrees(
+			-2.0f * QErr.X * AttCfg.QuaternionAttitudeGains.Roll) + RollRateFF;
+		DesiredPitchRate = FMath::RadiansToDegrees(
+			-2.0f * QErr.Y * AttCfg.QuaternionAttitudeGains.Pitch) + PitchRateFF;
+		DesiredYawRate += FMath::RadiansToDegrees(
+			2.0f * QErr.Z * AttCfg.QuaternionAttitudeGains.Yaw
+			* FMath::Clamp(AttCfg.YawWeight, 0.0f, 1.0f));
 	}
-
-	// 缓存角速度前馈供角速度环 Kff 通道消费（第 3 批）
-	RateFeedForwardDegPerSec = FVector(RollRateFF, PitchRateFF, 0.0f);
 
 	// 限幅到最大角速率
 	DesiredRollRate = FMath::Clamp(DesiredRollRate, -Context.Config.Controller.Limits.MaxRollRateDegreesPerSec, Context.Config.Controller.Limits.MaxRollRateDegreesPerSec);
 	DesiredPitchRate = FMath::Clamp(DesiredPitchRate, -Context.Config.Controller.Limits.MaxPitchRateDegreesPerSec, Context.Config.Controller.Limits.MaxPitchRateDegreesPerSec);
+	DesiredYawRate = FMath::Clamp(DesiredYawRate,
+		-YawSetpoint.MaxRateDegPerSec, YawSetpoint.MaxRateDegPerSec);
 	return FVector(DesiredRollRate, DesiredPitchRate, DesiredYawRate);
 }
 
@@ -391,18 +373,14 @@ FVector FFlightControlSolver::ComputeBodyTorqueCommand(FFlightControlSolverConte
 {
 	const FVector CurrentBodyRates = Context.Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec;
 
-	// 第 3 批：角速度前馈注入 Kff 通道。
-	// RateFeedForwardDegPerSec 由 ComputeDesiredBodyRates 的参考模型导数填入（Roll/Pitch），
-	// Yaw 通道前馈置零（偏航前馈已由 AngleGains.Yaw.Kff 在角度环承载）。
-
 	// ---- 第 4 批：分配饱和回传抗 windup（对标 PX4 rate_control.cpp:88-117）----
 	// 上一帧 AllocateToRotors 算出的饱和标志（1 帧延迟，可接受）。
 	// 当某轴正/负方向分配饱和（残差>0/<0）时，禁止该方向角速度误差继续累积积分，
 	// 避免积分项在"物理上无法满足"的方向上无限增长。
-	// 实现：复制该轴增益并把 Ki 置零（仅在饱和方向），其余项（Kp/Kd/Kff）保留。
-	auto MakeAntiWindupGains = [](const FDronePidGains& Base, bool bSaturatedPos, bool bSaturatedNeg, float RateError) -> FDronePidGains
+	// 实现：复制该轴增益并把 Ki 置零（仅在饱和方向），其余反馈项保留。
+	auto MakeAntiWindupGains = [](const FDroneFeedbackPidGains& Base, bool bSaturatedPos, bool bSaturatedNeg, float RateError) -> FDronePidGains
 	{
-		FDronePidGains G = Base;
+		FDronePidGains G = Base.ToRuntimeGains();
 		// 仅当误差方向与饱和方向一致时禁积分（PX4：saturated_positive → error=min(error,0)）
 		if ((bSaturatedPos && RateError > 0.0f) || (bSaturatedNeg && RateError < 0.0f))
 		{
@@ -444,7 +422,7 @@ FVector FFlightControlSolver::ComputeBodyTorqueCommand(FFlightControlSolverConte
 	PitchGains.Kff = 1.0f;
 	YawGains.Kff = 1.0f;
 
-	// u = Kp·(ω_des − ω) + Ki·∫ + Kd·d(ω)/dt + Kff·rate_ff
+	// u = Kp·(ω_des − ω) + Ki·∫ + Kd·d(ω)/dt + normalized_damping_ff
 	return FVector(
 		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.X, CurrentBodyRates.X, DeltaSeconds, RollGains, LastAngularDampingFeedForward.X),
 		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Y, CurrentBodyRates.Y, DeltaSeconds, PitchGains, LastAngularDampingFeedForward.Y),

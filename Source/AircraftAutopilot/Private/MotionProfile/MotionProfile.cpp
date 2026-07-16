@@ -112,15 +112,15 @@ FProfiledSetpoint UMotionProfile::Update(const FTrajectoryPoint& Nominal, float 
 	// -----------------------------------------------------------------------
 	// 5) Yaw：直接透传名义航向设定值，角速度前馈仅用几何角速度
 	//
-	//    设计原则：航向闭合是 FlightController 姿态环 Yaw PID 的职责，
+	//    设计原则：航向闭合是 FlightController 四元数姿态误差控制器的职责，
 	//    MotionProfile 只做运动学整形（速度/加速度/位置），不参与航向控制。
 	//    历史上此处用 YawError×增益 反推角速度并积分 ProfiledYaw，导致：
-	//      ① 反推的角速度作为前馈注入姿态环 → 与 Yaw PID 双重闭合航向误差 → 正反馈自旋
-	//      ② ProfiledYaw 自积分产生移动设定值，PID 永远追不上 → 积分饱和（I=120 钉死）
+	//      ① 反推的角速度作为前馈注入姿态环 → 与姿态误差重复闭合 → 正反馈自旋
+	//      ② ProfiledYaw 自积分产生移动设定值，姿态控制器持续追逐移动目标
 	//    修正：YawDegrees 直接透传 Nominal.YawDegrees（轨迹/制导律决定航向），
 	//          YawRateDegreesPerSec 直接透传 Nominal.YawRateDegreesPerSec
 	//          （直线段=0，曲线段=几何角速度），经 Slew 做 Jerk 限幅后输出。
-	//          姿态环用 Yaw PID 闭合 YawSetpoint→currentYaw，前馈只用真实几何角速度。
+	//          四元数姿态误差闭合 YawSetpoint→currentYaw，前馈只用真实几何角速度。
 	// -----------------------------------------------------------------------
 	const float TargetYawRate = Nominal.bValid
 		? FMath::Clamp(Nominal.YawRateDegreesPerSec,

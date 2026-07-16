@@ -175,7 +175,10 @@ struct AIRCRAFTCORE_API FAutopilotMovementIntent
 	/** Optional actor to face without changing the movement destination. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "航向目标 Actor"))
 	TObjectPtr<AActor> HeadingTargetActor = nullptr;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "期望偏航角速度（度/秒）"))
+	/** FixedYaw 时表示转向目标航向所使用的正向速度上限。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent",
+		meta = (ClampMin = "0.0", EditCondition = "HeadingMode == EAutopilotHeadingMode::FixedYaw", EditConditionHides,
+			DisplayName = "航向转动速度（度/秒）"))
 	float DesiredYawRateDegPerSec = 0.0f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "到达模式"))
 	EAutopilotArrivalMode ArrivalMode = EAutopilotArrivalMode::StopAndComplete;

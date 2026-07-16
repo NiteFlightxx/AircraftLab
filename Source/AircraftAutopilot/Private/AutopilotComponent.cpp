@@ -236,7 +236,17 @@ void UAutopilotComponent::ApplyHeadingOptions(
 	FAutopilotMovementIntent& Intent, const FAutopilotHeadingOptions& Heading)
 {
 	Intent.HeadingMode = Heading.Mode;
-	Intent.FixedYawDegrees = Heading.FixedYawDegrees;
+	Intent.FixedYawDegrees = FRotator::NormalizeAxis(Heading.FixedYawDegrees);
+	Intent.DesiredYawRateDegPerSec = Heading.Mode == EAutopilotHeadingMode::FixedYaw
+		? FMath::Max(Heading.YawRateDegreesPerSec, 0.0f)
+		: 0.0f;
+	if (Heading.Mode == EAutopilotHeadingMode::FixedYaw
+		&& Intent.DesiredYawRateDegPerSec > UE_SMALL_NUMBER)
+	{
+		Intent.MotionConstraints.MaxYawRateDegPerSec = FMath::Min(
+			Intent.MotionConstraints.MaxYawRateDegPerSec,
+			Intent.DesiredYawRateDegPerSec);
+	}
 	Intent.bUseIndependentHeadingTarget = Heading.bUseLookAtTarget;
 	Intent.HeadingTargetPositionCm = Heading.LookAtPositionCm;
 	Intent.HeadingTargetActor = Heading.LookAtActor;
@@ -634,8 +644,10 @@ void UAutopilotComponent::BuildInjection(FAutopilotInjection& OutInjection) cons
 	OutInjection.VerticalVelocitySetpointCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec.Z;
 	OutInjection.ThrustFeedForward = CachedFeedForward.ThrustFF;
 	OutInjection.YawSetpointDegrees = CachedProfiledSetpoint.YawDegrees;
-	OutInjection.YawRateSetpointDegPerSec = CachedProfiledSetpoint.YawRateDegreesPerSec
+	OutInjection.YawRateSetpointDegPerSec = CachedFeedForward.YawRateFFDegPerSec
 		+ CachedTurnCommand.DesiredYawRateDegPerSec;
+	OutInjection.YawRateLimitDegPerSec = MovementExecutor
+		? MovementExecutor->GetActiveIntent().MotionConstraints.MaxYawRateDegPerSec : 0.0f;
 	OutInjection.TurnRollDegrees = CachedTurnCommand.DesiredRollDegrees;
 	OutInjection.bValid = true;
 }

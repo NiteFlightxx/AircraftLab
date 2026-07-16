@@ -30,7 +30,7 @@
  *   3) ProfiledAcceleration = (ProfiledVelocity − PrevVelocity)/dt（再按限幅 clamp）
  *   4) ProfiledPosition += ProfiledVelocity · dt（积分，初值=真实位置，避免跳变）
  *   5) Yaw：直接透传名义航向（不积分），角速度前馈经 Rate/Jerk 限幅
- *      （航向闭合由 FlightController 姿态环 Yaw PID 负责，MotionProfile 不参与）
+	 *      （航向闭合由 FlightController 四元数姿态误差控制器负责，MotionProfile 不参与）
  *
  * 初始化语义：必须先用真实 P/Yaw 调 Initialize()，否则首帧从零拉起。
  *

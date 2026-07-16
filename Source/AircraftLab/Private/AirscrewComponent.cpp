@@ -84,15 +84,14 @@ void UAirscrewComponent::ApplyAircraftSimulationBudget_Implementation(
 
 void UAirscrewComponent::SyncDefinitionFromComponentTransform()
 {
-	RotorDefinition.SocketName = GetAttachSocketName();
-	RotorDefinition.PositionLocalCm = GetRelativeLocation();
-	RotorDefinition.RotationLocal = GetRelativeRotation();
-
+	// ThrustAxisLocal is authored in aircraft-body space. Component rotation is
+	// placement/presentation data and must not rotate the physical thrust axis.
 	CachedThrustAxisLocal = RotorDefinition.GetNormalizedThrustAxisLocal();
 
 	if (GetAttachParent())
 	{
-		CachedRelativeLocationFromBody = GetAttachParent()->GetComponentTransform().InverseTransformPosition(GetComponentLocation());
+		const FTransform& BodyTransform = GetAttachParent()->GetComponentTransform();
+		CachedRelativeLocationFromBody = BodyTransform.InverseTransformPosition(GetComponentLocation());
 	}
 	else
 	{
@@ -270,7 +269,13 @@ void UAirscrewComponent::DrawDebugVisualization() const
 	const bool bRotorActive = RotorDefinition.IsEnabled() && CurrentThrustForce > UE_SMALL_NUMBER;
 	const FColor DebugColor = (bRotorActive ? DebugEnabledColor : DebugDisabledColor).ToFColor(true);
 	const FVector Origin = GetComponentLocation();
-	const FVector AxisEnd = Origin + GetComponentTransform().TransformVectorNoScale(CachedThrustAxisLocal).GetSafeNormal() * DebugAxisLength;
+	const FTransform& AxisReferenceTransform = GetAttachParent()
+		? GetAttachParent()->GetComponentTransform()
+		: GetComponentTransform();
+	const FVector ThrustAxisWorld = CurrentThrustVectorWorld.IsNearlyZero()
+		? AxisReferenceTransform.TransformVectorNoScale(CachedThrustAxisLocal).GetSafeNormal()
+		: CurrentThrustVectorWorld.GetSafeNormal();
+	const FVector AxisEnd = Origin + ThrustAxisWorld * DebugAxisLength;
 	const FVector ForceEnd = Origin + CurrentThrustVectorWorld * DebugForceScale;
 
 	DrawDebugDirectionalArrow(World, Origin, ForceEnd, 10.0f, DebugColor, false, 0.0f, 0, 2.0f);

@@ -423,6 +423,7 @@ void UFlightControllerComponent::SetHeldAltitude(float WorldAltitudeCm)
 	Runtime.HoldTargets.bAltitudeHoldInitialized = true;
 	FlightControlSolver.PidStates.Altitude.Reset();
 	FlightControlSolver.PidStates.VerticalVelocity.Reset();
+	FlightControlSolver.bVerticalVelocitySetpointInitialized = false;
 }
 
 
@@ -431,7 +432,6 @@ void UFlightControllerComponent::SetHeldYaw(float YawDegrees)
 	// NormalizeAxis 将角度映射到 [-180, 180]
 	Runtime.HoldTargets.HeldYawDegrees = FRotator::NormalizeAxis(YawDegrees);
 	Runtime.HoldTargets.bYawHoldInitialized = true;
-	FlightControlSolver.PidStates.Angle.Yaw.Reset();
 }
 
 
@@ -440,12 +440,12 @@ void UFlightControllerComponent::SetUseAutopilotSetpoint(bool bEnabled)
 	bUseAutopilotSetpoint = bEnabled;
 	if (bEnabled)
 	{
-		// 启用 Autopilot 注入时复位位置/高度/航向 PID，避免旧积分残留
+		// 启用 Autopilot 注入时复位位置/高度 PID，避免旧积分残留。
 		FlightControlSolver.PidStates.Position.Reset();
 		FlightControlSolver.PidStates.Velocity.Reset();
 		FlightControlSolver.PidStates.Altitude.Reset();
 		FlightControlSolver.PidStates.VerticalVelocity.Reset();
-		FlightControlSolver.PidStates.Angle.Yaw.Reset();
+		FlightControlSolver.bVerticalVelocitySetpointInitialized = false;
 	}
 }
 
@@ -731,12 +731,14 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 	float DesiredVerticalVelocity = 0.0f;
 	// 步骤1: 垂直控制 — 高度保持/手动油门 → 总距指令 c ∈ [0,1]
 	const float CollectiveCommand = FlightControlSolver.ComputeVerticalControl(SolverContext, DeltaSeconds, DesiredVerticalVelocity);
-	// 步骤2: 期望姿态角 — 位置/速度PID 或 手动映射 → (φ_des, θ_des, ψ̇_des)
+	// 步骤2: Roll/Pitch 命令 — 位置/速度 PID 或手动映射。
 	const FRotator DesiredAttitude = FlightControlSolver.ComputeDesiredAttitude(SolverContext, DeltaSeconds);
-	// 步骤3: 期望偏航角速率 — 偏航保持/手动 → ψ̇_des
-	const float DesiredYawRate = FlightControlSolver.ComputeDesiredYawRate(SolverContext, DeltaSeconds);
-	// 步骤4: 期望机体角速率 — 角度环或直通 → (p_des, q_des, r_des)
-	const FVector DesiredBodyRates = FlightControlSolver.ComputeDesiredBodyRates(SolverContext, DesiredAttitude, DesiredYawRate, DeltaSeconds);
+	// 步骤3: 航向目标与偏航角速度前馈。
+	const FFlightControlYawSetpoint YawSetpoint = FlightControlSolver.ComputeYawSetpoint(SolverContext);
+	// 步骤4: 四元数姿态误差或角速度直通 → 机体角速率 (p_des, q_des, r_des)。
+	const FVector DesiredBodyRates = FlightControlSolver.ComputeDesiredBodyRates(
+		SolverContext, DesiredAttitude, YawSetpoint, DeltaSeconds);
+	const float DesiredYawRate = DesiredBodyRates.Z;
 	// 步骤5: 归一化力矩指令 — 角速率环 → (u_roll, u_pitch, u_yaw) ∈ [-1,1]
 	const FVector AxisCommands = FlightControlSolver.ComputeBodyTorqueCommand(SolverContext, DesiredBodyRates, DeltaSeconds);
 
@@ -770,13 +772,9 @@ void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDrone
 
 void UFlightControllerComponent::ResetControllerState()
 {
-	FlightControlSolver.PidStates.ResetAll();
+	FlightControlSolver.Reset();
 	Runtime.bHasPreviousAngularVelocity = false;
 	Runtime.PreviousAngularVelocityBodyDegPerSec = FVector::ZeroVector;
-	// 第 3 批：重置姿态参考模型状态与角速度前馈缓存，避免模式切换后残留旧设定值
-	FlightControlSolver.RollReferenceModel.Reset();
-	FlightControlSolver.PitchReferenceModel.Reset();
-	FlightControlSolver.RateFeedForwardDegPerSec = FVector::ZeroVector;
 	// 第 4 批：重置分配饱和标志，避免模式切换后残留导致积分被误冻结
 	for (int32 i = 0; i < 3; ++i) { ControlAllocator.bSaturatedPositive[i] = false; ControlAllocator.bSaturatedNegative[i] = false; }
 	// 重新锁定保持目标到当前位置/高度/航向

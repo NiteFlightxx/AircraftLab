@@ -397,4 +397,35 @@ bool FAutopilotIndependentHeadingTargetTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAutopilotFixedYawHeadingRateTest,
+	"AircraftAutopilot.Movement.FixedYawHeadingConsumesTurnRate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAutopilotFixedYawHeadingRateTest::RunTest(const FString& Parameters)
+{
+	UAutopilotMovementExecutor* Executor = NewObject<UAutopilotMovementExecutor>();
+	Executor->Initialize();
+	FAutopilotVehicleSnapshot Snapshot;
+	Snapshot.YawDegrees = 10.0f;
+
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::Hold;
+	Intent.HeadingMode = EAutopilotHeadingMode::FixedYaw;
+	Intent.FixedYawDegrees = 100.0f;
+	Intent.DesiredYawRateDegPerSec = 25.0f;
+	Intent.MotionConstraints.MaxYawRateDegPerSec = 25.0f;
+	Executor->Submit(Intent, Snapshot, EAutopilotIntentFailureReason::None);
+
+	FTrajectoryPoint Setpoint;
+	TestTrue(TEXT("Target-yaw hold setpoint builds"), Executor->BuildSetpoint(
+		Snapshot, 1.0f, FProfiledSetpoint(), Setpoint));
+	Executor->ApplyHeading(Snapshot, Setpoint);
+	TestTrue(TEXT("Target yaw remains the final heading"),
+		FMath::IsNearlyEqual(Setpoint.YawDegrees, 100.0f, 0.01f));
+	TestTrue(TEXT("Scan rate is emitted toward the target"),
+		FMath::IsNearlyEqual(Setpoint.YawRateDegreesPerSec, 25.0f, 0.01f));
+	return true;
+}
+
 #endif

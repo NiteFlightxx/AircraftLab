@@ -505,11 +505,11 @@ void FControlAllocator::Allocate(const FFlightControllerRuntimeConfig& Config, c
 
 		// --- 步骤2：构造法矩阵 N = J_free·J_free^T + λ²I ---
 		// 标准阻尼伪逆 (J·J^T + λ²I)^{-1} 的法方程形式。
-		// 注：第 2 批曾引入 AxisWeights 轴向加权（N = diag(1/W)·JJ^T + λ²I），但该公式非标准
+		// 注：第 2 批曾尝试轴向加权（N = diag(1/W)·JJ^T + λ²I），但该公式非标准
 		//   加权伪逆——1/W 作用在轴（行）而非旋翼（列）上，diag(1/W) 与 (JJ^T)⁻¹ 不可交换，
 		//   破坏了 J·u = residual 的精确求解（4×4 满秩时未加权可精确满足），导致分配力矩符号
 		//   翻转、姿态指数发散。已回退为标准阻尼伪逆。轴向优先级应通过主动集去饱和层次实现，
-		//   而非矩阵加权。AxisWeights 配置字段保留供未来正确的层次化分配使用。
+		//   而非矩阵加权。无效权重参数已从 Profile 删除。
 		double NormalMatrix[FlightControllerAllocation::WrenchAxisCount][FlightControllerAllocation::WrenchAxisCount] = {};
 		for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 		{

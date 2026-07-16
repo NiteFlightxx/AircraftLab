@@ -28,6 +28,9 @@ struct AIRCRAFTCORE_API FAutopilotInjection
 	float YawSetpointDegrees = 0.0f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
 	float YawRateSetpointDegPerSec = 0.0f;
+	/** Per-intent yaw-rate ceiling. Zero falls back to the flight-controller hard limit. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
+	float YawRateLimitDegPerSec = 0.0f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")
 	float TurnRollDegrees = 0.0f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot")

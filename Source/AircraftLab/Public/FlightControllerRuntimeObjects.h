@@ -34,6 +34,14 @@ struct FFlightControlReferenceModelState
 	}
 };
 
+/** 四元数姿态控制器使用的航向目标、角速度前馈和最终速率上限。 */
+struct FFlightControlYawSetpoint
+{
+	float TargetYawDegrees = 0.0f;
+	float FeedForwardRateDegPerSec = 0.0f;
+	float MaxRateDegPerSec = 0.0f;
+};
+
 namespace FlightControlDynamics
 {
 	struct AIRCRAFTLAB_API FDampingAwareHorizontalLimits
@@ -77,20 +85,21 @@ struct AIRCRAFTLAB_API FFlightControlSolver
 
 	FFlightControlReferenceModelState RollReferenceModel;
 	FFlightControlReferenceModelState PitchReferenceModel;
-	FVector RateFeedForwardDegPerSec = FVector::ZeroVector;
 	FVector LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 	FVector LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 	FVector LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
 	FVector LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 	FVector LastAngularDampingFeedForward = FVector::ZeroVector;
 	float LastVerticalDampingCollectiveFeedForward = 0.0f;
+	float LastDesiredVerticalVelocityCmPerSec = 0.0f;
+	bool bVerticalVelocitySetpointInitialized = false;
 
 	float ComputeVerticalControl(FFlightControlSolverContext& Context,
 		float DeltaSeconds, float& OutDesiredVerticalVelocity);
 	FRotator ComputeDesiredAttitude(FFlightControlSolverContext& Context, float DeltaSeconds);
-	float ComputeDesiredYawRate(FFlightControlSolverContext& Context, float DeltaSeconds);
+	FFlightControlYawSetpoint ComputeYawSetpoint(FFlightControlSolverContext& Context);
 	FVector ComputeDesiredBodyRates(FFlightControlSolverContext& Context,
-		const FRotator& DesiredAttitude, float DesiredYawRate, float DeltaSeconds);
+		const FRotator& DesiredAttitude, const FFlightControlYawSetpoint& YawSetpoint, float DeltaSeconds);
 	FVector ComputeBodyTorqueCommand(FFlightControlSolverContext& Context,
 		const FVector& DesiredBodyRatesDegreesPerSec, float DeltaSeconds);
 	FVector ComputeDesiredHorizontalVelocity(const FFlightControlSolverContext& Context) const;
@@ -105,13 +114,14 @@ struct AIRCRAFTLAB_API FFlightControlSolver
 		PidStates.ResetAll();
 		RollReferenceModel.Reset();
 		PitchReferenceModel.Reset();
-		RateFeedForwardDegPerSec = FVector::ZeroVector;
 		LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 		LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 		LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
 		LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 		LastAngularDampingFeedForward = FVector::ZeroVector;
 		LastVerticalDampingCollectiveFeedForward = 0.0f;
+		LastDesiredVerticalVelocityCmPerSec = 0.0f;
+		bVerticalVelocitySetpointInitialized = false;
 	}
 };
 

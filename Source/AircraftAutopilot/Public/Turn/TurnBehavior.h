@@ -13,21 +13,16 @@ class UTrajectoryGenerator;
  *
  * 第六部分：把"偏航直接驱动"（根因 #4）升级为"按速度自适应的协调/压坡转弯"。
  *
- * 当前问题（FlightControllerComponent.cpp:1334 ComputeDesiredYawRate）：
- *   偏航直接按 yaw 误差比例输出 yaw rate，所有速度下一视同仁。
- *   → 高速时纯偏航转弯会导致侧滑、机体不指向速度方向、视觉突兀；
- *   → 低速时又该用偏航而非滚转，但当前没有区分。
- *
  * 工业飞控的标准做法（PX4 mc_pos_control + ArduCopter）：
  *   - 低速：偏航跟踪（yaw follow），机体跟随速度方向转
  *   - 高速：滚转协调转弯（bank turn），靠 Roll 把向心力投影到水平，
  *           产生圆周运动的向心加速度，机体自然指向速度方向（无侧滑）
  *
  * 架构原则（与 MotionProfile 一致）：
- *   航向闭合是 FlightController 姿态环 Yaw PID 的唯一职责。
+ *   航向闭合是 FlightController 四元数姿态误差控制器的唯一职责。
  *   本类输出的 DesiredYawRateDegPerSec 仅作为【几何前馈】（期望速度方向的
  *   变化率），绝不闭合航向误差。历史上低速路径用 YawError×增益 反推角速度
- *   并注入前馈，与 Yaw PID 双重闭合 → 正反馈自旋，已修正为纯几何角速度。
+ *   并注入前馈，与姿态误差重复闭合 → 正反馈自旋，已修正为纯几何角速度。
  *
  * 协调转弯几何（水平圆周）：
  *   向心加速度 a_c = v²/R = v·ω（ω 为偏航角速度）

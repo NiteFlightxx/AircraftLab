@@ -264,10 +264,6 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryRequest
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "1"))
 	int32 BezierDegree = 3;
 
-	/** 航向跟随策略：true=跟随路径切向，false=锁定 TargetYawDegrees */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	bool bYawFollowPath = true;
-
 	/**
 	 * 语义等价比较：判断两个请求是否描述同一轨迹。
 	 * 仅比较轨迹定义字段（Type/Target/Path/Cruise/Orbit 等），
@@ -293,7 +289,6 @@ struct AIRCRAFTAUTOPILOT_API FTrajectoryRequest
 			&& OrbitAngularRateDegPerSec == Other.OrbitAngularRateDegPerSec
 			&& ArcStartAngleDegrees == Other.ArcStartAngleDegrees
 			&& ArcEndAngleDegrees == Other.ArcEndAngleDegrees
-			&& BezierDegree == Other.BezierDegree
-			&& bYawFollowPath == Other.bYawFollowPath;
+			&& BezierDegree == Other.BezierDegree;
 	}
 };

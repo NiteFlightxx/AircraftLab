@@ -78,12 +78,33 @@ bool UAutopilotMovementExecutor::Update(
 		|| ActiveIntent.MotionConstraints.MaxDecelerationCmPerSecSq != Intent.MotionConstraints.MaxDecelerationCmPerSecSq
 		|| ActiveIntent.PassThroughSpeedCmPerSec != Intent.PassThroughSpeedCmPerSec
 		|| ActiveIntent.MotionConstraints.MaxJerkCmPerSecCubed != Intent.MotionConstraints.MaxJerkCmPerSecCubed;
+	const bool bHeadingCompletionChanged = ActiveIntent.HeadingMode != Intent.HeadingMode
+		|| (Intent.HeadingMode == EAutopilotHeadingMode::FixedYaw
+			&& !FMath::IsNearlyEqual(ActiveIntent.FixedYawDegrees, Intent.FixedYawDegrees))
+		|| (Intent.HeadingMode == EAutopilotHeadingMode::FaceTarget
+			&& (ActiveIntent.bUseIndependentHeadingTarget != Intent.bUseIndependentHeadingTarget
+				|| ActiveIntent.HeadingTargetActor != Intent.HeadingTargetActor
+				|| !ActiveIntent.HeadingTargetPositionCm.Equals(Intent.HeadingTargetPositionCm, 0.1f)));
+	const bool bArrivalCriteriaChanged = ActiveIntent.ArrivalMode != Intent.ArrivalMode
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.HorizontalToleranceCm,
+			Intent.ArrivalCriteria.HorizontalToleranceCm)
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.VerticalToleranceCm,
+			Intent.ArrivalCriteria.VerticalToleranceCm)
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.SpeedToleranceCmPerSec,
+			Intent.ArrivalCriteria.SpeedToleranceCmPerSec)
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.YawToleranceDegrees,
+			Intent.ArrivalCriteria.YawToleranceDegrees)
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.StableTimeSeconds,
+			Intent.ArrivalCriteria.StableTimeSeconds);
 
 	ActiveIntent = Intent;
 	LastResolvedTargetCm = ResolveTargetPosition(Intent);
 	bTrajectoryDirty |= bTrajectoryChanged && Intent.Type != EAutopilotMovementIntentType::Hold
 		&& Intent.Type != EAutopilotMovementIntentType::MoveWithVelocity;
-	StableTimeSeconds = 0.0f;
+	if (bTrajectoryChanged || bHeadingCompletionChanged || bArrivalCriteriaChanged)
+	{
+		StableTimeSeconds = 0.0f;
+	}
 	return true;
 }
 
@@ -219,7 +240,22 @@ void UAutopilotMovementExecutor::ApplyHeading(
 		break;
 	case EAutopilotHeadingMode::FixedYaw:
 		InOutSetpoint.YawDegrees = ActiveIntent.FixedYawDegrees;
-		InOutSetpoint.YawRateDegreesPerSec = 0.0f;
+		{
+			const float YawErrorDegrees = FMath::FindDeltaAngleDegrees(
+				Snapshot.YawDegrees, ActiveIntent.FixedYawDegrees);
+			const float ConstraintRate = FMath::Max(
+				ActiveIntent.MotionConstraints.MaxYawRateDegPerSec, 0.0f);
+			const float RequestedRate = ActiveIntent.DesiredYawRateDegPerSec > UE_SMALL_NUMBER
+				? FMath::Min(ActiveIntent.DesiredYawRateDegPerSec, ConstraintRate)
+				: ConstraintRate;
+			const float MaxYawAcceleration = FMath::Max(
+				ActiveIntent.MotionConstraints.MaxYawAccelerationDegPerSecSq, 0.0f);
+			const float BrakingLimitedRate = MaxYawAcceleration > UE_SMALL_NUMBER
+				? FMath::Sqrt(2.0f * MaxYawAcceleration * FMath::Abs(YawErrorDegrees))
+				: RequestedRate;
+			InOutSetpoint.YawRateDegreesPerSec = FMath::Sign(YawErrorDegrees)
+				* FMath::Min(RequestedRate, BrakingLimitedRate);
+		}
 		break;
 	case EAutopilotHeadingMode::FaceTarget:
 		{
@@ -293,7 +329,7 @@ void UAutopilotMovementExecutor::UpdateCompletion(
 	HeadingProbe.VelocityCmPerSec = ProfiledSetpoint.VelocityCmPerSec;
 	ApplyHeading(Snapshot, HeadingProbe);
 	const bool bYawReached = FMath::Abs(FMath::FindDeltaAngleDegrees(
-		Snapshot.YawDegrees, HeadingProbe.YawDegrees)) <= Criteria.YawToleranceDegrees;
+			Snapshot.YawDegrees, HeadingProbe.YawDegrees)) <= Criteria.YawToleranceDegrees;
 	const bool bSpeedReached = Snapshot.VelocityCmPerSec.Size() <= Criteria.SpeedToleranceCmPerSec;
 	StableTimeSeconds = bPositionReached && (!bCircleArc || bTrajectoryReached)
 		&& bSpeedReached && bYawReached
@@ -352,7 +388,10 @@ bool UAutopilotMovementExecutor::ValidateIntent(const FAutopilotMovementIntent& 
 		|| Intent.ArrivalCriteria.YawToleranceDegrees < 0.0f
 		|| Intent.ArrivalCriteria.StableTimeSeconds < 0.0f
 		|| Intent.TimeoutSeconds < 0.0f
-		|| !FMath::IsFinite(Intent.FixedYawDegrees))
+		|| !FMath::IsFinite(Intent.FixedYawDegrees)
+		|| !FMath::IsFinite(Intent.DesiredYawRateDegPerSec)
+		|| (Intent.HeadingMode == EAutopilotHeadingMode::FixedYaw
+			&& Intent.DesiredYawRateDegPerSec < 0.0f))
 	{
 		return false;
 	}
@@ -458,7 +497,6 @@ bool UAutopilotMovementExecutor::RebuildTrajectory(const FAutopilotVehicleSnapsh
 		PhysicalMaxHorizontalAccelerationCmPerSecSq);
 	Request.PlanningJerkCmPerSecCubed = ActiveIntent.MotionConstraints.MaxJerkCmPerSecCubed;
 	Request.AcceptanceRadiusCm = ActiveIntent.ArrivalCriteria.HorizontalToleranceCm;
-	Request.bYawFollowPath = false;
 	const float EffectivePassThroughSpeedCmPerSec = FMath::Min(
 		ActiveIntent.PassThroughSpeedCmPerSec, Request.CruiseSpeedCmPerSec);
 

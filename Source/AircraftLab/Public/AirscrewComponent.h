@@ -187,7 +187,7 @@ protected:
 	/** 旋翼相对于刚体组件原点的局部坐标（厘米）；物理边界再减去 Chaos 真实质心偏移。 */
 	FVector CachedRelativeLocationFromBody = FVector::ZeroVector;
 
-	/** 旋翼推力方向的局部单位向量（通常为Up/Z轴） */
+	/** 旋翼推力方向在飞行器机体局部坐标系中的单位向量（通常为 Up/Z 轴） */
 	FVector CachedThrustAxisLocal = FVector::UpVector;
 
 	/** 是否处于强制停止状态（故障时跳过电机模型，立即归零物理输出） */

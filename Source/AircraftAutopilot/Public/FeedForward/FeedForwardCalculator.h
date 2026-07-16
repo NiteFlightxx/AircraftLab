@@ -14,8 +14,7 @@
  * 职责：把 Motion Profile 输出的【物理可达设定值】转为各环前馈量，
  *       注入对应 PID 的 Kff 通道，把"纯反馈跟踪"升级为"前馈+反馈跟踪"。
  *
- * 为什么需要前馈（根因 #3）：
- *   当前 AircraftLab 全代码 Kff=0（DroneTypes.h:432 定义但从未赋值）。
+ * 为什么需要前馈：
  *   纯反馈控制必然滞后 → 必须靠加大 Kp 追上目标 → Kp 大→过冲/突兀/振荡。
  *   加入前馈后：前馈承担"已知运动学"部分，PID 只补"模型误差/扰动"部分，
  *   Kp 可显著降低，平顺性提升。
@@ -32,7 +31,7 @@
  * 可扩展性：本类为 UObject+Blueprintable，未来可派生模型基前馈（MPC/LQR）、
  *   学习型前馈（神经网络），只需 override Compute()。
  *
- * 频率：与 Motion Profile 同频（50~100Hz）。
+ * 频率：与 Autopilot/Motion Profile 更新同频。
  * 前馈增益只在 FlightController Profile 的各 PID Kff 中配置；这里按 1:1 传递，
  * 避免 Autopilot 增益与 PID Kff 串联后出现两个等价调节点。
  */
@@ -54,8 +53,7 @@ public:
 
 	/**
 	 * 设置悬停推力基准（由 AutopilotComponent 的零阶 EKF 估计注入）。
-	 * 传入 >0 的值时替代 Params.HoverCollective 作为推力前馈基准；
-	 * 传入 <=0 时回退到 Params.HoverCollective（兼容无估计器的旧路径）。
+	 * 传入值作为归一化推力前馈基准，并限制到 [0,1]。
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|FeedForward")
 	void SetPhysicalReference(float InGravityCmPerSecSq, float InHoverThrustBaseline)
@@ -64,16 +62,14 @@ public:
 		HoverThrustBaseline = FMath::Clamp(InHoverThrustBaseline, 0.0f, 1.0f);
 	}
 
-	/** 取当前生效的悬停推力基准（>0 为 EKF 估计，<=0 表示回退配置值） */
+	/** 取当前生效的悬停推力基准。 */
 	UFUNCTION(BlueprintPure, Category = "Autopilot|FeedForward")
 	float GetHoverThrustBaseline() const { return HoverThrustBaseline; }
 
 protected:
 	/**
 	 * 悬停推力基准（EKF 估计注入）。
-	 * <=0 表示未注入，ComputeThrustFF 回退到 Params.HoverCollective；
-	 * >0 时作为推力前馈的归一化基准，替代死常数。
-	 * 由 UAutopilotComponent::Tick 每帧在 Compute 之前刷新。
+	 * 由 UAutopilotComponent::Tick 在 Compute 之前从飞控默认值或 EKF 估计刷新。
 	 */
 	float GravityCmPerSecSq = 980.0f;
 	float HoverThrustBaseline = 0.5f;

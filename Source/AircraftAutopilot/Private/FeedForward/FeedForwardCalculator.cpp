@@ -36,8 +36,7 @@ float UFeedForwardCalculator::ComputeThrustFF(const FProfiledSetpoint& Setpoint)
 	//   F_thrust = m·(a + g·ẑ)   （ẑ 向上，g·ẑ 为重力反方向补偿）
 	// 归一化到 collective（悬停时 = 悬停推力基准）：
 	//   T_ff = HoverBase · |a + g·ẑ| / g
-	// 悬停推力基准优先用 EKF 在线估计（SetHoverThrustBaseline 注入），
-	// 未注入时回退到 Params.HoverCollective 死常数，保持向后兼容。
+	// 悬停推力基准由 SetPhysicalReference 注入：可来自飞控 Profile 或 EKF 在线估计。
 	const float G = GravityCmPerSecSq;
 	const float HoverBase = HoverThrustBaseline;
 
