@@ -2,6 +2,50 @@
 
 #include "Math/RotationMatrix.h"
 
+namespace
+{
+	/**
+	 * 从刚体四元数提取世界水平面中的机头方向。
+	 * 正常姿态使用机体 Forward；其水平投影退化时，使用机体 Right 重建 Forward。
+	 */
+	FVector GetPlanarHeadingDirection(const FQuat& BodyRotation)
+	{
+		FVector Forward = BodyRotation.RotateVector(FVector::ForwardVector);
+		Forward.Z = 0.0f;
+		if (Forward.Normalize())
+		{
+			return Forward;
+		}
+
+		FVector Right = BodyRotation.RotateVector(FVector::RightVector);
+		Right.Z = 0.0f;
+		if (Right.Normalize())
+		{
+			return FVector(Right.Y, -Right.X, 0.0f);
+		}
+
+		return FVector::ForwardVector;
+	}
+
+	float GetPlanarHeadingDegrees(const FQuat& BodyRotation)
+	{
+		const FVector Forward = GetPlanarHeadingDirection(BodyRotation);
+		return FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X));
+	}
+
+	/** 返回从当前水平航向转到目标航向的最短有符号角，单位为弧度。 */
+	float ComputePlanarHeadingErrorRadians(const FQuat& BodyRotation, float TargetYawDegrees)
+	{
+		const FVector CurrentForward = GetPlanarHeadingDirection(BodyRotation);
+		const FQuat TargetHeadingRotation(
+			FVector::UpVector, FMath::DegreesToRadians(TargetYawDegrees));
+		const FVector TargetForward = TargetHeadingRotation.RotateVector(FVector::ForwardVector);
+		return FMath::Atan2(
+			FVector::CrossProduct(CurrentForward, TargetForward).Z,
+			FVector::DotProduct(CurrentForward, TargetForward));
+	}
+}
+
 FVector FlightControlDynamics::ComputeLinearDampingFeedForward(
 	const FVector& DesiredVelocityCmPerSec, float LinearDampingPerSecond, float Scale)
 {
@@ -207,9 +251,11 @@ FRotator FFlightControlSolver::ComputeDesiredAttitude(FFlightControlSolverContex
 	// ---- 路径 B：速度/位置 PID → 悬停倾斜方程 ----
 	const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(Context, DeltaSeconds);
 	const float GravityMagnitude = Context.PhysicsCache.GravityMagnitudeCmPerSecSq;
+	const float CurrentHeadingDegrees = GetPlanarHeadingDegrees(
+		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized());
 
 	// 构造仅含航向的"平面旋转"——提取机体前/右方向的水平投影
-	const FRotator FlatYawRotation(0.0f, Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw, 0.0f);
+	const FRotator FlatYawRotation(0.0f, CurrentHeadingDegrees, 0.0f);
 	const FVector ForwardFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::X);
 	const FVector RightFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::Y);
 
@@ -232,14 +278,17 @@ FRotator FFlightControlSolver::ComputeDesiredAttitude(FFlightControlSolverContex
 	// 限制最大倾角——超出此角度可能推力不足以抵消重力分量
 	DesiredRollDegrees = FMath::Clamp(DesiredRollDegrees, -Context.Config.Controller.Limits.MaxTiltAngleDegrees, Context.Config.Controller.Limits.MaxTiltAngleDegrees);
 	DesiredPitchDegrees = FMath::Clamp(DesiredPitchDegrees, -Context.Config.Controller.Limits.MaxTiltAngleDegrees, Context.Config.Controller.Limits.MaxTiltAngleDegrees);
-	return FRotator(DesiredPitchDegrees, Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw, DesiredRollDegrees);
+	return FRotator(DesiredPitchDegrees, CurrentHeadingDegrees, DesiredRollDegrees);
 }
 
 
 FFlightControlYawSetpoint FFlightControlSolver::ComputeYawSetpoint(FFlightControlSolverContext& Context)
 {
 	FFlightControlYawSetpoint Result;
-	const float CurrentYawDegrees = Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
+	// 航向保持初始化与下游航向误差必须使用同一份刚体四元数真值。
+	// 不再混用可能滞后一帧的显示用 AttitudeDegrees.Yaw，避免启动首帧凭空产生偏航指令。
+	const float CurrentYawDegrees = GetPlanarHeadingDegrees(
+		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized());
 	Result.TargetYawDegrees = CurrentYawDegrees;
 	Result.MaxRateDegPerSec = Context.Config.Controller.Limits.MaxYawRateDegreesPerSec;
 
@@ -275,7 +324,7 @@ FFlightControlYawSetpoint FFlightControlSolver::ComputeYawSetpoint(FFlightContro
 	// 摇杆超出死区 → 手动偏航率，同时重新锁定航向
 	if (FMath::Abs(ManualYawRate) > UE_SMALL_NUMBER)
 	{
-		Context.Runtime.HoldTargets.HeldYawDegrees = Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
+		Context.Runtime.HoldTargets.HeldYawDegrees = CurrentYawDegrees;
 		Context.Runtime.HoldTargets.bYawHoldInitialized = true;
 		Result.TargetYawDegrees = Context.Runtime.HoldTargets.HeldYawDegrees;
 		Result.FeedForwardRateDegPerSec = FMath::Clamp(
@@ -286,7 +335,7 @@ FFlightControlYawSetpoint FFlightControlSolver::ComputeYawSetpoint(FFlightContro
 	// 初始化锁定航向
 	if (!Context.Runtime.HoldTargets.bYawHoldInitialized)
 	{
-		Context.Runtime.HoldTargets.HeldYawDegrees = Context.Runtime.EstimatedState.State.AttitudeDegrees.Yaw;
+		Context.Runtime.HoldTargets.HeldYawDegrees = CurrentYawDegrees;
 		Context.Runtime.HoldTargets.bYawHoldInitialized = true;
 	}
 
@@ -339,9 +388,14 @@ FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContex
 		}
 
 		// 直接使用 Chaos 刚体四元数，避免由姿态显示角反算当前姿态。
+		// Roll/Pitch 命令是在当前机头航向坐标系中生成的，因此目标倾斜姿态
+		// 必须继续使用当前航向。目标 Yaw 在下方作为独立航向闭环处理；若直接
+		// 把 TargetYaw 与这里的 Roll/Pitch 拼接，Yaw 误差会泄漏到 QErr.X/Y，
+		// 使单纯转向产生错误的横滚/俯仰指令。
 		const FQuat QCur = Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized();
+		const float CurrentHeadingDegrees = GetPlanarHeadingDegrees(QCur);
 		const FQuat QDes = FRotator(
-			SmoothedPitch, YawSetpoint.TargetYawDegrees, SmoothedRoll).Quaternion();
+			SmoothedPitch, CurrentHeadingDegrees, SmoothedRoll).Quaternion();
 		FQuat QErr = QCur.Inverse() * QDes;
 		if (QErr.W < 0.0f)
 		{
@@ -355,9 +409,14 @@ FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContex
 			-2.0f * QErr.X * AttCfg.QuaternionAttitudeGains.Roll) + RollRateFF;
 		DesiredPitchRate = FMath::RadiansToDegrees(
 			-2.0f * QErr.Y * AttCfg.QuaternionAttitudeGains.Pitch) + PitchRateFF;
+
+		// 航向保持旧解算语义：目标航向误差产生比例角速度，轨迹/手动角速度
+		// 作为前馈叠加。航向误差来自刚体四元数的水平机头方向，不使用欧拉角 PID，
+		// 也不允许航向误差影响 Roll/Pitch 通道。
+		const float HeadingErrorRadians = ComputePlanarHeadingErrorRadians(
+			QCur, YawSetpoint.TargetYawDegrees);
 		DesiredYawRate += FMath::RadiansToDegrees(
-			2.0f * QErr.Z * AttCfg.QuaternionAttitudeGains.Yaw
-			* FMath::Clamp(AttCfg.YawWeight, 0.0f, 1.0f));
+			HeadingErrorRadians * AttCfg.QuaternionAttitudeGains.Yaw);
 	}
 
 	// 限幅到最大角速率

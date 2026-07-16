@@ -161,8 +161,86 @@ bool FAircraftQuaternionAttitudeUsesRigidBodyRotationTest::RunTest(const FString
 	YawSetpoint.TargetYawDegrees = 90.0f;
 	const FVector YawRates = Solver.ComputeDesiredBodyRates(
 		Context, FRotator::ZeroRotator, YawSetpoint, 0.004f);
-	TestTrue(TEXT("Target yaw is closed by the quaternion error, not a separate angle PID"),
+	TestTrue(TEXT("Target yaw is closed from the quaternion-derived heading, not an Euler PID"),
 		FMath::Abs(YawRates.Z) > 1.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftQuaternionHeadingDoesNotLeakIntoTiltTest,
+	"AircraftLab.Control.Attitude.QuaternionHeadingDoesNotLeakIntoTilt",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftQuaternionHeadingDoesNotLeakIntoTiltTest::RunTest(const FString& Parameters)
+{
+	FControllerRuntimeState Runtime;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+	FPhysicsCache PhysicsCache;
+	PhysicsCache.BodyTransform.SetRotation(FRotator(10.0f, 45.0f, 5.0f).Quaternion());
+	FModeCapabilities Capabilities;
+	FFlightControllerRuntimeConfig Config;
+	FlightControllerConfig::InitializeDefaults(Config.Controller);
+	Config.Controller.Attitude.bEnableAttitudeRefModel = false;
+	FAutopilotMovementIntent MovementIntent;
+	FAutopilotInjection Injection;
+	FControlAllocator Allocator;
+	FFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, MovementIntent, Injection, Allocator, false };
+	FFlightControlSolver Solver;
+	FFlightControlYawSetpoint YawSetpoint;
+	YawSetpoint.MaxRateDegPerSec = Config.Controller.Limits.MaxYawRateDegreesPerSec;
+	YawSetpoint.TargetYawDegrees = 45.0f;
+
+	const FRotator DesiredTilt(-8.0f, 45.0f, 12.0f);
+	const FVector SameHeadingRates = Solver.ComputeDesiredBodyRates(
+		Context, DesiredTilt, YawSetpoint, 0.004f);
+
+	YawSetpoint.TargetYawDegrees = -135.0f;
+	const FVector OppositeHeadingRates = Solver.ComputeDesiredBodyRates(
+		Context, DesiredTilt, YawSetpoint, 0.004f);
+
+	TestTrue(TEXT("Changing only target heading does not alter Roll rate"),
+		FMath::IsNearlyEqual(OppositeHeadingRates.X, SameHeadingRates.X, 1.e-4));
+	TestTrue(TEXT("Changing only target heading does not alter Pitch rate"),
+		FMath::IsNearlyEqual(OppositeHeadingRates.Y, SameHeadingRates.Y, 1.e-4));
+	TestTrue(TEXT("Changing target heading still changes Yaw rate"),
+		!FMath::IsNearlyEqual(OppositeHeadingRates.Z, SameHeadingRates.Z, 1.e-4));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawHoldInitializesFromRigidBodyQuaternionTest,
+	"AircraftLab.Control.Attitude.YawHoldInitializesFromRigidBodyQuaternion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawHoldInitializesFromRigidBodyQuaternionTest::RunTest(const FString& Parameters)
+{
+	FControllerRuntimeState Runtime;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+	// 模拟启动期显示状态尚未刷新，但 Chaos 刚体已经具有非零出生航向。
+	Runtime.EstimatedState.State.AttitudeDegrees = FRotator::ZeroRotator;
+	FPhysicsCache PhysicsCache;
+	PhysicsCache.BodyTransform.SetRotation(FRotator(0.0f, 73.0f, 0.0f).Quaternion());
+	FModeCapabilities Capabilities;
+	Capabilities.CanHoldYaw = true;
+	FFlightControllerRuntimeConfig Config;
+	FlightControllerConfig::InitializeDefaults(Config.Controller);
+	Config.Controller.Attitude.bEnableAttitudeRefModel = false;
+	FAutopilotMovementIntent MovementIntent;
+	FAutopilotInjection Injection;
+	FControlAllocator Allocator;
+	FFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, MovementIntent, Injection, Allocator, false };
+	FFlightControlSolver Solver;
+
+	const FFlightControlYawSetpoint YawSetpoint = Solver.ComputeYawSetpoint(Context);
+	const FVector DesiredRates = Solver.ComputeDesiredBodyRates(
+		Context, FRotator(0.0f, 73.0f, 0.0f), YawSetpoint, 0.004f);
+
+	TestTrue(TEXT("Initial held heading comes from the rigid-body quaternion"),
+		FMath::IsNearlyEqual(YawSetpoint.TargetYawDegrees, 73.0f, 1.e-4f));
+	TestTrue(TEXT("Matching initial heading produces no default Yaw rate"),
+		FMath::IsNearlyZero(DesiredRates.Z, 1.e-4));
 	return true;
 }
 

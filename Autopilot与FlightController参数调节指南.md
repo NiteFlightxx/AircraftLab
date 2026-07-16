@@ -249,7 +249,8 @@ Vector Field 参数：
 - `Position.VelocityGains.X/Y`：速度误差 → 水平期望加速度。Kff 接收轨迹加速度前馈。
 - `Altitude.AltitudeGains`：高度误差 → 垂直期望速度。Kff 接收垂直速度前馈。
 - `Altitude.VerticalVelocityGains`：垂直速度误差 → 总距偏移。
-- `Attitude.AngleGains.Roll/Pitch/Yaw`：姿态误差 → 期望机体角速度。
+- `Attitude.QuaternionAttitudeGains.Roll/Pitch`：四元数倾斜误差 → 期望机体 Roll/Pitch 角速度。
+- `Attitude.QuaternionAttitudeGains.Yaw`：由刚体四元数得到的水平航向误差 → 期望 Yaw 角速度；与偏航角速度前馈相加。
 - `Attitude.RateGains.Roll/Pitch/Yaw`：角速度误差 → 滚转/俯仰/偏航控制量。
 
 调参顺序必须从内到外：角速度环 → 姿态环 → 速度环 → 位置/高度环。一次只改一个环，先关闭或固定外环激励。
@@ -258,14 +259,14 @@ Vector Field 参数：
 
 | 参数 | 用途 | 调大/切换影响 |
 |---|---|---|
-| `AngleGains` | 三轴角度外环 PID | 见 5.4 |
+| `QuaternionAttitudeGains` | 四元数姿态外环比例增益；Roll/Pitch 闭合推力方向，Yaw 独立闭合水平航向 | 增大对应轴的姿态纠偏速度；过大会更容易触发角速度限幅并产生振荡 |
 | `RateGains` | 三轴角速度内环 PID | 见 5.4 |
 | `AngularDampingFeedForwardScale` | Chaos 角阻尼补偿；0=关闭，1=完整补偿 | 增大可减少稳态角速度误差；过大可能过补偿 |
 | `bEnableAttitudeRefModel` | 对 Roll/Pitch 目标使用二阶平滑模型 | 开启可减少姿态阶跃 |
 | `RefModelNaturalFrequency` | 参考模型快慢，约等于响应带宽 | 越大跟随更快更硬，越小更柔和 |
 | `RefModelRateFFLimitDegPerSec` | 参考模型角速度前馈限幅 | 增大可更快追姿态目标，但冲击更大 |
-| `bEnableQuaternionAttitude` | 使用四元数姿态误差 | 大姿态变化下更可靠，建议开启 |
-| `YawWeight` | 四元数控制中偏航相对 Roll/Pitch 的优先级 | 越大越积极对准偏航；越小越优先保持推力方向 |
+
+姿态外环固定使用四元数，不再提供欧拉角控制分支。航向目标不会参与 Roll/Pitch 目标四元数构造，避免偏航误差泄漏到倾斜控制；因此不再需要 `bEnableQuaternionAttitude` 或 `YawWeight`。
 
 ### 5.6 `Controller.Position`
 

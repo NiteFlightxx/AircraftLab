@@ -675,7 +675,7 @@ struct AIRCRAFTLAB_API FAircraftPlanarPidGains
 
 };
 
-/** 四元数姿态误差到机体角速度设定值的三轴比例增益。 */
+/** 四元数姿态控制比例增益：Roll/Pitch 控制倾斜误差，Yaw 控制独立水平航向误差。 */
 USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FAircraftQuaternionAttitudeGains
 {
@@ -807,7 +807,7 @@ struct AIRCRAFTLAB_API FAircraftAttitudeControllerConfig
 {
 	GENERATED_BODY()
 
-	/** 四元数姿态误差的三轴分量直接映射为机体角速度。 */
+	/** 四元数倾斜误差和独立水平航向误差映射为机体角速度。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Control",
 		meta = (DisplayName = "角度环姿态增益"))
 	FAircraftQuaternionAttitudeGains QuaternionAttitudeGains;
@@ -842,16 +842,6 @@ struct AIRCRAFTLAB_API FAircraftAttitudeControllerConfig
 		meta = (EditCondition = "bEnableAttitudeRefModel", EditConditionHides, ClampMin = "0.0", DisplayName = "角速度前馈限幅（度/秒）"))
 	float RefModelRateFFLimitDegPerSec = 100.0f;
 
-	// -----------------------------------------------------------------------
-	// 第 5 批：四元数姿态控制（对标 PX4 AttitudeControl.cpp:139-205）
-	// -----------------------------------------------------------------------
-
-	/** 偏航权重 [0,1]。推力方向（Roll/Pitch）优先对齐，Yaw 用此权重缩放。
-	 *  默认 0.4（PX4 默认）：偏航响应较姿态慢，优先保推力方向。
-	 *  1.0 = 全权偏航，0 = 完全忽略四元数中的偏航误差。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Control",
-		meta = (ClampMin = "0.0", ClampMax = "1.0", DisplayName = "偏航权重"))
-	float YawWeight = 0.4f;
 };
 
 /**
