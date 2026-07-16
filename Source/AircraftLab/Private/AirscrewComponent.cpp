@@ -1,5 +1,7 @@
 #include "AirscrewComponent.h"
+#include "AirscrewProfileAsset.h"
 #include "AircraftPhysicsUnits.h"
+#include "FlightControllerComponent.h"
 
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -18,12 +20,19 @@ UAirscrewComponent::UAirscrewComponent()
 void UAirscrewComponent::OnRegister()
 {
 	Super::OnRegister();
+	RefreshRotorConfiguration();
 	SyncDefinitionFromComponentTransform();
 }
 
 void UAirscrewComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	if (!RefreshRotorConfiguration())
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("Airscrew '%s' on '%s' requires a valid AirscrewProfileAsset; this rotor is disabled."),
+			*GetRotorName().ToString(), *GetNameSafe(GetOwner()));
+	}
 	SyncDefinitionFromComponentTransform();
 }
 
@@ -61,7 +70,52 @@ void UAirscrewComponent::ClearForceStop()
 
 void UAirscrewComponent::SetRotorEnabled(bool bNewEnabled)
 {
-	RotorDefinition.bEnabled = bNewEnabled;
+	if (bRotorEnabled == bNewEnabled)
+	{
+		return;
+	}
+	bRotorEnabled = bNewEnabled;
+	if (UFlightControllerComponent* Controller = GetOwner()
+		? GetOwner()->FindComponentByClass<UFlightControllerComponent>() : nullptr)
+	{
+		Controller->RefreshReferences();
+	}
+}
+
+void UAirscrewComponent::SetRotorProfile(UAirscrewProfileAsset* InRotorProfile)
+{
+	RotorProfile = InRotorProfile;
+	RefreshRotorConfiguration();
+	SyncDefinitionFromComponentTransform();
+	if (UFlightControllerComponent* Controller = GetOwner()
+		? GetOwner()->FindComponentByClass<UFlightControllerComponent>() : nullptr)
+	{
+		Controller->RefreshReferences();
+	}
+}
+
+void UAirscrewComponent::SetRotorName(FName InRotorName)
+{
+	RotorName = InRotorName;
+	if (UFlightControllerComponent* Controller = GetOwner()
+		? GetOwner()->FindComponentByClass<UFlightControllerComponent>() : nullptr)
+	{
+		Controller->RefreshReferences();
+	}
+}
+
+void UAirscrewComponent::SetSpinDirection(EAircraftRotorSpinDirection InSpinDirection)
+{
+	if (SpinDirection == InSpinDirection)
+	{
+		return;
+	}
+	SpinDirection = InSpinDirection;
+	if (UFlightControllerComponent* Controller = GetOwner()
+		? GetOwner()->FindComponentByClass<UFlightControllerComponent>() : nullptr)
+	{
+		Controller->RefreshReferences();
+	}
 }
 
 void UAirscrewComponent::SetForceApplicationEnabled(bool bNewEnabled)
@@ -86,7 +140,7 @@ void UAirscrewComponent::SyncDefinitionFromComponentTransform()
 {
 	// ThrustAxisLocal is authored in aircraft-body space. Component rotation is
 	// placement/presentation data and must not rotate the physical thrust axis.
-	CachedThrustAxisLocal = RotorDefinition.GetNormalizedThrustAxisLocal();
+	CachedThrustAxisLocal = RuntimeRotorDefinition.GetNormalizedThrustAxisLocal();
 
 	if (GetAttachParent())
 	{
@@ -98,10 +152,32 @@ void UAirscrewComponent::SyncDefinitionFromComponentTransform()
 		CachedRelativeLocationFromBody = GetRelativeLocation();
 	}
 
-	if (RotorDefinition.RotorName.IsNone())
+}
+
+bool UAirscrewComponent::RefreshRotorConfiguration()
+{
+	bRotorProfileValid = false;
+	if (!RotorProfile)
 	{
-		RotorDefinition.RotorName = GetFName();
+		RuntimeRotorDefinition = FAircraftRotorDefinition();
+		return false;
 	}
+
+	TArray<FText> ValidationErrors;
+	if (!RotorProfile->ValidateProfile(ValidationErrors))
+	{
+		RuntimeRotorDefinition = FAircraftRotorDefinition();
+		for (const FText& Error : ValidationErrors)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Airscrew profile '%s': %s"),
+				*RotorProfile->GetName(), *Error.ToString());
+		}
+		return false;
+	}
+
+	RuntimeRotorDefinition = RotorProfile->RotorDefinition;
+	bRotorProfileValid = true;
+	return true;
 }
 
 /**
@@ -129,7 +205,7 @@ void UAirscrewComponent::SyncDefinitionFromComponentTransform()
  */
 void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& BodyTransform)
 {
-	if (DeltaTime <= UE_SMALL_NUMBER || !RotorDefinition.IsEnabled())
+	if (DeltaTime <= UE_SMALL_NUMBER || !IsRotorEnabled())
 	{
 		CurrentNormalizedCommand = 0.0f;
 		CurrentRpm = 0.0f;
@@ -157,13 +233,13 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& Bod
 	// 步骤1: 指令平滑（Slew Rate Limiter）
 	// 限制指令变化率不超过 MaxCommandSlewPerSecond
 	const float EffectiveTargetCommand = GetEffectiveTargetCommand();
-	if (RotorDefinition.Motor.MaxCommandSlewPerSecond > 0.0f)
+	if (RuntimeRotorDefinition.Motor.MaxCommandSlewPerSecond > 0.0f)
 	{
 		CurrentNormalizedCommand = FMath::FInterpConstantTo(
 			CurrentNormalizedCommand,
 			EffectiveTargetCommand,
 			DeltaTime,
-			RotorDefinition.Motor.MaxCommandSlewPerSecond);
+			RuntimeRotorDefinition.Motor.MaxCommandSlewPerSecond);
 	}
 	else
 	{
@@ -177,15 +253,15 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& Bod
 	// ω = lerp(ω_prev, ω_target, 1 - e^(-Δt/τ))
 	// 加速/减速使用不同的时间常数
 	const float ResponseTime = TargetRpm >= CurrentRpm
-		? FMath::Max(RotorDefinition.Motor.SpinUpTimeSeconds, 0.001f)   // τ_up（加速）
-		: FMath::Max(RotorDefinition.Motor.SpinDownTimeSeconds, 0.001f); // τ_down（减速）
+		? FMath::Max(RuntimeRotorDefinition.Motor.SpinUpTimeSeconds, 0.001f)   // τ_up（加速）
+		: FMath::Max(RuntimeRotorDefinition.Motor.SpinDownTimeSeconds, 0.001f); // τ_down（减速）
 	const float ResponseAlpha = 1.0f - FMath::Exp(-DeltaTime / ResponseTime);
 	CurrentRpm = FMath::Lerp(CurrentRpm, TargetRpm, ResponseAlpha);
 
 	// 步骤4: 推力计算 T = T_max × (ω/ω_max)² × C_T × η
-	const float MaxRpm = FMath::Max(RotorDefinition.Motor.MaxRpm, 1.0f);
+	const float MaxRpm = FMath::Max(RuntimeRotorDefinition.Motor.MaxRpm, 1.0f);
 	const float ThrustRatio = FMath::Clamp(CurrentRpm / MaxRpm, 0.0f, 1.0f);
-	CurrentThrustForce = RotorDefinition.GetEffectiveMaxThrust() * FMath::Square(ThrustRatio) * FMath::Max(RotorDefinition.ThrustCoefficient, 0.0f);
+	CurrentThrustForce = RuntimeRotorDefinition.GetEffectiveMaxThrust() * FMath::Square(ThrustRatio) * FMath::Max(RuntimeRotorDefinition.ThrustCoefficient, 0.0f);
 
 	// 仅更新可视化/查询缓存；实际物理施力点会在物理边界按当前刚体姿态重新计算。
 	CurrentApplicationPointWorld = BodyTransform.TransformPosition(CachedRelativeLocationFromBody);
@@ -194,8 +270,8 @@ void UAirscrewComponent::UpdateRotorState(float DeltaTime, const FTransform& Bod
 	// τ_reaction = T × k_τ_eff，方向 = n_thrust × sign
 	const FVector ThrustDirWorld = BodyTransform.TransformVectorNoScale(CachedThrustAxisLocal).GetSafeNormal();
 	CurrentThrustVectorWorld = ThrustDirWorld * CurrentThrustForce;
-	CurrentReactionTorqueMagnitude = CurrentThrustForce * FMath::Max(RotorDefinition.GetEffectiveReactionTorqueCoefficient(), 0.0f);
-	CurrentReactionTorqueVectorWorld = ThrustDirWorld * (CurrentReactionTorqueMagnitude * RotorDefinition.GetSpinDirectionSign());
+	CurrentReactionTorqueMagnitude = CurrentThrustForce * FMath::Max(RuntimeRotorDefinition.GetEffectiveReactionTorqueCoefficient(), 0.0f);
+	CurrentReactionTorqueVectorWorld = ThrustDirWorld * (CurrentReactionTorqueMagnitude * GetSpinDirectionSign());
 }
 
 /**
@@ -234,7 +310,7 @@ FVector UAirscrewComponent::ApplyThrustForce_PhysicsThread(Chaos::FRigidBodyHand
 	const FVector ThrustDirectionWorld = BodyWorldRotation.RotateVector(CachedThrustAxisLocal).GetSafeNormal();
 	const FVector ThrustForceWorldN = ThrustDirectionWorld * CurrentThrustForce;
 	const FVector ReactionTorqueWorldNm = ThrustDirectionWorld
-		* (CurrentReactionTorqueMagnitude * RotorDefinition.GetSpinDirectionSign());
+		* (CurrentReactionTorqueMagnitude * GetSpinDirectionSign());
 
 	// AircraftLab 内部保持 SI（N、N·m），仅在 Chaos 边界转换为 kg·cm/s²、kg·cm²/s²。
 	const FVector ThrustForceChaos = AircraftPhysicsUnits::NewtonsToChaosForce(ThrustForceWorldN);
@@ -266,7 +342,7 @@ void UAirscrewComponent::DrawDebugVisualization() const
 		return;
 	}
 
-	const bool bRotorActive = RotorDefinition.IsEnabled() && CurrentThrustForce > UE_SMALL_NUMBER;
+	const bool bRotorActive = IsRotorEnabled() && CurrentThrustForce > UE_SMALL_NUMBER;
 	const FColor DebugColor = (bRotorActive ? DebugEnabledColor : DebugDisabledColor).ToFColor(true);
 	const FVector Origin = GetComponentLocation();
 	const FTransform& AxisReferenceTransform = GetAttachParent()
@@ -287,7 +363,7 @@ void UAirscrewComponent::DrawDebugVisualization() const
 
 	const FString DebugText = FString::Printf(
 		TEXT("%s\nCmd %.2f / %.2f\nRPM %.0f\nThrust %.1f\nYawT %.2f"),
-		*RotorDefinition.RotorName.ToString(),
+		*GetRotorName().ToString(),
 		CurrentNormalizedCommand,
 		TargetNormalizedCommand,
 		CurrentRpm,
@@ -299,12 +375,14 @@ void UAirscrewComponent::DrawDebugVisualization() const
 
 float UAirscrewComponent::GetEffectiveTargetCommand() const
 {
-	if (!RotorDefinition.IsEnabled())
+	if (!IsRotorEnabled())
 	{
 		return 0.0f;
 	}
 
-	return FMath::Clamp(TargetNormalizedCommand * FMath::Max(CommandScale, 0.0f), 0.0f, 1.0f);
+	return FMath::Clamp(
+		TargetNormalizedCommand * FMath::Max(RuntimeRotorDefinition.CommandScale, 0.0f),
+		0.0f, 1.0f);
 }
 
 /**
@@ -315,17 +393,17 @@ float UAirscrewComponent::GetEffectiveTargetCommand() const
 float UAirscrewComponent::ComputeTargetRpm(float EffectiveCommand) const
 {
 	const float ClampedCommand = FMath::Clamp(EffectiveCommand, 0.0f, 1.0f);
-	const float CommandExponent = FMath::Max(RotorDefinition.Motor.CommandExponent, 0.01f);
+	const float CommandExponent = FMath::Max(RuntimeRotorDefinition.Motor.CommandExponent, 0.01f);
 	// ShapedCommand = Command^exp，将线性指令映射为非线性转速曲线
 	const float ShapedCommand = FMath::Pow(ClampedCommand, CommandExponent);
-	const float MaxRpm = FMath::Max(RotorDefinition.Motor.MaxRpm, 1.0f);
+	const float MaxRpm = FMath::Max(RuntimeRotorDefinition.Motor.MaxRpm, 1.0f);
 
 	if (ShapedCommand <= UE_SMALL_NUMBER)
 	{
 		return 0.0f;
 	}
 
-	const float IdleRpm = FMath::Clamp(RotorDefinition.Motor.IdleRpm, 0.0f, MaxRpm);
+	const float IdleRpm = FMath::Clamp(RuntimeRotorDefinition.Motor.IdleRpm, 0.0f, MaxRpm);
 	// ω_target = ω_idle + (ω_max - ω_idle) × ShapedCommand
 	return FMath::Lerp(IdleRpm, MaxRpm, ShapedCommand);
 }

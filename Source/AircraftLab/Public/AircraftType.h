@@ -973,7 +973,10 @@ struct AIRCRAFTLAB_API FAircraftMotorModelConfig
 };
 
 /**
- * 单个旋翼的定义（位置、方向、物理参数）
+ * 可由多个旋翼实例共享的旋翼型号参数。
+ *
+ * RotorName、启用状态和 CW/CCW 旋向属于单个 UAirscrewComponent 实例，
+ * 不得放入本结构，否则共享同一配置资产的多个旋翼会互相污染身份或旋向。
  *
  * 物理公式 - 螺旋桨推力与扭矩：
  *
@@ -1000,21 +1003,9 @@ struct AIRCRAFTLAB_API FAircraftRotorDefinition
 {
 	GENERATED_BODY()
 
-	/** 旋翼名称（唯一标识） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
-	FName RotorName = NAME_None;
-
-	/** 是否启用该旋翼 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
-	bool bEnabled = true;
-
 	/** 推力方向（飞行器机体局部坐标系，通常为向上；不受 Airscrew 组件自身旋转影响） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FVector ThrustAxisLocal = FVector::UpVector;
-
-	/** 旋转方向（顺时针或逆时针） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
-	EAircraftRotorSpinDirection SpinDirection = EAircraftRotorSpinDirection::CounterClockwise;
 
 	/** 最大静推力（N）。该值必须是 SI 牛顿，禁止填写 Unreal/Chaos 原始力单位。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0", Units = "N"))
@@ -1036,14 +1027,13 @@ struct AIRCRAFTLAB_API FAircraftRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float ControlAuthorityScale = 1.0f;
 
+	/** 分配结果到电机指令的统一缩放；通常保持 1，仅用于同型号旋翼整体标定。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
+	float CommandScale = 1.0f;
+
 	/** 电机动态模型参数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FAircraftMotorModelConfig Motor;
-
-	bool IsEnabled() const
-	{
-		return bEnabled;
-	}
 
 	/**
 	 * 获取归一化后的推力方向（机体局部坐标系）
@@ -1052,16 +1042,6 @@ struct AIRCRAFTLAB_API FAircraftRotorDefinition
 	FVector GetNormalizedThrustAxisLocal() const
 	{
 		return ThrustAxisLocal.IsNearlyZero() ? FVector::UpVector : ThrustAxisLocal.GetSafeNormal();
-	}
-
-	/**
-	 * 获取旋转方向符号
-	 * CW = -1（顺时针）, CCW = +1（逆时针）
-	 * 用于确定反扭矩方向
-	 */
-	float GetSpinDirectionSign() const
-	{
-		return SpinDirection == EAircraftRotorSpinDirection::Clockwise ? -1.0f : 1.0f;
 	}
 
 	/**

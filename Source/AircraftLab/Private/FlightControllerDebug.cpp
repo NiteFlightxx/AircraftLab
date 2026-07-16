@@ -62,13 +62,13 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 		const FVector4 Jacobian = BuildJacobianColumn(Airscrew, ArmCm);
 		const double MaxThrustN = FlightControllerAllocation::GetRotorMaxPhysicalThrust(Rotor);
 		const double AllocatedMaxThrustN = FlightControllerAllocation::GetRotorMaxAllocatedThrust(Rotor);
-		const FName RotorName = Rotor.RotorName.IsNone() ? Airscrew->GetFName() : Rotor.RotorName;
+		const FName RotorName = Airscrew->GetRotorName();
 		TotalMaxThrustN += MaxThrustN;
 
 		UE_LOG(LogFlightControllerDebug, Log,
 			TEXT("[RotorLayout] [%d] %s ArmCm=(%.1f,%.1f,%.1f) Axis=(%.2f,%.2f,%.2f) Spin=%s Jacobian=(%.1fN,%.2fNm,%.2fNm,%.2fNm) Max=%.1fN AllocMax=%.1fN Ct=%.3f"),
 			RotorIndex, *RotorName.ToString(), ArmCm.X, ArmCm.Y, ArmCm.Z,
-			AxisBody.X, AxisBody.Y, AxisBody.Z, FlightControllerDebug::GetSpinDirectionLabel(Rotor.SpinDirection),
+			AxisBody.X, AxisBody.Y, AxisBody.Z, FlightControllerDebug::GetSpinDirectionLabel(Airscrew->GetSpinDirection()),
 			Jacobian[0], Jacobian[1], Jacobian[2], Jacobian[3], MaxThrustN, AllocatedMaxThrustN, Rotor.ThrustCoefficient);
 	}
 

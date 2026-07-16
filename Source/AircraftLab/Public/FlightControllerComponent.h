@@ -140,29 +140,33 @@ public:
 	// 旋翼失效与容错接口
 	// ========================================================================
 
-	/** 指定旋翼完全失效 */
+	/** 按稳定名称指定旋翼完全失效；名称不存在或重复时返回 false。 */
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
-	void FailRotor(int32 RotorIndex);
+	bool FailRotor(FName RotorName);
 
-	/** 恢复指定旋翼 */
+	/** 按稳定名称恢复指定旋翼。 */
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
-	void RecoverRotor(int32 RotorIndex);
+	bool RecoverRotor(FName RotorName);
 
-	/** 设置旋翼效能（0=完全失效，1=正常） */
+	/** 按稳定名称设置旋翼效能（0=完全失效，1=正常）。 */
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
-	void SetRotorEffectiveness(int32 RotorIndex, float Effectiveness);
+	bool SetRotorEffectiveness(FName RotorName, float Effectiveness);
 
-	/** 批量失效多个旋翼 */
+	/** 按稳定名称批量失效多个旋翼；返回实际成功处理的数量。 */
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
-	void FailRotors(const TArray<int32>& RotorIndices);
+	int32 FailRotors(const TArray<FName>& RotorNames);
+
+	/** 查询唯一名称对应的旋翼组件；名称无效或重复时返回 nullptr。 */
+	UFUNCTION(BlueprintPure, Category = "Aircraft|RotorHealth")
+	UAirscrewComponent* FindAirscrewByName(FName RotorName) const;
 
 	/** 恢复所有旋翼 */
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
 	void RecoverAllRotors();
 
-	/** 获取旋翼健康状态数组 */
+	/** 获取以 RotorName 为键的旋翼健康状态映射。 */
 	UFUNCTION(BlueprintPure, Category = "Aircraft|RotorHealth")
-	const TArray<FRotorHealthState>& GetRotorHealthStates() const { return RotorFailureManager.HealthStates; }
+	TMap<FName, FRotorHealthState> GetRotorHealthStates() const { return RotorFailureManager.HealthStatesByName; }
 
 	/** 获取控制能力评估 */
 	UFUNCTION(BlueprintPure, Category = "Aircraft|RotorHealth")
@@ -354,6 +358,10 @@ private:
 	/** 旋翼组件数组 */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UAirscrewComponent>> Airscrews;
+
+	/** 稳定名称到组件的一一映射；重复名称不会进入映射，避免误操作错误旋翼。 */
+	UPROPERTY(Transient)
+	TMap<FName, TObjectPtr<UAirscrewComponent>> AirscrewByName;
 
 	/** 物理线程缓存 - 物理线程写入，控制循环读取 */
 	FPhysicsCache PhysicsCache;

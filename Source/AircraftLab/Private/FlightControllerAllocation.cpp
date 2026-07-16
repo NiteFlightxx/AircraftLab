@@ -206,41 +206,62 @@ FAircraftRotorCommand MakeRotorCommand(const UAirscrewComponent* Airscrew)
 {
 	FAircraftRotorCommand RotorCommand;
 	if (!Airscrew) return RotorCommand;
-	const FAircraftRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
-	RotorCommand.RotorName = RotorDefinition.RotorName.IsNone() ? Airscrew->GetFName() : RotorDefinition.RotorName;
+	RotorCommand.RotorName = Airscrew->GetRotorName();
 	RotorCommand.NormalizedCommand = Airscrew->GetNormalizedCommand();
 	RotorCommand.TargetRpm = Airscrew->ComputeTargetRpm(Airscrew->GetEffectiveTargetCommand());
 	RotorCommand.CurrentRpm = Airscrew->GetCurrentRpm();
 	RotorCommand.GeneratedThrust = Airscrew->GetCurrentThrustForce();
 	// 反扭矩带符号：正值=CCW方向，负值=CW方向
-	RotorCommand.GeneratedReactionTorque = Airscrew->GetCurrentReactionTorqueMagnitude() * RotorDefinition.GetSpinDirectionSign();
+	RotorCommand.GeneratedReactionTorque = Airscrew->GetCurrentReactionTorqueMagnitude() * Airscrew->GetSpinDirectionSign();
 	return RotorCommand;
 }
 }
 void UFlightControllerComponent::UpdateRotorCache()
 {
 	Airscrews.Reset();
-	RotorFailureManager.HealthStates.Reset();
+	AirscrewByName.Reset();
+	RotorFailureManager.HealthStatesByName.Reset();
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor) return;
 
-	// 按组件迭代顺序发现所有旋翼
-	// 注意：旋翼的身份 = 数组下标，重排组件会导致 FailRotor(i) 失效
+	// 数组顺序只用于控制分配矩阵列；RotorName 才是对外稳定身份。
 	TArray<UAirscrewComponent*> FoundAirscrews;
 	OwnerActor->GetComponents<UAirscrewComponent>(FoundAirscrews);
+	TSet<FName> DuplicateRotorNames;
 	for (UAirscrewComponent* Airscrew : FoundAirscrews)
 	{
 		if (!Airscrew) continue;
 		Airscrews.Add(Airscrew);
+		const FName Name = Airscrew->GetRotorName();
+		if (DuplicateRotorNames.Contains(Name))
+		{
+			UE_LOG(LogFlightController, Error,
+				TEXT("Duplicate RotorName '%s' on '%s'; name-based rotor control is disabled for this name."),
+				*Name.ToString(), *GetNameSafe(OwnerActor));
+		}
+		else if (AirscrewByName.Contains(Name))
+		{
+			AirscrewByName.Remove(Name);
+			RotorFailureManager.HealthStatesByName.Remove(Name);
+			DuplicateRotorNames.Add(Name);
+			UE_LOG(LogFlightController, Error,
+				TEXT("Duplicate RotorName '%s' on '%s'; name-based rotor control is disabled for this name."),
+				*Name.ToString(), *GetNameSafe(OwnerActor));
+		}
+		else
+		{
+			AirscrewByName.Add(Name, Airscrew);
+			RotorFailureManager.HealthStatesByName.Add(Name, FRotorHealthState());
+		}
 		// 确保旋翼在本控制器之后 Tick（Tick 依赖）
 		Airscrew->AddTickPrerequisiteComponent(this);
-		RotorFailureManager.HealthStates.Add(FRotorHealthState());
 	}
 	// Size all per-step arrays while references are refreshed on the game thread.
 	const int32 NumRotors = Airscrews.Num();
 	Runtime.ControlOutput.RotorCommands.SetNum(NumRotors);
 	ControlAllocator.CommandBuffer.SetNum(NumRotors);
 	ControlAllocator.RotorDefinitionBuffer.SetNum(NumRotors);
+	ControlAllocator.RotorHealthBuffer.SetNum(NumRotors);
 	ControlAllocator.AllocatedThrustFractions.SetNum(NumRotors);
 	ControlAllocator.SolvedRotors.SetNum(NumRotors);
 
@@ -262,14 +283,6 @@ void UFlightControllerComponent::RebuildAllocationCache()
 	ControlAllocator.Cache.FreeRotors.SetNumZeroed(NumRotors);
 	ControlAllocator.Cache.NormalizedColumns.SetNumZeroed(NumRotors);
 
-	// 同步 RotorFailureManager.HealthStates 数组大小
-	if (RotorFailureManager.HealthStates.Num() != NumRotors)
-	{
-		RotorFailureManager.HealthStates.SetNum(NumRotors);
-		for (auto& State : RotorFailureManager.HealthStates)
-			State.Recover();
-	}
-
 	int32 HealthyCount = 0;
 	int32 FailedCount = 0;
 
@@ -285,8 +298,8 @@ void UFlightControllerComponent::RebuildAllocationCache()
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew || !Airscrew->IsRotorEnabled()) continue;
 
-		const float Effectiveness = RotorFailureManager.HealthStates.IsValidIndex(RotorIndex)
-			? RotorFailureManager.HealthStates[RotorIndex].Effectiveness : 1.0f;
+		const FRotorHealthState* HealthState = RotorFailureManager.HealthStatesByName.Find(Airscrew->GetRotorName());
+		const float Effectiveness = HealthState ? HealthState->Effectiveness : 0.0f;
 
 		// 完全失效的旋翼不参与 RowScale 计算
 		if (Effectiveness <= FlightControllerAllocation::AuthorityEpsilon)
@@ -338,8 +351,8 @@ void UFlightControllerComponent::RebuildAllocationCache()
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew || !Airscrew->IsRotorEnabled()) continue;
 
-		const float Effectiveness = RotorFailureManager.HealthStates.IsValidIndex(RotorIndex)
-			? RotorFailureManager.HealthStates[RotorIndex].Effectiveness : 1.0f;
+		const FRotorHealthState* HealthState = RotorFailureManager.HealthStatesByName.Find(Airscrew->GetRotorName());
+		const float Effectiveness = HealthState ? HealthState->Effectiveness : 0.0f;
 
 		if (Effectiveness <= FlightControllerAllocation::AuthorityEpsilon)
 			continue;
@@ -405,14 +418,17 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 
 	Runtime.ControlOutput.RotorCommands.SetNum(NumRotors);
 	ControlAllocator.RotorDefinitionBuffer.SetNum(NumRotors);
+	ControlAllocator.RotorHealthBuffer.SetNum(NumRotors);
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
 		if (const UAirscrewComponent* Airscrew = Airscrews[RotorIndex])
 		{
 			ControlAllocator.RotorDefinitionBuffer[RotorIndex] = Airscrew->GetRotorDefinition();
+			const FRotorHealthState* State = RotorFailureManager.HealthStatesByName.Find(Airscrew->GetRotorName());
+			ControlAllocator.RotorHealthBuffer[RotorIndex] = State ? *State : FRotorHealthState();
 		}
 	}
-	ControlAllocator.Allocate(RuntimeConfig, PhysicsCache, RotorFailureManager.HealthStates,
+	ControlAllocator.Allocate(RuntimeConfig, PhysicsCache, ControlAllocator.RotorHealthBuffer,
 		NumRotors, CollectiveCommand, AxisCommands, Runtime.ControlOutput);
 
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
@@ -425,7 +441,7 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 }
 
 void FControlAllocator::Allocate(const FFlightControllerRuntimeConfig& Config, const FPhysicsCache& PhysicsCache,
-	const TArray<FRotorHealthState>& RotorHealthStates, int32 NumRotors,
+	const TArray<FRotorHealthState>& RotorHealthByColumn, int32 NumRotors,
 	float CollectiveCommand, const FVector& AxisCommands, FAircraftControlOutput& OutControlOutput)
 {
 	if (!Cache.bIsValid || Cache.JacobianColumns.Num() != NumRotors) return;
@@ -476,7 +492,7 @@ void FControlAllocator::Allocate(const FFlightControllerRuntimeConfig& Config, c
 	// 记录失效旋翼（已从自由列表中移除的）
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
-		if (!FreeRotors[RotorIndex] && RotorHealthStates.IsValidIndex(RotorIndex) && RotorHealthStates[RotorIndex].bIsFailed)
+		if (!FreeRotors[RotorIndex] && RotorHealthByColumn.IsValidIndex(RotorIndex) && RotorHealthByColumn[RotorIndex].bIsFailed)
 			Diagnostics.FailedMotors.Add(RotorIndex);
 	}
 
@@ -653,7 +669,7 @@ FVector4 UFlightControllerComponent::BuildJacobianColumn(const UAirscrewComponen
 	//   CCW → spin_sign = +1 → 反扭矩方向 = 推力轴 × (+1) = 沿轴正方向
 	// 四旋翼标准布局：2CW + 2CCW 交替排列，使悬停时偏航反扭矩相互抵消
 	const FVector ReactionTorque = ThrustAxisBody
-		* (MaxAllocatedThrust * RotorDefinition.GetEffectiveReactionTorqueCoefficient() * RotorDefinition.GetSpinDirectionSign());
+		* (MaxAllocatedThrust * RotorDefinition.GetEffectiveReactionTorqueCoefficient() * Airscrew->GetSpinDirectionSign());
 	// 总力矩 = 偏心力矩 + 反扭矩
 	const FVector PhysicalTorque = FVector::CrossProduct(MomentArmMeters, ForceAtMax) + ReactionTorque;
 	// 构造雅可比列：[Fz, −τx, −τy, τz]
@@ -661,67 +677,85 @@ FVector4 UFlightControllerComponent::BuildJacobianColumn(const UAirscrewComponen
 }
 
 
-void UFlightControllerComponent::FailRotor(int32 RotorIndex)
+UAirscrewComponent* UFlightControllerComponent::FindAirscrewByName(FName RotorName) const
 {
+	if (RotorName.IsNone()) return nullptr;
+	const TObjectPtr<UAirscrewComponent>* Found = AirscrewByName.Find(RotorName);
+	return Found ? Found->Get() : nullptr;
+}
+
+bool UFlightControllerComponent::FailRotor(FName RotorName)
+{
+	UAirscrewComponent* Airscrew = FindAirscrewByName(RotorName);
+	FRotorHealthState* State = RotorFailureManager.HealthStatesByName.Find(RotorName);
+	if (!Airscrew || !State)
+	{
+		UE_LOG(LogFlightController, Warning, TEXT("FailRotor: unknown or duplicate RotorName '%s'."), *RotorName.ToString());
+		return false;
+	}
 	const float Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-	if (!RotorFailureManager.FailRotor(RotorIndex, Timestamp)) return;
-	if (Airscrews.IsValidIndex(RotorIndex) && Airscrews[RotorIndex])
-		Airscrews[RotorIndex]->ForceStopRotor();
+	FRotorFailureManager::MarkRotorFailed(*State, Timestamp);
+	Airscrew->ForceStopRotor();
 	ControlAllocator.bCacheDirty = true;
-	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor %d FAILED"), RotorIndex);
+	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor '%s' FAILED"), *RotorName.ToString());
+	return true;
 }
 
-
-void UFlightControllerComponent::RecoverRotor(int32 RotorIndex)
+bool UFlightControllerComponent::RecoverRotor(FName RotorName)
 {
-	if (!RotorFailureManager.RecoverRotor(RotorIndex)) return;
-	if (Airscrews.IsValidIndex(RotorIndex) && Airscrews[RotorIndex])
-		Airscrews[RotorIndex]->ClearForceStop();
+	UAirscrewComponent* Airscrew = FindAirscrewByName(RotorName);
+	FRotorHealthState* State = RotorFailureManager.HealthStatesByName.Find(RotorName);
+	if (!Airscrew || !State)
+	{
+		UE_LOG(LogFlightController, Warning, TEXT("RecoverRotor: unknown or duplicate RotorName '%s'."), *RotorName.ToString());
+		return false;
+	}
+	FRotorFailureManager::RecoverRotor(*State);
+	Airscrew->ClearForceStop();
 	ControlAllocator.bCacheDirty = true;
-	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor %d RECOVERED"), RotorIndex);
+	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor '%s' RECOVERED"), *RotorName.ToString());
+	return true;
 }
 
-
-void UFlightControllerComponent::SetRotorEffectiveness(int32 RotorIndex, float Effectiveness)
+bool UFlightControllerComponent::SetRotorEffectiveness(FName RotorName, float Effectiveness)
 {
+	UAirscrewComponent* Airscrew = FindAirscrewByName(RotorName);
+	FRotorHealthState* State = RotorFailureManager.HealthStatesByName.Find(RotorName);
+	if (!Airscrew || !State)
+	{
+		UE_LOG(LogFlightController, Warning, TEXT("SetRotorEffectiveness: unknown or duplicate RotorName '%s'."), *RotorName.ToString());
+		return false;
+	}
 	Effectiveness = FMath::Clamp(Effectiveness, 0.0f, 1.0f);
 	const float Timestamp = Effectiveness <= FlightControllerAllocation::AuthorityEpsilon && GetWorld()
 		? GetWorld()->GetTimeSeconds() : 0.0f;
-	if (!RotorFailureManager.SetRotorEffectiveness(
-		RotorIndex, Effectiveness, Timestamp, FlightControllerAllocation::AuthorityEpsilon)) return;
-	UAirscrewComponent* Airscrew = Airscrews.IsValidIndex(RotorIndex) ? Airscrews[RotorIndex] : nullptr;
-	if (Airscrew && RotorFailureManager.HealthStates[RotorIndex].bIsFailed) Airscrew->ForceStopRotor();
-	else if (Airscrew) Airscrew->ClearForceStop();
-
+	FRotorFailureManager::SetRotorEffectiveness(*State,
+		Effectiveness, Timestamp, FlightControllerAllocation::AuthorityEpsilon);
+	if (State->bIsFailed) Airscrew->ForceStopRotor();
+	else Airscrew->ClearForceStop();
 	ControlAllocator.bCacheDirty = true;
-	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor %d Effectiveness=%.2f"), RotorIndex, Effectiveness);
+	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor '%s' Effectiveness=%.2f"),
+		*RotorName.ToString(), Effectiveness);
+	return true;
 }
 
-
-void UFlightControllerComponent::FailRotors(const TArray<int32>& RotorIndices)
+int32 UFlightControllerComponent::FailRotors(const TArray<FName>& RotorNames)
 {
-	const float Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-	RotorFailureManager.FailRotors(RotorIndices, Timestamp);
-	for (const int32 RotorIndex : RotorIndices)
+	int32 FailedCount = 0;
+	for (const FName RotorName : RotorNames)
 	{
-		if (RotorFailureManager.HealthStates.IsValidIndex(RotorIndex))
-		{
-			if (Airscrews.IsValidIndex(RotorIndex) && Airscrews[RotorIndex])
-				Airscrews[RotorIndex]->ForceStopRotor();
-			UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] Rotor %d FAILED (batch)"), RotorIndex);
-		}
+		FailedCount += FailRotor(RotorName) ? 1 : 0;
 	}
-	ControlAllocator.bCacheDirty = true;
+	return FailedCount;
 }
 
 
 void UFlightControllerComponent::RecoverAllRotors()
 {
 	RotorFailureManager.RecoverAllRotors();
-	for (int32 RotorIndex = 0; RotorIndex < RotorFailureManager.HealthStates.Num(); ++RotorIndex)
+	for (const TPair<FName, TObjectPtr<UAirscrewComponent>>& Pair : AirscrewByName)
 	{
-		if (Airscrews.IsValidIndex(RotorIndex) && Airscrews[RotorIndex])
-			Airscrews[RotorIndex]->ClearForceStop();
+		if (Pair.Value) Pair.Value->ClearForceStop();
 	}
 	ControlAllocator.bCacheDirty = true;
 	UE_LOG(LogFlightController, Log, TEXT("[RotorHealth] ALL rotors RECOVERED"));
@@ -767,5 +801,5 @@ void UFlightControllerComponent::UpdateControlAuthorityInfo()
 	const double BaselineYaw = FlightControllerAllocation::GetBalancedAuthority(BaselinePositiveTorque[2], BaselineNegativeTorque[2]);
 
 	RotorFailureManager.UpdateAuthority(ControlAllocator.Cache, BaselineCollectiveAuthority,
-		BaselineRoll, BaselinePitch, BaselineYaw, FlightControllerAllocation::AuthorityEpsilon, NumRotors);
+		BaselineRoll, BaselinePitch, BaselineYaw, FlightControllerAllocation::AuthorityEpsilon);
 }

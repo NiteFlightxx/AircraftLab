@@ -214,7 +214,6 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 void UFlightControllerComponent::RefreshReferences()
 {
 	BodyPrimitive = ResolveBodyPrimitive();
-	if (!bRuntimeConfigInitialized) return;
 	AircraftInput = ResolveAircraftInput();
 	UpdateRotorCache();
 }

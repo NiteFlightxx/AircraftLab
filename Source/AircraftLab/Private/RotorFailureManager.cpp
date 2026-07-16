@@ -1,25 +1,19 @@
 #include "FlightControllerRuntimeObjects.h"
 
-bool FRotorFailureManager::FailRotor(int32 RotorIndex, float Timestamp)
+void FRotorFailureManager::MarkRotorFailed(FRotorHealthState& State, float Timestamp)
 {
-	if (!HealthStates.IsValidIndex(RotorIndex)) return false;
-	HealthStates[RotorIndex].MarkFailed(Timestamp);
-	return true;
+	State.MarkFailed(Timestamp);
 }
 
-bool FRotorFailureManager::RecoverRotor(int32 RotorIndex)
+void FRotorFailureManager::RecoverRotor(FRotorHealthState& State)
 {
-	if (!HealthStates.IsValidIndex(RotorIndex)) return false;
-	HealthStates[RotorIndex].Recover();
-	return true;
+	State.Recover();
 }
 
-bool FRotorFailureManager::SetRotorEffectiveness(
-	int32 RotorIndex, float Effectiveness, float Timestamp, double FailureEpsilon)
+void FRotorFailureManager::SetRotorEffectiveness(
+	FRotorHealthState& State, float Effectiveness, float Timestamp, double FailureEpsilon)
 {
-	if (!HealthStates.IsValidIndex(RotorIndex)) return false;
 	Effectiveness = FMath::Clamp(Effectiveness, 0.0f, 1.0f);
-	FRotorHealthState& State = HealthStates[RotorIndex];
 	State.Effectiveness = Effectiveness;
 
 	if (Effectiveness <= FailureEpsilon)
@@ -35,25 +29,13 @@ bool FRotorFailureManager::SetRotorEffectiveness(
 		if (Effectiveness >= 1.0f) State.FailureTimestamp = -1.0f;
 	}
 
-	return true;
-}
-
-void FRotorFailureManager::FailRotors(const TArray<int32>& RotorIndices, float Timestamp)
-{
-	for (const int32 RotorIndex : RotorIndices)
-	{
-		if (HealthStates.IsValidIndex(RotorIndex))
-		{
-			HealthStates[RotorIndex].MarkFailed(Timestamp);
-		}
-	}
 }
 
 void FRotorFailureManager::RecoverAllRotors()
 {
-	for (FRotorHealthState& State : HealthStates)
+	for (TPair<FName, FRotorHealthState>& Pair : HealthStatesByName)
 	{
-		State.Recover();
+		Pair.Value.Recover();
 	}
 }
 
@@ -63,8 +45,7 @@ void FRotorFailureManager::UpdateAuthority(
 	double BaselineRollAuthority,
 	double BaselinePitchAuthority,
 	double BaselineYawAuthority,
-	double AuthorityEpsilon,
-	int32 NumRotors)
+	double AuthorityEpsilon)
 {
 	AuthorityInfo.Reset();
 	PolicyStatus.bHasAuthoritySample = true;
@@ -85,13 +66,10 @@ void FRotorFailureManager::UpdateAuthority(
 	AuthorityInfo.YawAuthority = BaselineYawAuthority > AuthorityEpsilon
 		? static_cast<float>(GetBalancedAuthority(AllocationCache.PositiveTorqueAuthority[2], AllocationCache.NegativeTorqueAuthority[2]) / BaselineYawAuthority) : 0.0f;
 
-	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+	for (const TPair<FName, FRotorHealthState>& Pair : HealthStatesByName)
 	{
-		if (HealthStates.IsValidIndex(RotorIndex))
-		{
-			if (HealthStates[RotorIndex].IsHealthy()) ++AuthorityInfo.HealthyRotorCount;
-			else ++AuthorityInfo.FailedRotorCount;
-		}
+		if (Pair.Value.IsHealthy()) ++AuthorityInfo.HealthyRotorCount;
+		else ++AuthorityInfo.FailedRotorCount;
 	}
 }
 

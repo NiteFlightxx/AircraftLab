@@ -132,6 +132,8 @@ struct AIRCRAFTLAB_API FControlAllocator
 	FAllocationDiagnostics Diagnostics;
 	TArray<float> CommandBuffer;
 	TArray<FAircraftRotorDefinition> RotorDefinitionBuffer;
+	/** RotorName 健康映射按当前矩阵列顺序展开的单步快照。 */
+	TArray<FRotorHealthState> RotorHealthBuffer;
 	/** Reused active-set work buffers; the async physics path must not allocate every step. */
 	TArray<double> AllocatedThrustFractions;
 	TArray<bool> SolvedRotors;
@@ -140,7 +142,7 @@ struct AIRCRAFTLAB_API FControlAllocator
 	bool bCacheDirty = true;
 
 	void Allocate(const FFlightControllerRuntimeConfig& Config, const FPhysicsCache& PhysicsCache,
-		const TArray<FRotorHealthState>& RotorHealthStates, int32 NumRotors,
+		const TArray<FRotorHealthState>& RotorHealthByColumn, int32 NumRotors,
 		float CollectiveCommand, const FVector& AxisCommands, FAircraftControlOutput& OutControlOutput);
 
 	void Reset()
@@ -149,6 +151,7 @@ struct AIRCRAFTLAB_API FControlAllocator
 		Diagnostics.Reset();
 		CommandBuffer.Reset();
 		RotorDefinitionBuffer.Reset();
+		RotorHealthBuffer.Reset();
 		AllocatedThrustFractions.Reset();
 		SolvedRotors.Reset();
 		for (int32 Axis = 0; Axis < 3; ++Axis)
@@ -207,7 +210,7 @@ struct AIRCRAFTLAB_API FRotorFailureManager
 	GENERATED_BODY()
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|RotorHealth")
-	TArray<FRotorHealthState> HealthStates;
+	TMap<FName, FRotorHealthState> HealthStatesByName;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|RotorHealth")
 	FControlAuthorityInfo AuthorityInfo;
@@ -215,14 +218,14 @@ struct AIRCRAFTLAB_API FRotorFailureManager
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	FFlightFailurePolicyStatus PolicyStatus;
 
-	bool FailRotor(int32 RotorIndex, float Timestamp);
-	bool RecoverRotor(int32 RotorIndex);
-	bool SetRotorEffectiveness(int32 RotorIndex, float Effectiveness, float Timestamp, double FailureEpsilon);
-	void FailRotors(const TArray<int32>& RotorIndices, float Timestamp);
+	static void MarkRotorFailed(FRotorHealthState& State, float Timestamp);
+	static void RecoverRotor(FRotorHealthState& State);
+	static void SetRotorEffectiveness(
+		FRotorHealthState& State, float Effectiveness, float Timestamp, double FailureEpsilon);
 	void RecoverAllRotors();
 	void UpdateAuthority(const FAllocationCache& AllocationCache, double BaselineCollectiveAuthority,
 		double BaselineRollAuthority, double BaselinePitchAuthority, double BaselineYawAuthority,
-		double AuthorityEpsilon, int32 NumRotors);
+		double AuthorityEpsilon);
 	bool EvaluatePolicy(const FFlightControllerFailurePolicyConfig& Policy, float DeltaSeconds,
 		EFlightFailurePolicyAction& OutAction);
 	void ResetPolicyLatch();

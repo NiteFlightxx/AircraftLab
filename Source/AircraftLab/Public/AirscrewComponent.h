@@ -8,6 +8,7 @@
 #include "AirscrewComponent.generated.h"
 
 namespace Chaos { class FRigidBodyHandle_Internal; }
+class UAirscrewProfileAsset;
 
 /**
  * 螺旋桨/旋翼组件
@@ -33,10 +34,19 @@ public:
 	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
-	void SetNormalizedCommand(float InNormalizedCommand);
-
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
 	void SetRotorEnabled(bool bNewEnabled);
+
+	/** 设置共享旋翼型号资产，并立即重建本组件的运行时配置快照。 */
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
+	void SetRotorProfile(UAirscrewProfileAsset* InRotorProfile);
+
+	/** 设置本旋翼实例的唯一名称。飞控使用该名称寻址旋翼。 */
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
+	void SetRotorName(FName InRotorName);
+
+	/** 设置本旋翼实例的旋向；CW 与 CCW 旋翼可以共享同一个 Profile。 */
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
+	void SetSpinDirection(EAircraftRotorSpinDirection InSpinDirection);
 
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
 	void SetForceApplicationEnabled(bool bNewEnabled);
@@ -50,36 +60,43 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
 	void SetDebugDrawEnabled(bool bNewEnabled);
 
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
 	float GetNormalizedCommand() const { return TargetNormalizedCommand; }
 
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
 	float GetCurrentCommand() const { return CurrentNormalizedCommand; }
 
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
 	float GetCurrentRpm() const { return CurrentRpm; }
 
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
 	float GetCurrentThrustForce() const { return CurrentThrustForce; }
 
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
 	FVector GetCurrentThrustVectorWorld() const { return CurrentThrustVectorWorld; }
 
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
 	FVector GetCurrentApplicationPointWorld() const { return CurrentApplicationPointWorld; }
 
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
 	float GetCurrentReactionTorqueMagnitude() const { return CurrentReactionTorqueMagnitude; }
 
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
 	FVector GetCurrentReactionTorqueVectorWorld() const { return CurrentReactionTorqueVectorWorld; }
 
-	const FAircraftRotorDefinition& GetRotorDefinition() const { return RotorDefinition; }
-	bool IsRotorEnabled() const { return RotorDefinition.IsEnabled(); }
+	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
+	FName GetRotorName() const { return RotorName.IsNone() ? GetFName() : RotorName; }
+
+	UFUNCTION(BlueprintPure, Category = "Aircraft|Airscrew")
+	EAircraftRotorSpinDirection GetSpinDirection() const { return SpinDirection; }
+
+	float GetSpinDirectionSign() const
+	{
+		return SpinDirection == EAircraftRotorSpinDirection::Clockwise ? -1.0f : 1.0f;
+	}
+
+	const FAircraftRotorDefinition& GetRotorDefinition() const { return RuntimeRotorDefinition; }
+	bool IsRotorEnabled() const { return bRotorEnabled && bRotorProfileValid; }
+	bool HasValidRotorProfile() const { return bRotorProfileValid; }
 
 public:
 	/** 从组件Transform同步旋翼定义数据 */
 	void SyncDefinitionFromComponentTransform();
+
+	/** 从共享资产复制不含 UObject 的运行时快照；只允许在游戏线程调用。 */
+	bool RefreshRotorConfiguration();
 
 	/** 
 	 * 更新旋翼状态（转速、推力、反扭矩）
@@ -118,22 +135,70 @@ public:
 	FVector GetThrustAxisLocal() const { return CachedThrustAxisLocal; }
 
 protected:
-	/** 旋翼物理定义（位置、方向、推力系数、电机参数等） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Airscrew")
-	FAircraftRotorDefinition RotorDefinition;
+	/** 所有同型号 CW/CCW 旋翼共享的唯一物理参数来源。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew|Profile")
+	TObjectPtr<UAirscrewProfileAsset> RotorProfile;
+
+	/** 单个旋翼实例的稳定唯一名称；为空时使用组件名称。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew")
+	FName RotorName = NAME_None;
+
+	/** 单个旋翼实例的旋向；CW 与 CCW 旋翼可以共享同一个 Profile。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew")
+	EAircraftRotorSpinDirection SpinDirection = EAircraftRotorSpinDirection::CounterClockwise;
+
+	/** 单个旋翼实例是否参与模拟。运行时禁用不会修改共享资产。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew")
+	bool bRotorEnabled = true;
 
 	/** 是否启用物理力的施加 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Airscrew")
 	bool bApplyForce = true;
+private:
+	friend class UFlightControllerComponent;
+
+	/** 仅供飞控控制分配调用，不暴露给蓝图。 */
+	void SetNormalizedCommand(float InNormalizedCommand);
 
 	/** 目标归一化指令（0~1），由FlightController分配 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Airscrew", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float TargetNormalizedCommand = 0.0f;
 
-	/** 指令缩放因子，用于微调该旋翼的整体输出比例 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Airscrew", meta = (ClampMin = "0.0"))
-	float CommandScale = 1.0f;
+	/** 飞控指令经电机模型后的当前值。 */
+	float CurrentNormalizedCommand = 0.0f;
 
+	/** 当前转速（RPM），经一阶电机模型平滑后的值 */
+	float CurrentRpm = 0.0f;
+
+	/** 当前产生的推力（牛顿） */
+	float CurrentThrustForce = 0.0f;
+
+	/** 当前推力在世界坐标系下的向量 */
+	FVector CurrentThrustVectorWorld = FVector::ZeroVector;
+
+	/** 当前推力施加点的世界坐标 */
+	FVector CurrentApplicationPointWorld = FVector::ZeroVector;
+
+	/** 当前反扭矩的大小（牛顿·米） */
+	float CurrentReactionTorqueMagnitude = 0.0f;
+
+	/** 当前反扭矩在世界坐标系下的向量 */
+	FVector CurrentReactionTorqueVectorWorld = FVector::ZeroVector;
+
+	bool bSimulationBudgetAllowsDebug = false;
+
+	/** BeginPlay 前从 RotorProfile 复制，物理线程只读取该快照。 */
+	FAircraftRotorDefinition RuntimeRotorDefinition;
+	bool bRotorProfileValid = false;
+
+	/** 旋翼相对于刚体组件原点的局部坐标（厘米）；物理边界再减去 Chaos 真实质心偏移。 */
+	FVector CachedRelativeLocationFromBody = FVector::ZeroVector;
+
+	/** 旋翼推力方向在飞行器机体局部坐标系中的单位向量（通常为 Up/Z 轴） */
+	FVector CachedThrustAxisLocal = FVector::UpVector;
+
+	/** 是否处于强制停止状态（故障时跳过电机模型，立即归零物理输出） */
+	bool bForceStopped = false;
+protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
 	bool bDrawDebug = false;
 
@@ -155,41 +220,4 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
 	FLinearColor DebugDisabledColor = FLinearColor(0.35f, 0.35f, 0.35f, 1.0f);
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew", meta = (AllowPrivateAccess = "true"))
-	float CurrentNormalizedCommand = 0.0f;
-
-	/** 当前转速（RPM），经一阶电机模型平滑后的值 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew", meta = (AllowPrivateAccess = "true"))
-	float CurrentRpm = 0.0f;
-
-	/** 当前产生的推力（牛顿） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew", meta = (AllowPrivateAccess = "true"))
-	float CurrentThrustForce = 0.0f;
-
-	/** 当前推力在世界坐标系下的向量 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew", meta = (AllowPrivateAccess = "true"))
-	FVector CurrentThrustVectorWorld = FVector::ZeroVector;
-
-	/** 当前推力施加点的世界坐标 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew", meta = (AllowPrivateAccess = "true"))
-	FVector CurrentApplicationPointWorld = FVector::ZeroVector;
-
-	/** 当前反扭矩的大小（牛顿·米） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew", meta = (AllowPrivateAccess = "true"))
-	float CurrentReactionTorqueMagnitude = 0.0f;
-
-	/** 当前反扭矩在世界坐标系下的向量 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew", meta = (AllowPrivateAccess = "true"))
-	FVector CurrentReactionTorqueVectorWorld = FVector::ZeroVector;
-
-	bool bSimulationBudgetAllowsDebug = false;
-
-	/** 旋翼相对于刚体组件原点的局部坐标（厘米）；物理边界再减去 Chaos 真实质心偏移。 */
-	FVector CachedRelativeLocationFromBody = FVector::ZeroVector;
-
-	/** 旋翼推力方向在飞行器机体局部坐标系中的单位向量（通常为 Up/Z 轴） */
-	FVector CachedThrustAxisLocal = FVector::UpVector;
-
-	/** 是否处于强制停止状态（故障时跳过电机模型，立即归零物理输出） */
-	bool bForceStopped = false;
 };
