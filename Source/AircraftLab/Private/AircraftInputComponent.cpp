@@ -1,4 +1,4 @@
-#include "DroneInputComponent.h"
+#include "AircraftInputComponent.h"
 
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -8,7 +8,7 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 
-UDroneInputComponent::UDroneInputComponent()
+UAircraftInputComponent::UAircraftInputComponent()
 {
 	// 输入组件不需要Tick，输入由Enhanced Input事件驱动
 	PrimaryComponentTick.bCanEverTick = false;
@@ -18,7 +18,7 @@ UDroneInputComponent::UDroneInputComponent()
  * 将输入映射上下文注册到本地玩家的Enhanced Input子系统
  * 调用链：OwnerPawn → PlayerController → LocalPlayer → Subsystem
  */
-void UDroneInputComponent::ApplyMappingContext() const
+void UAircraftInputComponent::ApplyMappingContext() const
 {
 	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	if (!OwnerPawn || !InputMapping)
@@ -49,7 +49,7 @@ void UDroneInputComponent::ApplyMappingContext() const
  * 绑定Enhanced Input的Action到回调函数
  * 每个Action绑定Triggered（按下/持续）和Completed/Canceled（释放）两个事件
  */
-void UDroneInputComponent::BindInput(UInputComponent* PlayerInputComponent)
+void UAircraftInputComponent::BindInput(UInputComponent* PlayerInputComponent)
 {
 	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent);
 	if (!EnhancedInput)
@@ -60,30 +60,30 @@ void UDroneInputComponent::BindInput(UInputComponent* PlayerInputComponent)
 	// 移动输入：2D向量 → Roll(X) / Pitch(Y)
 	if (IA_Move)
 	{
-		EnhancedInput->BindAction(IA_Move, ETriggerEvent::Triggered, this, &UDroneInputComponent::InputMove);
-		EnhancedInput->BindAction(IA_Move, ETriggerEvent::Completed, this, &UDroneInputComponent::ResetMove);
-		EnhancedInput->BindAction(IA_Move, ETriggerEvent::Canceled, this, &UDroneInputComponent::ResetMove);
+		EnhancedInput->BindAction(IA_Move, ETriggerEvent::Triggered, this, &UAircraftInputComponent::InputMove);
+		EnhancedInput->BindAction(IA_Move, ETriggerEvent::Completed, this, &UAircraftInputComponent::ResetMove);
+		EnhancedInput->BindAction(IA_Move, ETriggerEvent::Canceled, this, &UAircraftInputComponent::ResetMove);
 	}
 
 	// 油门输入：1D轴 → Throttle
 	if (IA_Throttle)
 	{
-		EnhancedInput->BindAction(IA_Throttle, ETriggerEvent::Triggered, this, &UDroneInputComponent::InputThrottle);
-		EnhancedInput->BindAction(IA_Throttle, ETriggerEvent::Completed, this, &UDroneInputComponent::ResetThrottle);
-		EnhancedInput->BindAction(IA_Throttle, ETriggerEvent::Canceled, this, &UDroneInputComponent::ResetThrottle);
+		EnhancedInput->BindAction(IA_Throttle, ETriggerEvent::Triggered, this, &UAircraftInputComponent::InputThrottle);
+		EnhancedInput->BindAction(IA_Throttle, ETriggerEvent::Completed, this, &UAircraftInputComponent::ResetThrottle);
+		EnhancedInput->BindAction(IA_Throttle, ETriggerEvent::Canceled, this, &UAircraftInputComponent::ResetThrottle);
 	}
 
 	// 偏航输入：1D轴 → Yaw
 	if (IA_Turn)
 	{
-		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Triggered, this, &UDroneInputComponent::InputTurn);
-		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Completed, this, &UDroneInputComponent::ResetTurn);
-		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Canceled, this, &UDroneInputComponent::ResetTurn);
+		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Triggered, this, &UAircraftInputComponent::InputTurn);
+		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Completed, this, &UAircraftInputComponent::ResetTurn);
+		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Canceled, this, &UAircraftInputComponent::ResetTurn);
 	}
 }
 
 /** 移动输入回调：2D向量 X→Roll, Y→Pitch，clamp到[-1,1] */
-void UDroneInputComponent::InputMove(const FInputActionValue& Value)
+void UAircraftInputComponent::InputMove(const FInputActionValue& Value)
 {
 	const FVector2D Move = Value.Get<FVector2D>();
 	PilotInput.Roll = FMath::Clamp(Move.X, -1.0f, 1.0f);
@@ -91,32 +91,32 @@ void UDroneInputComponent::InputMove(const FInputActionValue& Value)
 }
 
 /** 油门输入回调：1D值→Throttle，clamp到[-1,1] */
-void UDroneInputComponent::InputThrottle(const FInputActionValue& Value)
+void UAircraftInputComponent::InputThrottle(const FInputActionValue& Value)
 {
 	PilotInput.Throttle = FMath::Clamp(Value.Get<float>(), -1.0f, 1.0f);
 }
 
 /** 偏航输入回调：1D值→Yaw，clamp到[-1,1] */
-void UDroneInputComponent::InputTurn(const FInputActionValue& Value)
+void UAircraftInputComponent::InputTurn(const FInputActionValue& Value)
 {
 	PilotInput.Yaw = FMath::Clamp(Value.Get<float>(), -1.0f, 1.0f);
 }
 
 /** 释放移动输入：Roll/Pitch归零 */
-void UDroneInputComponent::ResetMove(const FInputActionValue& Value)
+void UAircraftInputComponent::ResetMove(const FInputActionValue& Value)
 {
 	PilotInput.Roll = 0.0f;
 	PilotInput.Pitch = 0.0f;
 }
 
 /** 释放油门输入：Throttle归零 */
-void UDroneInputComponent::ResetThrottle(const FInputActionValue& Value)
+void UAircraftInputComponent::ResetThrottle(const FInputActionValue& Value)
 {
 	PilotInput.Throttle = 0.0f;
 }
 
 /** 释放偏航输入：Yaw归零 */
-void UDroneInputComponent::ResetTurn(const FInputActionValue& Value)
+void UAircraftInputComponent::ResetTurn(const FInputActionValue& Value)
 {
 	PilotInput.Yaw = 0.0f;
 }

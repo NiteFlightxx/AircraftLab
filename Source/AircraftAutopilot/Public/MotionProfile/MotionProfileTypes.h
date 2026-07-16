@@ -12,8 +12,8 @@
  * 第三部分核心数据：把 Trajectory Generator 输出的【名义设定值】限幅为
  * 【物理可达设定值】，保证设定值各阶导数连续（Jerk 有界），从而消灭"突兀"。
  *
- * 与 AircraftLab 的 FDroneControlLimits 关系：
- *   - FDroneControlLimits 是【控制器硬限幅】（对 PID 输出 clamp），
+ * 与 AircraftLab 的 FAircraftControlLimits 关系：
+ *   - FAircraftControlLimits 是【控制器硬限幅】（对 PID 输出 clamp），
  *     clamp 本身就是 Jerk=∞ 的来源之一。
  *   - FProfileLimits 是【设定值整形限幅】（对设定值速率限幅），
  *     通过逐周期 Slew 限制让设定值平滑过渡，PID 只需跟踪平滑目标。

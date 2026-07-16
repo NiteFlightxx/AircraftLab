@@ -1,6 +1,6 @@
 #include "FlightControllerProfileAsset.h"
 
-void FlightControllerConfig::InitializeDefaults(FDroneFlightControllerConfig& OutConfig)
+void FlightControllerConfig::InitializeDefaults(FAircraftFlightControllerConfig& OutConfig)
 {
 	// ========================================================================
 	// 运动限制（安全边界）

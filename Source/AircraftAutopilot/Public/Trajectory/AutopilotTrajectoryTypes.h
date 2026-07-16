@@ -14,7 +14,7 @@
  *   - 内部几何计算使用 Frenet-Serret 路径坐标系（弧长 s、切向/法向），
  *     天然适配 Pure Pursuit / Vector Field 等路径跟踪算法（第五部分）。
  *   - 对外接口（FTrajectoryPoint）输出世界坐标系设定值，
- *     与 AircraftLab 的 FDroneKinematicState 约定一致（cm / ° / 世界系），
+ *     与 AircraftLab 的 FAircraftKinematicState 约定一致（cm / ° / 世界系），
  *     下游控制器无需感知 Frenet。
  *
  * 单位约定（与 AircraftLab 全代码统一）：

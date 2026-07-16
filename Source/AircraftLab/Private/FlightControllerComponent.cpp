@@ -3,7 +3,7 @@
 
 #include "AircraftPawn.h"
 #include "AirscrewComponent.h"
-#include "DroneInputComponent.h"
+#include "AircraftInputComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -50,7 +50,7 @@ void UFlightControllerComponent::BeginPlay()
 		Runtime.EstimatedState.State.PositionCm = BodyPrimitive->GetComponentLocation();
 		Runtime.EstimatedState.State.VelocityCmPerSec = BodyPrimitive->GetPhysicsLinearVelocity();
 		Runtime.EstimatedState.State.AttitudeDegrees = BodyPrimitive->GetComponentRotation();
-		Runtime.EstimatedState.AltitudeReference = EDroneAltitudeReference::WorldZ;
+		Runtime.EstimatedState.AltitudeReference = EAircraftAltitudeReference::WorldZ;
 		Runtime.EstimatedState.AttitudeConfidence = 1.0f;
 		Runtime.EstimatedState.PositionConfidence = 1.0f;
 	}
@@ -58,10 +58,10 @@ void UFlightControllerComponent::BeginPlay()
 	// 注意：这里不预先设置 Runtime.ActiveFlightMode，让 SetFlightMode 能正确执行
 	// SetFlightMode 内部有 early-return guard: if (Active == New) return;
 	// 如果在调用前就把 Active 设成 New，则初始化链（UpdateModeCapabilities + ResetControllerState）会被跳过
-	SetFlightMode(EDroneFlightMode::PositionHold);
+	SetFlightMode(EAircraftFlightMode::PositionHold);
 
 	// 解锁状态：初始是否解锁取决于 Profile
-	Runtime.ArmState = EDroneArmState::Armed;
+	Runtime.ArmState = EAircraftArmState::Armed;
 	UpdateHomeState(true);
 	ResetControllerState();
 }
@@ -107,12 +107,12 @@ void UFlightControllerComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		PhysicsCache.GravityMagnitudeCmPerSecSq = FMath::Abs(World->GetGravityZ());
 
 	// 从输入组件读取飞手摇杆状态
-	const FDronePilotInput PilotInput = DroneInput ? DroneInput->GetPilotInput() : FDronePilotInput();
+	const FAircraftPilotInput PilotInput = AircraftInput ? AircraftInput->GetPilotInput() : FAircraftPilotInput();
 	UpdateRequestedModeAndArmState(PilotInput);
 	ApplyFailurePolicy(DeltaTime);
 
 	// 未解锁时停止所有旋翼（带 PID 重置）
-	if (Runtime.ArmState != EDroneArmState::Armed)
+	if (Runtime.ArmState != EAircraftArmState::Armed)
 		StopAllRotors(true);
 
 	// 跨线程数据传递：游戏线程写入，物理线程读取
@@ -165,7 +165,7 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 {
 	Super::AsyncPhysicsTickComponent(DeltaTime, SimTime);
 	// 仅在已解锁且控制器使能时执行
-	if (DeltaTime <= UE_SMALL_NUMBER || !bControllerEnabled || Runtime.ArmState != EDroneArmState::Armed) return;
+	if (DeltaTime <= UE_SMALL_NUMBER || !bControllerEnabled || Runtime.ArmState != EAircraftArmState::Armed) return;
 	if (Airscrews.IsEmpty() || !BodyPrimitive) return;
 
 	// 获取 Chaos 物理线程刚体句柄
@@ -215,7 +215,7 @@ void UFlightControllerComponent::RefreshReferences()
 {
 	BodyPrimitive = ResolveBodyPrimitive();
 	if (!bRuntimeConfigInitialized) return;
-	DroneInput = ResolveDroneInput();
+	AircraftInput = ResolveAircraftInput();
 	UpdateRotorCache();
 }
 
@@ -227,7 +227,7 @@ void UFlightControllerComponent::ApplyFailurePolicy(float DeltaSeconds)
 		return;
 	}
 
-	if (RuntimeConfig.FailurePolicy.bEvaluateOnlyWhenArmed && Runtime.ArmState != EDroneArmState::Armed)
+	if (RuntimeConfig.FailurePolicy.bEvaluateOnlyWhenArmed && Runtime.ArmState != EAircraftArmState::Armed)
 	{
 		return;
 	}
@@ -255,10 +255,10 @@ void UFlightControllerComponent::ApplyFailurePolicy(float DeltaSeconds)
 		SetFlightMode(RuntimeConfig.FailurePolicy.DegradedFlightMode);
 		break;
 	case EFlightFailurePolicyAction::Failsafe:
-		Runtime.ArmState = EDroneArmState::Failsafe;
+		Runtime.ArmState = EAircraftArmState::Failsafe;
 		break;
 	case EFlightFailurePolicyAction::EmergencyStop:
-		Runtime.ArmState = EDroneArmState::EmergencyStop;
+		Runtime.ArmState = EAircraftArmState::EmergencyStop;
 		break;
 	default:
 		break;
@@ -281,8 +281,8 @@ void UFlightControllerComponent::Arm()
 		UE_LOG(LogTemp, Warning, TEXT("Arm rejected: FailurePolicy is latched. Reset the policy latch after resolving the fault."));
 		return;
 	}
-	if (Runtime.ArmState == EDroneArmState::Armed) return;
-	Runtime.ArmState = EDroneArmState::Armed;
+	if (Runtime.ArmState == EAircraftArmState::Armed) return;
+	Runtime.ArmState = EAircraftArmState::Armed;
 	UpdateHomeState(true);       // 解锁时重置归航点
 	ResetControllerState();       // 清零所有 PID 状态
 }
@@ -290,54 +290,54 @@ void UFlightControllerComponent::Arm()
 
 void UFlightControllerComponent::Disarm()
 {
-	if (Runtime.ArmState == EDroneArmState::Disarmed) return;
-	Runtime.ArmState = EDroneArmState::Disarmed;
+	if (Runtime.ArmState == EAircraftArmState::Disarmed) return;
+	Runtime.ArmState = EAircraftArmState::Disarmed;
 	StopAllRotors(true);         // 停桨并重置 PID
 }
 
 
-void UFlightControllerComponent::SetFlightMode(EDroneFlightMode NewFlightMode)
+void UFlightControllerComponent::SetFlightMode(EAircraftFlightMode NewFlightMode)
 {
 	if (Runtime.ActiveFlightMode == NewFlightMode) return;
 	Runtime.ActiveFlightMode = NewFlightMode;
 
 	switch (NewFlightMode)
 	{
-	case EDroneFlightMode::Manual:
+	case EAircraftFlightMode::Manual:
 		// 纯手动：无自稳，摇杆直接映射到电机
-		Runtime.AttitudeMode = EDroneAttitudeMode::Manual;
+		Runtime.AttitudeMode = EAircraftAttitudeMode::Manual;
 		Runtime.bAltitudeHoldEnabled = false; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = false;
 		break;
-	case EDroneFlightMode::Acro:
+	case EAircraftFlightMode::Acro:
 		// 特技模式：角速率控制（无自动水平），适合筋斗/横滚
-		Runtime.AttitudeMode = EDroneAttitudeMode::Acro;
+		Runtime.AttitudeMode = EAircraftAttitudeMode::Acro;
 		Runtime.bAltitudeHoldEnabled = false; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = false;
 		break;
-	case EDroneFlightMode::Angle:
+	case EAircraftFlightMode::Angle:
 		// 角度模式：姿态角控制（自动水平），最常用的飞行模式
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
+		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 		Runtime.bAltitudeHoldEnabled = false; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = false;
 		break;
-	case EDroneFlightMode::AltitudeHold:
+	case EAircraftFlightMode::AltitudeHold:
 		// 高度保持：在 Angle 基础上加气压计定高
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
+		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 		Runtime.bAltitudeHoldEnabled = true; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = false;
 		break;
-	case EDroneFlightMode::VelocityHold:
+	case EAircraftFlightMode::VelocityHold:
 		// 速度保持：加 GPS 速度闭环
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
+		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 		Runtime.bAltitudeHoldEnabled = true; Runtime.bPositionHoldEnabled = false; Runtime.bVelocityHoldEnabled = true;
 		break;
-	case EDroneFlightMode::PositionHold:
+	case EAircraftFlightMode::PositionHold:
 		// 位置保持：全功能定点悬停
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
+		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 		Runtime.bAltitudeHoldEnabled = true; Runtime.bPositionHoldEnabled = true; Runtime.bVelocityHoldEnabled = true;
 		break;
-	case EDroneFlightMode::Mission:
-	case EDroneFlightMode::ReturnToHome:
-	case EDroneFlightMode::AutoLand:
+	case EAircraftFlightMode::Mission:
+	case EAircraftFlightMode::ReturnToHome:
+	case EAircraftFlightMode::AutoLand:
 		// 自动模式：全功能 + 自动航点/返航/降落
-		Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
+		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 		Runtime.bAltitudeHoldEnabled = true; Runtime.bPositionHoldEnabled = true; Runtime.bVelocityHoldEnabled = true;
 		break;
 	}
@@ -348,7 +348,7 @@ void UFlightControllerComponent::SetFlightMode(EDroneFlightMode NewFlightMode)
 }
 
 
-void UFlightControllerComponent::SetAttitudeMode(EDroneAttitudeMode NewAttitudeMode)
+void UFlightControllerComponent::SetAttitudeMode(EAircraftAttitudeMode NewAttitudeMode)
 {
 	if (Runtime.AttitudeMode == NewAttitudeMode) return;
 	Runtime.AttitudeMode = NewAttitudeMode;
@@ -459,7 +459,7 @@ void UFlightControllerComponent::SetAutopilotProvider(UObject* Provider)
 bool UFlightControllerComponent::GetAircraftFlightKinematicState(
 	FAircraftFlightKinematicState& OutState) const
 {
-	const FDroneKinematicState& State = Runtime.EstimatedState.State;
+	const FAircraftKinematicState& State = Runtime.EstimatedState.State;
 	OutState.PositionCm = State.PositionCm;
 	OutState.VelocityCmPerSec = State.VelocityCmPerSec;
 	OutState.AccelerationWorldCmPerSecSq = State.AccelerationWorldCmPerSecSq;
@@ -478,7 +478,7 @@ void UFlightControllerComponent::SetAircraftAutopilotProvider(UObject* Provider)
 uint8 UFlightControllerComponent::ActivateAircraftAutopilotControl()
 {
 	const uint8 PreviousMode = static_cast<uint8>(Runtime.ActiveFlightMode);
-	SetFlightMode(EDroneFlightMode::Mission);
+	SetFlightMode(EAircraftFlightMode::Mission);
 	SetUseAutopilotSetpoint(true);
 	return PreviousMode;
 }
@@ -487,9 +487,9 @@ uint8 UFlightControllerComponent::ActivateAircraftAutopilotControl()
 void UFlightControllerComponent::DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode)
 {
 	SetUseAutopilotSetpoint(false);
-	if (Runtime.ActiveFlightMode == EDroneFlightMode::Mission)
+	if (Runtime.ActiveFlightMode == EAircraftFlightMode::Mission)
 	{
-		SetFlightMode(static_cast<EDroneFlightMode>(PreviousFlightMode));
+		SetFlightMode(static_cast<EAircraftFlightMode>(PreviousFlightMode));
 	}
 }
 
@@ -499,7 +499,7 @@ void UFlightControllerComponent::GetAircraftAutopilotMotionLimits(
 	float& OutMaxSpeedCmPerSec,
 	float& OutMaxAccelerationCmPerSecSq) const
 {
-	const FDroneControlLimits& HardLimits = RuntimeConfig.Controller.Limits;
+	const FAircraftControlLimits& HardLimits = RuntimeConfig.Controller.Limits;
 	const float TiltLimitedAcceleration = PhysicsCache.GravityMagnitudeCmPerSecSq
 		* FMath::Tan(FMath::DegreesToRadians(HardLimits.MaxTiltAngleDegrees));
 	const float PhysicalAcceleration = FMath::Min(
@@ -544,30 +544,30 @@ void UFlightControllerComponent::ClearMovementIntentOverride()
 
 void UFlightControllerComponent::UpdateModeCapabilities()
 {
-	const EDroneFlightMode Mode = Runtime.ActiveFlightMode;
-	const EDroneAttitudeMode AttMode = Runtime.AttitudeMode;
+	const EAircraftFlightMode Mode = Runtime.ActiveFlightMode;
+	const EAircraftAttitudeMode AttMode = Runtime.AttitudeMode;
 
 	// 偏航保持需要角度环参与（Manual/Acro 没有角度环，无法锁航向）
-	ModeCapabilities.CanHoldYaw = (AttMode != EDroneAttitudeMode::Manual && AttMode != EDroneAttitudeMode::Acro);
+	ModeCapabilities.CanHoldYaw = (AttMode != EAircraftAttitudeMode::Manual && AttMode != EAircraftAttitudeMode::Acro);
 
 	// 高度保持：手动开启 或 自动模式隐含
 	ModeCapabilities.CanHoldAltitude = Runtime.bAltitudeHoldEnabled
-		|| Mode == EDroneFlightMode::PositionHold || Mode == EDroneFlightMode::ReturnToHome
-		|| Mode == EDroneFlightMode::Mission || Mode == EDroneFlightMode::AutoLand;
+		|| Mode == EAircraftFlightMode::PositionHold || Mode == EAircraftFlightMode::ReturnToHome
+		|| Mode == EAircraftFlightMode::Mission || Mode == EAircraftFlightMode::AutoLand;
 
 	// 速度控制：手动开启 或 自动模式隐含
 	ModeCapabilities.CanUseVelocityControl = Runtime.bVelocityHoldEnabled || Runtime.bPositionHoldEnabled
-		|| Mode == EDroneFlightMode::ReturnToHome || Mode == EDroneFlightMode::Mission || Mode == EDroneFlightMode::AutoLand;
+		|| Mode == EAircraftFlightMode::ReturnToHome || Mode == EAircraftFlightMode::Mission || Mode == EAircraftFlightMode::AutoLand;
 
 	// 位置控制：手动开启 或 自动模式隐含
 	ModeCapabilities.CanUsePositionControl = Runtime.bPositionHoldEnabled
-		|| Mode == EDroneFlightMode::ReturnToHome || Mode == EDroneFlightMode::Mission || Mode == EDroneFlightMode::AutoLand;
+		|| Mode == EAircraftFlightMode::ReturnToHome || Mode == EAircraftFlightMode::Mission || Mode == EAircraftFlightMode::AutoLand;
 
 	// 位置保持 = 位置控制能力
 	ModeCapabilities.CanHoldPosition = ModeCapabilities.CanUsePositionControl;
 
 	// 返航能力
-	ModeCapabilities.CanUseReturnHome = (Mode == EDroneFlightMode::ReturnToHome);
+	ModeCapabilities.CanUseReturnHome = (Mode == EAircraftFlightMode::ReturnToHome);
 }
 
 
@@ -626,21 +626,21 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 	Runtime.EstimatedState.State.AttitudeDegrees = BodyQuat.Rotator();
 	Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec = PhysicsCache.AngularVelocityBodyDegPerSec;
 	Runtime.EstimatedState.State.AngularAccelerationBodyDegreesPerSecSq = AngularAccelerationBody;
-	Runtime.EstimatedState.AltitudeReference = EDroneAltitudeReference::WorldZ;
+	Runtime.EstimatedState.AltitudeReference = EAircraftAltitudeReference::WorldZ;
 	// 置信度硬编码 1.0 = 完美估计（仿真特权）
 	Runtime.EstimatedState.AttitudeConfidence = 1.0f;
 	Runtime.EstimatedState.PositionConfidence = 1.0f;
 }
 
 
-void UFlightControllerComponent::UpdateRequestedModeAndArmState(const FDronePilotInput& PilotInput)
+void UFlightControllerComponent::UpdateRequestedModeAndArmState(const FAircraftPilotInput& PilotInput)
 {
-	if (Runtime.ArmState == EDroneArmState::Armed) UpdateHomeState(true);
+	if (Runtime.ArmState == EAircraftArmState::Armed) UpdateHomeState(true);
 }
 
 
 FAutopilotMovementIntent UFlightControllerComponent::BuildManualMovementIntent(
-	const FDronePilotInput& PilotInput) const
+	const FAircraftPilotInput& PilotInput) const
 {
 	FAutopilotMovementIntent Intent;
 	const bool bHasHorizontalInput = FMath::Abs(PilotInput.Roll) > RuntimeConfig.Input.HorizontalHoldStickDeadband
@@ -654,7 +654,7 @@ FAutopilotMovementIntent UFlightControllerComponent::BuildManualMovementIntent(
 	const FRotator FlatYaw(0.0f, Runtime.EstimatedState.State.AttitudeDegrees.Yaw, 0.0f);
 	const FVector Forward = FRotationMatrix(FlatYaw).GetUnitAxis(EAxis::X);
 	const FVector Right = FRotationMatrix(FlatYaw).GetUnitAxis(EAxis::Y);
-	const FDroneControlLimits& Limits = RuntimeConfig.Controller.Limits;
+	const FAircraftControlLimits& Limits = RuntimeConfig.Controller.Limits;
 	if (bHasHorizontalInput)
 	{
 		Intent.DesiredVelocityCmPerSec = Forward * (PilotInput.Pitch * Limits.MaxHorizontalSpeedCmPerSec)
@@ -706,15 +706,15 @@ void UFlightControllerComponent::UpdateHomeState(bool bForceResetHome)
 }
 
 
-void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FDronePilotInput& PilotInput)
+void UFlightControllerComponent::RunControlLoop(float DeltaSeconds, const FAircraftPilotInput& PilotInput)
 {
 	if (Airscrews.IsEmpty()) UpdateRotorCache();
 	if (Airscrews.IsEmpty() || !BodyPrimitive) return;
 
 	// 清空上帧的控制输出
 	// Preserve RotorCommands capacity: this runs on every async physics step.
-	Runtime.ControlOutput.Targets = FDroneControlTargets();
-	Runtime.ControlOutput.Wrench = FDroneWrenchCommand();
+	Runtime.ControlOutput.Targets = FAircraftControlTargets();
+	Runtime.ControlOutput.Wrench = FAircraftWrenchCommand();
 	Runtime.ControlOutput.Targets.FlightMode = Runtime.ActiveFlightMode;
 
 	// ---- 串级 PID 按固定顺序执行 ----
@@ -794,8 +794,8 @@ void UFlightControllerComponent::ResetControllerState()
 void UFlightControllerComponent::StopAllRotors(bool bResetController)
 {
 	if (bResetController) ResetControllerState();
-	Runtime.ControlOutput.Targets = FDroneControlTargets();
-	Runtime.ControlOutput.Wrench = FDroneWrenchCommand();
+	Runtime.ControlOutput.Targets = FAircraftControlTargets();
+	Runtime.ControlOutput.Wrench = FAircraftWrenchCommand();
 	Runtime.ControlOutput.Targets.FlightMode = Runtime.ActiveFlightMode;
 	Runtime.ControlOutput.RotorCommands.SetNum(Airscrews.Num());
 
@@ -829,9 +829,9 @@ UPrimitiveComponent* UFlightControllerComponent::ResolveBodyPrimitive() const
 }
 
 
-UDroneInputComponent* UFlightControllerComponent::ResolveDroneInput() const
+UAircraftInputComponent* UFlightControllerComponent::ResolveAircraftInput() const
 {
 	const AActor* Owner = GetOwner();
 	if (!Owner) return nullptr;
-	return Owner->FindComponentByClass<UDroneInputComponent>();
+	return Owner->FindComponentByClass<UAircraftInputComponent>();
 }

@@ -1,12 +1,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DroneTypes.h"
+#include "AircraftType.h"
 #include "GameFramework/Pawn.h"
 
 #include "AircraftPawn.generated.h"
 
-class UDroneInputComponent;
+class UAircraftInputComponent;
 class UFlightControllerComponent;
 class USkeletalMeshComponent;
 class UActorComponent;
@@ -18,7 +18,7 @@ class UAutopilotComponent;
  *
  * 包含五个核心组件：
  * 1. BodyMesh（骨骼网格体） - 飞行器的物理表现和碰撞体
- * 2. DroneInput（输入组件） - 处理玩家输入映射
+ * 2. AircraftInput（输入组件） - 处理玩家输入映射
  * 3. FlightController（飞控组件） - 运行PID控制循环和电机分配
  * 4. AutopilotComponent（自动驾驶组件） - 轨迹与设定值生成
  * 5. SimulationLOD（模拟LOD组件） - 应用集中式模拟预算
@@ -41,19 +41,19 @@ public:
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
 	/** 获取机身骨骼网格体组件 */
-	UFUNCTION(BlueprintPure, Category = "Drone")
+	UFUNCTION(BlueprintPure, Category = "Aircraft")
 	USkeletalMeshComponent* GetBodyMesh() const { return BodyMesh; }
 
 	/** 获取无人机输入组件 */
-	UFUNCTION(BlueprintPure, Category = "Drone")
-	UDroneInputComponent* GetDroneInputComponent() const { return DroneInput; }
+	UFUNCTION(BlueprintPure, Category = "Aircraft")
+	UAircraftInputComponent* GetAircraftInputComponent() const { return AircraftInput; }
 
 	/** 获取飞行控制器组件 */
-	UFUNCTION(BlueprintPure, Category = "Drone")
+	UFUNCTION(BlueprintPure, Category = "Aircraft")
 	UFlightControllerComponent* GetFlightControllerComponent() const { return FlightController; }
 
 	/** 获取 C++ 原生 Autopilot 默认子对象。 */
-	UFUNCTION(BlueprintPure, Category = "Drone")
+	UFUNCTION(BlueprintPure, Category = "Aircraft")
 	UAutopilotComponent* GetAutopilotComponent() const { return AutopilotComponent; }
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
@@ -61,15 +61,15 @@ public:
 
 private:
 	/** 机身骨骼网格体（同时也是Root组件和物理碰撞体） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USkeletalMeshComponent> BodyMesh;
 
 	/** 无人机输入组件（Enhanced Input 映射和摇杆处理） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UDroneInputComponent> DroneInput;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAircraftInputComponent> AircraftInput;
 
 	/** 飞行控制器组件（PID控制、混合器、状态估计） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UFlightControllerComponent> FlightController;
 
 	/** Optional data-driven simulation budget adapter; policy evaluation lives in the world subsystem. */
@@ -77,7 +77,7 @@ private:
 	TObjectPtr<UAircraftSimulationLODComponent> SimulationLOD;
 	
 	/** 自动驾驶组件（C++ 原生默认子对象）。 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Autopilot", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAutopilotComponent> AutopilotComponent;
 	
 };

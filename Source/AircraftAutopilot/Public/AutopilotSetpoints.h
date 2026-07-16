@@ -17,7 +17,7 @@
  *         → FAutopilotInjection
  *
  * 坐标系：位置/速度/加速度=世界系(cm)；姿态=欧拉角(°)；角速率=机体系(°/s)。
- * 与 AircraftLab FDroneKinematicState 约定一致，集成时零转换。
+ * 与 AircraftLab FAircraftKinematicState 约定一致，集成时零转换。
  */
 
 /**

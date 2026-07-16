@@ -80,7 +80,7 @@ struct AIRCRAFTLAB_API FFlightControlSolver
 {
 	GENERATED_BODY()
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|PID")
 	FControllerPidStates PidStates;
 
 	FFlightControlReferenceModelState RollReferenceModel;
@@ -131,7 +131,7 @@ struct AIRCRAFTLAB_API FControlAllocator
 	FAllocationCache Cache;
 	FAllocationDiagnostics Diagnostics;
 	TArray<float> CommandBuffer;
-	TArray<FDroneRotorDefinition> RotorDefinitionBuffer;
+	TArray<FAircraftRotorDefinition> RotorDefinitionBuffer;
 	/** Reused active-set work buffers; the async physics path must not allocate every step. */
 	TArray<double> AllocatedThrustFractions;
 	TArray<bool> SolvedRotors;
@@ -141,7 +141,7 @@ struct AIRCRAFTLAB_API FControlAllocator
 
 	void Allocate(const FFlightControllerRuntimeConfig& Config, const FPhysicsCache& PhysicsCache,
 		const TArray<FRotorHealthState>& RotorHealthStates, int32 NumRotors,
-		float CollectiveCommand, const FVector& AxisCommands, FDroneControlOutput& OutControlOutput);
+		float CollectiveCommand, const FVector& AxisCommands, FAircraftControlOutput& OutControlOutput);
 
 	void Reset()
 	{
@@ -166,37 +166,37 @@ struct AIRCRAFTLAB_API FFlightFailurePolicyStatus
 {
 	GENERATED_BODY()
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	bool bHasAuthoritySample = false;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	bool bViolationActive = false;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	bool bTriggered = false;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	float ViolationDurationSeconds = 0.0f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	float RecoveryDurationSeconds = 0.0f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	EFlightFailurePolicyAction TriggeredAction = EFlightFailurePolicyAction::WarningOnly;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	bool bHealthyRotorCountViolation = false;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	bool bCollectiveAuthorityViolation = false;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	bool bRollAuthorityViolation = false;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	bool bPitchAuthorityViolation = false;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	bool bYawAuthorityViolation = false;
 };
 
@@ -206,13 +206,13 @@ struct AIRCRAFTLAB_API FRotorFailureManager
 {
 	GENERATED_BODY()
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|RotorHealth")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|RotorHealth")
 	TArray<FRotorHealthState> HealthStates;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|RotorHealth")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|RotorHealth")
 	FControlAuthorityInfo AuthorityInfo;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FailurePolicy")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FailurePolicy")
 	FFlightFailurePolicyStatus PolicyStatus;
 
 	bool FailRotor(int32 RotorIndex, float Timestamp);

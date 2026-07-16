@@ -7,26 +7,26 @@ DEFINE_LOG_CATEGORY_STATIC(LogFlightControllerDebug, Log, All);
 
 namespace FlightControllerDebug
 {
-const TCHAR* GetFlightModeLabel(EDroneFlightMode FlightMode)
+const TCHAR* GetFlightModeLabel(EAircraftFlightMode FlightMode)
 {
 	switch (FlightMode)
 	{
-	case EDroneFlightMode::Manual: return TEXT("Manual");
-	case EDroneFlightMode::Acro: return TEXT("Acro");
-	case EDroneFlightMode::Angle: return TEXT("Angle");
-	case EDroneFlightMode::AltitudeHold: return TEXT("AltitudeHold");
-	case EDroneFlightMode::PositionHold: return TEXT("PositionHold");
-	case EDroneFlightMode::VelocityHold: return TEXT("VelocityHold");
-	case EDroneFlightMode::Mission: return TEXT("Mission");
-	case EDroneFlightMode::ReturnToHome: return TEXT("ReturnToHome");
-	case EDroneFlightMode::AutoLand: return TEXT("AutoLand");
+	case EAircraftFlightMode::Manual: return TEXT("Manual");
+	case EAircraftFlightMode::Acro: return TEXT("Acro");
+	case EAircraftFlightMode::Angle: return TEXT("Angle");
+	case EAircraftFlightMode::AltitudeHold: return TEXT("AltitudeHold");
+	case EAircraftFlightMode::PositionHold: return TEXT("PositionHold");
+	case EAircraftFlightMode::VelocityHold: return TEXT("VelocityHold");
+	case EAircraftFlightMode::Mission: return TEXT("Mission");
+	case EAircraftFlightMode::ReturnToHome: return TEXT("ReturnToHome");
+	case EAircraftFlightMode::AutoLand: return TEXT("AutoLand");
 	default: return TEXT("Unknown");
 	}
 }
 
-const TCHAR* GetSpinDirectionLabel(EDroneRotorSpinDirection SpinDirection)
+const TCHAR* GetSpinDirectionLabel(EAircraftRotorSpinDirection SpinDirection)
 {
-	return SpinDirection == EDroneRotorSpinDirection::Clockwise ? TEXT("CW") : TEXT("CCW");
+	return SpinDirection == EAircraftRotorSpinDirection::Clockwise ? TEXT("CW") : TEXT("CCW");
 }
 
 int32 GetSignBucket(float Value, float Deadband)
@@ -56,7 +56,7 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
 		if (!Airscrew) continue;
 
-		const FDroneRotorDefinition& Rotor = Airscrew->GetRotorDefinition();
+		const FAircraftRotorDefinition& Rotor = Airscrew->GetRotorDefinition();
 		const FVector ArmCm = GetRotorPositionFromCenterOfMassBodyCm(Airscrew);
 		const FVector AxisBody = GetRotorThrustAxisBody(Airscrew);
 		const FVector4 Jacobian = BuildJacobianColumn(Airscrew, ArmCm);
@@ -87,7 +87,7 @@ void UFlightControllerComponent::LogRotorLayoutIfNeeded()
 }
 
 void UFlightControllerComponent::MaybeEmitDebugLog(
-	const FDronePilotInput& PilotInput, float DeltaSeconds, float CollectiveCommand,
+	const FAircraftPilotInput& PilotInput, float DeltaSeconds, float CollectiveCommand,
 	float DesiredVerticalVelocity, const FRotator& DesiredAttitude, float DesiredYawRate,
 	const FVector& DesiredBodyRates, const FVector& AxisCommands)
 {
@@ -232,7 +232,7 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 	for (int32 RotorIndex = 0; RotorIndex < Airscrews.Num(); ++RotorIndex)
 	{
 		const UAirscrewComponent* Airscrew = Airscrews[RotorIndex];
-		const FDroneRotorCommand* Command = Runtime.ControlOutput.RotorCommands.IsValidIndex(RotorIndex)
+		const FAircraftRotorCommand* Command = Runtime.ControlOutput.RotorCommands.IsValidIndex(RotorIndex)
 			? &Runtime.ControlOutput.RotorCommands[RotorIndex] : nullptr;
 		if (!Airscrew || !Command) continue;
 

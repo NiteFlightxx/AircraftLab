@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "AircraftMovementIntent.h"
-#include "DroneTypes.h"
+#include "AircraftType.h"
 #include "AutopilotProvider.h"
 
 #include "FlightControllerTypes.generated.h"
@@ -25,7 +25,7 @@
  *   - YawRateSetpointDegPerSec → 偏航环 Kff（偏航角速度前馈）
  *   - TurnRollDegrees → 协调转弯滚转附加（叠加到期望 Roll）
  *
- * 单位：位置 cm、速度 cm/s、加速度 cm/s²、角度 °、角速度 °/s（与 DroneTypes 一致）。
+ * 单位：位置 cm、速度 cm/s、加速度 cm/s²、角度 °、角速度 °/s（与 AircraftTypes 一致）。
  */
 
 /**
@@ -60,15 +60,15 @@ struct AIRCRAFTLAB_API FRotorHealthState
 	GENERATED_BODY()
 
 	/** 旋翼效能 0.0=完全失效 1.0=正常 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|RotorHealth", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|RotorHealth", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float Effectiveness = 1.0f;
 
 	/** 是否已失效 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|RotorHealth")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|RotorHealth")
 	bool bIsFailed = false;
 
 	/** 失效时间戳（秒） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|RotorHealth")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|RotorHealth")
 	float FailureTimestamp = -1.0f;
 
 	/** 失效模式（预留扩展） */
@@ -108,27 +108,27 @@ struct AIRCRAFTLAB_API FControlAuthorityInfo
 	GENERATED_BODY()
 
 	/** 总距控制能力 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Authority")
 	float CollectiveAuthority = 0.0f;
 
 	/** 横滚控制能力 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Authority")
 	float RollAuthority = 0.0f;
 
 	/** 俯仰控制能力 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Authority")
 	float PitchAuthority = 0.0f;
 
 	/** 偏航控制能力 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Authority")
 	float YawAuthority = 0.0f;
 
 	/** 健康旋翼数量 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Authority")
 	int32 HealthyRotorCount = 0;
 
 	/** 失效旋翼数量 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Authority")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Authority")
 	int32 FailedRotorCount = 0;
 
 	void Reset()
@@ -219,15 +219,15 @@ struct AIRCRAFTLAB_API FHoldTargets
 	GENERATED_BODY()
 
 	/** 位置保持目标（厘米，世界坐标） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FlightController")
 	FVector HeldPositionCm = FVector::ZeroVector;
 
 	/** 高度保持目标（厘米，Z轴） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FlightController")
 	float HeldAltitudeCm = 0.0f;
 
 	/** 偏航保持目标（度） */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|FlightController")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|FlightController")
 	float HeldYawDegrees = 0.0f;
 
 	/** 位置保持是否已初始化 */
@@ -259,25 +259,25 @@ struct AIRCRAFTLAB_API FHoldTargets
 struct FControllerRuntimeState
 {
 	/** 估计状态 */
-	FDroneEstimatedState EstimatedState;
+	FAircraftEstimatedState EstimatedState;
 
 	/** 控制输出 */
-	FDroneControlOutput ControlOutput;
+	FAircraftControlOutput ControlOutput;
 
 	/** 目标保持状态 */
 	FHoldTargets HoldTargets;
 
 	/** Home点状态 */
-	FDroneHomeState HomeState;
+	FAircraftHomeState HomeState;
 
 	/** 当前解锁状态 */
-	EDroneArmState ArmState = EDroneArmState::Disarmed;
+	EAircraftArmState ArmState = EAircraftArmState::Disarmed;
 
 	/** 当前激活的飞行模式 */
-	EDroneFlightMode ActiveFlightMode = EDroneFlightMode::Angle;
+	EAircraftFlightMode ActiveFlightMode = EAircraftFlightMode::Angle;
 
 	/** 姿态控制模式 */
-	EDroneAttitudeMode AttitudeMode = EDroneAttitudeMode::Angle;
+	EAircraftAttitudeMode AttitudeMode = EAircraftAttitudeMode::Angle;
 
 	/** 是否启用高度保持 */
 	bool bAltitudeHoldEnabled = false;
@@ -309,24 +309,24 @@ struct AIRCRAFTLAB_API FControllerPidStates
 	GENERATED_BODY()
 
 	/** 位置环PID状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	FDronePlanarPidState Position;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|PID")
+	FAircraftPlanarPidState Position;
 
 	/** 速度环PID状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	FDronePlanarPidState Velocity;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|PID")
+	FAircraftPlanarPidState Velocity;
 
 	/** 机体角速度环 PID 状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	FDroneBodyRatePidState Rate;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|PID")
+	FAircraftBodyRatePidState Rate;
 
 	/** 高度环PID状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	FDronePidState Altitude;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|PID")
+	FAircraftPidState Altitude;
 
 	/** 垂直速度环PID状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	FDronePidState VerticalVelocity;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|PID")
+	FAircraftPidState VerticalVelocity;
 
 	void ResetAll()
 	{

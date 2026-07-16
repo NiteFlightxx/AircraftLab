@@ -136,7 +136,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftQuaternionAttitudeUsesRigidBodyRotationTest::RunTest(const FString& Parameters)
 {
 	FControllerRuntimeState Runtime;
-	Runtime.AttitudeMode = EDroneAttitudeMode::Angle;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 	// Deliberately stale display angles: the controller must use the rigid-body quaternion.
 	Runtime.EstimatedState.State.AttitudeDegrees = FRotator(0.0f, 0.0f, 90.0f);
 	FPhysicsCache PhysicsCache;

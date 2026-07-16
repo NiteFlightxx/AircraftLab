@@ -42,7 +42,7 @@ AircraftLab 是一个基于 Unreal Engine Chaos 物理引擎的多旋翼无人�
 ```
 AAircraftPawn
 ├── BodyMesh            (USkeletalMeshComponent)   ── 物理刚体（根组件）
-├── DroneInput          (UDroneInputComponent)     ── 输入采集（Enhanced Input）
+├── AircraftInput          (UAircraftInputComponent)     ── 输入采集（Enhanced Input）
 └── FlightController    (UFlightControllerComponent) ── 飞控大脑（PID + 混合器）
         │
         ├── 发现并驱动 N 个 UAirscrewComponent（旋翼）
@@ -53,8 +53,8 @@ AAircraftPawn
 
 | 组件 | 文件 | 职责 |
 |---|---|---|
-| `USkeletalMeshComponent BodyMesh` | — | 唯一的物理刚体。`SetSimulatePhysics(true)`、`SetEnableGravity(true)`。质量/惯量来自物理资产 `SK_Drone_Physics*`。 |
-| `UDroneInputComponent` | `DroneInputComponent.h/cpp` | 事件驱动（不 Tick），把 Enhanced Input 的 `IA_Move`/`IA_Throttle`/`IA_Turn` 转成 `FDronePilotInput`（归一化 [-1,1]）。 |
+| `USkeletalMeshComponent BodyMesh` | — | 唯一的物理刚体。`SetSimulatePhysics(true)`、`SetEnableGravity(true)`。质量/惯量来自物理资产 `SK_Aircraft_Physics*`。 |
+| `UAircraftInputComponent` | `AircraftInputComponent.h/cpp` | 事件驱动（不 Tick），把 Enhanced Input 的 `IA_Move`/`IA_Throttle`/`IA_Turn` 转成 `FAircraftPilotInput`（归一化 [-1,1]）。 |
 | `UFlightControllerComponent` | `FlightControllerComponent.h/cpp` | 飞控大脑：每个 Chaos 物理步执行一次级联 PID + 阻尼伪逆混合器。 |
 | `UAirscrewComponent` | `AirscrewComponent.h/cpp` | 单个旋翼的物理仿真：电机动力学、推力/反扭矩计算、对刚体施力。 |
 
@@ -65,7 +65,7 @@ AAircraftPawn
 ```
 ┌─────────────── 游戏线程 (TickComponent) ───────────────┐
 │  1. 缓存重力 Z（物理线程不能调用 GetWorld()）           │
-│  2. 读取 DroneInput->GetPilotInput()                    │
+│  2. 读取 AircraftInput->GetPilotInput()                    │
 │  3. 更新解锁/归航状态                                    │
 │  4. 写入 CachedPilotInput ─────────────┐                │
 └─────────────────────────────────────────│────────────────┘
@@ -96,14 +96,14 @@ AAircraftPawn
 ```
 Source/AircraftLab/
 ├── Public/
-│   ├── DroneTypes.h                 # 全部 UENUM/USTRUCT 数据类型（1681 行，几乎全是数据定义）
+│   ├── AircraftTypes.h                 # 全部 UENUM/USTRUCT 数据类型（1681 行，几乎全是数据定义）
 │   ├── AircraftPawn.h               # Pawn 定义（3 个组件）
-│   ├── DroneInputComponent.h        # 输入组件
+│   ├── AircraftInputComponent.h        # 输入组件
 │   ├── AirscrewComponent.h          # 旋翼组件
 │   └── FlightControllerComponent.h  # 飞控组件（含缓存、运行时状态、诊断结构）
 └── Private/
     ├── AircraftPawn.cpp             # 组件装配
-    ├── DroneInputComponent.cpp      # Enhanced Input 绑定
+    ├── AircraftInputComponent.cpp      # Enhanced Input 绑定
     ├── AirscrewComponent.cpp        # 旋翼物理（~300 行）
     └── FlightControllerComponent.cpp # 飞控实现（~1500 行，核心）
 ```
@@ -150,7 +150,7 @@ AngVelBody = (-Raw.X, -Raw.Y, Raw.Z)
 
 ### 2.3 旋转方向符号
 
-旋翼旋转方向用 `EDroneRotorSpinDirection`（`DroneTypes.h:104-112`），符号映射（`DroneTypes.h:1058-1061`）：
+旋翼旋转方向用 `EAircraftRotorSpinDirection`（`AircraftTypes.h:104-112`），符号映射（`AircraftTypes.h:1058-1061`）：
 
 ```
 Clockwise        (CW)  → sign = -1
@@ -395,7 +395,7 @@ CurrentReactionTorqueVectorWorld = ThrustDirWorld * (Magnitude * GetSpinDirectio
 
 ### 5.2 PID 原始方程
 
-理想 PID（`DroneTypes.h:507-544`，`UpdateFromError`）：
+理想 PID（`AircraftTypes.h:507-544`，`UpdateFromError`）：
 
 $$
 u = K_p \cdot e + K_i \int e \, dt + K_d \frac{de}{dt} + K_{ff} \cdot ff
@@ -412,13 +412,13 @@ $$
 
 AircraftLab 提供两个更新方法，**选择哪一个很关键**：
 
-#### (a) `UpdateFromError`（`DroneTypes.h:507-544`）
+#### (a) `UpdateFromError`（`AircraftTypes.h:507-544`）
 
 导数对误差求导：$D = de/dt$。**问题**：当设定值 $SP$ 阶跃变化时，$de/dt$ 会产生巨大尖峰（“设定值踢击 / setpoint kick”），导致输出冲击。
 
 **适用**：设定值缓慢变化或本身就是连续 PID 输出的场景（如姿态角环的设定值来自速度环，已是平滑信号）。
 
-#### (b) `UpdateFromMeasurement`（`DroneTypes.h:564-605`）
+#### (b) `UpdateFromMeasurement`（`AircraftTypes.h:564-605`）
 
 导数对**测量值**求导：$D = -d(PV)/dt$。注意负号——因为 $e = SP - PV$，对 $PV$ 求导要取负才能等价。
 
@@ -432,7 +432,7 @@ AircraftLab 提供两个更新方法，**选择哪一个很关键**：
 
 积分饱和是 PID 的经典陷阱：若输出已到限幅但积分还在累加，一旦误差反向，积分要先“还债”才能响应，造成巨大超调。
 
-AircraftLab 采用 **条件积分冻结（Conditional Integration）**（`DroneTypes.h:538-541`）：
+AircraftLab 采用 **条件积分冻结（Conditional Integration）**（`AircraftTypes.h:538-541`）：
 
 ```cpp
 // 若输出饱和且开启了饱和冻结，则回滚积分到上一拍值
@@ -444,7 +444,7 @@ if (bFreezeIntegralWhenSaturated && OutputWasClamped)
 
 ### 5.5 导数低通滤波
 
-微分天然放大高频噪声（$de/dt$ 对噪声极其敏感）。AircraftLab 对导数项施加 **一阶低通滤波器**（`DroneTypes.h:614-628`）：
+微分天然放大高频噪声（$de/dt$ 对噪声极其敏感）。AircraftLab 对导数项施加 **一阶低通滤波器**（`AircraftTypes.h:614-628`）：
 
 $$
 \alpha = \frac{\Delta t}{1/(2\pi f_c) + \Delta t}
@@ -788,7 +788,7 @@ $$
 
 AircraftLab 用三层枚举描述无人机状态。
 
-### 9.1 解锁状态 `EDroneArmState`（`DroneTypes.h:10-27`）
+### 9.1 解锁状态 `EAircraftArmState`（`AircraftTypes.h:10-27`）
 
 ```
 Disarmed      ── 未解锁（电机停转）
@@ -800,7 +800,7 @@ EmergencyStop ── 紧急停止
 
 只有 `Armed` 状态下飞控才在物理线程运行控制循环（`cpp:229`）。
 
-### 9.2 姿态模式 `EDroneAttitudeMode`（`DroneTypes.h:32-43`）
+### 9.2 姿态模式 `EAircraftAttitudeMode`（`AircraftTypes.h:32-43`）
 
 ```
 Manual ── 无任何自稳（裸速率/直通）
@@ -810,7 +810,7 @@ Angle  ── 姿态角控制（自动水平）
 
 决定 `ComputeDesiredBodyRates` 是绕过姿态角环（Manual/Acro）还是经过它（Angle）。
 
-### 9.3 飞行模式 `EDroneFlightMode`（`DroneTypes.h:48-77`）
+### 9.3 飞行模式 `EAircraftFlightMode`（`AircraftTypes.h:48-77`）
 
 ```
 Manual / Acro / Angle       ── 基础姿态模式
@@ -864,15 +864,15 @@ AngVel    = BodyHandle->W();   // rad/s → 转 °/s，再逆变换到机体并�
 
 ### 10.2 已定义但未启用的传感器/滤波结构
 
-`DroneTypes.h` 完整定义了未来传感器融合所需的全部数据结构（但当前无实现代码）：
+`AircraftTypes.h` 完整定义了未来传感器融合所需的全部数据结构（但当前无实现代码）：
 
-- `FDroneImuConfig`（IMU 噪声、采样率）
-- `FDroneBarometerConfig`（气压计）
-- `FDroneGpsConfig`（GPS）
-- `FDroneMagnetometerConfig`（磁力计）
-- `FDroneOpticalFlowConfig`（光流）
-- `FDroneRangefinderConfig`（测距仪）
-- `FDroneEstimatorConfig`（互补滤波/EKF 融合系数，`DroneTypes.h:1434-1470`）
+- `FAircraftImuConfig`（IMU 噪声、采样率）
+- `FAircraftBarometerConfig`（气压计）
+- `FAircraftGpsConfig`（GPS）
+- `FAircraftMagnetometerConfig`（磁力计）
+- `FAircraftOpticalFlowConfig`（光流）
+- `FAircraftRangefinderConfig`（测距仪）
+- `FAircraftEstimatorConfig`（互补滤波/EKF 融合系数，`AircraftTypes.h:1434-1470`）
 
 这些是“未来工作”的占位，标记在 §14。
 
@@ -917,7 +917,7 @@ $$
 
 ### 12.1 Enhanced Input 映射
 
-`UDroneInputComponent`（`DroneInputComponent.h/cpp`）事件驱动（不 Tick），绑定三个 Input Action：
+`UAircraftInputComponent`（`AircraftInputComponent.h/cpp`）事件驱动（不 Tick），绑定三个 Input Action：
 
 | Action | 值类型 | 映射到 | 语义 |
 |---|---|---|---|
@@ -925,9 +925,9 @@ $$
 | `IA_Throttle` | `float` | `Throttle` | 正=爬升，负=下降 |
 | `IA_Turn` | `float` | `Yaw` | 正=顺时针 |
 
-每个 Action 绑定 `Triggered`（按下/持续）和 `Completed`/`Canceled`（释放）。**释放时归零**（`DroneInputComponent.cpp:106-122`），实现“自动回中”。
+每个 Action 绑定 `Triggered`（按下/持续）和 `Completed`/`Canceled`（释放）。**释放时归零**（`AircraftInputComponent.cpp:106-122`），实现“自动回中”。
 
-### 12.2 `FDronePilotInput` 语义（`DroneTypes.h:136-165`）
+### 12.2 `FAircraftPilotInput` 语义（`AircraftTypes.h:136-165`）
 
 所有轴 clamp 到 $[-1, 1]$：
 - `Throttle`：负=下降，正=爬升
@@ -948,7 +948,7 @@ $$
 
 ## 13. 完整参数参考表
 
-### 13.1 控制限幅 `FDroneControlLimits`
+### 13.1 控制限幅 `FAircraftControlLimits`
 
 | 参数 | 默认值 | 含义 |
 |---|---|---|
@@ -965,16 +965,16 @@ $$
 | `HoverCollectiveCommand` | 0.50 | 悬停总距 |
 | `MaxCollectiveCommand` | 1.0 | 最大总距 |
 
-### 13.2 质量惯量 `FDroneMassProperties`
+### 13.2 质量惯量 `FAircraftMassProperties`
 
 | 参数 | 默认值 |
 |---|---|
 | `MassKg` | 1.2 |
 | `InertiaDiagonalKgCmSq` | (5000, 5000, 9000) |
 
-> 注意：当前运行时质量/惯量实际来自物理资产 `SK_Drone_Physics*`，此结构体未在代码中被消费（见 §14）。
+> 注意：当前运行时质量/惯量实际来自物理资产 `SK_Aircraft_Physics*`，此结构体未在代码中被消费（见 §14）。
 
-### 13.3 空气动力学 `FDroneAerodynamicsConfig`
+### 13.3 空气动力学 `FAircraftAerodynamicsConfig`
 
 | 参数 | 默认值 |
 |---|---|
@@ -986,7 +986,7 @@ $$
 
 > 注意：此结构体当前未被控制器/旋翼代码消费（见 §14）。
 
-### 13.4 控制分配 `FDroneControlAllocationConfig`
+### 13.4 控制分配 `FAircraftControlAllocationConfig`
 
 | 参数 | 默认值 | 含义 |
 |---|---|---|
@@ -1014,8 +1014,8 @@ $$
 
 | 已删除项 | 删除原因 | 当前权威路径 |
 |---|---|---|
-| `FDroneFlightConfig` | 从未实例化或传入飞控；只是把多个互不相连的配置再次聚合 | 飞控参数由 `UFlightControllerProfileAsset` 管理，Autopilot 参数由 `UAutopilotProfileAsset` 管理 |
-| `EDroneFrameType` | 只被 `FDroneFlightConfig` 引用，类型标签不会生成布局或改变混控 | 旋翼数量、位置、推力轴和旋向来自实际 `UAirscrewComponent`，控制分配由实时几何计算 |
+| `FAircraftFlightConfig` | 从未实例化或传入飞控；只是把多个互不相连的配置再次聚合 | 飞控参数由 `UFlightControllerProfileAsset` 管理，Autopilot 参数由 `UAutopilotProfileAsset` 管理 |
+| `EAircraftFrameType` | 只被 `FAircraftFlightConfig` 引用，类型标签不会生成布局或改变混控 | 旋翼数量、位置、推力轴和旋向来自实际 `UAirscrewComponent`，控制分配由实时几何计算 |
 | `FAutopilotMovementIntent.DesiredAccelerationCmPerSecSq` | Submit/轨迹代码均不读取；轨迹加速度由 Motion Profile 产生 | `FProfiledSetpoint.AccelerationCmPerSecSq` → `FAutopilotInjection` |
 | `FAutopilotMovementIntent.ThrustFeedForward` | 与真正的飞控注入字段重名但从未读取 | `FFeedForward.ThrustFF` → `FAutopilotInjection.ThrustFeedForward` |
 | `FFeedForward.bEnabled` | 只被写为 `true`，从未参与分支判断 | `FProfiledSetpoint.bValid` 决定前馈是否有效 |
@@ -1028,24 +1028,24 @@ $$
 
 | 保留项 | 预期作用 | 当前状态及未来影响 |
 |---|---|---|
-| `FDroneMassProperties` | 质量、质心偏移、惯量对角线 | 当前以 Chaos 物理资产为准；未来若支持纯数据驱动机体，质量影响加速度，质心影响耦合力矩，惯量影响角响应 |
-| `FDroneAerodynamicsConfig` | 分轴线性/角阻力、地效、风速 | 当前没有专用施力代码；接线后会影响极速、滑行衰减、转动阻尼、近地推力和抗风表现 |
-| `FDroneMotorModelConfig.MinRpm` | 电机允许维持的最低机械转速 | 当前停机使用 0、解锁使用 `IdleRpm`；未来若模拟 ESC 最低转速或空中停转保护，需要与怠速区分 |
-| `FDroneRotorDefinition.RadiusCm` | 桨盘面积及气动尺度 | 当前推力由 `MaxThrustForce` 标定；接入叶素/动量模型后会影响推力、功率、地效和桨间干扰 |
-| `FDroneRotorDefinition.bUseSocketTransform` | 在骨骼插槽布局和显式局部布局间选择 | 当前以组件实际 Transform 为权威；未来导入纯结构配置或自动生成旋翼组件时有用 |
-| `FDroneFirstOrderFilterState` | 保存低通滤波器历史值 | 当前传感器仿真未启用；接线后用于抑制 IMU 等高频噪声，同时会引入相位延迟 |
+| `FAircraftMassProperties` | 质量、质心偏移、惯量对角线 | 当前以 Chaos 物理资产为准；未来若支持纯数据驱动机体，质量影响加速度，质心影响耦合力矩，惯量影响角响应 |
+| `FAircraftAerodynamicsConfig` | 分轴线性/角阻力、地效、风速 | 当前没有专用施力代码；接线后会影响极速、滑行衰减、转动阻尼、近地推力和抗风表现 |
+| `FAircraftMotorModelConfig.MinRpm` | 电机允许维持的最低机械转速 | 当前停机使用 0、解锁使用 `IdleRpm`；未来若模拟 ESC 最低转速或空中停转保护，需要与怠速区分 |
+| `FAircraftRotorDefinition.RadiusCm` | 桨盘面积及气动尺度 | 当前推力由 `MaxThrustForce` 标定；接入叶素/动量模型后会影响推力、功率、地效和桨间干扰 |
+| `FAircraftRotorDefinition.bUseSocketTransform` | 在骨骼插槽布局和显式局部布局间选择 | 当前以组件实际 Transform 为权威；未来导入纯结构配置或自动生成旋翼组件时有用 |
+| `FAircraftFirstOrderFilterState` | 保存低通滤波器历史值 | 当前传感器仿真未启用；接线后用于抑制 IMU 等高频噪声，同时会引入相位延迟 |
 
 ### 14.3 保留：传感器与状态估计配置
 
-`FDroneScalarNoiseModel`、`FDroneVectorNoiseModel`、`FDroneImuConfig`、`FDroneBarometerConfig`、`FDroneGpsConfig`、`FDroneMagnetometerConfig`、`FDroneOpticalFlowConfig`、`FDroneRangefinderConfig`、`FDroneSensorSuiteConfig` 和 `FDroneEstimatorConfig` 当前没有运行时实现。飞控仍直接读取 Chaos 真值，而不是带采样率、延迟、量程、偏置和噪声的传感器输出。
+`FAircraftScalarNoiseModel`、`FAircraftVectorNoiseModel`、`FAircraftImuConfig`、`FAircraftBarometerConfig`、`FAircraftGpsConfig`、`FAircraftMagnetometerConfig`、`FAircraftOpticalFlowConfig`、`FAircraftRangefinderConfig`、`FAircraftSensorSuiteConfig` 和 `FAircraftEstimatorConfig` 当前没有运行时实现。飞控仍直接读取 Chaos 真值，而不是带采样率、延迟、量程、偏置和噪声的传感器输出。
 
 这些配置对物理无人机和后续网络预测仍有明确价值，因此保留：采样率和延迟决定反馈时效；噪声、偏置和滤波决定抖动及漂移；GPS/气压计/磁力计/光流融合权重决定位置、高度、航向的长期稳定性。正式接线前不应把它们开放给策划调参，因为修改它们目前不会产生任何效果。
 
 ### 14.4 保留：安全启动与故障保护
 
-`UDroneInputComponent.bStartArmed` 当前未被读取，`UFlightControllerComponent::BeginPlay()` 会直接把运行时状态设为 `Armed`。它表达的“出生时是否解锁”是有效的安全策略，后续应迁移到统一的飞控/世界初始化流程，而不是简单删除。
+`UAircraftInputComponent.bStartArmed` 当前未被读取，`UFlightControllerComponent::BeginPlay()` 会直接把运行时状态设为 `Armed`。它表达的“出生时是否解锁”是有效的安全策略，后续应迁移到统一的飞控/世界初始化流程，而不是简单删除。
 
-`FDroneFailsafeConfig` 中的指令丢失超时、GPS 丢失宽限、低电量返航、临界电量降落和最大倾角急停也尚未接线。它与当前只处理旋翼控制权不足的 `FFlightControllerFailurePolicyConfig` 不重复；接线后会直接决定失联、失定位和低电量时的行为，因此保留。
+`FAircraftFailsafeConfig` 中的指令丢失超时、GPS 丢失宽限、低电量返航、临界电量降落和最大倾角急停也尚未接线。它与当前只处理旋翼控制权不足的 `FFlightControllerFailurePolicyConfig` 不重复；接线后会直接决定失联、失定位和低电量时的行为，因此保留。
 
 ### 14.5 保留：分层控制设定值契约
 
@@ -1061,8 +1061,8 @@ $$
 
 | 公式 | 位置 |
 |---|---|
-| PID: $u = K_p e + K_i\int e\,dt + K_d\dot e + K_{ff}ff$ | `DroneTypes.h:530` |
-| 导数滤波: $\alpha = \Delta t/(1/(2\pi f_c)+\Delta t)$ | `DroneTypes.h:623` |
+| PID: $u = K_p e + K_i\int e\,dt + K_d\dot e + K_{ff}ff$ | `AircraftTypes.h:530` |
+| 导数滤波: $\alpha = \Delta t/(1/(2\pi f_c)+\Delta t)$ | `AircraftTypes.h:623` |
 | 悬停倾斜: $\tan\theta = a/g$ | `FlightController.cpp:810` |
 | 目标转速: $\omega = \omega_{idle}+(\omega_{max}-\omega_{idle})c^{exp}$ | `AirscrewComponent.cpp:295` |
 | 一阶响应: $\alpha = 1-e^{-\Delta t/\tau}$ | `AirscrewComponent.cpp:172` |
@@ -1095,11 +1095,11 @@ $$
 | 默认 PID 参数 | `FlightControllerComponent.cpp` | 401 |
 | 旋翼状态更新（5 步） | `AirscrewComponent.cpp` | 120 |
 | 推力/反扭矩施加 | `AirscrewComponent.cpp` | 212 |
-| PID 引擎（两种更新） | `DroneTypes.h` | 507, 564 |
-| 抗饱和 | `DroneTypes.h` | 538 |
-| 导数滤波 | `DroneTypes.h` | 614 |
-| 所有 UENUM/USTRUCT | `DroneTypes.h` | 全文 |
-| 输入绑定 | `DroneInputComponent.cpp` | 52 |
+| PID 引擎（两种更新） | `AircraftTypes.h` | 507, 564 |
+| 抗饱和 | `AircraftTypes.h` | 538 |
+| 导数滤波 | `AircraftTypes.h` | 614 |
+| 所有 UENUM/USTRUCT | `AircraftTypes.h` | 全文 |
+| 输入绑定 | `AircraftInputComponent.cpp` | 52 |
 | 组件装配 | `AircraftPawn.cpp` | 16 |
 
 ---

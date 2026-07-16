@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
-#include "DroneTypes.h"
+#include "AircraftType.h"
 
 #include "FlightControllerProfileAsset.generated.h"
 
@@ -101,7 +101,7 @@ struct AIRCRAFTLAB_API FFlightControllerFailurePolicyConfig
 	/** Action=SwitchFlightMode 时切换到的模式。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy",
 		meta = (EditCondition = "Action == EFlightFailurePolicyAction::SwitchFlightMode", EditConditionHides, DisplayName = "降级飞行模式"))
-	EDroneFlightMode DegradedFlightMode = EDroneFlightMode::Angle;
+	EAircraftFlightMode DegradedFlightMode = EAircraftFlightMode::Angle;
 };
 
 /**
@@ -110,7 +110,7 @@ struct AIRCRAFTLAB_API FFlightControllerFailurePolicyConfig
  */
 struct AIRCRAFTLAB_API FFlightControllerRuntimeConfig
 {
-	FDroneFlightControllerConfig Controller;
+	FAircraftFlightControllerConfig Controller;
 	FFlightControllerInputConfig Input;
 	FFlightControllerExecutionConfig Execution;
 	FFlightControllerFailurePolicyConfig FailurePolicy;
@@ -119,7 +119,7 @@ struct AIRCRAFTLAB_API FFlightControllerRuntimeConfig
 namespace FlightControllerConfig
 {
 	/** 新建资产使用的唯一默认控制参数来源。 */
-	AIRCRAFTLAB_API void InitializeDefaults(FDroneFlightControllerConfig& OutConfig);
+	AIRCRAFTLAB_API void InitializeDefaults(FAircraftFlightControllerConfig& OutConfig);
 }
 
 /**
@@ -135,7 +135,7 @@ public:
 	UFlightControllerProfileAsset();
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile", meta = (DisplayName = "控制器配置"))
-	FDroneFlightControllerConfig Controller;
+	FAircraftFlightControllerConfig Controller;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile", meta = (DisplayName = "输入配置"))
 	FFlightControllerInputConfig Input;

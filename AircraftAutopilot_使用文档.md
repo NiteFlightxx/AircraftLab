@@ -127,14 +127,14 @@ TurnBehavior.Compute → FTurnCommand
     ↓
 Position → Velocity → Accel → Attitude → Rate → FAxisCommand
     ↓
-Mixer → FDroneControlOutput → Rotor → AddForce/AddTorque → Chaos
+Mixer → FAircraftControlOutput → Rotor → AddForce/AddTorque → Chaos
 ```
 
 ---
 
 ## 3. 单位与坐标系约定
 
-全栈统一，与 AircraftLab 的 `FDroneKinematicState` 约定一致，集成时零转换。
+全栈统一，与 AircraftLab 的 `FAircraftKinematicState` 约定一致，集成时零转换。
 
 | 物理量 | 单位 | 备注                              |
 |---|---|---------------------------------|
@@ -447,7 +447,7 @@ struct FMotionProfileLimits {
 };
 ```
 
-> **重要**：Profile 限幅应 ≤ 控制器硬限幅（`FDroneControlLimits`），
+> **重要**：Profile 限幅应 ≤ 控制器硬限幅（`FAircraftControlLimits`），
 > 保证设定值永远在硬限幅内，PID 不会触及 clamp 边界（clamp 本身是 Jerk=∞ 的来源）。
 
 #### API

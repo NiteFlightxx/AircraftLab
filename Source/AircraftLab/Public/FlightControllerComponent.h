@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "DroneTypes.h"
+#include "AircraftType.h"
 #include "AutopilotProvider.h"
 #include "FlightControllerTypes.h"
 #include "FlightControllerProfileAsset.h"
@@ -13,7 +13,7 @@
 #include "FlightControllerComponent.generated.h"
 
 class UAirscrewComponent;
-class UDroneInputComponent;
+class UAircraftInputComponent;
 class UPrimitiveComponent;
 namespace Chaos { class FRigidBodyHandle_Internal; }
 /**
@@ -66,47 +66,47 @@ public:
 	float GetLinearDampingPerSecond() const { return PhysicsCache.LinearDampingPerSecond; }
 
 	/** 刷新组件引用 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
 	void RefreshReferences();
 
 	/** 解锁无人机 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
 	void Arm();
 
 	/** 锁定无人机 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
 	void Disarm();
 
 	/** 设置飞行模式 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
-	void SetFlightMode(EDroneFlightMode NewFlightMode);
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
+	void SetFlightMode(EAircraftFlightMode NewFlightMode);
 
 	/** 设置姿态控制模式 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
-	void SetAttitudeMode(EDroneAttitudeMode NewAttitudeMode);
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
+	void SetAttitudeMode(EAircraftAttitudeMode NewAttitudeMode);
 
 	/** 设置高度保持开关 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
 	void SetAltitudeHoldEnabled(bool bEnabled);
 
 	/** 设置位置保持开关 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
 	void SetPositionHoldEnabled(bool bEnabled);
 
 	/** 设置速度保持开关 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
 	void SetVelocityHoldEnabled(bool bEnabled);
 
 	/** 设置控制器启用状态 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
 	void SetControllerEnabled(bool bNewEnabled);
 
 	/** 设置高度保持目标 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
 	void SetHeldAltitude(float WorldAltitudeCm);
 
 	/** 设置偏航保持目标 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController")
 	void SetHeldYaw(float YawDegrees);
 
 	// ========================================================================
@@ -118,18 +118,18 @@ public:
 	 * true：控制循环读取 CachedAutopilotInjection（位置/高度/航向/前馈全部来自 Autopilot）
 	 * false：控制循环使用手动摇杆 + HoldTargets（原有手动模式，完全不受影响）
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController|Autopilot")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController|Autopilot")
 	void SetUseAutopilotSetpoint(bool bEnabled);
 
 	/** 查询是否正在使用 Autopilot 设定值 */
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController|Autopilot")
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController|Autopilot")
 	bool IsUsingAutopilotSetpoint() const { return bUseAutopilotSetpoint; }
 
 	/**
 	 * 绑定 Autopilot 设定值提供者（实现 IAutopilotProvider 的 UObject）。
 	 * 通常在 UAutopilotComponent::BeginPlay 中调用 SetAutopilotProvider(this)。
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FlightController|Autopilot")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FlightController|Autopilot")
 	void SetAutopilotProvider(UObject* Provider);
 
 	/** GameplayPolicy 临时覆盖玩家/Autopilot MovementIntent。 */
@@ -141,66 +141,66 @@ public:
 	// ========================================================================
 
 	/** 指定旋翼完全失效 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|RotorHealth")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
 	void FailRotor(int32 RotorIndex);
 
 	/** 恢复指定旋翼 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|RotorHealth")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
 	void RecoverRotor(int32 RotorIndex);
 
 	/** 设置旋翼效能（0=完全失效，1=正常） */
-	UFUNCTION(BlueprintCallable, Category = "Drone|RotorHealth")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
 	void SetRotorEffectiveness(int32 RotorIndex, float Effectiveness);
 
 	/** 批量失效多个旋翼 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|RotorHealth")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
 	void FailRotors(const TArray<int32>& RotorIndices);
 
 	/** 恢复所有旋翼 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|RotorHealth")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|RotorHealth")
 	void RecoverAllRotors();
 
 	/** 获取旋翼健康状态数组 */
-	UFUNCTION(BlueprintPure, Category = "Drone|RotorHealth")
+	UFUNCTION(BlueprintPure, Category = "Aircraft|RotorHealth")
 	const TArray<FRotorHealthState>& GetRotorHealthStates() const { return RotorFailureManager.HealthStates; }
 
 	/** 获取控制能力评估 */
-	UFUNCTION(BlueprintPure, Category = "Drone|RotorHealth")
+	UFUNCTION(BlueprintPure, Category = "Aircraft|RotorHealth")
 	const FControlAuthorityInfo& GetControlAuthorityInfo() const { return RotorFailureManager.AuthorityInfo; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FailurePolicy")
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FailurePolicy")
 	FFlightFailurePolicyStatus GetFailurePolicyStatus() const { return RotorFailureManager.PolicyStatus; }
 
 	/** 清除 FailurePolicy 锁存；若故障条件仍存在，将在确认时间后再次触发。 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FailurePolicy")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FailurePolicy")
 	void ResetFailurePolicyLatch();
 
 	/** 临时暂停自动 FailurePolicy 判定；不修改健康状态和控制分配。 */
-	UFUNCTION(BlueprintCallable, Category = "Drone|FailurePolicy")
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|FailurePolicy")
 	void SetFailurePolicyEvaluationSuspended(bool bSuspended) { bFailurePolicyEvaluationSuspended = bSuspended; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FailurePolicy")
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FailurePolicy")
 	bool IsFailurePolicyEvaluationSuspended() const { return bFailurePolicyEvaluationSuspended; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
-	EDroneArmState GetArmState() const { return Runtime.ArmState; }
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
+	EAircraftArmState GetArmState() const { return Runtime.ArmState; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
-	EDroneFlightMode GetFlightMode() const { return Runtime.ActiveFlightMode; }
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
+	EAircraftFlightMode GetFlightMode() const { return Runtime.ActiveFlightMode; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
-	EDroneAttitudeMode GetAttitudeMode() const { return Runtime.AttitudeMode; }
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
+	EAircraftAttitudeMode GetAttitudeMode() const { return Runtime.AttitudeMode; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
 	bool IsControllerEnabled() const { return bControllerEnabled; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
 	bool IsAltitudeHoldEnabled() const { return Runtime.bAltitudeHoldEnabled; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
 	bool IsPositionHoldEnabled() const { return Runtime.bPositionHoldEnabled; }
 
-	UFUNCTION(BlueprintPure, Category = "Drone|FlightController")
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
 	bool IsVelocityHoldEnabled() const { return Runtime.bVelocityHoldEnabled; }
 
 	/** 当前模式是否使用高度保持 */
@@ -218,9 +218,9 @@ public:
 	/** 当前模式是否使用位置控制 */
 	bool UsesPositionControl() const { return ModeCapabilities.CanUsePositionControl; }
 
-	const FDroneEstimatedState& GetEstimatedState() const { return Runtime.EstimatedState; }
-	const FDroneControlOutput& GetControlOutput() const { return Runtime.ControlOutput; }
-	const FDroneHomeState& GetHomeState() const { return Runtime.HomeState; }
+	const FAircraftEstimatedState& GetEstimatedState() const { return Runtime.EstimatedState; }
+	const FAircraftControlOutput& GetControlOutput() const { return Runtime.ControlOutput; }
+	const FAircraftHomeState& GetHomeState() const { return Runtime.HomeState; }
 	const FAllocationDiagnostics& GetAllocationDiagnostics() const { return ControlAllocator.Diagnostics; }
 	const FModeCapabilities& GetModeCapabilities() const { return ModeCapabilities; }
 	const FAllocationCache& GetAllocationCache() const { return ControlAllocator.Cache; }
@@ -240,8 +240,8 @@ protected:
 	void UpdateEstimatedState_PhysicsThread(float DeltaSeconds, float SimTime, Chaos::FRigidBodyHandle_Internal* BodyHandle);
 
 	/** 更新请求的飞行模式和解锁状态 */
-	void UpdateRequestedModeAndArmState(const FDronePilotInput& PilotInput);
-	FAutopilotMovementIntent BuildManualMovementIntent(const FDronePilotInput& PilotInput) const;
+	void UpdateRequestedModeAndArmState(const FAircraftPilotInput& PilotInput);
+	FAutopilotMovementIntent BuildManualMovementIntent(const FAircraftPilotInput& PilotInput) const;
 
 	/** 更新Home点状态 */
 	void UpdateHomeState(bool bForceResetHome = false);
@@ -253,7 +253,7 @@ protected:
 	void UpdateModeCapabilities();
 
 	/** 运行飞控主循环 */
-	void RunControlLoop(float DeltaSeconds, const FDronePilotInput& PilotInput);
+	void RunControlLoop(float DeltaSeconds, const FAircraftPilotInput& PilotInput);
 
 	/** 统一重置所有控制器状态 */
 	void ResetControllerState();
@@ -293,7 +293,7 @@ protected:
 
 	/** 条件性输出调试日志 */
 	void MaybeEmitDebugLog(
-		const FDronePilotInput& PilotInput,
+		const FAircraftPilotInput& PilotInput,
 		float DeltaSeconds,
 		float CollectiveCommand,
 		float DesiredVerticalVelocity,
@@ -306,31 +306,31 @@ protected:
 	UPrimitiveComponent* ResolveBodyPrimitive() const;
 
 	/** 解析无人机输入组件 */
-	UDroneInputComponent* ResolveDroneInput() const;
+	UAircraftInputComponent* ResolveAircraftInput() const;
 
 protected:
 	/** 唯一的非调试配置来源；缺失或无效时飞控不会启动。 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Drone|FlightController|Profile")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Aircraft|FlightController|Profile")
 	TObjectPtr<UFlightControllerProfileAsset> ControllerProfile;
 
 	/** 调试日志开关 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
 	bool bEnableDebugLog = false;
 
 	/** 是否记录旋翼指令日志 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
 	bool bLogRotorCommands = false;
 
 	/** 是否记录旋翼布局日志 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
 	bool bLogRotorLayout = false;
 
 	/** 是否记录符号诊断日志 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
 	bool bLogSignDiagnostics = false;
 
 	/** 调试日志输出间隔（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Debug", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug", meta = (ClampMin = "0.0"))
 	float DebugLogIntervalSeconds = 0.20f;
 
 private:
@@ -349,7 +349,7 @@ private:
 
 	/** 无人机输入组件 */
 	UPROPERTY(Transient)
-	TObjectPtr<UDroneInputComponent> DroneInput;
+	TObjectPtr<UAircraftInputComponent> AircraftInput;
 
 	/** 旋翼组件数组 */
 	UPROPERTY(Transient)
@@ -362,7 +362,7 @@ private:
 	FControllerRuntimeState Runtime;
 
 	/** 级联控制解算器状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|PID", meta = (AllowPrivateAccess = "true"))
 	FFlightControlSolver FlightControlSolver;
 
 	/** 模式能力缓存 - 模式切换时更新 */
@@ -372,7 +372,7 @@ private:
 	FControlAllocator ControlAllocator;
 
 	/** 旋翼故障与控制能力状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|RotorHealth", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|RotorHealth", meta = (AllowPrivateAccess = "true"))
 	FRotorFailureManager RotorFailureManager;
 
 	/** 调试状态 */
@@ -382,7 +382,7 @@ private:
 	 * 缓存的飞行员输入
 	 * 游戏线程写入（TickComponent），物理线程读取（AsyncPhysicsTick）
 	 */
-	FDronePilotInput CachedPilotInput;
+	FAircraftPilotInput CachedPilotInput;
 
 	// -----------------------------------------------------------------------
 	// Autopilot 集成

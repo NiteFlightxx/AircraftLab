@@ -1,7 +1,7 @@
 #include "AircraftPawn.h"
 
 #include "Components/SkeletalMeshComponent.h"
-#include "DroneInputComponent.h"
+#include "AircraftInputComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "FlightControllerComponent.h"
 #include "AutopilotComponent.h"
@@ -11,7 +11,7 @@
  * 飞行器Pawn构造函数
  * 创建并初始化三个核心组件：
  * - BodyMesh: 骨骼网格体，设为Root组件，开启物理模拟和重力
- * - DroneInput: 无人机输入处理组件
+ * - AircraftInput: 无人机输入处理组件
  * - FlightController: 飞行控制（PID + 混合器）组件
  * - 默认不由玩家自动占有；NPC由AI/Autopilot驱动，玩家控制玩法可在蓝图显式开启
  */
@@ -31,7 +31,7 @@ AAircraftPawn::AAircraftPawn()
 	BodyMesh->SetSimulatePhysics(true);
 	BodyMesh->SetEnableGravity(true);
 
-	DroneInput = CreateDefaultSubobject<UDroneInputComponent>(TEXT("DroneInput"));
+	AircraftInput = CreateDefaultSubobject<UAircraftInputComponent>(TEXT("AircraftInput"));
 	FlightController = CreateDefaultSubobject<UFlightControllerComponent>(TEXT("FlightController"));
 	SimulationLOD = CreateDefaultSubobject<UAircraftSimulationLODComponent>(TEXT("SimulationLOD"));
 	AutoPossessPlayer = EAutoReceiveInput::Disabled;
@@ -56,17 +56,17 @@ void AAircraftPawn::BeginPlay()
 	}
 
 	// 应用Enhanced Input映射上下文
-	DroneInput->ApplyMappingContext();
+	AircraftInput->ApplyMappingContext();
 	// 唤醒所有刚体确保物理模拟启动
 	BodyMesh->WakeAllRigidBodies();
 
 }
 
 
-/** 绑定玩家输入到DroneInputComponent */
+/** 绑定玩家输入到AircraftInputComponent */
 void AAircraftPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	DroneInput->BindInput(PlayerInputComponent);
+	AircraftInput->BindInput(PlayerInputComponent);
 }

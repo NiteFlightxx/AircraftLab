@@ -228,7 +228,7 @@ Vector Field 参数：
 
 必须满足 `MinCollective <= HoverCollective <= MaxCollective`。
 
-### 5.4 PID 通用字段 `FDronePidGains`
+### 5.4 PID 通用字段 `FAircraftPidGains`
 
 每个轴的 PID 都包含以下字段：
 
@@ -381,15 +381,15 @@ Vector Field 参数：
 
 | 参数或结构 | 未来用途 | 调大/启用后的预期影响 |
 |---|---|---|
-| `FDroneMassProperties` | 数据驱动的质量、质心和惯量 | 质量增大使相同推力下加速度降低；惯量增大使姿态响应变慢；质心偏移会产生轴间耦合 |
-| `FDroneAerodynamicsConfig` | 分轴阻力、地效和风 | 阻力增大降低极速并增强自然衰减；地效增强会使近地悬停更敏感；风速改变外部扰动 |
-| `FDroneMotorModelConfig.MinRpm` | ESC/电机最低机械转速 | 提高后可避免过低转速，但会抬高最小可用推力；当前仍由 0 和 `IdleRpm` 控制 |
-| `FDroneRotorDefinition.RadiusCm` | 桨盘气动模型 | 半径增大会改变桨盘面积、推力和功率需求；当前使用标定的最大推力，不读取半径 |
-| `FDroneRotorDefinition.bUseSocketTransform` | 选择插槽布局或显式局部布局 | 接线后决定旋翼几何来源；当前以组件实际 Transform 为准 |
+| `FAircraftMassProperties` | 数据驱动的质量、质心和惯量 | 质量增大使相同推力下加速度降低；惯量增大使姿态响应变慢；质心偏移会产生轴间耦合 |
+| `FAircraftAerodynamicsConfig` | 分轴阻力、地效和风 | 阻力增大降低极速并增强自然衰减；地效增强会使近地悬停更敏感；风速改变外部扰动 |
+| `FAircraftMotorModelConfig.MinRpm` | ESC/电机最低机械转速 | 提高后可避免过低转速，但会抬高最小可用推力；当前仍由 0 和 `IdleRpm` 控制 |
+| `FAircraftRotorDefinition.RadiusCm` | 桨盘气动模型 | 半径增大会改变桨盘面积、推力和功率需求；当前使用标定的最大推力，不读取半径 |
+| `FAircraftRotorDefinition.bUseSocketTransform` | 选择插槽布局或显式局部布局 | 接线后决定旋翼几何来源；当前以组件实际 Transform 为准 |
 | 传感器噪声、采样率、延迟和滤波 | IMU/GPS/气压计/磁力计/光流/测距仿真 | 噪声与延迟增大通常使控制更抖、更滞后；滤波增强可降噪但会增加响应延迟 |
-| `FDroneEstimatorConfig` | 多传感器状态融合 | 融合权重决定短期响应、长期漂移和对单传感器异常的敏感度 |
-| `FDroneFailsafeConfig` | 失联、GPS 丢失、低电量和过倾角策略 | 阈值越保守越早触发返航/降落/急停，但也更容易误触发 |
-| `UDroneInputComponent.bStartArmed` | 统一启动流程中的解锁策略 | `false` 更安全，`true` 可立即起转；当前 `BeginPlay()` 直接解锁，字段尚无效果 |
-| `FDroneFirstOrderFilterState` | 保存传感器低通滤波历史 | 更低截止频率会更平滑但延迟更大；当前没有传感器运行时消费它 |
+| `FAircraftEstimatorConfig` | 多传感器状态融合 | 融合权重决定短期响应、长期漂移和对单传感器异常的敏感度 |
+| `FAircraftFailsafeConfig` | 失联、GPS 丢失、低电量和过倾角策略 | 阈值越保守越早触发返航/降落/急停，但也更容易误触发 |
+| `UAircraftInputComponent.bStartArmed` | 统一启动流程中的解锁策略 | `false` 更安全，`true` 可立即起转；当前 `BeginPlay()` 直接解锁，字段尚无效果 |
+| `FAircraftFirstOrderFilterState` | 保存传感器低通滤波历史 | 更低截止频率会更平滑但延迟更大；当前没有传感器运行时消费它 |
 
 此外，`FVelocitySetpoint`、`FAccelerationSetpoint`、`FAttitudeThrustSetpoint`、`FBodyRateSetpoint`、`FAxisCommand` 是未来分层控制器和遥测使用的数据契约，不是策划参数，暂时保留。

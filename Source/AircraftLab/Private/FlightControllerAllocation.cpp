@@ -3,7 +3,7 @@
 
 #include "AircraftPawn.h"
 #include "AirscrewComponent.h"
-#include "DroneInputComponent.h"
+#include "AircraftInputComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -44,7 +44,7 @@ constexpr double CommandTolerance = 1.0e-4;
 //       η    = Efficiency（效率，0=完全失效，1=全健康）
 // 注意：这里 η 来自 GetEffectiveMaxThrust()，已包含 max(η,0) 处理
 // ---------------------------------------------------------------------------
-double GetRotorMaxPhysicalThrust(const FDroneRotorDefinition& RotorDefinition)
+double GetRotorMaxPhysicalThrust(const FAircraftRotorDefinition& RotorDefinition)
 {
 	return RotorDefinition.GetEffectiveMaxThrust() * FMath::Max(RotorDefinition.ThrustCoefficient, 0.0f);
 }
@@ -55,7 +55,7 @@ double GetRotorMaxPhysicalThrust(const FDroneRotorDefinition& RotorDefinition)
 // 公式：T_max_alloc = T_max_phys × clamp(ControlAuthorityScale, 0, 1)
 // ControlAuthorityScale 用于人为限制某旋翼在混合器中的最大份额（如测试降额）
 // ---------------------------------------------------------------------------
-double GetRotorMaxAllocatedThrust(const FDroneRotorDefinition& RotorDefinition)
+double GetRotorMaxAllocatedThrust(const FAircraftRotorDefinition& RotorDefinition)
 {
 	return GetRotorMaxPhysicalThrust(RotorDefinition) * FMath::Clamp(RotorDefinition.ControlAuthorityScale, 0.0f, 1.0f);
 }
@@ -77,7 +77,7 @@ double GetRotorMaxAllocatedThrust(const FDroneRotorDefinition& RotorDefinition)
 //     3) 反整形：  c = c_shaped^(1/exp)
 //         抵消正向的 c^exp 整形
 // ---------------------------------------------------------------------------
-float ConvertThrustToCommand(const FDroneRotorDefinition& RotorDefinition, double TargetThrust)
+float ConvertThrustToCommand(const FAircraftRotorDefinition& RotorDefinition, double TargetThrust)
 {
 	// 步骤0：零推力或零物理上限时直接返回 0
 	const double MaxPhysicalThrust = GetRotorMaxPhysicalThrust(RotorDefinition);
@@ -202,11 +202,11 @@ bool SolveLinearSystem4(const double Matrix[WrenchAxisCount][WrenchAxisCount], c
 // ---------------------------------------------------------------------------
 // MakeRotorCommand — 从 Airscrew 当前状态构建旋翼指令快照
 // ---------------------------------------------------------------------------
-FDroneRotorCommand MakeRotorCommand(const UAirscrewComponent* Airscrew)
+FAircraftRotorCommand MakeRotorCommand(const UAirscrewComponent* Airscrew)
 {
-	FDroneRotorCommand RotorCommand;
+	FAircraftRotorCommand RotorCommand;
 	if (!Airscrew) return RotorCommand;
-	const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
+	const FAircraftRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
 	RotorCommand.RotorName = RotorDefinition.RotorName.IsNone() ? Airscrew->GetFName() : RotorDefinition.RotorName;
 	RotorCommand.NormalizedCommand = Airscrew->GetNormalizedCommand();
 	RotorCommand.TargetRpm = Airscrew->ComputeTargetRpm(Airscrew->GetEffectiveTargetCommand());
@@ -426,7 +426,7 @@ void UFlightControllerComponent::AllocateToRotors(float CollectiveCommand, const
 
 void FControlAllocator::Allocate(const FFlightControllerRuntimeConfig& Config, const FPhysicsCache& PhysicsCache,
 	const TArray<FRotorHealthState>& RotorHealthStates, int32 NumRotors,
-	float CollectiveCommand, const FVector& AxisCommands, FDroneControlOutput& OutControlOutput)
+	float CollectiveCommand, const FVector& AxisCommands, FAircraftControlOutput& OutControlOutput)
 {
 	if (!Cache.bIsValid || Cache.JacobianColumns.Num() != NumRotors) return;
 
@@ -440,7 +440,7 @@ void FControlAllocator::Allocate(const FFlightControllerRuntimeConfig& Config, c
 	// 对标 PX4 thrust_ned_z / cos_ned_body（PositionControl.cpp:222）。
 	// 机体倾斜后，旋翼推力的垂直分量 = T·cos(tilt)；为维持升力须把总距除以 cos(tilt)。
 	// cos(tilt) = 机体 Z 轴在世界系中与世界上方向的点积。
-	const FDroneControlAllocationConfig& AllocCfg = Config.Controller.Allocator;
+	const FAircraftControlAllocationConfig& AllocCfg = Config.Controller.Allocator;
 	double CompensatedCollective = FMath::Clamp(static_cast<double>(CollectiveCommand), 0.0, 1.0);
 	if (AllocCfg.bEnableTiltCompensation && CompensatedCollective > 0.0)
 	{
@@ -639,7 +639,7 @@ FVector UFlightControllerComponent::GetRotorThrustAxisBody(const UAirscrewCompon
 
 FVector4 UFlightControllerComponent::BuildJacobianColumn(const UAirscrewComponent* Airscrew, const FVector& LocalPositionFromCenterOfMassCm) const
 {
-	const FDroneRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
+	const FAircraftRotorDefinition& RotorDefinition = Airscrew->GetRotorDefinition();
 	// T_max_alloc = T_max_phys × ControlAuthorityScale（人为降额）
 	const float MaxAllocatedThrust = FlightControllerAllocation::GetRotorMaxAllocatedThrust(RotorDefinition);
 	// 推力轴方向（机体系，归一化）
