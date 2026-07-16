@@ -72,13 +72,13 @@ public:
 	void AdvanceManagedSimulation(float DeltaSeconds);
 
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	UPROPERTY(EditDefaultsOnly, Category = "Aircraft|Simulation")
 	TObjectPtr<UAircraftSimulationLODProfileAsset> SimulationProfile;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation")
 	FAircraftSimulationImportance Importance;
 
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_CurrentTier, Category = "Aircraft|Simulation")
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentTier)
 	EAircraftSimulationTier CurrentTier = EAircraftSimulationTier::FullPhysics;
 
 private:

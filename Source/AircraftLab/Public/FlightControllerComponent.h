@@ -314,27 +314,27 @@ protected:
 
 protected:
 	/** 唯一的非调试配置来源；缺失或无效时飞控不会启动。 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Aircraft|FlightController|Profile")
+	UPROPERTY(EditDefaultsOnly, Category = "Aircraft|FlightController|Profile")
 	TObjectPtr<UFlightControllerProfileAsset> ControllerProfile;
 
 	/** 调试日志开关 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug")
 	bool bEnableDebugLog = false;
 
 	/** 是否记录旋翼指令日志 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug")
 	bool bLogRotorCommands = false;
 
 	/** 是否记录旋翼布局日志 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug")
 	bool bLogRotorLayout = false;
 
 	/** 是否记录符号诊断日志 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug")
 	bool bLogSignDiagnostics = false;
 
 	/** 调试日志输出间隔（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug", meta = (ClampMin = "0.0"))
 	float DebugLogIntervalSeconds = 0.20f;
 
 private:
@@ -370,7 +370,6 @@ private:
 	FControllerRuntimeState Runtime;
 
 	/** 级联控制解算器状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|PID", meta = (AllowPrivateAccess = "true"))
 	FFlightControlSolver FlightControlSolver;
 
 	/** 模式能力缓存 - 模式切换时更新 */
@@ -380,7 +379,6 @@ private:
 	FControlAllocator ControlAllocator;
 
 	/** 旋翼故障与控制能力状态 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|RotorHealth", meta = (AllowPrivateAccess = "true"))
 	FRotorFailureManager RotorFailureManager;
 
 	/** 调试状态 */

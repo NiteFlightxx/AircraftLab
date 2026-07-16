@@ -125,7 +125,7 @@ public:
 
 protected:
 	/** The only authored configuration source for this component. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Autopilot")
+	UPROPERTY(EditAnywhere, Category = "Autopilot")
 	TObjectPtr<UAutopilotProfileAsset> Profile;
 
 	UPROPERTY(Transient)

@@ -33,22 +33,17 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
 
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
 	void SetRotorEnabled(bool bNewEnabled);
 
 	/** 设置共享旋翼型号资产，并立即重建本组件的运行时配置快照。 */
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
 	void SetRotorProfile(UAirscrewProfileAsset* InRotorProfile);
 
 	/** 设置本旋翼实例的唯一名称。飞控使用该名称寻址旋翼。 */
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
 	void SetRotorName(FName InRotorName);
 
 	/** 设置本旋翼实例的旋向；CW 与 CCW 旋翼可以共享同一个 Profile。 */
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
 	void SetSpinDirection(EAircraftRotorSpinDirection InSpinDirection);
 
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Airscrew")
 	void SetForceApplicationEnabled(bool bNewEnabled);
 
 	/** 强制停止旋翼（立即归零所有物理输出，跳过电机模型延迟） */
@@ -136,23 +131,23 @@ public:
 
 protected:
 	/** 所有同型号 CW/CCW 旋翼共享的唯一物理参数来源。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew|Profile")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Airscrew|Profile")
 	TObjectPtr<UAirscrewProfileAsset> RotorProfile;
 
 	/** 单个旋翼实例的稳定唯一名称；为空时使用组件名称。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Airscrew")
 	FName RotorName = NAME_None;
 
 	/** 单个旋翼实例的旋向；CW 与 CCW 旋翼可以共享同一个 Profile。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Airscrew")
 	EAircraftRotorSpinDirection SpinDirection = EAircraftRotorSpinDirection::CounterClockwise;
 
 	/** 单个旋翼实例是否参与模拟。运行时禁用不会修改共享资产。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Airscrew")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Airscrew")
 	bool bRotorEnabled = true;
 
 	/** 是否启用物理力的施加 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Airscrew")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Airscrew")
 	bool bApplyForce = true;
 private:
 	friend class UFlightControllerComponent;
@@ -199,25 +194,25 @@ private:
 	/** 是否处于强制停止状态（故障时跳过电机模型，立即归零物理输出） */
 	bool bForceStopped = false;
 protected:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug")
 	bool bDrawDebug = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug")
 	bool bDrawDebugText = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug", meta = (ClampMin = "0.0"))
 	float DebugForceScale = 0.1f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug", meta = (ClampMin = "0.0"))
 	float DebugAxisLength = 30.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug", meta = (ClampMin = "0.0"))
 	float DebugTextOffset = 18.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug")
 	FLinearColor DebugEnabledColor = FLinearColor(0.0f, 1.0f, 0.2f, 1.0f);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Debug")
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Debug")
 	FLinearColor DebugDisabledColor = FLinearColor(0.35f, 0.35f, 0.35f, 1.0f);
 
 };
