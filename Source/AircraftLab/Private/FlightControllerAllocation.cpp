@@ -672,8 +672,14 @@ FVector4 UFlightControllerComponent::BuildJacobianColumn(const UAirscrewComponen
 		* (MaxAllocatedThrust * RotorDefinition.GetEffectiveReactionTorqueCoefficient() * Airscrew->GetSpinDirectionSign());
 	// 总力矩 = 偏心力矩 + 反扭矩
 	const FVector PhysicalTorque = FVector::CrossProduct(MomentArmMeters, ForceAtMax) + ReactionTorque;
-	// 构造雅可比列：[Fz, −τx, −τy, τz]
-	return FVector4(ForceAtMax.Z, -PhysicalTorque.X, -PhysicalTorque.Y, PhysicalTorque.Z);
+	const FVector ControllerTorque =
+		RuntimeConfig.Controller.BodyAxes.BodyTorqueToController(PhysicalTorque);
+	// 构造飞控标准坐标中的雅可比列：[Fz, Roll, Pitch, Yaw]
+	return FVector4(
+		ForceAtMax.Z,
+		ControllerTorque.X,
+		ControllerTorque.Y,
+		ControllerTorque.Z);
 }
 
 

@@ -16,8 +16,14 @@
 
 class UFeedForwardCalculator;
 class UAutopilotMovementExecutor;
+class UAnimInstance;
+class UAnimMontage;
 class UMotionProfile;
 class UPathFollowingStrategy;
+class UPhysicsConstraintComponent;
+class USkeletalMeshComponent;
+struct FAutopilotRootMotionRequest;
+struct FAutopilotVehicleSnapshot;
 
 /**
  * Executes one movement intent at a time and publishes a continuous setpoint to
@@ -35,9 +41,15 @@ public:
 
 	virtual void OnRegister() override;
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
 	virtual bool GetAircraftKinematicTarget_Implementation(FAircraftKinematicTarget& OutTarget) const override;
+	virtual bool RequiresAircraftFullPhysics() const override
+	{
+		return ActiveRootMotionHandle.IsValid()
+			&& ActiveRootMotionDriveMode == EAutopilotRootMotionDriveMode::PhysicsConstraint;
+	}
 
 	virtual bool GetAutopilotInjection(FAutopilotInjection& OutInjection) const override;
 	virtual bool IsAutopilotActive() const override { return bAutopilotActive; }
@@ -69,6 +81,18 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
 	FAutopilotIntentHandle SubmitVelocity(const FAutopilotVelocityCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	FAutopilotIntentHandle SubmitRootMotionKinematic(
+		const FAutopilotKinematicRootMotionCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	FAutopilotIntentHandle SubmitRootMotionFlightController(
+		const FAutopilotFlightControllerRootMotionCommand& Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
+	FAutopilotIntentHandle SubmitRootMotionPhysicsConstraint(
+		const FAutopilotPhysicsConstraintRootMotionCommand& Command);
 
 	UFUNCTION(BlueprintCallable, Category = "Autopilot|Commands")
 	FAutopilotIntentHandle SubmitHold(const FAutopilotHeadingOptions& Heading);
@@ -117,6 +141,23 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Autopilot|HoverThrust")
 	float GetEstimatedHoverThrust() const;
 
+	/**
+	 * 消费 SkeletalMesh 本帧已提取的 Root Motion，并将世界空间增量应用到 Owner 根组件。
+	 * 本函数不负责播放动画、切换物理、暂停飞控或安排 Tick；蓝图应在 Mesh 完成动画更新后调用。
+	 *
+	 * @param SkeletalMesh          提供 Root Motion 的骨骼网格体，必须属于本组件的 Owner。
+	 * @param OutWorldRootMotion    实际消费到的世界空间位移/旋转增量。
+	 * @param OutHitResult          Sweep 时的碰撞结果。
+	 * @param bSweep                移动 Owner 根组件时是否执行碰撞扫描。
+	 * @return 本帧是否消费到了有效 Root Motion。
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|RootMotion", meta = (DisplayName = "Consume And Apply Root Motion"))
+	bool ConsumeAndApplyRootMotion(
+		USkeletalMeshComponent* SkeletalMesh,
+		FTransform& OutWorldRootMotion,
+		FHitResult& OutHitResult,
+		bool bSweep = true);
+
 	UPROPERTY(BlueprintAssignable, Category = "Autopilot|Intent")
 	FOnAutopilotIntentChanged OnIntentStarted;
 
@@ -160,6 +201,31 @@ private:
 	FTurnCommand CachedTurnCommand;
 	FHoverThrustEstimator HoverThrustEstimator;
 	FAircraftSimulationBudget SimulationBudget;
+	UPROPERTY(Transient)
+	TObjectPtr<USkeletalMeshComponent> ActiveRootMotionMesh;
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimInstance> ActiveRootMotionAnimInstance;
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> ActiveRootMotionMontage;
+	UPROPERTY(Transient)
+	TObjectPtr<UPhysicsConstraintComponent> ActiveRootMotionConstraint;
+	FAutopilotIntentHandle ActiveRootMotionHandle;
+	EAutopilotRootMotionDriveMode ActiveRootMotionDriveMode = EAutopilotRootMotionDriveMode::FlightController;
+	FName ActiveRootMotionPhysicsBoneName = NAME_None;
+	bool bActiveRootMotionSweep = true;
+	bool bActiveRootMotionApplyRotation = true;
+	bool bRootMotionMontageEnded = false;
+	bool bRootMotionMontageInterrupted = false;
+	FVector ActiveRootMotionTargetPositionCm = FVector::ZeroVector;
+	FVector PreviousRootMotionTargetPositionCm = FVector::ZeroVector;
+	FQuat ActiveRootMotionTrajectoryActorRotation = FQuat::Identity;
+	FQuat ActiveRootMotionDesiredActorRotation = FQuat::Identity;
+	FQuat PreviousRootMotionConstraintTargetRotation = FQuat::Identity;
+	FTransform ActiveRootMotionConstraintReference = FTransform::Identity;
+	FVector PreviousRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	float PreviousRootMotionTargetYawDegrees = 0.0f;
+	float RootMotionArrivalStableTimeSeconds = 0.0f;
+	float ActiveRootMotionStartPositionSeconds = 0.0f;
 
 	void CreateRuntimeObjects();
 	void ResolveFlightController();
@@ -172,6 +238,34 @@ private:
 	void BuildInjection(FAutopilotInjection& OutInjection) const;
 	void UpdateHoverThrustEstimate(float DeltaSeconds);
 	void RefreshSimulationTickEnabled();
+	FAutopilotIntentHandle SubmitRootMotionRequest(
+		const FAutopilotRootMotionRequest& Request);
+	void TickRootMotionIntent(float DeltaSeconds);
+	bool ConsumeRootMotionDelta(
+		USkeletalMeshComponent* SkeletalMesh,
+		FTransform& OutWorldRootMotion) const;
+	void AccumulateRootMotionPhysicalTarget(const FTransform& WorldRootMotion);
+	void UpdateRootMotionFlightControlSetpoint(
+		const FAutopilotVehicleSnapshot& Snapshot,
+		bool bConsumedRootMotion,
+		float DeltaSeconds);
+	bool CreateRootMotionPhysicsConstraint(
+		const FAutopilotRootMotionConstraintDrive& ConstraintDrive,
+		const FAutopilotVehicleSnapshot& Snapshot);
+	bool UpdateRootMotionPhysicsConstraintTarget(
+		const FAutopilotVehicleSnapshot& Snapshot,
+		bool bConsumedRootMotion,
+		float DeltaSeconds);
+	bool HasReachedRootMotionPhysicalTarget(
+		const FAutopilotVehicleSnapshot& Snapshot,
+		float DeltaSeconds);
+	void CleanupRootMotionIntent(bool bStopMontage);
+	bool CaptureActiveRootMotionSnapshot(
+		FAutopilotVehicleSnapshot& OutSnapshot,
+		float DeltaSeconds,
+		const FVector& PreviousLocation) const;
+	FAutopilotVehicleSnapshot MakeRootMotionSnapshot(float DeltaSeconds, const FVector& PreviousLocation) const;
+	void HandleRootMotionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 	static void ApplyHeadingOptions(FAutopilotMovementIntent& Intent, const FAutopilotHeadingOptions& Heading);
 	static void ApplyFiniteOptions(FAutopilotMovementIntent& Intent, const FAutopilotFiniteCommandOptions& Options);
 	static void ApplyContinuousConstraints(

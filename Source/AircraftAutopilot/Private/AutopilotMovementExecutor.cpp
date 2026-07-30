@@ -215,6 +215,13 @@ bool UAutopilotMovementExecutor::BuildSetpoint(
 		OutSetpoint.bValid = true;
 		return true;
 	}
+	if (ActiveIntent.Type == EAutopilotMovementIntentType::RootMotion)
+	{
+		OutSetpoint.PositionCm = Snapshot.PositionCm;
+		OutSetpoint.YawDegrees = Snapshot.YawDegrees;
+		OutSetpoint.bValid = true;
+		return true;
+	}
 	if (!TrajectoryGenerator->IsValid())
 	{
 		return false;
@@ -296,7 +303,8 @@ void UAutopilotMovementExecutor::UpdateCompletion(
 	ActiveResult.Progress = GetTrajectoryProgress();
 	if (ActiveIntent.Type == EAutopilotMovementIntentType::Hold
 		|| ActiveIntent.Type == EAutopilotMovementIntentType::MoveWithVelocity
-		|| ActiveIntent.Type == EAutopilotMovementIntentType::Orbit)
+		|| ActiveIntent.Type == EAutopilotMovementIntentType::Orbit
+		|| ActiveIntent.Type == EAutopilotMovementIntentType::RootMotion)
 	{
 		return;
 	}
@@ -339,6 +347,54 @@ void UAutopilotMovementExecutor::UpdateCompletion(
 		FinishActive(EAutopilotIntentStatus::Succeeded, EAutopilotIntentFailureReason::None);
 		EnterHold(Snapshot, &Target);
 	}
+}
+
+bool UAutopilotMovementExecutor::TickExternalIntent(
+	FAutopilotIntentHandle Handle,
+	const FAutopilotVehicleSnapshot& Snapshot,
+	float DeltaSeconds,
+	float Progress)
+{
+	if (!bHasExternalIntent
+		|| Handle != ActiveResult.Handle
+		|| ActiveIntent.Type != EAutopilotMovementIntentType::RootMotion)
+	{
+		return false;
+	}
+
+	ActiveResult.ElapsedSeconds += FMath::Max(DeltaSeconds, 0.0f);
+	ActiveResult.Progress = FMath::Clamp(Progress, 0.0f, 1.0f);
+	if (ActiveResult.Status == EAutopilotIntentStatus::Accepted)
+	{
+		ActiveResult.Status = EAutopilotIntentStatus::Executing;
+	}
+	if (ActiveIntent.TimeoutSeconds > 0.0f
+		&& ActiveResult.ElapsedSeconds >= ActiveIntent.TimeoutSeconds)
+	{
+		FinishActive(EAutopilotIntentStatus::Failed, EAutopilotIntentFailureReason::Timeout);
+		EnterHold(Snapshot);
+		return false;
+	}
+	return true;
+}
+
+bool UAutopilotMovementExecutor::FinishExternalIntent(
+	FAutopilotIntentHandle Handle,
+	const FAutopilotVehicleSnapshot& Snapshot,
+	EAutopilotIntentStatus Status,
+	EAutopilotIntentFailureReason Reason)
+{
+	if (!bHasExternalIntent
+		|| Handle != ActiveResult.Handle
+		|| ActiveIntent.Type != EAutopilotMovementIntentType::RootMotion)
+	{
+		return false;
+	}
+	ActiveResult.Progress = Status == EAutopilotIntentStatus::Succeeded
+		? 1.0f : ActiveResult.Progress;
+	FinishActive(Status, Reason);
+	EnterHold(Snapshot);
+	return true;
 }
 
 FAutopilotIntentResult UAutopilotMovementExecutor::GetResult(FAutopilotIntentHandle Handle) const

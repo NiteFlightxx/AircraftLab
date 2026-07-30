@@ -8,16 +8,17 @@ namespace
 	 * 从刚体四元数提取世界水平面中的机头方向。
 	 * 正常姿态使用机体 Forward；其水平投影退化时，使用机体 Right 重建 Forward。
 	 */
-	FVector GetPlanarHeadingDirection(const FQuat& BodyRotation)
+	FVector GetPlanarHeadingDirection(
+		const FQuat& BodyRotation, const FAircraftBodyAxesConfig& BodyAxes)
 	{
-		FVector Forward = BodyRotation.RotateVector(FVector::ForwardVector);
+		FVector Forward = BodyRotation.RotateVector(BodyAxes.GetForwardAxisBody());
 		Forward.Z = 0.0f;
 		if (Forward.Normalize())
 		{
 			return Forward;
 		}
 
-		FVector Right = BodyRotation.RotateVector(FVector::RightVector);
+		FVector Right = BodyRotation.RotateVector(BodyAxes.GetRightAxisBody());
 		Right.Z = 0.0f;
 		if (Right.Normalize())
 		{
@@ -27,16 +28,19 @@ namespace
 		return FVector::ForwardVector;
 	}
 
-	float GetPlanarHeadingDegrees(const FQuat& BodyRotation)
+	float GetPlanarHeadingDegrees(
+		const FQuat& BodyRotation, const FAircraftBodyAxesConfig& BodyAxes)
 	{
-		const FVector Forward = GetPlanarHeadingDirection(BodyRotation);
+		const FVector Forward = GetPlanarHeadingDirection(BodyRotation, BodyAxes);
 		return FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X));
 	}
 
 	/** 返回从当前水平航向转到目标航向的最短有符号角，单位为弧度。 */
-	float ComputePlanarHeadingErrorRadians(const FQuat& BodyRotation, float TargetYawDegrees)
+	float ComputePlanarHeadingErrorRadians(
+		const FQuat& BodyRotation, float TargetYawDegrees,
+		const FAircraftBodyAxesConfig& BodyAxes)
 	{
-		const FVector CurrentForward = GetPlanarHeadingDirection(BodyRotation);
+		const FVector CurrentForward = GetPlanarHeadingDirection(BodyRotation, BodyAxes);
 		const FQuat TargetHeadingRotation(
 			FVector::UpVector, FMath::DegreesToRadians(TargetYawDegrees));
 		const FVector TargetForward = TargetHeadingRotation.RotateVector(FVector::ForwardVector);
@@ -251,8 +255,9 @@ FRotator FFlightControlSolver::ComputeDesiredAttitude(FFlightControlSolverContex
 	// ---- 路径 B：速度/位置 PID → 悬停倾斜方程 ----
 	const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(Context, DeltaSeconds);
 	const float GravityMagnitude = Context.PhysicsCache.GravityMagnitudeCmPerSecSq;
+	const FAircraftBodyAxesConfig& BodyAxes = Context.Config.Controller.BodyAxes;
 	const float CurrentHeadingDegrees = GetPlanarHeadingDegrees(
-		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized());
+		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized(), BodyAxes);
 
 	// 构造仅含航向的"平面旋转"——提取机体前/右方向的水平投影
 	const FRotator FlatYawRotation(0.0f, CurrentHeadingDegrees, 0.0f);
@@ -287,8 +292,9 @@ FFlightControlYawSetpoint FFlightControlSolver::ComputeYawSetpoint(FFlightContro
 	FFlightControlYawSetpoint Result;
 	// 航向保持初始化与下游航向误差必须使用同一份刚体四元数真值。
 	// 不再混用可能滞后一帧的显示用 AttitudeDegrees.Yaw，避免启动首帧凭空产生偏航指令。
+	const FAircraftBodyAxesConfig& BodyAxes = Context.Config.Controller.BodyAxes;
 	const float CurrentYawDegrees = GetPlanarHeadingDegrees(
-		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized());
+		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized(), BodyAxes);
 	Result.TargetYawDegrees = CurrentYawDegrees;
 	Result.MaxRateDegPerSec = Context.Config.Controller.Limits.MaxYawRateDegreesPerSec;
 
@@ -392,8 +398,10 @@ FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContex
 		// 必须继续使用当前航向。目标 Yaw 在下方作为独立航向闭环处理；若直接
 		// 把 TargetYaw 与这里的 Roll/Pitch 拼接，Yaw 误差会泄漏到 QErr.X/Y，
 		// 使单纯转向产生错误的横滚/俯仰指令。
-		const FQuat QCur = Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized();
-		const float CurrentHeadingDegrees = GetPlanarHeadingDegrees(QCur);
+		const FAircraftBodyAxesConfig& BodyAxes = Context.Config.Controller.BodyAxes;
+		const FQuat QBody = Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized();
+		const FQuat QCur = BodyAxes.GetControlWorldRotation(QBody);
+		const float CurrentHeadingDegrees = GetPlanarHeadingDegrees(QBody, BodyAxes);
 		const FQuat QDes = FRotator(
 			SmoothedPitch, CurrentHeadingDegrees, SmoothedRoll).Quaternion();
 		FQuat QErr = QCur.Inverse() * QDes;
@@ -414,7 +422,7 @@ FVector FFlightControlSolver::ComputeDesiredBodyRates(FFlightControlSolverContex
 		// 作为前馈叠加。航向误差来自刚体四元数的水平机头方向，不使用欧拉角 PID，
 		// 也不允许航向误差影响 Roll/Pitch 通道。
 		const float HeadingErrorRadians = ComputePlanarHeadingErrorRadians(
-			QCur, YawSetpoint.TargetYawDegrees);
+			QBody, YawSetpoint.TargetYawDegrees, BodyAxes);
 		DesiredYawRate += FMath::RadiansToDegrees(
 			HeadingErrorRadians * AttCfg.QuaternionAttitudeGains.Yaw);
 	}

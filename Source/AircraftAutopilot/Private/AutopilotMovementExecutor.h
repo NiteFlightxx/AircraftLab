@@ -46,6 +46,16 @@ public:
 		const FAutopilotVehicleSnapshot& Snapshot,
 		float DeltaSeconds,
 		const FProfiledSetpoint& ProfiledSetpoint);
+	bool TickExternalIntent(
+		FAutopilotIntentHandle Handle,
+		const FAutopilotVehicleSnapshot& Snapshot,
+		float DeltaSeconds,
+		float Progress);
+	bool FinishExternalIntent(
+		FAutopilotIntentHandle Handle,
+		const FAutopilotVehicleSnapshot& Snapshot,
+		EAutopilotIntentStatus Status,
+		EAutopilotIntentFailureReason Reason);
 
 	FAutopilotIntentResult GetResult(FAutopilotIntentHandle Handle) const;
 	const FAutopilotIntentResult& GetCurrentResult() const { return ActiveResult; }

@@ -117,6 +117,15 @@ FAircraftSimulationSnapshot UAircraftSimulationLODComponent::BuildSnapshot(
 	Snapshot.PositionCm = GetOwner() ? GetOwner()->GetActorLocation() : FVector::ZeroVector;
 	Snapshot.NearestPlayerDistanceCm = NearestPlayerDistanceCm;
 	Snapshot.Importance = Importance;
+	for (const TWeakObjectPtr<UActorComponent>& ConsumerComponent : Consumers)
+	{
+		if (const IAircraftSimulationLODConsumer* Consumer =
+			Cast<IAircraftSimulationLODConsumer>(ConsumerComponent.Get()))
+		{
+			Snapshot.Importance.bHasExternalPhysicsConstraint |=
+				Consumer->RequiresAircraftFullPhysics();
+		}
+	}
 	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
 	{
 		Snapshot.Importance.bPlayerControlled |= Pawn->IsPlayerControlled();

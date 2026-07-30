@@ -40,4 +40,6 @@ public:
 		float& OutHoverCollectiveCommand,
 		float& OutVerticalAccelerationMpsSq,
 		float& OutCollectiveThrustCommand) const = 0;
+	/** 飞控标准坐标（X=Forward）到模型局部坐标的固定旋转。 */
+	virtual FQuat GetAircraftControlToBodyRotation() const = 0;
 };

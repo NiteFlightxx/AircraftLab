@@ -60,6 +60,7 @@ public:
 		float& OutHoverCollectiveCommand,
 		float& OutVerticalAccelerationMpsSq,
 		float& OutCollectiveThrustCommand) const override;
+	virtual FQuat GetAircraftControlToBodyRotation() const override;
 
 	/** 获取本次运行使用的不可变配置快照。 */
 	const FFlightControllerRuntimeConfig& GetRuntimeConfig() const { return RuntimeConfig; }

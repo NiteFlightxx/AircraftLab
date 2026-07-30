@@ -181,7 +181,7 @@ struct FPhysicsCache
 	/** 世界坐标系上方向（通常为Z轴） */
 	FVector WorldUp = FVector::UpVector;
 
-	/** 机体坐标轴（世界坐标系表示） */
+	/** 飞控标准坐标轴 Forward/Right/Up（世界坐标系表示） */
 	FVector BodyAxisX = FVector::ForwardVector;
 	FVector BodyAxisY = FVector::RightVector;
 	FVector BodyAxisZ = FVector::UpVector;

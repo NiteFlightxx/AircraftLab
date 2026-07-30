@@ -2,6 +2,9 @@
 
 void FlightControllerConfig::InitializeDefaults(FAircraftFlightControllerConfig& OutConfig)
 {
+	// 默认美术约定：模型局部 +Y 为机头方向（可在 Profile 中切换为 ±X/±Y）。
+	OutConfig.BodyAxes.ForwardAxis = EAircraftForwardAxis::PositiveY;
+
 	// ========================================================================
 	// 运动限制（安全边界）
 	// 100kg 无人机倾斜过大会失控，需严格限制

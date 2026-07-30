@@ -1,3 +1,4 @@
+#include "AircraftType.h"
 #include "AircraftPhysicsUnits.h"
 #include "Chaos/ParticleHandle.h"
 #include "Chaos/Particle/ParticleUtilities.h"
@@ -9,12 +10,12 @@ namespace AircraftTorqueConventionTests
 {
 FVector ToControllerAngularVector(const FVector& PhysicalBodyVector)
 {
-	return FVector(-PhysicalBodyVector.X, -PhysicalBodyVector.Y, PhysicalBodyVector.Z);
+	return FAircraftBodyAxesConfig().BodyAngularToController(PhysicalBodyVector);
 }
 
 FVector ToPhysicalBodyTorque(const FVector& ControllerTorque)
 {
-	return FVector(-ControllerTorque.X, -ControllerTorque.Y, ControllerTorque.Z);
+	return FAircraftBodyAxesConfig().ControllerTorqueToBody(ControllerTorque);
 }
 }
 
@@ -63,10 +64,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FAircraftSymmetricRotorPitchWrenchTest::RunTest(const FString& Parameters)
 {
-	const FVector FrontRightM(0.187, 0.189, 0.13);
-	const FVector BackRightM(-0.189, 0.188, 0.13);
-	const FVector BackLeftM(-0.188, -0.187, 0.13);
-	const FVector FrontLeftM(0.187, -0.187, 0.13);
+	const FAircraftBodyAxesConfig BodyAxes;
+	const FVector FrontRightM = BodyAxes.ControlToBodyVector(FVector(0.187, 0.189, 0.13));
+	const FVector BackRightM = BodyAxes.ControlToBodyVector(FVector(-0.189, 0.188, 0.13));
+	const FVector BackLeftM = BodyAxes.ControlToBodyVector(FVector(-0.188, -0.187, 0.13));
+	const FVector FrontLeftM = BodyAxes.ControlToBodyVector(FVector(0.187, -0.187, 0.13));
 	const FVector FrontForceN(0.0, 0.0, 300.0);
 	const FVector BackForceN(0.0, 0.0, 200.0);
 
@@ -74,7 +76,7 @@ bool FAircraftSymmetricRotorPitchWrenchTest::RunTest(const FString& Parameters)
 		+ FVector::CrossProduct(FrontLeftM, FrontForceN)
 		+ FVector::CrossProduct(BackRightM, BackForceN)
 		+ FVector::CrossProduct(BackLeftM, BackForceN);
-	const FVector ControllerTorque = AircraftTorqueConventionTests::ToControllerAngularVector(PhysicalTorque);
+	const FVector ControllerTorque = BodyAxes.BodyTorqueToController(PhysicalTorque);
 	TestTrue(TEXT("More front thrust produces positive controller pitch torque"), ControllerTorque.Y > 0.0);
 	TestTrue(TEXT("Symmetric thrust produces negligible roll torque"), FMath::Abs(ControllerTorque.X) < 1.0);
 	return true;
@@ -89,10 +91,13 @@ bool FAircraftCenterOfMassLeverArmTest::RunTest(const FString& Parameters)
 {
 	using namespace Chaos;
 	TUniquePtr<FPBDRigidParticle> Rigid = FPBDRigidParticle::CreateParticle();
+	const FAircraftBodyAxesConfig BodyAxes;
 	const FVector BodyWorldPosition(120.0, -80.0, 300.0);
 	const FQuat BodyWorldRotation = FRotator(25.0, 30.0, 10.0).Quaternion();
-	const FVector CenterOfMassBodyCm(32.54, 0.0, 105.05);
-	const FVector RotorBodyCm(18.7, 18.9, 113.0);
+	const FVector CenterOfMassBodyCm =
+		BodyAxes.ControlToBodyVector(FVector(32.54, 0.0, 105.05));
+	const FVector RotorBodyCm =
+		BodyAxes.ControlToBodyVector(FVector(18.7, 18.9, 113.0));
 	const FVector ThrustAxisBody = FVector::UpVector;
 
 	Rigid->SetX(FVec3(BodyWorldPosition));
@@ -110,8 +115,10 @@ bool FAircraftCenterOfMassLeverArmTest::RunTest(const FString& Parameters)
 		FVector::CrossProduct(TrueArmWorld * 0.01, ForceWorld));
 	const FVector OriginBasedTorqueBody = BodyWorldRotation.UnrotateVector(
 		FVector::CrossProduct((RotorWorld - BodyWorldPosition) * 0.01, ForceWorld));
+	const FVector CorrectTorqueController = BodyAxes.BodyTorqueToController(CorrectTorqueBody);
+	const FVector OriginBasedTorqueController = BodyAxes.BodyTorqueToController(OriginBasedTorqueBody);
 	TestTrue(TEXT("Offset COM changes this rotor's pitch torque sign"),
-		CorrectTorqueBody.Y * OriginBasedTorqueBody.Y < 0.0);
+		CorrectTorqueController.Y * OriginBasedTorqueController.Y < 0.0);
 	return true;
 }
 

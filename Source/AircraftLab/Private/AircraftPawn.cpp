@@ -60,6 +60,11 @@ void AAircraftPawn::BeginPlay()
 	// 唤醒所有刚体确保物理模拟启动
 	BodyMesh->WakeAllRigidBodies();
 
+	GetFlightControllerComponent()->Arm();
+	GetFlightControllerComponent()->SetFlightMode(EAircraftFlightMode::PositionHold);
+	GetFlightControllerComponent()->SetAttitudeMode(EAircraftAttitudeMode::Angle);
+	GetFlightControllerComponent()->SetPositionHoldEnabled(true);
+	
 }
 
 

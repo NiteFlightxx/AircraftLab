@@ -4,6 +4,49 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftDefaultBodyAxesTest,
+	"AircraftLab.Control.Axes.DefaultForwardIsPositiveY",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftDefaultBodyAxesTest::RunTest(const FString& Parameters)
+{
+	FAircraftFlightControllerConfig Config;
+	FlightControllerConfig::InitializeDefaults(Config);
+	const FAircraftBodyAxesConfig& BodyAxes = Config.BodyAxes;
+
+	TestEqual(TEXT("Default model forward axis is +Y"),
+		BodyAxes.ForwardAxis, EAircraftForwardAxis::PositiveY);
+	TestTrue(TEXT("Configured forward vector is model-local +Y"),
+		BodyAxes.GetForwardAxisBody().Equals(FVector::RightVector, 1.e-4f));
+	TestTrue(TEXT("Configured right vector is model-local -X"),
+		BodyAxes.GetRightAxisBody().Equals(-FVector::ForwardVector, 1.e-4f));
+	TestTrue(TEXT("Identity model rotation exposes a +90 degree control heading"),
+		FMath::IsNearlyEqual(
+			BodyAxes.GetControlWorldRotation(FQuat::Identity).Rotator().Yaw,
+			90.0f,
+			1.e-4f));
+
+	const FVector ControllerTorque(1.0f, 2.0f, 3.0f);
+	const FVector PhysicalBodyTorque = BodyAxes.ControllerTorqueToBody(ControllerTorque);
+	TestTrue(TEXT("Controller torque round-trips through the configured body axes"),
+		BodyAxes.BodyTorqueToController(PhysicalBodyTorque).Equals(ControllerTorque, 1.e-4f));
+	const FQuat DesiredControlWorld = FRotator(0.0f, 35.0f, 0.0f).Quaternion();
+	const FQuat DesiredBodyWorld =
+		DesiredControlWorld * BodyAxes.GetControlToBodyRotation().Inverse();
+	TestTrue(TEXT("Kinematic body rotation preserves the requested control heading"),
+		BodyAxes.GetControlWorldRotation(DesiredBodyWorld).Equals(DesiredControlWorld, 1.e-4f));
+
+	FAircraftBodyAxesConfig LegacyAxes;
+	LegacyAxes.ForwardAxis = EAircraftForwardAxis::PositiveX;
+	TestTrue(TEXT("+X remains available for legacy models"),
+		LegacyAxes.GetForwardAxisBody().Equals(FVector::ForwardVector, 1.e-4f));
+	TestTrue(TEXT("Legacy +X torque mapping is unchanged"),
+		LegacyAxes.ControllerTorqueToBody(ControllerTorque).Equals(
+			FVector(-1.0f, -2.0f, 3.0f), 1.e-4f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftLinearDampingFeedForwardTest,
 	"AircraftLab.Control.Velocity.LinearDampingFeedForward",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -158,7 +201,7 @@ bool FAircraftQuaternionAttitudeUsesRigidBodyRotationTest::RunTest(const FString
 	TestTrue(TEXT("Identity rigid-body attitude has no Roll/Pitch quaternion error"),
 		FVector2D(DesiredRates.X, DesiredRates.Y).IsNearlyZero(1.e-4f));
 
-	YawSetpoint.TargetYawDegrees = 90.0f;
+	YawSetpoint.TargetYawDegrees = 180.0f;
 	const FVector YawRates = Solver.ComputeDesiredBodyRates(
 		Context, FRotator::ZeroRotator, YawSetpoint, 0.004f);
 	TestTrue(TEXT("Target yaw is closed from the quaternion-derived heading, not an Euler PID"),
@@ -189,13 +232,13 @@ bool FAircraftQuaternionHeadingDoesNotLeakIntoTiltTest::RunTest(const FString& P
 	FFlightControlSolver Solver;
 	FFlightControlYawSetpoint YawSetpoint;
 	YawSetpoint.MaxRateDegPerSec = Config.Controller.Limits.MaxYawRateDegreesPerSec;
-	YawSetpoint.TargetYawDegrees = 45.0f;
+	YawSetpoint.TargetYawDegrees = 135.0f;
 
-	const FRotator DesiredTilt(-8.0f, 45.0f, 12.0f);
+	const FRotator DesiredTilt(-8.0f, 135.0f, 12.0f);
 	const FVector SameHeadingRates = Solver.ComputeDesiredBodyRates(
 		Context, DesiredTilt, YawSetpoint, 0.004f);
 
-	YawSetpoint.TargetYawDegrees = -135.0f;
+	YawSetpoint.TargetYawDegrees = -45.0f;
 	const FVector OppositeHeadingRates = Solver.ComputeDesiredBodyRates(
 		Context, DesiredTilt, YawSetpoint, 0.004f);
 
@@ -235,10 +278,10 @@ bool FAircraftYawHoldInitializesFromRigidBodyQuaternionTest::RunTest(const FStri
 
 	const FFlightControlYawSetpoint YawSetpoint = Solver.ComputeYawSetpoint(Context);
 	const FVector DesiredRates = Solver.ComputeDesiredBodyRates(
-		Context, FRotator(0.0f, 73.0f, 0.0f), YawSetpoint, 0.004f);
+		Context, FRotator(0.0f, 163.0f, 0.0f), YawSetpoint, 0.004f);
 
 	TestTrue(TEXT("Initial held heading comes from the rigid-body quaternion"),
-		FMath::IsNearlyEqual(YawSetpoint.TargetYawDegrees, 73.0f, 1.e-4f));
+		FMath::IsNearlyEqual(YawSetpoint.TargetYawDegrees, 163.0f, 1.e-4f));
 	TestTrue(TEXT("Matching initial heading produces no default Yaw rate"),
 		FMath::IsNearlyZero(DesiredRates.Z, 1.e-4));
 	return true;

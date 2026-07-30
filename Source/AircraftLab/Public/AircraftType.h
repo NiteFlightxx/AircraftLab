@@ -799,6 +799,107 @@ struct AIRCRAFTLAB_API FAircraftControlLimits
 	float MaxCollectiveCommand = 1.0f;
 };
 
+/** 模型局部坐标中的机头方向；Up 固定为局部 +Z，Right 由右手系自动推导。 */
+UENUM(BlueprintType)
+enum class EAircraftForwardAxis : uint8
+{
+	PositiveX UMETA(DisplayName = "+X"),
+	PositiveY UMETA(DisplayName = "+Y"),
+	NegativeX UMETA(DisplayName = "-X"),
+	NegativeY UMETA(DisplayName = "-Y")
+};
+
+/**
+ * 物理模型局部坐标到飞控标准坐标的唯一映射。
+ * 飞控标准坐标始终为 X=Forward、Y=Right、Z=Up；模型无需为了飞控重新旋转。
+ */
+USTRUCT(BlueprintType)
+struct AIRCRAFTLAB_API FAircraftBodyAxesConfig
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Axes", meta = (DisplayName = "模型前向轴"))
+	EAircraftForwardAxis ForwardAxis = EAircraftForwardAxis::PositiveY;
+
+	float GetForwardYawOffsetDegrees() const
+	{
+		switch (ForwardAxis)
+		{
+		case EAircraftForwardAxis::PositiveX: return 0.0f;
+		case EAircraftForwardAxis::PositiveY: return 90.0f;
+		case EAircraftForwardAxis::NegativeX: return 180.0f;
+		case EAircraftForwardAxis::NegativeY: return -90.0f;
+		default: return 90.0f;
+		}
+	}
+
+	FVector GetForwardAxisBody() const
+	{
+		return FQuat(FVector::UpVector, FMath::DegreesToRadians(GetForwardYawOffsetDegrees()))
+			.RotateVector(FVector::ForwardVector);
+	}
+
+	FVector GetRightAxisBody() const
+	{
+		return FVector::CrossProduct(FVector::UpVector, GetForwardAxisBody()).GetSafeNormal();
+	}
+
+	FQuat GetControlToBodyRotation() const
+	{
+		return FQuat(FVector::UpVector, FMath::DegreesToRadians(GetForwardYawOffsetDegrees()));
+	}
+
+	FQuat GetControlWorldRotation(const FQuat& BodyWorldRotation) const
+	{
+		return (BodyWorldRotation * GetControlToBodyRotation()).GetNormalized();
+	}
+
+	FVector BodyToControlVector(const FVector& BodyVector) const
+	{
+		return FVector(
+			FVector::DotProduct(BodyVector, GetForwardAxisBody()),
+			FVector::DotProduct(BodyVector, GetRightAxisBody()),
+			BodyVector.Z);
+	}
+
+	FVector ControlToBodyVector(const FVector& ControlVector) const
+	{
+		return GetForwardAxisBody() * ControlVector.X
+			+ GetRightAxisBody() * ControlVector.Y
+			+ FVector::UpVector * ControlVector.Z;
+	}
+
+	FVector BodyAxisMagnitudesToControl(const FVector& BodyAxisMagnitudes) const
+	{
+		const FVector ForwardAbs = GetForwardAxisBody().GetAbs();
+		const FVector RightAbs = GetRightAxisBody().GetAbs();
+		return FVector(
+			FVector::DotProduct(BodyAxisMagnitudes, ForwardAbs),
+			FVector::DotProduct(BodyAxisMagnitudes, RightAbs),
+			BodyAxisMagnitudes.Z);
+	}
+
+	/** 物理机体系角向量 -> 飞控 Roll/Pitch/Yaw 符号约定。 */
+	FVector BodyAngularToController(const FVector& PhysicalBodyVector) const
+	{
+		const FVector ControlVector = BodyToControlVector(PhysicalBodyVector);
+		return FVector(-ControlVector.X, -ControlVector.Y, ControlVector.Z);
+	}
+
+	/** 飞控 Roll/Pitch/Yaw 力矩 -> 物理模型局部坐标。 */
+	FVector ControllerTorqueToBody(const FVector& ControllerTorque) const
+	{
+		return ControlToBodyVector(FVector(
+			-ControllerTorque.X, -ControllerTorque.Y, ControllerTorque.Z));
+	}
+
+	/** 物理模型局部力矩 -> 飞控 Roll/Pitch/Yaw 力矩。 */
+	FVector BodyTorqueToController(const FVector& PhysicalBodyTorque) const
+	{
+		return BodyAngularToController(PhysicalBodyTorque);
+	}
+};
+
 /**
  * 姿态控制器配置（角度环和角速率环 PID）
  */
@@ -1009,27 +1110,27 @@ struct AIRCRAFTLAB_API FAircraftRotorDefinition
 
 	/** 最大静推力（N）。该值必须是 SI 牛顿，禁止填写 Unreal/Chaos 原始力单位。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0", Units = "N"))
-	float MaxThrustForce = 900.0f;
+	float MaxThrustForce = 245.f;
 
 	/** 推力系数（用于推力∝系数*转速²） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
-	float ThrustCoefficient = 1.0f;
+	float ThrustCoefficient = 2.f;
 
 	/** 反扭矩系数（m），满足 ReactionTorque[N·m] = Thrust[N] * Coefficient[m]。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0", Units = "m"))
-	float ReactionTorqueCoefficient = 0.03f;
+	float ReactionTorqueCoefficient = 100.f;
 
 	/** 效率（0~1，影响实际推力和扭矩） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
-	float Efficiency = 1.0f;
+	float Efficiency = 1.f;
 
 	/** 控制分配可用推力缩放 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ControlAuthorityScale = 1.0f;
+	float ControlAuthorityScale = 1.f;
 
 	/** 分配结果到电机指令的统一缩放；通常保持 1，仅用于同型号旋翼整体标定。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
-	float CommandScale = 1.0f;
+	float CommandScale = 1.f;
 
 	/** 电机动态模型参数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
@@ -1581,6 +1682,10 @@ USTRUCT(BlueprintType)
 struct AIRCRAFTLAB_API FAircraftFlightControllerConfig
 {
 	GENERATED_BODY()
+
+	/** 模型局部坐标轴约定；默认使用 +Y 作为机头方向。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Control", meta = (DisplayName = "机体轴约定"))
+	FAircraftBodyAxesConfig BodyAxes;
 
 	/** 控制限幅 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Control", meta = (DisplayName = "运动限制"))

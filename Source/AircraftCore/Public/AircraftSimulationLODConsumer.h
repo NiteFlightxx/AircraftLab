@@ -30,4 +30,7 @@ public:
 		OutTarget = FAircraftKinematicTarget();
 		return false;
 	}
+
+	/** Runtime features such as a world constraint can temporarily prevent kinematic/dormant demotion. */
+	virtual bool RequiresAircraftFullPhysics() const { return false; }
 };

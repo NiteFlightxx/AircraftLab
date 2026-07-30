@@ -169,7 +169,8 @@ void UFlightControllerComponent::MaybeEmitDebugLog(
 		const FVector ReactionTorqueBodyNm = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
 			Airscrew->GetCurrentReactionTorqueVectorWorld());
 		const FVector PhysicalTorqueBodyNm = FVector::CrossProduct(ArmM, ForceBodyN) + ReactionTorqueBodyNm;
-		const FVector ControllerTorqueNm(-PhysicalTorqueBodyNm.X, -PhysicalTorqueBodyNm.Y, PhysicalTorqueBodyNm.Z);
+		const FVector ControllerTorqueNm =
+			RuntimeConfig.Controller.BodyAxes.BodyTorqueToController(PhysicalTorqueBodyNm);
 		AppliedForceBodyN += ForceBodyN;
 		AppliedTorqueControllerNm += ControllerTorqueNm;
 		if (bLogRotorCommands)

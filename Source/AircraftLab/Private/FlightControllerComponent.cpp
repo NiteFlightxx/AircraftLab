@@ -47,12 +47,19 @@ void UFlightControllerComponent::BeginPlay()
 	// 首次 SubmitMoveTo 会用原点当轨迹起点，导致起点蓝点画在原点。
 	if (BodyPrimitive)
 	{
+		const FQuat BodyRotation = BodyPrimitive->GetComponentQuat();
+		const FAircraftBodyAxesConfig& BodyAxes = RuntimeConfig.Controller.BodyAxes;
 		Runtime.EstimatedState.State.PositionCm = BodyPrimitive->GetComponentLocation();
 		Runtime.EstimatedState.State.VelocityCmPerSec = BodyPrimitive->GetPhysicsLinearVelocity();
-		Runtime.EstimatedState.State.AttitudeDegrees = BodyPrimitive->GetComponentRotation();
+		Runtime.EstimatedState.State.AttitudeDegrees =
+			BodyAxes.GetControlWorldRotation(BodyRotation).Rotator();
 		Runtime.EstimatedState.AltitudeReference = EAircraftAltitudeReference::WorldZ;
 		Runtime.EstimatedState.AttitudeConfidence = 1.0f;
 		Runtime.EstimatedState.PositionConfidence = 1.0f;
+		PhysicsCache.BodyTransform = FTransform(BodyRotation, BodyPrimitive->GetComponentLocation());
+		PhysicsCache.BodyAxisX = BodyRotation.RotateVector(BodyAxes.GetForwardAxisBody());
+		PhysicsCache.BodyAxisY = BodyRotation.RotateVector(BodyAxes.GetRightAxisBody());
+		PhysicsCache.BodyAxisZ = BodyRotation.RotateVector(FVector::UpVector);
 	}
 	
 	// 注意：这里不预先设置 Runtime.ActiveFlightMode，让 SetFlightMode 能正确执行
@@ -188,14 +195,15 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 	// 控制循环已更新各旋翼指令，现在对刚体施力
 	const FVector AngularAccelerationBeforeWorldRad(BodyHandle->AngularAcceleration());
 	FVector PhysicsStepAppliedTorqueControllerNm = FVector::ZeroVector;
+	const FAircraftBodyAxesConfig& BodyAxes = RuntimeConfig.Controller.BodyAxes;
 	for (UAirscrewComponent* Airscrew : Airscrews)
 	{
 		if (!Airscrew) continue;
 		const FVector AppliedTorqueWorldNm = Airscrew->ApplyThrustForce_PhysicsThread(BodyHandle);
 		const FVector PhysicalTorqueBodyNm = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
 			AppliedTorqueWorldNm);
-		PhysicsStepAppliedTorqueControllerNm += FVector(
-			-PhysicalTorqueBodyNm.X, -PhysicalTorqueBodyNm.Y, PhysicalTorqueBodyNm.Z);
+		PhysicsStepAppliedTorqueControllerNm += BodyAxes.BodyTorqueToController(
+			PhysicalTorqueBodyNm);
 	}
 	const FVector AngularAccelerationAfterWorldRad(BodyHandle->AngularAcceleration());
 	const FVector RotorDeltaBodyRad = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
@@ -203,9 +211,9 @@ void UFlightControllerComponent::AsyncPhysicsTickComponent(float DeltaTime, floa
 	const FVector ChaosAfterBodyRad = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(
 		AngularAccelerationAfterWorldRad);
 	PhysicsCache.RotorAngularAccelerationDeltaBodyDegPerSecSq = FMath::RadiansToDegrees(
-		FVector(-RotorDeltaBodyRad.X, -RotorDeltaBodyRad.Y, RotorDeltaBodyRad.Z));
+		BodyAxes.BodyAngularToController(RotorDeltaBodyRad));
 	PhysicsCache.ChaosAngularAccelerationAfterBodyDegPerSecSq = FMath::RadiansToDegrees(
-		FVector(-ChaosAfterBodyRad.X, -ChaosAfterBodyRad.Y, ChaosAfterBodyRad.Z));
+		BodyAxes.BodyAngularToController(ChaosAfterBodyRad));
 	PhysicsCache.PhysicsStepAppliedTorqueControllerNm = PhysicsStepAppliedTorqueControllerNm;
 	++PhysicsCache.PhysicsStepDiagnosticsSequence;
 }
@@ -526,6 +534,11 @@ void UFlightControllerComponent::GetAircraftAutopilotPhysicalState(
 	OutCollectiveThrustCommand = Runtime.ControlOutput.Targets.Attitude.CollectiveThrust;
 }
 
+FQuat UFlightControllerComponent::GetAircraftControlToBodyRotation() const
+{
+	return RuntimeConfig.Controller.BodyAxes.GetControlToBodyRotation();
+}
+
 
 void UFlightControllerComponent::SetMovementIntentOverride(const FAutopilotMovementIntent& Intent)
 {
@@ -583,6 +596,7 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 	const FQuat BodyQuat(BodyHandle->R());
 	const FVector BodyVel(BodyHandle->V());
 	const FVector BodyAngVelRad(BodyHandle->W());
+	const FAircraftBodyAxesConfig& BodyAxes = RuntimeConfig.Controller.BodyAxes;
 
 	// 缓存体变换（后续 BuildJacobianColumn 等函数使用）
 	PhysicsCache.BodyTransform = FTransform(BodyQuat, BodyPos);
@@ -591,15 +605,17 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 	PhysicsCache.MassKg = static_cast<float>(BodyHandle->M());
 	PhysicsCache.LinearDampingPerSecond = static_cast<float>(BodyHandle->LinearEtherDrag());
 	PhysicsCache.AngularDampingPerSecond = static_cast<float>(BodyHandle->AngularEtherDrag());
-	PhysicsCache.InertiaDiagonalKgM2 = FVector(BodyHandle->I()) * 0.0001;
+	PhysicsCache.InertiaDiagonalKgM2 = BodyAxes.BodyAxisMagnitudesToControl(
+		FVector(BodyHandle->I()) * 0.0001);
 
 	// 角速度处理：
 	//   1) rad/s → °/s
 	//   2) 世界系 → 机体系（逆旋转）
-	//   3) X/Y 翻转（符号约定对齐）
+	//   3) 从模型局部轴映射到 Forward/Right/Up
+	//   4) Roll/Pitch 符号翻转（飞控历史符号约定）
 	const FVector AngVelWorldDeg = FMath::RadiansToDegrees(BodyAngVelRad);
 	const FVector AngVelBodyRaw = PhysicsCache.BodyTransform.InverseTransformVectorNoScale(AngVelWorldDeg);
-	PhysicsCache.AngularVelocityBodyDegPerSec = FVector(-AngVelBodyRaw.X, -AngVelBodyRaw.Y, AngVelBodyRaw.Z);
+	PhysicsCache.AngularVelocityBodyDegPerSec = BodyAxes.BodyAngularToController(AngVelBodyRaw);
 	const FVector AngularAccelerationBody =
 		(Runtime.bHasPreviousAngularVelocity && DeltaSeconds > UE_SMALL_NUMBER)
 		? (PhysicsCache.AngularVelocityBodyDegPerSec - Runtime.PreviousAngularVelocityBodyDegPerSec) / DeltaSeconds
@@ -622,13 +638,17 @@ void UFlightControllerComponent::UpdateEstimatedState_PhysicsThread(float DeltaS
 	Runtime.EstimatedState.State.PositionCm = BodyPos;
 	Runtime.EstimatedState.State.VelocityCmPerSec = PhysicsCache.LinearVelocityCmPerSec;
 	Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq = CurrentAcceleration;
-	Runtime.EstimatedState.State.AttitudeDegrees = BodyQuat.Rotator();
+	const FQuat ControlWorldRotation = BodyAxes.GetControlWorldRotation(BodyQuat);
+	Runtime.EstimatedState.State.AttitudeDegrees = ControlWorldRotation.Rotator();
 	Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec = PhysicsCache.AngularVelocityBodyDegPerSec;
 	Runtime.EstimatedState.State.AngularAccelerationBodyDegreesPerSecSq = AngularAccelerationBody;
 	Runtime.EstimatedState.AltitudeReference = EAircraftAltitudeReference::WorldZ;
 	// 置信度硬编码 1.0 = 完美估计（仿真特权）
 	Runtime.EstimatedState.AttitudeConfidence = 1.0f;
 	Runtime.EstimatedState.PositionConfidence = 1.0f;
+	PhysicsCache.BodyAxisX = BodyQuat.RotateVector(BodyAxes.GetForwardAxisBody());
+	PhysicsCache.BodyAxisY = BodyQuat.RotateVector(BodyAxes.GetRightAxisBody());
+	PhysicsCache.BodyAxisZ = BodyQuat.RotateVector(FVector::UpVector);
 }
 
 

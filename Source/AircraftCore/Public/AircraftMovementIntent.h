@@ -14,7 +14,9 @@ enum class EAutopilotMovementIntentType : uint8
 	FollowPath UMETA(DisplayName = "跟随路径"),
 	Orbit UMETA(DisplayName = "环绕飞行"),
 	/** Follow a finite horizontal circular arc around TargetPositionCm/TargetActor. */
-	CircleArc UMETA(DisplayName = "圆弧飞行")
+	CircleArc UMETA(DisplayName = "圆弧飞行"),
+	/** Movement follows a trajectory extracted from an animation montage's Root Motion. */
+	RootMotion UMETA(DisplayName = "Root Motion")
 };
 
 UENUM(BlueprintType)

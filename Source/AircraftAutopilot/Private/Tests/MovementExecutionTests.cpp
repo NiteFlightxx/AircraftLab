@@ -83,6 +83,66 @@ bool FAutopilotIntentLifecycleTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAutopilotRootMotionIntentLifecycleTest,
+	"AircraftAutopilot.Movement.RootMotionIntentUsesExternalLifecycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAutopilotRootMotionIntentLifecycleTest::RunTest(const FString& Parameters)
+{
+	const FAutopilotKinematicRootMotionCommand KinematicCommand;
+	const FAutopilotFlightControllerRootMotionCommand FlightControllerCommand;
+	const FAutopilotPhysicsConstraintRootMotionCommand PhysicsConstraintCommand;
+	TestTrue(TEXT("Kinematic Root Motion applies animation rotation by default"),
+		KinematicCommand.bApplyRootMotionRotation);
+	TestTrue(TEXT("Flight-controller Root Motion drives yaw by default"),
+		FlightControllerCommand.bApplyRootMotionRotation);
+	TestTrue(TEXT("Constraint Root Motion drives rotation by default"),
+		PhysicsConstraintCommand.bApplyRootMotionRotation);
+	const FAutopilotRootMotionConstraintDrive DefaultConstraintDrive;
+	TestTrue(TEXT("Constraint Root Motion defaults to mass-independent acceleration drive"),
+		DefaultConstraintDrive.bAccelerationMode);
+	TestTrue(TEXT("Constraint Root Motion has position and damping strength"),
+		DefaultConstraintDrive.LinearPositionStrength > 0.0f
+			&& DefaultConstraintDrive.LinearVelocityStrength > 0.0f
+			&& DefaultConstraintDrive.AngularPositionStrength > 0.0f
+			&& DefaultConstraintDrive.AngularVelocityStrength > 0.0f);
+
+	UAutopilotMovementExecutor* Executor = NewObject<UAutopilotMovementExecutor>();
+	Executor->Initialize();
+	FAutopilotVehicleSnapshot Snapshot;
+	Snapshot.PositionCm = FVector(100.0f, 200.0f, 300.0f);
+
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::RootMotion;
+	const FAutopilotIntentHandle Handle = Executor->Submit(
+		Intent, Snapshot, EAutopilotIntentFailureReason::None);
+	TestEqual(TEXT("Root Motion intent is accepted"),
+		Executor->GetResult(Handle).Status, EAutopilotIntentStatus::Accepted);
+
+	TestTrue(TEXT("External Root Motion tick owns progress and elapsed time"),
+		Executor->TickExternalIntent(Handle, Snapshot, 0.25f, 0.4f));
+	const FAutopilotIntentResult Executing = Executor->GetResult(Handle);
+	TestEqual(TEXT("First external tick starts execution"),
+		Executing.Status, EAutopilotIntentStatus::Executing);
+	TestTrue(TEXT("Montage progress is exposed through the intent result"),
+		FMath::IsNearlyEqual(Executing.Progress, 0.4f));
+	TestTrue(TEXT("Root Motion completion enters the common terminal lifecycle"),
+		Executor->FinishExternalIntent(
+			Handle,
+			Snapshot,
+			EAutopilotIntentStatus::Succeeded,
+			EAutopilotIntentFailureReason::None));
+	const FAutopilotIntentResult Completed = Executor->GetResult(Handle);
+	TestEqual(TEXT("Completed Root Motion intent succeeds"),
+		Completed.Status, EAutopilotIntentStatus::Succeeded);
+	TestTrue(TEXT("Successful Root Motion reports full progress"),
+		FMath::IsNearlyEqual(Completed.Progress, 1.0f));
+	TestEqual(TEXT("Executor returns to Hold after Root Motion"),
+		Executor->GetActiveIntent().Type, EAutopilotMovementIntentType::Hold);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAutopilotYawDynamicsLimitTest,
 	"AircraftAutopilot.Movement.YawRateUsesAccelerationLimit",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
