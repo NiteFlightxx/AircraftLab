@@ -63,6 +63,33 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
 	void ForceSimulationReevaluation();
 
+	/**
+	 * Persistently selects the configured LOD entry that uses DriveMode.
+	 * Manual selection has priority over automatic LOD and motion-source requests
+	 * until ClearManualDriveModeOverride is called.
+	 *
+	 * Returns false when the active profile has no entry for DriveMode.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation|Drive")
+	bool SetManualDriveModeOverride(
+		EAircraftSimulationDriveMode DriveMode);
+
+	/** Returns control of the drive mode to motion sources and automatic LOD. */
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation|Drive")
+	void ClearManualDriveModeOverride();
+
+	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation|Drive")
+	bool HasManualDriveModeOverride() const
+	{
+		return bManualDriveModeOverrideActive;
+	}
+
+	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation|Drive")
+	EAircraftSimulationDriveMode GetManualDriveModeOverride() const
+	{
+		return ManualDriveModeOverride;
+	}
+
 	UPROPERTY(BlueprintAssignable, Category = "Aircraft|Simulation")
 	FOnAircraftSimulationLODChanged OnSimulationLODChanged;
 
@@ -87,6 +114,10 @@ protected:
 	int32 CurrentLODIndex = 0;
 
 private:
+	bool bManualDriveModeOverrideActive = false;
+	EAircraftSimulationDriveMode ManualDriveModeOverride =
+		EAircraftSimulationDriveMode::None;
+
 	UFUNCTION()
 	void OnRep_CurrentLODIndex(int32 PreviousLODIndex);
 

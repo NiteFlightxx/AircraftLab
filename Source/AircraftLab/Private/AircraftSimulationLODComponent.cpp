@@ -149,6 +149,33 @@ void UAircraftSimulationLODComponent::ForceSimulationReevaluation()
 	LastEvaluationTimeSeconds = -BIG_NUMBER;
 }
 
+bool UAircraftSimulationLODComponent::SetManualDriveModeOverride(
+	EAircraftSimulationDriveMode DriveMode)
+{
+	if (GetEffectiveProfile().FindLODForDriveMode(
+			DriveMode, CurrentLODIndex) == INDEX_NONE)
+	{
+		return false;
+	}
+
+	ManualDriveModeOverride = DriveMode;
+	bManualDriveModeOverrideActive = true;
+	RefreshAircraftSimulationDrive_Implementation();
+	return true;
+}
+
+void UAircraftSimulationLODComponent::ClearManualDriveModeOverride()
+{
+	if (!bManualDriveModeOverrideActive)
+	{
+		return;
+	}
+
+	bManualDriveModeOverrideActive = false;
+	ManualDriveModeOverride = EAircraftSimulationDriveMode::None;
+	RefreshAircraftSimulationDrive_Implementation();
+}
+
 const UAircraftSimulationLODProfileAsset& UAircraftSimulationLODComponent::GetEffectiveProfile() const
 {
 	return SimulationProfile ? *SimulationProfile : *GetDefault<UAircraftSimulationLODProfileAsset>();
@@ -324,6 +351,15 @@ void UAircraftSimulationLODComponent::ApplyCollisionBudget(
 
 FAircraftSimulationDriveOverride UAircraftSimulationLODComponent::ResolveDriveOverride() const
 {
+	if (bManualDriveModeOverrideActive)
+	{
+		FAircraftSimulationDriveOverride ManualOverride;
+		ManualOverride.DriveMode = ManualDriveModeOverride;
+		ManualOverride.Priority = MAX_int32;
+		ManualOverride.bValid = true;
+		return ManualOverride;
+	}
+
 	FAircraftSimulationDriveOverride Best;
 	for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
 	{

@@ -60,10 +60,10 @@ bool FAircraftComponentReflectionBoundaryTest::RunTest(const FString& Parameters
 	}
 	TestNull(TEXT("The coupled SubmitRootMotion API has been removed"),
 		UAutopilotComponent::StaticClass()->FindFunctionByName(TEXT("SubmitRootMotion")));
-	const auto TestRootMotionFunction = [this](const FName FunctionName)
+	const auto TestBlueprintFunction =
+		[this](const UClass* Class, const FName FunctionName)
 	{
-		const UFunction* Function =
-			UAutopilotComponent::StaticClass()->FindFunctionByName(FunctionName);
+		const UFunction* Function = Class->FindFunctionByName(FunctionName);
 		TestNotNull(*FString::Printf(
 			TEXT("%s is exposed to Blueprint"), *FunctionName.ToString()), Function);
 		if (Function)
@@ -73,9 +73,27 @@ bool FAircraftComponentReflectionBoundaryTest::RunTest(const FString& Parameters
 				Function->HasAnyFunctionFlags(FUNC_BlueprintCallable));
 		}
 	};
-	TestRootMotionFunction(TEXT("SubmitRootMotionKinematic"));
-	TestRootMotionFunction(TEXT("SubmitRootMotionFlightController"));
-	TestRootMotionFunction(TEXT("SubmitRootMotionPhysicsConstraint"));
+	TestBlueprintFunction(
+		UAutopilotComponent::StaticClass(),
+		TEXT("SubmitRootMotionKinematic"));
+	TestBlueprintFunction(
+		UAutopilotComponent::StaticClass(),
+		TEXT("SubmitRootMotionFlightController"));
+	TestBlueprintFunction(
+		UAutopilotComponent::StaticClass(),
+		TEXT("SubmitRootMotionPhysicsConstraint"));
+	TestBlueprintFunction(
+		UAircraftSimulationLODComponent::StaticClass(),
+		TEXT("SetManualDriveModeOverride"));
+	TestBlueprintFunction(
+		UAircraftSimulationLODComponent::StaticClass(),
+		TEXT("ClearManualDriveModeOverride"));
+	TestBlueprintFunction(
+		UAircraftSimulationLODComponent::StaticClass(),
+		TEXT("HasManualDriveModeOverride"));
+	TestBlueprintFunction(
+		UAircraftSimulationLODComponent::StaticClass(),
+		TEXT("GetManualDriveModeOverride"));
 
 	const UScriptStruct* KinematicStruct =
 		FAutopilotKinematicRootMotionCommand::StaticStruct();
