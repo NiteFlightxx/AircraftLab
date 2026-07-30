@@ -18,14 +18,23 @@ UAircraftSimulationLODComponent::UAircraftSimulationLODComponent()
 void UAircraftSimulationLODComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	RootPrimitive = ResolveRootPrimitive();
 	RefreshConsumers();
-	RefreshManagedPhysicsBodies();
-	CurrentBudget = GetEffectiveProfile().BuildBudget(CurrentTier);
-	TierChangedTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	RefreshCollisionComponents();
+	CurrentLODIndex = GetEffectiveProfile().LODs.IsValidIndex(CurrentLODIndex)
+		? CurrentLODIndex
+		: (GetEffectiveProfile().LODs.IsEmpty() ? INDEX_NONE : 0);
+	CurrentBudget = GetEffectiveProfile().BuildBudget(CurrentLODIndex);
+	LODChangedTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	if (GetOwner() && !GetOwner()->HasAuthority() && GetEffectiveProfile().bAuthoritySimulationOnly)
 	{
-		ApplyTierFromSubsystem(CurrentTier, true, TierChangedTimeSeconds);
+		ApplyLODFromSubsystem(CurrentLODIndex, true, LODChangedTimeSeconds);
+	}
+	else
+	{
+		const int32 InitialLODIndex = CurrentLODIndex;
+		CurrentLODIndex = MIN_int32;
+		ApplyLODFromSubsystem(
+			InitialLODIndex, false, LODChangedTimeSeconds);
 	}
 	if (UWorld* World = GetWorld())
 	{
@@ -36,11 +45,46 @@ void UAircraftSimulationLODComponent::BeginPlay()
 	}
 }
 
+void UAircraftSimulationLODComponent::RefreshAircraftSimulationDrive_Implementation()
+{
+	RefreshConsumers();
+	const FAircraftSimulationDriveOverride Override = ResolveDriveOverride();
+	if (!Override.bValid)
+	{
+		if (bDriveOverrideActive)
+		{
+			bDriveOverrideActive = false;
+			ApplyLODFromSubsystem(
+				LODIndexBeforeDriveOverride,
+				bNetworkProxyBudget,
+				GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+		}
+		ForceSimulationReevaluation();
+		return;
+	}
+	const int32 OverrideLODIndex = GetEffectiveProfile().FindLODForDriveMode(
+		Override.DriveMode, CurrentLODIndex);
+	if (OverrideLODIndex == INDEX_NONE)
+	{
+		ForceSimulationReevaluation();
+		return;
+	}
+	if (!bDriveOverrideActive)
+	{
+		LODIndexBeforeDriveOverride = CurrentLODIndex;
+		bDriveOverrideActive = true;
+	}
+	ApplyLODFromSubsystem(
+		OverrideLODIndex,
+		bNetworkProxyBudget,
+		GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+}
+
 void UAircraftSimulationLODComponent::GetLifetimeReplicatedProps(
 	TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(UAircraftSimulationLODComponent, CurrentTier);
+	DOREPLIFETIME(UAircraftSimulationLODComponent, CurrentLODIndex);
 }
 
 void UAircraftSimulationLODComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -117,15 +161,7 @@ FAircraftSimulationSnapshot UAircraftSimulationLODComponent::BuildSnapshot(
 	Snapshot.PositionCm = GetOwner() ? GetOwner()->GetActorLocation() : FVector::ZeroVector;
 	Snapshot.NearestPlayerDistanceCm = NearestPlayerDistanceCm;
 	Snapshot.Importance = Importance;
-	for (const TWeakObjectPtr<UActorComponent>& ConsumerComponent : Consumers)
-	{
-		if (const IAircraftSimulationLODConsumer* Consumer =
-			Cast<IAircraftSimulationLODConsumer>(ConsumerComponent.Get()))
-		{
-			Snapshot.Importance.bHasExternalPhysicsConstraint |=
-				Consumer->RequiresAircraftFullPhysics();
-		}
-	}
+	Snapshot.DriveOverride = ResolveDriveOverride();
 	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
 	{
 		Snapshot.Importance.bPlayerControlled |= Pawn->IsPlayerControlled();
@@ -156,53 +192,44 @@ void UAircraftSimulationLODComponent::MarkEvaluated(float WorldTimeSeconds)
 	}
 }
 
-float UAircraftSimulationLODComponent::GetSecondsInCurrentTier(float WorldTimeSeconds) const
+float UAircraftSimulationLODComponent::GetSecondsInCurrentLOD(float WorldTimeSeconds) const
 {
-	return FMath::Max(WorldTimeSeconds - TierChangedTimeSeconds, 0.0f);
+	return FMath::Max(WorldTimeSeconds - LODChangedTimeSeconds, 0.0f);
 }
 
-void UAircraftSimulationLODComponent::ApplyTierFromSubsystem(
-	EAircraftSimulationTier NewTier, bool bNetworkProxy, float WorldTimeSeconds)
+void UAircraftSimulationLODComponent::ApplyLODFromSubsystem(
+	int32 NewLODIndex, bool bNetworkProxy, float WorldTimeSeconds)
 {
-	if (CurrentTier == NewTier && bNetworkProxyBudget == bNetworkProxy) return;
-	const EAircraftSimulationTier PreviousTier = CurrentTier;
-	const FAircraftSimulationBudget NewBudget = GetEffectiveProfile().BuildBudget(NewTier, bNetworkProxy);
+	if (CurrentLODIndex == NewLODIndex
+		&& bNetworkProxyBudget == bNetworkProxy)
+	{
+		return;
+	}
+	const int32 PreviousLODIndex = CurrentLODIndex;
+	const FAircraftSimulationBudget NewBudget =
+		GetEffectiveProfile().BuildBudget(NewLODIndex, bNetworkProxy);
 
 	RefreshConsumers();
-	// Stop force producers before disabling physics; restore physics before waking consumers.
-	if (!NewBudget.bEnablePhysics)
+	ApplyCollisionBudget(NewBudget);
+	for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
 	{
-		for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
+		if (UActorComponent* Component = Consumer.Get())
 		{
-			if (UActorComponent* Component = Consumer.Get())
-			{
-				IAircraftSimulationLODConsumer::Execute_ApplyAircraftSimulationBudget(Component, NewBudget);
-			}
-		}
-		ApplyPhysicalBudget(NewBudget);
-	}
-	else
-	{
-		ApplyPhysicalBudget(NewBudget);
-		for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
-		{
-			if (UActorComponent* Component = Consumer.Get())
-			{
-				IAircraftSimulationLODConsumer::Execute_ApplyAircraftSimulationBudget(Component, NewBudget);
-			}
+			IAircraftSimulationLODConsumer::Execute_ApplyAircraftSimulationBudget(
+				Component, NewBudget);
 		}
 	}
 
-	CurrentTier = NewTier;
+	CurrentLODIndex = NewLODIndex;
 	bNetworkProxyBudget = bNetworkProxy;
 	CurrentBudget = NewBudget;
-	TierChangedTimeSeconds = WorldTimeSeconds;
+	LODChangedTimeSeconds = WorldTimeSeconds;
 	if (AActor* Owner = GetOwner(); Owner && Owner->HasAuthority())
 	{
 		const float NetFrequency = FMath::Max(NewBudget.SuggestedNetUpdateFrequency, 1.0f);
 		Owner->SetNetUpdateFrequency(NetFrequency);
 		Owner->SetMinNetUpdateFrequency(FMath::Min(NetFrequency, 2.0f));
-		if (NewTier == EAircraftSimulationTier::Dormant)
+		if (NewBudget.bEnableNetworkDormancy)
 		{
 			if (!bHasSavedNetDormancy)
 			{
@@ -210,7 +237,7 @@ void UAircraftSimulationLODComponent::ApplyTierFromSubsystem(
 				bHasSavedNetDormancy = true;
 			}
 			Owner->SetNetDormancy(DORM_DormantAll);
-			// SetNetDormancy alone may remove the actor before CurrentTier is replicated.
+			// SetNetDormancy alone may remove the actor before CurrentLODIndex is replicated.
 			// ForceNetUpdate flushes dormancy and guarantees one final property update.
 			Owner->ForceNetUpdate();
 		}
@@ -225,54 +252,21 @@ void UAircraftSimulationLODComponent::ApplyTierFromSubsystem(
 			Owner->ForceNetUpdate();
 		}
 	}
-	if (PreviousTier != NewTier)
+	if (PreviousLODIndex != NewLODIndex)
 	{
-		OnSimulationTierChanged.Broadcast(PreviousTier, NewTier);
+		OnSimulationLODChanged.Broadcast(PreviousLODIndex, NewLODIndex);
 	}
 }
 
-void UAircraftSimulationLODComponent::OnRep_CurrentTier(EAircraftSimulationTier PreviousTier)
+void UAircraftSimulationLODComponent::OnRep_CurrentLODIndex(
+	int32 PreviousLODIndex)
 {
-	const EAircraftSimulationTier ReplicatedTier = CurrentTier;
-	CurrentTier = PreviousTier;
-	ApplyTierFromSubsystem(
-		ReplicatedTier, true, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
-}
-
-void UAircraftSimulationLODComponent::AdvanceManagedSimulation(float DeltaSeconds)
-{
-	if (DeltaSeconds <= UE_SMALL_NUMBER || !RootPrimitive)
-	{
-		return;
-	}
-	if (CurrentBudget.bIsNetworkProxy)
-	{
-		// Replicated movement updates the root; detached internal bodies still need to follow it in non-physical tiers.
-		if (!CurrentBudget.bEnablePhysics) UpdateManagedBodiesFromRoot();
-		return;
-	}
-	if (!CurrentBudget.bEnableKinematicMovement) return;
-
-	FAircraftKinematicTarget Target;
-	if (!FindKinematicTarget(Target) || !Target.bValid) return;
-	const UAircraftSimulationLODProfileAsset& Profile = GetEffectiveProfile();
-	const FVector CurrentLocation = RootPrimitive->GetComponentLocation();
-	const FVector PredictedLocation = CurrentLocation + Target.VelocityCmPerSec * DeltaSeconds;
-	const float CorrectionAlpha = 1.0f - FMath::Exp(
-		-FMath::Max(Profile.KinematicPositionCorrectionRate, 0.0f) * DeltaSeconds);
-	const FVector NewLocation = FMath::Lerp(PredictedLocation, Target.PositionCm, CorrectionAlpha);
-	const FRotator NewRotation = FMath::RInterpTo(
-		RootPrimitive->GetComponentRotation(), Target.RotationDegrees, DeltaSeconds,
-		Profile.KinematicRotationInterpSpeed);
-	FHitResult Hit;
-	RootPrimitive->SetWorldLocationAndRotation(
-		NewLocation, NewRotation, Profile.bSweepKinematicMovement, &Hit, ETeleportType::None);
-	if (!ManagedPhysicsBodies.IsEmpty())
-	{
-		ManagedPhysicsBodies[0].LinearVelocityCmPerSec = Target.VelocityCmPerSec;
-		ManagedPhysicsBodies[0].AngularVelocityRadPerSec = FVector::ZeroVector;
-	}
-	UpdateManagedBodiesFromRoot();
+	const int32 ReplicatedLODIndex = CurrentLODIndex;
+	CurrentLODIndex = PreviousLODIndex;
+	ApplyLODFromSubsystem(
+		ReplicatedLODIndex,
+		true,
+		GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
 }
 
 void UAircraftSimulationLODComponent::RefreshConsumers()
@@ -291,61 +285,26 @@ void UAircraftSimulationLODComponent::RefreshConsumers()
 	}
 }
 
-void UAircraftSimulationLODComponent::RefreshManagedPhysicsBodies()
+void UAircraftSimulationLODComponent::RefreshCollisionComponents()
 {
-	ManagedPhysicsBodies.Reset();
-	if (!GetOwner() || !RootPrimitive) return;
+	CollisionComponents.Reset();
+	if (!GetOwner()) return;
 	TArray<UPrimitiveComponent*> Primitives;
 	GetOwner()->GetComponents<UPrimitiveComponent>(Primitives);
-	Primitives.Remove(RootPrimitive);
-	Primitives.Insert(RootPrimitive, 0);
-	const FTransform RootTransform = RootPrimitive->GetComponentTransform();
 	for (UPrimitiveComponent* Primitive : Primitives)
 	{
 		if (!Primitive) continue;
-		FManagedPhysicsBodyState& State = ManagedPhysicsBodies.AddDefaulted_GetRef();
+		FCollisionComponentState& State = CollisionComponents.AddDefaulted_GetRef();
 		State.Component = Primitive;
-		State.RelativeToRoot = Primitive == RootPrimitive
-			? FTransform::Identity : Primitive->GetComponentTransform().GetRelativeTransform(RootTransform);
 		State.OriginalCollision = Primitive->GetCollisionEnabled();
-		State.bShouldSimulateInPhysicalTier = Primitive->IsSimulatingPhysics();
-		if (State.bShouldSimulateInPhysicalTier)
-		{
-			State.LinearVelocityCmPerSec = Primitive->GetPhysicsLinearVelocity();
-			State.AngularVelocityRadPerSec = Primitive->GetPhysicsAngularVelocityInRadians();
-		}
 	}
 }
 
-void UAircraftSimulationLODComponent::ApplyPhysicalBudget(const FAircraftSimulationBudget& Budget)
+void UAircraftSimulationLODComponent::ApplyCollisionBudget(
+	const FAircraftSimulationBudget& Budget)
 {
-	if (!RootPrimitive) RootPrimitive = ResolveRootPrimitive();
-	if (!RootPrimitive) return;
-	if (ManagedPhysicsBodies.IsEmpty()) RefreshManagedPhysicsBodies();
-
-	if (!Budget.bEnablePhysics)
-	{
-		const FTransform RootTransform = RootPrimitive->GetComponentTransform();
-		for (FManagedPhysicsBodyState& State : ManagedPhysicsBodies)
-		{
-			UPrimitiveComponent* Primitive = State.Component.Get();
-			if (!Primitive) continue;
-			State.RelativeToRoot = Primitive == RootPrimitive
-				? FTransform::Identity : Primitive->GetComponentTransform().GetRelativeTransform(RootTransform);
-			if (CurrentBudget.bEnablePhysics)
-			{
-				State.bShouldSimulateInPhysicalTier = Primitive->IsSimulatingPhysics();
-			}
-			if (Primitive->IsSimulatingPhysics())
-			{
-				State.LinearVelocityCmPerSec = Primitive->GetPhysicsLinearVelocity();
-				State.AngularVelocityRadPerSec = Primitive->GetPhysicsAngularVelocityInRadians();
-				Primitive->SetSimulatePhysics(false);
-			}
-		}
-	}
-
-	for (FManagedPhysicsBodyState& State : ManagedPhysicsBodies)
+	if (CollisionComponents.IsEmpty()) RefreshCollisionComponents();
+	for (FCollisionComponentState& State : CollisionComponents)
 	{
 		UPrimitiveComponent* Primitive = State.Component.Get();
 		if (!Primitive) continue;
@@ -361,53 +320,24 @@ void UAircraftSimulationLODComponent::ApplyPhysicalBudget(const FAircraftSimulat
 		}
 		Primitive->SetCollisionEnabled(CollisionEnabled);
 	}
-
-	if (Budget.bEnablePhysics)
-	{
-		UpdateManagedBodiesFromRoot();
-		for (FManagedPhysicsBodyState& State : ManagedPhysicsBodies)
-		{
-			UPrimitiveComponent* Primitive = State.Component.Get();
-			if (!Primitive || !State.bShouldSimulateInPhysicalTier || Primitive->IsSimulatingPhysics()) continue;
-			Primitive->SetSimulatePhysics(true);
-			Primitive->SetPhysicsLinearVelocity(State.LinearVelocityCmPerSec);
-			Primitive->SetPhysicsAngularVelocityInRadians(State.AngularVelocityRadPerSec);
-			Primitive->WakeAllRigidBodies();
-		}
-	}
 }
 
-void UAircraftSimulationLODComponent::UpdateManagedBodiesFromRoot()
+FAircraftSimulationDriveOverride UAircraftSimulationLODComponent::ResolveDriveOverride() const
 {
-	if (!RootPrimitive) return;
-	const FTransform RootTransform = RootPrimitive->GetComponentTransform();
-	for (FManagedPhysicsBodyState& State : ManagedPhysicsBodies)
-	{
-		UPrimitiveComponent* Primitive = State.Component.Get();
-		if (!Primitive || Primitive == RootPrimitive || Primitive->IsSimulatingPhysics()) continue;
-		Primitive->SetWorldTransform(State.RelativeToRoot * RootTransform, false, nullptr, ETeleportType::None);
-	}
-}
-
-bool UAircraftSimulationLODComponent::FindKinematicTarget(FAircraftKinematicTarget& OutTarget) const
-{
+	FAircraftSimulationDriveOverride Best;
 	for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
 	{
-		if (UActorComponent* Component = Consumer.Get())
+		UActorComponent* Component = Consumer.Get();
+		if (!Component) continue;
+		const FAircraftSimulationDriveOverride Candidate =
+			IAircraftSimulationLODConsumer::Execute_GetAircraftSimulationDriveOverride(
+				Component);
+		if (Candidate.bValid
+			&& (!Best.bValid
+				|| Candidate.Priority > Best.Priority))
 		{
-			FAircraftKinematicTarget Candidate;
-			if (IAircraftSimulationLODConsumer::Execute_GetAircraftKinematicTarget(Component, Candidate)
-				&& Candidate.bValid)
-			{
-				OutTarget = Candidate;
-				return true;
-			}
+			Best = Candidate;
 		}
 	}
-	return false;
-}
-
-UPrimitiveComponent* UAircraftSimulationLODComponent::ResolveRootPrimitive() const
-{
-	return GetOwner() ? Cast<UPrimitiveComponent>(GetOwner()->GetRootComponent()) : nullptr;
+	return Best;
 }

@@ -1,4 +1,5 @@
 #include "AirscrewComponent.h"
+#include "AircraftInputComponent.h"
 #include "AircraftSimulationLODComponent.h"
 #include "AutopilotComponent.h"
 #include "FlightControllerComponent.h"
@@ -34,6 +35,11 @@ bool FAircraftComponentReflectionBoundaryTest::RunTest(const FString& Parameters
 	TestAuthoredProperty(UAutopilotComponent::StaticClass(), TEXT("Profile"));
 	TestAuthoredProperty(UAircraftSimulationLODComponent::StaticClass(), TEXT("SimulationProfile"));
 	TestAuthoredProperty(UAircraftSimulationLODComponent::StaticClass(), TEXT("Importance"));
+	TestAuthoredProperty(UAircraftInputComponent::StaticClass(), TEXT("InputMapping"));
+	TestAuthoredProperty(UAircraftInputComponent::StaticClass(), TEXT("MappingPriority"));
+	TestAuthoredProperty(UAircraftInputComponent::StaticClass(), TEXT("IA_Move"));
+	TestAuthoredProperty(UAircraftInputComponent::StaticClass(), TEXT("IA_Throttle"));
+	TestAuthoredProperty(UAircraftInputComponent::StaticClass(), TEXT("IA_Turn"));
 
 	TestNull(TEXT("Airscrew target command is not reflected"),
 		FindFProperty<FProperty>(UAirscrewComponent::StaticClass(), TEXT("TargetNormalizedCommand")));
@@ -84,7 +90,9 @@ bool FAircraftComponentReflectionBoundaryTest::RunTest(const FString& Parameters
 		PhysicsConstraintStruct);
 	if (KinematicStruct && FlightControllerStruct && PhysicsConstraintStruct)
 	{
-		TestNotNull(TEXT("Kinematic Root Motion exposes collision sweep"),
+		TestNotNull(TEXT("Kinematic Root Motion exposes arrival criteria"),
+			FindFProperty<FProperty>(KinematicStruct, TEXT("ArrivalCriteria")));
+		TestNull(TEXT("Kinematic Root Motion does not own backend collision sweep"),
 			FindFProperty<FProperty>(KinematicStruct, TEXT("bSweep")));
 		TestNull(TEXT("Kinematic Root Motion does not expose flight constraints"),
 			FindFProperty<FProperty>(KinematicStruct, TEXT("MotionConstraints")));
@@ -100,9 +108,9 @@ bool FAircraftComponentReflectionBoundaryTest::RunTest(const FString& Parameters
 		TestNull(TEXT("Flight-controller Root Motion does not expose constraint tuning"),
 			FindFProperty<FProperty>(FlightControllerStruct, TEXT("ConstraintDrive")));
 
-		TestNotNull(TEXT("Constraint Root Motion exposes its physics bone"),
+		TestNull(TEXT("Constraint Root Motion does not own a physics bone"),
 			FindFProperty<FProperty>(PhysicsConstraintStruct, TEXT("PhysicsBoneName")));
-		TestNotNull(TEXT("Constraint Root Motion exposes drive tuning"),
+		TestNull(TEXT("Constraint Root Motion does not own drive tuning"),
 			FindFProperty<FProperty>(PhysicsConstraintStruct, TEXT("ConstraintDrive")));
 		TestNotNull(TEXT("Constraint Root Motion exposes arrival criteria"),
 			FindFProperty<FProperty>(PhysicsConstraintStruct, TEXT("ArrivalCriteria")));
@@ -112,16 +120,18 @@ bool FAircraftComponentReflectionBoundaryTest::RunTest(const FString& Parameters
 			FindFProperty<FProperty>(PhysicsConstraintStruct, TEXT("bSweep")));
 	}
 
-	const FProperty* CurrentTierProperty = FindFProperty<FProperty>(
-		UAircraftSimulationLODComponent::StaticClass(), TEXT("CurrentTier"));
-	TestNotNull(TEXT("CurrentTier remains reflected for replication"), CurrentTierProperty);
-	if (CurrentTierProperty)
+	const FProperty* CurrentLODProperty = FindFProperty<FProperty>(
+		UAircraftSimulationLODComponent::StaticClass(), TEXT("CurrentLODIndex"));
+	TestNotNull(TEXT("CurrentLODIndex is reflected for replication"),
+		CurrentLODProperty);
+	if (CurrentLODProperty)
 	{
-		TestTrue(TEXT("CurrentTier remains replicated"), CurrentTierProperty->HasAnyPropertyFlags(CPF_Net));
-		TestFalse(TEXT("CurrentTier is not a Blueprint variable"),
-			CurrentTierProperty->HasAnyPropertyFlags(CPF_BlueprintVisible));
-		TestFalse(TEXT("CurrentTier is not editable in Details"),
-			CurrentTierProperty->HasAnyPropertyFlags(CPF_Edit));
+		TestTrue(TEXT("CurrentLODIndex is replicated"),
+			CurrentLODProperty->HasAnyPropertyFlags(CPF_Net));
+		TestFalse(TEXT("CurrentLODIndex is not a Blueprint variable"),
+			CurrentLODProperty->HasAnyPropertyFlags(CPF_BlueprintVisible));
+		TestFalse(TEXT("CurrentLODIndex is not editable in Details"),
+			CurrentLODProperty->HasAnyPropertyFlags(CPF_Edit));
 	}
 
 	return true;

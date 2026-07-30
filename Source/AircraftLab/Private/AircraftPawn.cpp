@@ -40,7 +40,7 @@ AAircraftPawn::AAircraftPawn()
 	
 }
 
-/** 游戏开始时：应用网络物理模式、输入映射并唤醒物理状态。 */
+/** 游戏开始时：应用网络物理模式并唤醒物理状态。输入映射随本地玩家接管应用。 */
 void AAircraftPawn::BeginPlay()
 {
 	Super::BeginPlay();
@@ -55,8 +55,6 @@ void AAircraftPawn::BeginPlay()
 		SetPhysicsReplicationMode(EPhysicsReplicationMode::PredictiveInterpolation);
 	}
 
-	// 应用Enhanced Input映射上下文
-	AircraftInput->ApplyMappingContext();
 	// 唤醒所有刚体确保物理模拟启动
 	BodyMesh->WakeAllRigidBodies();
 
@@ -74,4 +72,22 @@ void AAircraftPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
 	AircraftInput->BindInput(PlayerInputComponent);
+}
+
+void AAircraftPawn::PawnClientRestart()
+{
+	Super::PawnClientRestart();
+	if (AircraftInput)
+	{
+		AircraftInput->ApplyMappingContext();
+	}
+}
+
+void AAircraftPawn::OnRep_Controller()
+{
+	Super::OnRep_Controller();
+	if (AircraftInput && IsLocallyControlled())
+	{
+		AircraftInput->ApplyMappingContext();
+	}
 }

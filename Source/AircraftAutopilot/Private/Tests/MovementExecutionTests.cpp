@@ -98,14 +98,10 @@ bool FAutopilotRootMotionIntentLifecycleTest::RunTest(const FString& Parameters)
 		FlightControllerCommand.bApplyRootMotionRotation);
 	TestTrue(TEXT("Constraint Root Motion drives rotation by default"),
 		PhysicsConstraintCommand.bApplyRootMotionRotation);
-	const FAutopilotRootMotionConstraintDrive DefaultConstraintDrive;
-	TestTrue(TEXT("Constraint Root Motion defaults to mass-independent acceleration drive"),
-		DefaultConstraintDrive.bAccelerationMode);
-	TestTrue(TEXT("Constraint Root Motion has position and damping strength"),
-		DefaultConstraintDrive.LinearPositionStrength > 0.0f
-			&& DefaultConstraintDrive.LinearVelocityStrength > 0.0f
-			&& DefaultConstraintDrive.AngularPositionStrength > 0.0f
-			&& DefaultConstraintDrive.AngularVelocityStrength > 0.0f);
+	TestTrue(TEXT("Kinematic Root Motion has explicit arrival criteria"),
+		KinematicCommand.ArrivalCriteria.HorizontalToleranceCm > 0.0f);
+	TestTrue(TEXT("Constraint Root Motion has explicit arrival criteria"),
+		PhysicsConstraintCommand.ArrivalCriteria.HorizontalToleranceCm > 0.0f);
 
 	UAutopilotMovementExecutor* Executor = NewObject<UAutopilotMovementExecutor>();
 	Executor->Initialize();

@@ -9,6 +9,7 @@
 #include "GameFramework/Actor.h"
 #include "Math/RotationMatrix.h"
 #include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsEngine/PhysicsConstraintComponent.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 
 //DEFINE_LOG_CATEGORY_STATIC(LogFlightController, Log, All);
@@ -25,8 +26,7 @@ UFlightControllerComponent::UFlightControllerComponent()
 void UFlightControllerComponent::OnRegister()
 {
 	Super::OnRegister();
-	// 启用异步物理 Tick，使本组件能在物理线程执行控制循环
-	SetAsyncPhysicsTickEnabled(bSimulationBudgetAllowsControl);
+	RefreshSimulationTickState();
 }
 
 
@@ -71,6 +71,17 @@ void UFlightControllerComponent::BeginPlay()
 	Runtime.ArmState = EAircraftArmState::Armed;
 	UpdateHomeState(true);
 	ResetControllerState();
+	SetSimulationDriveMode(
+		SimulationDriveMode,
+		bSimulationPhysicsEnabled);
+}
+
+
+void UFlightControllerComponent::EndPlay(
+	const EEndPlayReason::Type EndPlayReason)
+{
+	DestroySimulationConstraint();
+	Super::EndPlay(EndPlayReason);
 }
 
 
@@ -107,6 +118,21 @@ void UFlightControllerComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	if (DeltaTime <= UE_SMALL_NUMBER) return;
 	if (!bControllerEnabled) { StopAllRotors(false); return; }
 	if (!BodyPrimitive) RefreshReferences();
+	if (!BodyPrimitive || SimulationDriveMode == EAircraftSimulationDriveMode::None)
+	{
+		return;
+	}
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint)
+	{
+		UpdateAlternativeDriveEstimatedState(DeltaTime);
+		UpdateConstraintSimulation(DeltaTime);
+		return;
+	}
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic)
+	{
+		UpdateKinematicSimulation(DeltaTime);
+		return;
+	}
 
 	// 缓存重力值 g（物理线程中无法调用 GetWorld()）
 	// 重力用于悬停倾斜方程 tan(θ) = a/g 以及高度 PID
@@ -224,6 +250,22 @@ void UFlightControllerComponent::RefreshReferences()
 	BodyPrimitive = ResolveBodyPrimitive();
 	AircraftInput = ResolveAircraftInput();
 	UpdateRotorCache();
+	MotionTargetSources.Reset();
+	if (AActor* Owner = GetOwner())
+	{
+		TArray<UActorComponent*> Components;
+		Owner->GetComponents(Components);
+		for (UActorComponent* Component : Components)
+		{
+			if (Component
+				&& Component != this
+				&& Component->GetClass()->ImplementsInterface(
+					UAircraftSimulationLODConsumer::StaticClass()))
+			{
+				MotionTargetSources.Add(Component);
+			}
+		}
+	}
 }
 
 
@@ -398,29 +440,286 @@ void UFlightControllerComponent::SetControllerEnabled(bool bNewEnabled)
 {
 	bControllerEnabled = bNewEnabled;
 	if (!bControllerEnabled) StopAllRotors(true);
-	SetComponentTickEnabled(bControllerEnabled && bSimulationBudgetAllowsControl);
-	SetAsyncPhysicsTickEnabled(bControllerEnabled && bSimulationBudgetAllowsControl);
+	RefreshSimulationTickState();
 }
 
 
 void UFlightControllerComponent::ApplyAircraftSimulationBudget_Implementation(
 	const FAircraftSimulationBudget& Budget)
 {
-	const bool bAllowControl = Budget.bRunFlightController && !Budget.bIsNetworkProxy;
-	if (bSimulationBudgetAllowsControl == bAllowControl) return;
-	bSimulationBudgetAllowsControl = bAllowControl;
-	if (!bAllowControl)
+	SetSimulationDriveMode(
+		Budget.bIsNetworkProxy
+			? EAircraftSimulationDriveMode::None : Budget.DriveMode,
+		Budget.bEnablePhysics);
+}
+
+
+void UFlightControllerComponent::RefreshSimulationTickState()
+{
+	const bool bRunGameThread =
+		bRuntimeConfigInitialized
+		&& bControllerEnabled
+		&& SimulationDriveMode != EAircraftSimulationDriveMode::None;
+	const bool bRunPhysicsThread =
+		bRuntimeConfigInitialized
+		&& bControllerEnabled
+		&& SimulationDriveMode == EAircraftSimulationDriveMode::FlightController;
+	SetComponentTickEnabled(bRunGameThread);
+	SetAsyncPhysicsTickEnabled(bRunPhysicsThread);
+}
+
+
+void UFlightControllerComponent::SetSimulationDriveMode(
+	EAircraftSimulationDriveMode NewDriveMode,
+	bool bEnablePhysics)
+{
+	if (!bRuntimeConfigInitialized)
 	{
-		if (bRuntimeConfigInitialized) StopAllRotors(true);
-		SetComponentTickEnabled(false);
-		SetAsyncPhysicsTickEnabled(false);
+		SimulationDriveMode = NewDriveMode;
+		bSimulationPhysicsEnabled = bEnablePhysics;
+		RefreshSimulationTickState();
 		return;
 	}
+	if (!BodyPrimitive) RefreshReferences();
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
+		&& NewDriveMode != EAircraftSimulationDriveMode::PhysicsConstraint)
+	{
+		DestroySimulationConstraint();
+	}
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::FlightController
+		&& NewDriveMode != EAircraftSimulationDriveMode::FlightController
+		&& bRuntimeConfigInitialized)
+	{
+		StopAllRotors(true);
+	}
 
-	RefreshReferences();
-	if (bRuntimeConfigInitialized) ResetControllerState();
-	SetComponentTickEnabled(bControllerEnabled);
-	SetAsyncPhysicsTickEnabled(bControllerEnabled);
+	if (BodyPrimitive)
+	{
+		if (bEnablePhysics
+			&& !BodyPrimitive->IsSimulatingPhysics()
+			&& SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic)
+		{
+			SavedSimulationLinearVelocityCmPerSec =
+				Runtime.EstimatedState.State.VelocityCmPerSec;
+			FAircraftMotionTarget Target;
+			SavedSimulationAngularVelocityRadPerSec = PullMotionTarget(Target)
+				? Target.AngularVelocityWorldDegPerSec
+					* (UE_PI / 180.0f)
+				: FVector::ZeroVector;
+		}
+		if (!bEnablePhysics && BodyPrimitive->IsSimulatingPhysics())
+		{
+			SavedSimulationLinearVelocityCmPerSec =
+				BodyPrimitive->GetPhysicsLinearVelocity();
+			SavedSimulationAngularVelocityRadPerSec =
+				BodyPrimitive->GetPhysicsAngularVelocityInRadians();
+			BodyPrimitive->SetSimulatePhysics(false);
+		}
+		else if (bEnablePhysics && !BodyPrimitive->IsSimulatingPhysics())
+		{
+			BodyPrimitive->SetSimulatePhysics(true);
+			BodyPrimitive->SetPhysicsLinearVelocity(
+				SavedSimulationLinearVelocityCmPerSec);
+			BodyPrimitive->SetPhysicsAngularVelocityInRadians(
+				SavedSimulationAngularVelocityRadPerSec);
+			BodyPrimitive->WakeAllRigidBodies();
+		}
+	}
+
+	SimulationDriveMode = NewDriveMode;
+	bSimulationPhysicsEnabled = bEnablePhysics;
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
+		&& BodyPrimitive && BodyPrimitive->IsSimulatingPhysics()
+		&& !CreateSimulationConstraint())
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("FlightController failed to create its physics-constraint backend for %s."),
+			*GetNameSafe(GetOwner()));
+		SimulationDriveMode = EAircraftSimulationDriveMode::None;
+	}
+	else if (SimulationDriveMode == EAircraftSimulationDriveMode::FlightController
+		&& bRuntimeConfigInitialized)
+	{
+		ResetControllerState();
+	}
+	RefreshSimulationTickState();
+}
+
+
+bool UFlightControllerComponent::PullMotionTarget(
+	FAircraftMotionTarget& OutTarget) const
+{
+	OutTarget = FAircraftMotionTarget();
+	bool bFoundTarget = false;
+	for (const TWeakObjectPtr<UActorComponent>& Source : MotionTargetSources)
+	{
+		UActorComponent* Component = Source.Get();
+		if (!Component) continue;
+		FAircraftMotionTarget Candidate;
+		if (IAircraftSimulationLODConsumer::Execute_GetAircraftMotionTarget(
+				Component, Candidate)
+			&& Candidate.bValid
+			&& (!bFoundTarget || Candidate.Priority > OutTarget.Priority))
+		{
+			OutTarget = Candidate;
+			bFoundTarget = true;
+		}
+	}
+	return bFoundTarget;
+}
+
+
+void UFlightControllerComponent::UpdateAlternativeDriveEstimatedState(
+	float DeltaSeconds)
+{
+	if (!BodyPrimitive || DeltaSeconds <= UE_SMALL_NUMBER) return;
+	FAircraftKinematicState& State = Runtime.EstimatedState.State;
+	const FVector Velocity = BodyPrimitive->IsSimulatingPhysics()
+		? BodyPrimitive->GetPhysicsLinearVelocity()
+		: PreviousAlternativeVelocityCmPerSec;
+	State.PositionCm = BodyPrimitive->GetComponentLocation();
+	State.AccelerationWorldCmPerSecSq =
+		(Velocity - State.VelocityCmPerSec) / DeltaSeconds;
+	State.VelocityCmPerSec = Velocity;
+	State.AttitudeDegrees = RuntimeConfig.Controller.BodyAxes.GetControlWorldRotation(
+		BodyPrimitive->GetComponentQuat()).Rotator();
+	State.AngularVelocityBodyDegreesPerSec = BodyPrimitive->IsSimulatingPhysics()
+		? FMath::RadiansToDegrees(
+			RuntimeConfig.Controller.BodyAxes.BodyAngularToController(
+				BodyPrimitive->GetComponentQuat().UnrotateVector(
+					BodyPrimitive->GetPhysicsAngularVelocityInRadians())))
+		: FVector::ZeroVector;
+	PreviousAlternativeVelocityCmPerSec = Velocity;
+}
+
+
+bool UFlightControllerComponent::CreateSimulationConstraint()
+{
+	if (!BodyPrimitive || !BodyPrimitive->IsSimulatingPhysics() || !GetOwner())
+	{
+		return false;
+	}
+	DestroySimulationConstraint();
+	const FName ConstraintName = MakeUniqueObjectName(
+		GetOwner(), UPhysicsConstraintComponent::StaticClass(),
+		TEXT("AircraftSimulationConstraint"));
+	SimulationConstraint = NewObject<UPhysicsConstraintComponent>(
+		GetOwner(), ConstraintName, RF_Transient);
+	if (!SimulationConstraint) return false;
+
+	GetOwner()->AddInstanceComponent(SimulationConstraint);
+	SimulationConstraintReference = BodyPrimitive->GetComponentTransform();
+	SimulationConstraint->SetWorldTransform(SimulationConstraintReference);
+	SimulationConstraint->RegisterComponent();
+	SimulationConstraint->SetLinearXLimit(LCM_Free, 0.0f);
+	SimulationConstraint->SetLinearYLimit(LCM_Free, 0.0f);
+	SimulationConstraint->SetLinearZLimit(LCM_Free, 0.0f);
+	SimulationConstraint->SetAngularSwing1Limit(ACM_Free, 0.0f);
+	SimulationConstraint->SetAngularSwing2Limit(ACM_Free, 0.0f);
+	SimulationConstraint->SetAngularTwistLimit(ACM_Free, 0.0f);
+	SimulationConstraint->SetLinearPositionDrive(true, true, true);
+	SimulationConstraint->SetLinearVelocityDrive(true, true, true);
+	SimulationConstraint->SetAngularDriveMode(EAngularDriveMode::SLERP);
+	SimulationConstraint->SetOrientationDriveSLERP(true);
+	SimulationConstraint->SetAngularVelocityDriveSLERP(true);
+	const FFlightSimulationConstraintConfig& Config =
+		RuntimeConfig.ConstraintSimulation;
+	SimulationConstraint->SetLinearDriveAccelerationMode(
+		Config.bAccelerationMode);
+	SimulationConstraint->SetAngularDriveAccelerationMode(
+		Config.bAccelerationMode);
+	SimulationConstraint->SetLinearDriveParams(
+		Config.LinearPositionStrength,
+		Config.LinearVelocityStrength,
+		Config.LinearForceLimit);
+	SimulationConstraint->SetAngularDriveParams(
+		Config.AngularPositionStrength,
+		Config.AngularVelocityStrength,
+		Config.AngularTorqueLimit);
+	SimulationConstraint->SetProjectionEnabled(false);
+	SimulationConstraint->SetDisableCollision(true);
+	SimulationConstraint->SetConstrainedComponents(
+		BodyPrimitive, NAME_None, nullptr, NAME_None);
+	BodyPrimitive->WakeAllRigidBodies();
+	return SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
+		&& !SimulationConstraint->IsBroken();
+}
+
+
+void UFlightControllerComponent::DestroySimulationConstraint()
+{
+	if (!IsValid(SimulationConstraint)) return;
+	SimulationConstraint->TermComponentConstraint();
+	SimulationConstraint->DestroyComponent();
+	SimulationConstraint = nullptr;
+}
+
+
+void UFlightControllerComponent::UpdateConstraintSimulation(float DeltaSeconds)
+{
+	if (!IsValid(SimulationConstraint)
+		|| !SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
+		|| SimulationConstraint->IsBroken())
+	{
+		return;
+	}
+	FAircraftMotionTarget Target;
+	if (!PullMotionTarget(Target)) return;
+	const FVector PositionTarget =
+		SimulationConstraintReference.InverseTransformPosition(Target.PositionCm);
+	const FVector VelocityTarget =
+		SimulationConstraintReference.InverseTransformVectorNoScale(
+			Target.VelocityCmPerSec);
+	const FQuat OrientationTarget = (
+		SimulationConstraintReference.GetRotation().Inverse()
+		* Target.RotationDegrees.Quaternion()).GetNormalized();
+	const FVector AngularVelocityTargetRevPerSec =
+		SimulationConstraintReference.InverseTransformVectorNoScale(
+			Target.AngularVelocityWorldDegPerSec) / 360.0f;
+	SimulationConstraint->SetLinearPositionTarget(PositionTarget);
+	SimulationConstraint->SetLinearVelocityTarget(VelocityTarget);
+	SimulationConstraint->SetAngularOrientationTarget(
+		OrientationTarget.Rotator());
+	SimulationConstraint->SetAngularVelocityTarget(
+		AngularVelocityTargetRevPerSec);
+	BodyPrimitive->WakeAllRigidBodies();
+}
+
+
+void UFlightControllerComponent::UpdateKinematicSimulation(float DeltaSeconds)
+{
+	if (!BodyPrimitive) return;
+	FAircraftMotionTarget Target;
+	if (!PullMotionTarget(Target))
+	{
+		UpdateAlternativeDriveEstimatedState(DeltaSeconds);
+		return;
+	}
+	const FFlightSimulationKinematicConfig& Config =
+		RuntimeConfig.KinematicSimulation;
+	const FVector PredictedLocation =
+		BodyPrimitive->GetComponentLocation()
+		+ Target.VelocityCmPerSec * DeltaSeconds;
+
+	const float CorrectionAlpha = 1.0f - FMath::Exp(
+		-FMath::Max(Config.PositionCorrectionRate, 0.0f) * DeltaSeconds);
+	const FVector NewLocation = FMath::Lerp(
+		PredictedLocation, Target.PositionCm, CorrectionAlpha);
+
+	const FRotator NewRotation = FMath::RInterpTo(
+		BodyPrimitive->GetComponentRotation(),
+		Target.RotationDegrees,
+		DeltaSeconds,
+		Config.RotationInterpSpeed);
+	FHitResult Hit;
+	BodyPrimitive->SetWorldLocationAndRotation(
+		NewLocation,
+		NewRotation,
+		Config.bSweepMovement,
+		&Hit,
+		ETeleportType::None);
+	PreviousAlternativeVelocityCmPerSec = Target.VelocityCmPerSec;
+	UpdateAlternativeDriveEstimatedState(DeltaSeconds);
 }
 
 

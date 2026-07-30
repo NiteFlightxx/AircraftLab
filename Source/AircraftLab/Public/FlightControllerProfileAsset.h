@@ -39,6 +39,50 @@ struct AIRCRAFTLAB_API FFlightControllerExecutionConfig
 
 };
 
+/** Generic six-degree-of-freedom physics backend owned by the flight simulation. */
+USTRUCT(BlueprintType)
+struct AIRCRAFTLAB_API FFlightSimulationConstraintConfig
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Constraint", meta = (ClampMin = "0.0", DisplayName = "线性位置强度"))
+	float LinearPositionStrength = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Constraint", meta = (ClampMin = "0.0", DisplayName = "线性速度阻尼"))
+	float LinearVelocityStrength = 20.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Constraint", meta = (ClampMin = "0.0", DisplayName = "最大线性力"))
+	float LinearForceLimit = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Constraint", meta = (ClampMin = "0.0", DisplayName = "角度位置强度"))
+	float AngularPositionStrength = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Constraint", meta = (ClampMin = "0.0", DisplayName = "角速度阻尼"))
+	float AngularVelocityStrength = 20.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Constraint", meta = (ClampMin = "0.0", DisplayName = "最大角度力矩"))
+	float AngularTorqueLimit = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Constraint", meta = (DisplayName = "使用加速度驱动"))
+	bool bAccelerationMode = true;
+};
+
+/** Generic transform backend owned by the flight simulation. */
+USTRUCT(BlueprintType)
+struct AIRCRAFTLAB_API FFlightSimulationKinematicConfig
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Kinematic", meta = (DisplayName = "移动时检测碰撞"))
+	bool bSweepMovement = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Kinematic", meta = (ClampMin = "0.0", DisplayName = "位置纠偏速率"))
+	float PositionCorrectionRate = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Kinematic", meta = (ClampMin = "0.0", DisplayName = "旋转插值速度"))
+	float RotationInterpSpeed = 8.0f;
+};
+
 /** 控制能力不足时由组件执行的降级动作。 */
 UENUM(BlueprintType)
 enum class EFlightFailurePolicyAction : uint8
@@ -114,6 +158,8 @@ struct AIRCRAFTLAB_API FFlightControllerRuntimeConfig
 	FFlightControllerInputConfig Input;
 	FFlightControllerExecutionConfig Execution;
 	FFlightControllerFailurePolicyConfig FailurePolicy;
+	FFlightSimulationConstraintConfig ConstraintSimulation;
+	FFlightSimulationKinematicConfig KinematicSimulation;
 };
 
 namespace FlightControllerConfig
@@ -145,6 +191,12 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile", meta = (DisplayName = "故障策略"))
 	FFlightControllerFailurePolicyConfig FailurePolicy;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile", meta = (DisplayName = "物理约束模拟"))
+	FFlightSimulationConstraintConfig ConstraintSimulation;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Profile", meta = (DisplayName = "运动学模拟"))
+	FFlightSimulationKinematicConfig KinematicSimulation;
 
 	/** 构建不含 UObject 引用的只读运行快照。 */
 	FFlightControllerRuntimeConfig BuildRuntimeConfig() const;

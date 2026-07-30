@@ -7,12 +7,12 @@ class UAircraftSimulationLODProfileAsset;
 
 namespace AircraftSimulationLODPolicy
 {
-	AIRCRAFTLAB_API EAircraftSimulationTier SelectNominalTier(
+	AIRCRAFTLAB_API int32 SelectNominalLOD(
 		const UAircraftSimulationLODProfileAsset& Profile, float NearestPlayerDistanceCm);
 
-	AIRCRAFTLAB_API EAircraftSimulationTier ResolveTier(
+	AIRCRAFTLAB_API int32 ResolveLOD(
 		const UAircraftSimulationLODProfileAsset& Profile,
-		EAircraftSimulationTier CurrentTier,
-		float SecondsInCurrentTier,
+		int32 CurrentLODIndex,
+		float SecondsInCurrentLOD,
 		const FAircraftSimulationSnapshot& Snapshot);
 }

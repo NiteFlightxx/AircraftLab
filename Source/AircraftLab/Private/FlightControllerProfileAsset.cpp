@@ -14,6 +14,8 @@ FFlightControllerRuntimeConfig UFlightControllerProfileAsset::BuildRuntimeConfig
 	Result.Input = Input;
 	Result.Execution = Execution;
 	Result.FailurePolicy = FailurePolicy;
+	Result.ConstraintSimulation = ConstraintSimulation;
+	Result.KinematicSimulation = KinematicSimulation;
 	return Result;
 }
 
@@ -75,6 +77,31 @@ bool UFlightControllerProfileAsset::ValidateProfile(TArray<FText>& OutErrors) co
 	if (FailurePolicy.ConfirmationTimeSeconds < 0.0f || FailurePolicy.RecoveryConfirmationTimeSeconds < 0.0f)
 	{
 		OutErrors.Add(LOCTEXT("InvalidFailurePolicyTime", "Failure policy confirmation times cannot be negative."));
+	}
+	const FFlightSimulationConstraintConfig& Constraint = ConstraintSimulation;
+	if (!FMath::IsFinite(Constraint.LinearPositionStrength)
+		|| !FMath::IsFinite(Constraint.LinearVelocityStrength)
+		|| !FMath::IsFinite(Constraint.LinearForceLimit)
+		|| !FMath::IsFinite(Constraint.AngularPositionStrength)
+		|| !FMath::IsFinite(Constraint.AngularVelocityStrength)
+		|| !FMath::IsFinite(Constraint.AngularTorqueLimit)
+		|| Constraint.LinearPositionStrength < 0.0f
+		|| Constraint.LinearVelocityStrength < 0.0f
+		|| Constraint.LinearForceLimit < 0.0f
+		|| Constraint.AngularPositionStrength < 0.0f
+		|| Constraint.AngularVelocityStrength < 0.0f
+		|| Constraint.AngularTorqueLimit < 0.0f)
+	{
+		OutErrors.Add(LOCTEXT("InvalidConstraintSimulation",
+			"Constraint simulation strengths and limits must be finite and non-negative."));
+	}
+	if (!FMath::IsFinite(KinematicSimulation.PositionCorrectionRate)
+		|| !FMath::IsFinite(KinematicSimulation.RotationInterpSpeed)
+		|| KinematicSimulation.PositionCorrectionRate < 0.0f
+		|| KinematicSimulation.RotationInterpSpeed < 0.0f)
+	{
+		OutErrors.Add(LOCTEXT("InvalidKinematicSimulation",
+			"Kinematic simulation interpolation settings must be finite and non-negative."));
 	}
 
 	return OutErrors.IsEmpty();

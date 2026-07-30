@@ -4,14 +4,14 @@
 
 #include "AircraftSimulationLODTypes.generated.h"
 
-/** Aircraft simulation fidelity, ordered from most to least expensive. */
+/** The backend that realizes a shared aircraft motion target. */
 UENUM(BlueprintType)
-enum class EAircraftSimulationTier : uint8
+enum class EAircraftSimulationDriveMode : uint8
 {
-	FullPhysics UMETA(DisplayName = "完整物理"),
-	ReducedPhysics UMETA(DisplayName = "简化物理"),
-	Kinematic UMETA(DisplayName = "运动学"),
-	Dormant UMETA(DisplayName = "休眠")
+	None UMETA(DisplayName = "无驱动"),
+	FlightController UMETA(DisplayName = "飞控驱动"),
+	PhysicsConstraint UMETA(DisplayName = "物理约束驱动"),
+	Kinematic UMETA(DisplayName = "运动学驱动")
 };
 
 UENUM(BlueprintType)
@@ -22,29 +22,31 @@ enum class EAircraftSimulationCollisionMode : uint8
 	QueryAndPhysics UMETA(DisplayName = "查询与物理碰撞")
 };
 
-/** Per-tier policy authored in UAircraftSimulationLODProfileAsset. */
+/** One data-driven LOD entry. Array order is nearest/highest priority to farthest. */
 USTRUCT(BlueprintType)
-struct AIRCRAFTCORE_API FAircraftSimulationTierSettings
+struct AIRCRAFTCORE_API FAircraftSimulationLODSettings
 {
 	GENERATED_BODY()
 
-	/** Nominal upper distance from the nearest player. Dormant ignores this value. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "名称"))
+	FName Name = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "驱动模式"))
+	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::None;
+
+	/** Nominal upper distance from the nearest player. The final array entry ignores this value. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (
 		DisplayName = "最大生效距离",
-		ToolTip = "该模拟层级距离最近玩家的最大生效距离。休眠层级不使用此参数。",
+		ToolTip = "该LOD距离最近玩家的最大生效距离。数组最后一个LOD是无限距离兜底，不使用此参数。",
 		ClampMin = "0.0", Units = "cm"))
 	float MaxDistanceCm = 6000.0f;
 
 	/** Slow guidance/gameplay cadence. Zero means every game frame. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "运行慢速逻辑"))
+	bool bRunSlowLogic = true;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "慢速逻辑更新间隔", ClampMin = "0.0", Units = "s"))
 	float SlowLogicIntervalSeconds = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "启用物理模拟"))
-	bool bEnablePhysics = true;
-
-	/** Enables manager-driven transform integration from a generic kinematic target provider. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "启用运动学移动"))
-	bool bEnableKinematicMovement = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "碰撞模式"))
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
@@ -55,6 +57,25 @@ struct AIRCRAFTCORE_API FAircraftSimulationTierSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "允许调试绘制"))
 	bool bAllowDebugDraw = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "启用网络休眠"))
+	bool bEnableNetworkDormancy = false;
+};
+
+/** An exact temporary drive request published by an active motion source. */
+USTRUCT(BlueprintType)
+struct AIRCRAFTCORE_API FAircraftSimulationDriveOverride
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
+	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
+	int32 Priority = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
+	bool bValid = false;
 };
 
 /** Gameplay importance is intentionally independent from flight-controller and AI types. */
@@ -88,7 +109,7 @@ struct AIRCRAFTCORE_API FAircraftSimulationImportance
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
 	bool bMustRemainPhysical = false;
 
-	bool RequiresFullPhysics() const
+	bool RequiresHighestPriorityLOD() const
 	{
 		return bPlayerControlled || bInCombat || bFiring || bRecentlyDamaged
 			|| bRecoveringFromDamage || bHasExternalPhysicsConstraint || bMissionCritical || bMustRemainPhysical;
@@ -108,6 +129,9 @@ struct AIRCRAFTCORE_API FAircraftSimulationSnapshot
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	FAircraftSimulationImportance Importance;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	FAircraftSimulationDriveOverride DriveOverride;
 };
 
 /** Generic budget consumed by optional aircraft features. */
@@ -117,19 +141,16 @@ struct AIRCRAFTCORE_API FAircraftSimulationBudget
 	GENERATED_BODY()
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	EAircraftSimulationTier Tier = EAircraftSimulationTier::FullPhysics;
+	int32 LODIndex = INDEX_NONE;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	bool bRunFlightController = true;
+	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	bool bRunSlowLogic = true;
+	bool bRunSlowLogic = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	bool bEnablePhysics = true;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	bool bEnableKinematicMovement = false;
+	bool bEnablePhysics = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	bool bIsNetworkProxy = false;
@@ -141,27 +162,39 @@ struct AIRCRAFTCORE_API FAircraftSimulationBudget
 	float SuggestedNetUpdateFrequency = 30.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
+	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::Disabled;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	bool bAllowDebugDraw = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	bool bEnableNetworkDormancy = false;
 };
 
-/** Optional target published by guidance and integrated by the LOD component in kinematic mode. */
+/** Shared target published by guidance, Root Motion, animation, or gameplay. */
 USTRUCT(BlueprintType)
-struct AIRCRAFTCORE_API FAircraftKinematicTarget
+struct AIRCRAFTCORE_API FAircraftMotionTarget
 {
 	GENERATED_BODY()
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
 	FVector PositionCm = FVector::ZeroVector;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
 	FVector VelocityCmPerSec = FVector::ZeroVector;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
+	FVector AccelerationCmPerSecSq = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
 	FRotator RotationDegrees = FRotator::ZeroRotator;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
+	FVector AngularVelocityWorldDegPerSec = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
+	int32 Priority = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
 	bool bValid = false;
 };

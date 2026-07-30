@@ -20,7 +20,6 @@ class UAnimInstance;
 class UAnimMontage;
 class UMotionProfile;
 class UPathFollowingStrategy;
-class UPhysicsConstraintComponent;
 class USkeletalMeshComponent;
 struct FAutopilotRootMotionRequest;
 struct FAutopilotVehicleSnapshot;
@@ -44,12 +43,8 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
-	virtual bool GetAircraftKinematicTarget_Implementation(FAircraftKinematicTarget& OutTarget) const override;
-	virtual bool RequiresAircraftFullPhysics() const override
-	{
-		return ActiveRootMotionHandle.IsValid()
-			&& ActiveRootMotionDriveMode == EAutopilotRootMotionDriveMode::PhysicsConstraint;
-	}
+	virtual bool GetAircraftMotionTarget_Implementation(FAircraftMotionTarget& OutTarget) const override;
+	virtual FAircraftSimulationDriveOverride GetAircraftSimulationDriveOverride_Implementation() const override;
 
 	virtual bool GetAutopilotInjection(FAutopilotInjection& OutInjection) const override;
 	virtual bool IsAutopilotActive() const override { return bAutopilotActive; }
@@ -207,12 +202,9 @@ private:
 	TObjectPtr<UAnimInstance> ActiveRootMotionAnimInstance;
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveRootMotionMontage;
-	UPROPERTY(Transient)
-	TObjectPtr<UPhysicsConstraintComponent> ActiveRootMotionConstraint;
 	FAutopilotIntentHandle ActiveRootMotionHandle;
-	EAutopilotRootMotionDriveMode ActiveRootMotionDriveMode = EAutopilotRootMotionDriveMode::FlightController;
-	FName ActiveRootMotionPhysicsBoneName = NAME_None;
-	bool bActiveRootMotionSweep = true;
+	EAircraftSimulationDriveMode ActiveRootMotionDriveMode =
+		EAircraftSimulationDriveMode::FlightController;
 	bool bActiveRootMotionApplyRotation = true;
 	bool bRootMotionMontageEnded = false;
 	bool bRootMotionMontageInterrupted = false;
@@ -220,9 +212,11 @@ private:
 	FVector PreviousRootMotionTargetPositionCm = FVector::ZeroVector;
 	FQuat ActiveRootMotionTrajectoryActorRotation = FQuat::Identity;
 	FQuat ActiveRootMotionDesiredActorRotation = FQuat::Identity;
-	FQuat PreviousRootMotionConstraintTargetRotation = FQuat::Identity;
-	FTransform ActiveRootMotionConstraintReference = FTransform::Identity;
+	FQuat PreviousRootMotionDesiredActorRotation = FQuat::Identity;
 	FVector PreviousRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	FVector ActiveRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	FVector ActiveRootMotionTargetAccelerationCmPerSecSq = FVector::ZeroVector;
+	FVector ActiveRootMotionTargetAngularVelocityWorldDegPerSec = FVector::ZeroVector;
 	float PreviousRootMotionTargetYawDegrees = 0.0f;
 	float RootMotionArrivalStableTimeSeconds = 0.0f;
 	float ActiveRootMotionStartPositionSeconds = 0.0f;
@@ -238,25 +232,19 @@ private:
 	void BuildInjection(FAutopilotInjection& OutInjection) const;
 	void UpdateHoverThrustEstimate(float DeltaSeconds);
 	void RefreshSimulationTickEnabled();
+	void RefreshSimulationDriveSelection() const;
 	FAutopilotIntentHandle SubmitRootMotionRequest(
 		const FAutopilotRootMotionRequest& Request);
 	void TickRootMotionIntent(float DeltaSeconds);
 	bool ConsumeRootMotionDelta(
 		USkeletalMeshComponent* SkeletalMesh,
 		FTransform& OutWorldRootMotion) const;
-	void AccumulateRootMotionPhysicalTarget(const FTransform& WorldRootMotion);
-	void UpdateRootMotionFlightControlSetpoint(
+	void AccumulateRootMotionTarget(const FTransform& WorldRootMotion);
+	void UpdateRootMotionTarget(
 		const FAutopilotVehicleSnapshot& Snapshot,
 		bool bConsumedRootMotion,
 		float DeltaSeconds);
-	bool CreateRootMotionPhysicsConstraint(
-		const FAutopilotRootMotionConstraintDrive& ConstraintDrive,
-		const FAutopilotVehicleSnapshot& Snapshot);
-	bool UpdateRootMotionPhysicsConstraintTarget(
-		const FAutopilotVehicleSnapshot& Snapshot,
-		bool bConsumedRootMotion,
-		float DeltaSeconds);
-	bool HasReachedRootMotionPhysicalTarget(
+	bool HasReachedRootMotionTarget(
 		const FAutopilotVehicleSnapshot& Snapshot,
 		float DeltaSeconds);
 	void CleanupRootMotionIntent(bool bStopMontage);

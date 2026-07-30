@@ -28,14 +28,6 @@ void UAircraftSimulationWorldSubsystem::Tick(float DeltaTime)
 		RefreshPlayerLocations();
 	}
 
-	for (const TWeakObjectPtr<UAircraftSimulationLODComponent>& Entry : RegisteredAircraft)
-	{
-		if (UAircraftSimulationLODComponent* Component = Entry.Get())
-		{
-			Component->AdvanceManagedSimulation(DeltaTime);
-		}
-	}
-
 	int32 EvaluationBudget = 1;
 	for (const TWeakObjectPtr<UAircraftSimulationLODComponent>& Entry : RegisteredAircraft)
 	{
@@ -63,7 +55,8 @@ void UAircraftSimulationWorldSubsystem::Tick(float DeltaTime)
 		const UAircraftSimulationLODProfileAsset& Profile = Component->GetEffectiveProfile();
 		if (Profile.bAuthoritySimulationOnly && !Owner->HasAuthority())
 		{
-			Component->ApplyTierFromSubsystem(Component->GetCurrentSimulationTier(), true, WorldTime);
+			Component->ApplyLODFromSubsystem(
+				Component->GetCurrentSimulationLOD(), true, WorldTime);
 			Component->MarkEvaluated(WorldTime);
 			++Evaluated;
 			continue;
@@ -71,10 +64,12 @@ void UAircraftSimulationWorldSubsystem::Tick(float DeltaTime)
 
 		const float Distance = FindNearestPlayerDistanceCm(Owner->GetActorLocation());
 		const FAircraftSimulationSnapshot Snapshot = Component->BuildSnapshot(Distance, WorldTime);
-		const EAircraftSimulationTier Tier = AircraftSimulationLODPolicy::ResolveTier(
-			Profile, Component->GetCurrentSimulationTier(),
-			Component->GetSecondsInCurrentTier(WorldTime), Snapshot);
-		Component->ApplyTierFromSubsystem(Tier, false, WorldTime);
+		const int32 LODIndex = AircraftSimulationLODPolicy::ResolveLOD(
+			Profile,
+			Component->GetCurrentSimulationLOD(),
+			Component->GetSecondsInCurrentLOD(WorldTime),
+			Snapshot);
+		Component->ApplyLODFromSubsystem(LODIndex, false, WorldTime);
 		Component->MarkEvaluated(WorldTime);
 		++Evaluated;
 	}

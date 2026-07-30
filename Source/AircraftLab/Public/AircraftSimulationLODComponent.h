@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "AircraftSimulationLODConsumer.h"
 #include "AircraftSimulationLODTypes.h"
 
 #include "AircraftSimulationLODComponent.generated.h"
@@ -11,13 +12,14 @@ class UAircraftSimulationWorldSubsystem;
 class UPrimitiveComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
-	FOnAircraftSimulationTierChanged,
-	EAircraftSimulationTier, PreviousTier,
-	EAircraftSimulationTier, NewTier);
+	FOnAircraftSimulationLODChanged,
+	int32, PreviousLODIndex,
+	int32, NewLODIndex);
 
 /** Per-aircraft adapter. All updates are manager-driven; this component has no Tick. */
 UCLASS(ClassGroup = (AircraftLab), meta = (BlueprintSpawnableComponent))
 class AIRCRAFTLAB_API UAircraftSimulationLODComponent : public UActorComponent
+	, public IAircraftSimulationLODController
 {
 	GENERATED_BODY()
 
@@ -27,9 +29,10 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void RefreshAircraftSimulationDrive_Implementation() override;
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
-	EAircraftSimulationTier GetCurrentSimulationTier() const { return CurrentTier; }
+	int32 GetCurrentSimulationLOD() const { return CurrentLODIndex; }
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
 	FAircraftSimulationImportance GetSimulationImportance() const { return Importance; }
@@ -43,7 +46,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
 	void SetFiring(bool bFiring);
 
-	/** Keeps full physics for the profile's CombatKeepAliveSeconds. */
+	/** Keeps array entry zero selected for the profile's CombatKeepAliveSeconds. */
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
 	void NotifyCombatActivity();
 
@@ -53,7 +56,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
 	void SetMustRemainPhysical(bool bMustRemainPhysical);
 
-	/** Only external payload/world constraints force FullPhysics. Internal rotor constraints are managed as one rig. */
+	/** Only external payload/world constraints force array entry zero. */
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
 	void SetHasExternalPhysicsConstraint(bool bHasConstraint);
 
@@ -61,15 +64,17 @@ public:
 	void ForceSimulationReevaluation();
 
 	UPROPERTY(BlueprintAssignable, Category = "Aircraft|Simulation")
-	FOnAircraftSimulationTierChanged OnSimulationTierChanged;
+	FOnAircraftSimulationLODChanged OnSimulationLODChanged;
 
 	const UAircraftSimulationLODProfileAsset& GetEffectiveProfile() const;
 	FAircraftSimulationSnapshot BuildSnapshot(float NearestPlayerDistanceCm, float WorldTimeSeconds) const;
 	bool IsEvaluationDue(float WorldTimeSeconds) const;
 	void MarkEvaluated(float WorldTimeSeconds);
-	float GetSecondsInCurrentTier(float WorldTimeSeconds) const;
-	void ApplyTierFromSubsystem(EAircraftSimulationTier NewTier, bool bNetworkProxy, float WorldTimeSeconds);
-	void AdvanceManagedSimulation(float DeltaSeconds);
+	float GetSecondsInCurrentLOD(float WorldTimeSeconds) const;
+	void ApplyLODFromSubsystem(
+		int32 NewLODIndex,
+		bool bNetworkProxy,
+		float WorldTimeSeconds);
 
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Aircraft|Simulation")
@@ -78,40 +83,33 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation")
 	FAircraftSimulationImportance Importance;
 
-	UPROPERTY(ReplicatedUsing = OnRep_CurrentTier)
-	EAircraftSimulationTier CurrentTier = EAircraftSimulationTier::FullPhysics;
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentLODIndex)
+	int32 CurrentLODIndex = 0;
 
 private:
 	UFUNCTION()
-	void OnRep_CurrentTier(EAircraftSimulationTier PreviousTier);
+	void OnRep_CurrentLODIndex(int32 PreviousLODIndex);
 
 	void RefreshConsumers();
-	void RefreshManagedPhysicsBodies();
-	void ApplyPhysicalBudget(const FAircraftSimulationBudget& Budget);
-	void UpdateManagedBodiesFromRoot();
-	bool FindKinematicTarget(FAircraftKinematicTarget& OutTarget) const;
-	UPrimitiveComponent* ResolveRootPrimitive() const;
+	void RefreshCollisionComponents();
+	void ApplyCollisionBudget(const FAircraftSimulationBudget& Budget);
+	FAircraftSimulationDriveOverride ResolveDriveOverride() const;
 
-	UPROPERTY(Transient)
-	TObjectPtr<UPrimitiveComponent> RootPrimitive;
-
-	struct FManagedPhysicsBodyState
+	struct FCollisionComponentState
 	{
 		TWeakObjectPtr<UPrimitiveComponent> Component;
-		FTransform RelativeToRoot = FTransform::Identity;
-		FVector LinearVelocityCmPerSec = FVector::ZeroVector;
-		FVector AngularVelocityRadPerSec = FVector::ZeroVector;
 		ECollisionEnabled::Type OriginalCollision = ECollisionEnabled::NoCollision;
-		bool bShouldSimulateInPhysicalTier = false;
 	};
 
 	TArray<TWeakObjectPtr<UActorComponent>> Consumers;
-	TArray<FManagedPhysicsBodyState> ManagedPhysicsBodies;
+	TArray<FCollisionComponentState> CollisionComponents;
 	FAircraftSimulationBudget CurrentBudget;
 	float LastEvaluationTimeSeconds = -BIG_NUMBER;
-	float TierChangedTimeSeconds = 0.0f;
+	float LODChangedTimeSeconds = 0.0f;
 	float LastCombatActivityTimeSeconds = -BIG_NUMBER;
 	bool bNetworkProxyBudget = false;
+	bool bDriveOverrideActive = false;
+	int32 LODIndexBeforeDriveOverride = 0;
 	TEnumAsByte<ENetDormancy> SavedNetDormancy = DORM_Awake;
 	bool bHasSavedNetDormancy = false;
 };

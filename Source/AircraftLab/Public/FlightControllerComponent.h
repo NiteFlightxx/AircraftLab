@@ -14,6 +14,7 @@
 
 class UAirscrewComponent;
 class UAircraftInputComponent;
+class UPhysicsConstraintComponent;
 class UPrimitiveComponent;
 namespace Chaos { class FRigidBodyHandle_Internal; }
 /**
@@ -44,6 +45,7 @@ public:
 
 	virtual void OnRegister() override;
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void AsyncPhysicsTickComponent(float DeltaTime, float SimTime) override;
 	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
@@ -200,6 +202,9 @@ public:
 	bool IsControllerEnabled() const { return bControllerEnabled; }
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
+	EAircraftSimulationDriveMode GetSimulationDriveMode() const { return SimulationDriveMode; }
+
+	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
 	bool IsAltitudeHoldEnabled() const { return Runtime.bAltitudeHoldEnabled; }
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft|FlightController")
@@ -313,6 +318,17 @@ protected:
 	/** 解析无人机输入组件 */
 	UAircraftInputComponent* ResolveAircraftInput() const;
 
+	void RefreshSimulationTickState();
+	void SetSimulationDriveMode(
+		EAircraftSimulationDriveMode NewDriveMode,
+		bool bEnablePhysics);
+	bool PullMotionTarget(FAircraftMotionTarget& OutTarget) const;
+	void UpdateAlternativeDriveEstimatedState(float DeltaSeconds);
+	bool CreateSimulationConstraint();
+	void DestroySimulationConstraint();
+	void UpdateConstraintSimulation(float DeltaSeconds);
+	void UpdateKinematicSimulation(float DeltaSeconds);
+
 protected:
 	/** 唯一的非调试配置来源；缺失或无效时飞控不会启动。 */
 	UPROPERTY(EditDefaultsOnly, Category = "Aircraft|FlightController|Profile")
@@ -346,11 +362,22 @@ private:
 	bool bControllerEnabled = false;
 	bool bRuntimeConfigInitialized = false;
 	bool bFailurePolicyEvaluationSuspended = false;
-	bool bSimulationBudgetAllowsControl = true;
+	EAircraftSimulationDriveMode SimulationDriveMode =
+		EAircraftSimulationDriveMode::FlightController;
+	bool bSimulationPhysicsEnabled = true;
 
 	/** 机身Primitive组件 */
 	UPROPERTY(Transient)
 	TObjectPtr<UPrimitiveComponent> BodyPrimitive;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UPhysicsConstraintComponent> SimulationConstraint;
+
+	TArray<TWeakObjectPtr<UActorComponent>> MotionTargetSources;
+	FTransform SimulationConstraintReference = FTransform::Identity;
+	FVector SavedSimulationLinearVelocityCmPerSec = FVector::ZeroVector;
+	FVector SavedSimulationAngularVelocityRadPerSec = FVector::ZeroVector;
+	FVector PreviousAlternativeVelocityCmPerSec = FVector::ZeroVector;
 
 	/** 无人机输入组件 */
 	UPROPERTY(Transient)

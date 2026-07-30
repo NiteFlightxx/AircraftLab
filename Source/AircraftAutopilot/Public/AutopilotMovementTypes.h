@@ -7,16 +7,7 @@
 #include "AutopilotMovementTypes.generated.h"
 
 class UAnimMontage;
-class UPrimitiveComponent;
 class USkeletalMeshComponent;
-
-/** Root Motion 的内部驱动路径；蓝图通过三个独立提交接口选择。 */
-enum class EAutopilotRootMotionDriveMode : uint8
-{
-	Kinematic,
-	FlightController,
-	PhysicsConstraint
-};
 
 UENUM(BlueprintType)
 enum class EAutopilotIntentStatus : uint8
@@ -42,8 +33,7 @@ enum class EAutopilotIntentFailureReason : uint8
 	Timeout UMETA(DisplayName = "超时"),
 	Replaced UMETA(DisplayName = "被替换"),
 	CancelledByCaller UMETA(DisplayName = "调用方取消"),
-	AnimationInterrupted UMETA(DisplayName = "动画被中断"),
-	PhysicsConstraintBroken UMETA(DisplayName = "物理约束已断开")
+	AnimationInterrupted UMETA(DisplayName = "动画被中断")
 };
 
 USTRUCT(BlueprintType)
@@ -251,37 +241,6 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotVelocityCommand
 	float TimeoutSeconds = 0.0f;
 };
 
-/** Chaos 约束驱动参数。Acceleration Mode 下强度基本不随刚体质量和惯量变化。 */
-USTRUCT(BlueprintType)
-struct AIRCRAFTAUTOPILOT_API FAutopilotRootMotionConstraintDrive
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Constraint", meta = (ClampMin = "0.0", DisplayName = "线性位置强度"))
-	float LinearPositionStrength = 100.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Constraint", meta = (ClampMin = "0.0", DisplayName = "线性速度阻尼"))
-	float LinearVelocityStrength = 20.0f;
-
-	/** 0 表示不限制最大约束力。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Constraint", meta = (ClampMin = "0.0", DisplayName = "最大线性力"))
-	float LinearForceLimit = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Constraint", meta = (ClampMin = "0.0", DisplayName = "角度位置强度"))
-	float AngularPositionStrength = 100.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Constraint", meta = (ClampMin = "0.0", DisplayName = "角速度阻尼"))
-	float AngularVelocityStrength = 20.0f;
-
-	/** 0 表示不限制最大约束力矩。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Constraint", meta = (ClampMin = "0.0", DisplayName = "最大角度力矩"))
-	float AngularTorqueLimit = 0.0f;
-
-	/** 开启后线性/角度驱动强度按加速度解释，减少质量和惯量变化带来的调参差异。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Constraint", meta = (DisplayName = "使用加速度驱动"))
-	bool bAccelerationMode = true;
-};
-
 /** 三种 Root Motion 命令共享的动画播放参数。 */
 USTRUCT(BlueprintType)
 struct AIRCRAFTAUTOPILOT_API FAutopilotRootMotionPlayback
@@ -305,7 +264,7 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotRootMotionPlayback
 	bool bStopAllMontages = true;
 };
 
-/** 直接把 Root Motion 增量应用到 Actor 根组件。 */
+/** Root Motion 生成统一运动目标，由飞控组件的运动学后端执行。 */
 USTRUCT(BlueprintType)
 struct AIRCRAFTAUTOPILOT_API FAutopilotKinematicRootMotionCommand
 {
@@ -317,8 +276,8 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotKinematicRootMotionCommand
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Kinematic", meta = (DisplayName = "使用 Root Motion 旋转"))
 	bool bApplyRootMotionRotation = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Kinematic", meta = (DisplayName = "移动时检测碰撞"))
-	bool bSweep = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Kinematic", meta = (DisplayName = "到达判据"))
+	FAutopilotArrivalCriteria ArrivalCriteria;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Kinematic", meta = (ClampMin = "0.0", DisplayName = "超时时间（秒）"))
 	float TimeoutSeconds = 0.0f;
@@ -351,7 +310,7 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotFlightControllerRootMotionCommand
 	float TimeoutSeconds = 0.0f;
 };
 
-/** Root Motion 更新一个连接到世界的 Chaos 六自由度软约束目标。 */
+/** Root Motion 生成统一运动目标，由飞控组件的 Chaos 六自由度约束后端执行。 */
 USTRUCT(BlueprintType)
 struct AIRCRAFTAUTOPILOT_API FAutopilotPhysicsConstraintRootMotionCommand
 {
@@ -365,13 +324,6 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotPhysicsConstraintRootMotionCommand
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|PhysicsConstraint", meta = (EditCondition = "!bApplyRootMotionRotation", EditConditionHides, DisplayName = "航向选项"))
 	FAutopilotHeadingOptions Heading;
-
-	/** 根 SkeletalMesh 上的可选物理骨骼；驱动根刚体时保持 None。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|PhysicsConstraint", meta = (DisplayName = "物理骨骼"))
-	FName PhysicsBoneName = NAME_None;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|PhysicsConstraint", meta = (DisplayName = "约束驱动参数"))
-	FAutopilotRootMotionConstraintDrive ConstraintDrive;
 
 	/** Montage 结束后，刚体达到最终 Root Motion 目标才会完成 Intent。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|PhysicsConstraint", meta = (DisplayName = "到达判据"))

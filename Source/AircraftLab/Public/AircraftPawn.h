@@ -39,6 +39,8 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+	virtual void PawnClientRestart() override;
+	virtual void OnRep_Controller() override;
 
 	/** 获取机身骨骼网格体组件 */
 	UFUNCTION(BlueprintPure, Category = "Aircraft")

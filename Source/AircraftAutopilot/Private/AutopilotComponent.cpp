@@ -12,7 +12,6 @@
 #include "PathFollowing/DirectGuidance.h"
 #include "PathFollowing/PurePursuitGuidance.h"
 #include "PathFollowing/VectorFieldGuidance.h"
-#include "PhysicsEngine/PhysicsConstraintComponent.h"
 #include "Trajectory/TrajectoryGenerator.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogAutopilot, Log, All);
@@ -21,12 +20,9 @@ struct FAutopilotRootMotionRequest
 {
 	const FAutopilotRootMotionPlayback* Playback = nullptr;
 	FAutopilotMovementIntent Intent;
-	EAutopilotRootMotionDriveMode DriveMode =
-		EAutopilotRootMotionDriveMode::FlightController;
-	FAutopilotRootMotionConstraintDrive ConstraintDrive;
-	FName PhysicsBoneName = NAME_None;
+	EAircraftSimulationDriveMode DriveMode =
+		EAircraftSimulationDriveMode::FlightController;
 	bool bApplyRootMotionRotation = true;
-	bool bSweep = true;
 };
 
 namespace
@@ -218,7 +214,8 @@ void UAutopilotComponent::TickComponent(
 bool UAutopilotComponent::GetAutopilotInjection(FAutopilotInjection& OutInjection) const
 {
 	const bool bRootMotionBypassesFlightController = ActiveRootMotionHandle.IsValid()
-		&& ActiveRootMotionDriveMode != EAutopilotRootMotionDriveMode::FlightController;
+		&& ActiveRootMotionDriveMode
+			!= EAircraftSimulationDriveMode::FlightController;
 	if (!bAutopilotActive || bRootMotionBypassesFlightController
 		|| !CachedProfiledSetpoint.bValid)
 	{
@@ -299,21 +296,54 @@ void UAutopilotComponent::ApplyAircraftSimulationBudget_Implementation(
 	RefreshSimulationTickEnabled();
 }
 
-bool UAutopilotComponent::GetAircraftKinematicTarget_Implementation(
-	FAircraftKinematicTarget& OutTarget) const
+bool UAutopilotComponent::GetAircraftMotionTarget_Implementation(
+	FAircraftMotionTarget& OutTarget) const
 {
-	OutTarget = FAircraftKinematicTarget();
-	if (!bAutopilotActive || !CachedProfiledSetpoint.bValid) return false;
+	OutTarget = FAircraftMotionTarget();
+	if (!bAutopilotActive) return false;
+	if (ActiveRootMotionHandle.IsValid())
+	{
+		OutTarget.PositionCm = ActiveRootMotionTargetPositionCm;
+		OutTarget.VelocityCmPerSec =
+			ActiveRootMotionTargetVelocityCmPerSec;
+		OutTarget.AccelerationCmPerSecSq =
+			ActiveRootMotionTargetAccelerationCmPerSecSq;
+		OutTarget.RotationDegrees =
+			ActiveRootMotionDesiredActorRotation.Rotator();
+		OutTarget.AngularVelocityWorldDegPerSec =
+			ActiveRootMotionTargetAngularVelocityWorldDegPerSec;
+		OutTarget.Priority = 1000;
+		OutTarget.bValid = true;
+		return true;
+	}
+	if (!CachedProfiledSetpoint.bValid) return false;
 	OutTarget.PositionCm = CachedProfiledSetpoint.PositionCm;
-	OutTarget.VelocityCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec;
+	OutTarget.VelocityCmPerSec =
+		CachedProfiledSetpoint.VelocityCmPerSec;
+	OutTarget.AccelerationCmPerSecSq =
+		CachedProfiledSetpoint.AccelerationCmPerSecSq;
 	const FQuat DesiredControlWorld =
 		FRotator(0.0f, CachedProfiledSetpoint.YawDegrees, 0.0f).Quaternion();
 	const FQuat ControlToBody = FlightController
 		? FlightController->GetAircraftControlToBodyRotation()
 		: FQuat::Identity;
 	OutTarget.RotationDegrees = (DesiredControlWorld * ControlToBody.Inverse()).Rotator();
+	OutTarget.AngularVelocityWorldDegPerSec =
+		FVector(0.0f, 0.0f, CachedProfiledSetpoint.YawRateDegreesPerSec);
+	OutTarget.Priority = 0;
 	OutTarget.bValid = true;
 	return true;
+}
+
+FAircraftSimulationDriveOverride
+UAutopilotComponent::GetAircraftSimulationDriveOverride_Implementation() const
+{
+	FAircraftSimulationDriveOverride Override;
+	if (!ActiveRootMotionHandle.IsValid()) return Override;
+	Override.DriveMode = ActiveRootMotionDriveMode;
+	Override.Priority = 1000;
+	Override.bValid = true;
+	return Override;
 }
 
 FAutopilotIntentHandle UAutopilotComponent::SubmitMovementIntent(const FAutopilotMovementIntent& Intent)
@@ -471,10 +501,10 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionKinematic(
 	FAutopilotRootMotionRequest Request;
 	Request.Playback = &Command.Playback;
 	Request.Intent.Type = EAutopilotMovementIntentType::RootMotion;
+	Request.Intent.ArrivalCriteria = Command.ArrivalCriteria;
 	Request.Intent.TimeoutSeconds = Command.TimeoutSeconds;
-	Request.DriveMode = EAutopilotRootMotionDriveMode::Kinematic;
+	Request.DriveMode = EAircraftSimulationDriveMode::Kinematic;
 	Request.bApplyRootMotionRotation = Command.bApplyRootMotionRotation;
-	Request.bSweep = Command.bSweep;
 	return SubmitRootMotionRequest(Request);
 }
 
@@ -487,7 +517,7 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionFlightController(
 	Request.Intent.MotionConstraints = Command.MotionConstraints;
 	Request.Intent.ArrivalCriteria = Command.ArrivalCriteria;
 	Request.Intent.TimeoutSeconds = Command.TimeoutSeconds;
-	Request.DriveMode = EAutopilotRootMotionDriveMode::FlightController;
+	Request.DriveMode = EAircraftSimulationDriveMode::FlightController;
 	Request.bApplyRootMotionRotation = Command.bApplyRootMotionRotation;
 	if (Command.bApplyRootMotionRotation)
 	{
@@ -508,9 +538,7 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionPhysicsConstraint(
 	Request.Intent.Type = EAutopilotMovementIntentType::RootMotion;
 	Request.Intent.ArrivalCriteria = Command.ArrivalCriteria;
 	Request.Intent.TimeoutSeconds = Command.TimeoutSeconds;
-	Request.DriveMode = EAutopilotRootMotionDriveMode::PhysicsConstraint;
-	Request.ConstraintDrive = Command.ConstraintDrive;
-	Request.PhysicsBoneName = Command.PhysicsBoneName;
+	Request.DriveMode = EAircraftSimulationDriveMode::PhysicsConstraint;
 	Request.bApplyRootMotionRotation = Command.bApplyRootMotionRotation;
 	if (Command.bApplyRootMotionRotation)
 	{
@@ -548,36 +576,19 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionRequest(
 		SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 	FAutopilotVehicleSnapshot Snapshot;
 	bool bHasControllerState = false;
-	if (Request.DriveMode == EAutopilotRootMotionDriveMode::Kinematic
+	if (Request.DriveMode == EAircraftSimulationDriveMode::Kinematic
 		&& GetOwner())
 	{
 		Snapshot = MakeRootMotionSnapshot(
 			0.0f, GetOwner()->GetActorLocation());
 		bHasControllerState = true;
 	}
-	else if (Request.DriveMode == EAutopilotRootMotionDriveMode::PhysicsConstraint
-		&& GetOwner() && IsValid(SkeletalMesh))
-	{
-		Snapshot.PositionCm = SkeletalMesh->GetComponentLocation();
-		Snapshot.VelocityCmPerSec =
-			SkeletalMesh->GetPhysicsLinearVelocity(Request.PhysicsBoneName);
-		const FQuat ControlWorld = FlightController
-			? SkeletalMesh->GetComponentQuat()
-				* FlightController->GetAircraftControlToBodyRotation()
-			: SkeletalMesh->GetComponentQuat();
-		Snapshot.YawDegrees = ControlWorld.Rotator().Yaw;
-		bHasControllerState = true;
-	}
 	else
 	{
 		bHasControllerState = CaptureSnapshot(Snapshot);
 	}
-	const FAutopilotRootMotionConstraintDrive& ConstraintDrive =
-		Request.ConstraintDrive;
 	EAutopilotIntentFailureReason RejectionReason = EAutopilotIntentFailureReason::None;
-	if (!bHasControllerState
-		|| (Request.DriveMode == EAutopilotRootMotionDriveMode::FlightController
-			&& !FlightController))
+	if (!FlightController || !bHasControllerState)
 	{
 		RejectionReason = EAutopilotIntentFailureReason::FlightControllerUnavailable;
 	}
@@ -602,34 +613,15 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionRequest(
 	{
 		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
 	}
-	else if (Request.DriveMode != EAutopilotRootMotionDriveMode::Kinematic
-		&& !IsRootMotionArrivalFinite(Request.Intent.ArrivalCriteria))
+	else if (!IsRootMotionArrivalFinite(Request.Intent.ArrivalCriteria))
 	{
 		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
 	}
-	else if (Request.DriveMode == EAutopilotRootMotionDriveMode::FlightController
+	else if (Request.DriveMode == EAircraftSimulationDriveMode::FlightController
 		&& !AreRootMotionConstraintsFinite(Request.Intent.MotionConstraints))
 	{
 		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
 	}
-	else if (Request.DriveMode == EAutopilotRootMotionDriveMode::PhysicsConstraint
-		&& (!SkeletalMesh->IsSimulatingPhysics(Request.PhysicsBoneName)
-			|| !FMath::IsFinite(ConstraintDrive.LinearPositionStrength)
-			|| ConstraintDrive.LinearPositionStrength < 0.0f
-			|| !FMath::IsFinite(ConstraintDrive.LinearVelocityStrength)
-			|| ConstraintDrive.LinearVelocityStrength < 0.0f
-			|| !FMath::IsFinite(ConstraintDrive.LinearForceLimit)
-			|| ConstraintDrive.LinearForceLimit < 0.0f
-			|| !FMath::IsFinite(ConstraintDrive.AngularPositionStrength)
-			|| ConstraintDrive.AngularPositionStrength < 0.0f
-			|| !FMath::IsFinite(ConstraintDrive.AngularVelocityStrength)
-			|| ConstraintDrive.AngularVelocityStrength < 0.0f
-			|| !FMath::IsFinite(ConstraintDrive.AngularTorqueLimit)
-			|| ConstraintDrive.AngularTorqueLimit < 0.0f))
-	{
-		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
-	}
-
 	const FAutopilotIntentHandle Handle =
 		MovementExecutor->Submit(Request.Intent, Snapshot, RejectionReason);
 	if (MovementExecutor->GetResult(Handle).Status != EAutopilotIntentStatus::Accepted)
@@ -643,8 +635,6 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionRequest(
 	ActiveRootMotionMontage = Playback->Montage;
 	ActiveRootMotionHandle = Handle;
 	ActiveRootMotionDriveMode = Request.DriveMode;
-	ActiveRootMotionPhysicsBoneName = Request.PhysicsBoneName;
-	bActiveRootMotionSweep = Request.bSweep;
 	bActiveRootMotionApplyRotation = Request.bApplyRootMotionRotation;
 	bRootMotionMontageEnded = false;
 	bRootMotionMontageInterrupted = false;
@@ -655,14 +645,17 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionRequest(
 		SkeletalMesh->GetComponentQuat();
 	ActiveRootMotionDesiredActorRotation =
 		ActiveRootMotionTrajectoryActorRotation;
-	PreviousRootMotionConstraintTargetRotation =
+	PreviousRootMotionDesiredActorRotation =
 		ActiveRootMotionTrajectoryActorRotation;
 	PreviousRootMotionTargetVelocityCmPerSec = Snapshot.VelocityCmPerSec;
+	ActiveRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	ActiveRootMotionTargetAccelerationCmPerSecSq = FVector::ZeroVector;
+	ActiveRootMotionTargetAngularVelocityWorldDegPerSec = FVector::ZeroVector;
 	PreviousRootMotionTargetYawDegrees = Snapshot.YawDegrees;
 	RootMotionArrivalStableTimeSeconds = 0.0f;
 	if (MotionProfile
 		&& ActiveRootMotionDriveMode
-			== EAutopilotRootMotionDriveMode::FlightController)
+			== EAircraftSimulationDriveMode::FlightController)
 	{
 		MotionProfile->Initialize(
 			Snapshot.PositionCm,
@@ -672,18 +665,18 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionRequest(
 			0.0f);
 	}
 	if (ActiveRootMotionDriveMode
-		== EAutopilotRootMotionDriveMode::FlightController)
+		== EAircraftSimulationDriveMode::FlightController)
 	{
 		ApplyIntentMotionLimits();
 	}
-	if (ActiveRootMotionDriveMode == EAutopilotRootMotionDriveMode::PhysicsConstraint
-		&& !CreateRootMotionPhysicsConstraint(ConstraintDrive, Snapshot))
+	RefreshSimulationDriveSelection();
+	if (SimulationBudget.DriveMode != ActiveRootMotionDriveMode)
 	{
 		MovementExecutor->FinishExternalIntent(
 			Handle,
 			Snapshot,
 			EAutopilotIntentStatus::Failed,
-			EAutopilotIntentFailureReason::PhysicsConstraintBroken);
+			EAutopilotIntentFailureReason::InvalidIntent);
 		CleanupRootMotionIntent(false);
 		InvalidateOutputs();
 		BroadcastIntentEvents();
@@ -999,7 +992,8 @@ void UAutopilotComponent::SetPathFollowingStrategy(EPathFollowingStrategy Strate
 bool UAutopilotComponent::CaptureSnapshot(FAutopilotVehicleSnapshot& OutSnapshot) const
 {
 	if (!FlightController) return false;
-	if (SimulationBudget.bEnableKinematicMovement && GetOwner())
+	if (SimulationBudget.DriveMode == EAircraftSimulationDriveMode::Kinematic
+		&& GetOwner())
 	{
 		OutSnapshot.PositionCm = GetOwner()->GetActorLocation();
 		OutSnapshot.VelocityCmPerSec = CachedProfiledSetpoint.bValid
@@ -1026,11 +1020,27 @@ void UAutopilotComponent::RefreshSimulationTickEnabled()
 		&& !SimulationBudget.bIsNetworkProxy;
 	const bool bBudgetAllowsTick = bRootMotionRequiresTick
 		|| (SimulationBudget.bRunSlowLogic
-			&& !SimulationBudget.bIsNetworkProxy
-			&& SimulationBudget.Tier != EAircraftSimulationTier::Dormant);
+			&& !SimulationBudget.bIsNetworkProxy);
 	PrimaryComponentTick.TickInterval = bRootMotionRequiresTick
 		? 0.0f : FMath::Max(SimulationBudget.SlowLogicIntervalSeconds, 0.0f);
 	SetComponentTickEnabled(bAutopilotActive && bBudgetAllowsTick);
+}
+
+void UAutopilotComponent::RefreshSimulationDriveSelection() const
+{
+	if (!GetOwner()) return;
+	TArray<UActorComponent*> Components;
+	GetOwner()->GetComponents(Components);
+	for (UActorComponent* Component : Components)
+	{
+		if (Component
+			&& Component->GetClass()->ImplementsInterface(
+				UAircraftSimulationLODController::StaticClass()))
+		{
+			IAircraftSimulationLODController::
+				Execute_RefreshAircraftSimulationDrive(Component);
+		}
+	}
 }
 
 void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
@@ -1057,6 +1067,21 @@ void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
 		BroadcastIntentEvents();
 		return;
 	}
+	if (SimulationBudget.DriveMode != ActiveRootMotionDriveMode)
+	{
+		FAutopilotVehicleSnapshot Snapshot;
+		CaptureActiveRootMotionSnapshot(
+			Snapshot, DeltaSeconds, GetOwner()->GetActorLocation());
+		MovementExecutor->FinishExternalIntent(
+			ActiveRootMotionHandle,
+			Snapshot,
+			EAutopilotIntentStatus::Failed,
+			EAutopilotIntentFailureReason::InvalidIntent);
+		CleanupRootMotionIntent(true);
+		InvalidateOutputs();
+		BroadcastIntentEvents();
+		return;
+	}
 
 	const FVector PreviousLocation = GetOwner()->GetActorLocation();
 	FTransform WorldRootMotion = FTransform::Identity;
@@ -1064,29 +1089,7 @@ void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
 		ConsumeRootMotionDelta(ActiveRootMotionMesh, WorldRootMotion);
 	if (bConsumedRootMotion)
 	{
-		if (ActiveRootMotionDriveMode == EAutopilotRootMotionDriveMode::Kinematic)
-		{
-			USceneComponent* RootComponent = GetOwner()->GetRootComponent();
-			if (RootComponent)
-			{
-				const FQuat NewWorldRotation = bActiveRootMotionApplyRotation
-					? (WorldRootMotion.GetRotation()
-						* RootComponent->GetComponentQuat()).GetNormalized()
-					: RootComponent->GetComponentQuat();
-				FHitResult HitResult;
-				RootComponent->MoveComponent(
-					WorldRootMotion.GetTranslation(),
-					NewWorldRotation,
-					bActiveRootMotionSweep,
-					&HitResult,
-					MOVECOMP_NoFlags,
-					ETeleportType::None);
-			}
-		}
-		else
-		{
-			AccumulateRootMotionPhysicalTarget(WorldRootMotion);
-		}
+		AccumulateRootMotionTarget(WorldRootMotion);
 	}
 
 	FAutopilotVehicleSnapshot Snapshot;
@@ -1103,26 +1106,7 @@ void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
 		BroadcastIntentEvents();
 		return;
 	}
-	if (ActiveRootMotionDriveMode == EAutopilotRootMotionDriveMode::FlightController)
-	{
-		UpdateRootMotionFlightControlSetpoint(
-			Snapshot, bConsumedRootMotion, DeltaSeconds);
-	}
-	else if (ActiveRootMotionDriveMode
-		== EAutopilotRootMotionDriveMode::PhysicsConstraint
-		&& !UpdateRootMotionPhysicsConstraintTarget(
-			Snapshot, bConsumedRootMotion, DeltaSeconds))
-	{
-		MovementExecutor->FinishExternalIntent(
-			ActiveRootMotionHandle,
-			Snapshot,
-			EAutopilotIntentStatus::Failed,
-			EAutopilotIntentFailureReason::PhysicsConstraintBroken);
-		CleanupRootMotionIntent(true);
-		InvalidateOutputs();
-		BroadcastIntentEvents();
-		return;
-	}
+	UpdateRootMotionTarget(Snapshot, bConsumedRootMotion, DeltaSeconds);
 
 	const float MontageLength = ActiveRootMotionMontage->GetPlayLength();
 	const float MontagePosition = ActiveRootMotionAnimInstance->Montage_GetPosition(
@@ -1172,18 +1156,14 @@ void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
 	const FAutopilotIntentHandle CompletedHandle = ActiveRootMotionHandle;
 	const bool bInterrupted = bRootMotionMontageInterrupted;
 	if (!bInterrupted
-		&& ActiveRootMotionDriveMode != EAutopilotRootMotionDriveMode::Kinematic
-		&& !HasReachedRootMotionPhysicalTarget(Snapshot, DeltaSeconds))
+		&& !HasReachedRootMotionTarget(Snapshot, DeltaSeconds))
 	{
 		return;
 	}
 
 	const bool bFlightControllerDriven =
-		ActiveRootMotionDriveMode == EAutopilotRootMotionDriveMode::FlightController;
-	const bool bKinematicDriven =
-		ActiveRootMotionDriveMode == EAutopilotRootMotionDriveMode::Kinematic;
-	const bool bPhysicallyDriven =
-		!bKinematicDriven;
+		ActiveRootMotionDriveMode
+			== EAircraftSimulationDriveMode::FlightController;
 	const FVector FinalTargetPositionCm = ActiveRootMotionTargetPositionCm;
 	MovementExecutor->FinishExternalIntent(
 		CompletedHandle,
@@ -1192,7 +1172,7 @@ void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
 		bInterrupted
 			? EAutopilotIntentFailureReason::AnimationInterrupted
 			: EAutopilotIntentFailureReason::None);
-	if (!bInterrupted && bPhysicallyDriven)
+	if (!bInterrupted)
 	{
 		MovementExecutor->EnterHold(Snapshot, &FinalTargetPositionCm);
 	}
@@ -1200,13 +1180,11 @@ void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
 	{
 		MotionProfile->Initialize(
 			Snapshot.PositionCm,
-			bPhysicallyDriven
-				? Snapshot.VelocityCmPerSec : FVector::ZeroVector,
-			bPhysicallyDriven
-				? Snapshot.AccelerationCmPerSecSq : FVector::ZeroVector,
+			Snapshot.VelocityCmPerSec,
+			Snapshot.AccelerationCmPerSecSq,
 			Snapshot.YawDegrees,
 			0.0f);
-		if (!bInterrupted && !bKinematicDriven)
+		if (!bInterrupted)
 		{
 			CachedProfiledSetpoint = MotionProfile->GetCurrentSetpoint();
 			CachedGuidanceCommand = FGuidanceCommand();
@@ -1220,7 +1198,7 @@ void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
 		}
 	}
 	CleanupRootMotionIntent(false);
-	if (bKinematicDriven || bInterrupted)
+	if (bInterrupted)
 	{
 		InvalidateOutputs();
 	}
@@ -1247,7 +1225,7 @@ bool UAutopilotComponent::ConsumeRootMotionDelta(
 	return !OutWorldRootMotion.ContainsNaN();
 }
 
-void UAutopilotComponent::AccumulateRootMotionPhysicalTarget(
+void UAutopilotComponent::AccumulateRootMotionTarget(
 	const FTransform& WorldRootMotion)
 {
 	const AActor* Owner = GetOwner();
@@ -1271,27 +1249,30 @@ void UAutopilotComponent::AccumulateRootMotionPhysicalTarget(
 		* ActorLocalRotation).GetNormalized();
 }
 
-void UAutopilotComponent::UpdateRootMotionFlightControlSetpoint(
+void UAutopilotComponent::UpdateRootMotionTarget(
 	const FAutopilotVehicleSnapshot& Snapshot,
 	bool bConsumedRootMotion,
 	float DeltaSeconds)
 {
-	if (!MotionProfile || DeltaSeconds <= UE_SMALL_NUMBER)
+	if (DeltaSeconds <= UE_SMALL_NUMBER)
 	{
 		InvalidateOutputs();
 		return;
 	}
 
-	ApplyIntentMotionLimits();
 	FTrajectoryPoint NominalSetpoint;
 	NominalSetpoint.PositionCm = ActiveRootMotionTargetPositionCm;
-	NominalSetpoint.VelocityCmPerSec = bConsumedRootMotion
+	ActiveRootMotionTargetVelocityCmPerSec = bConsumedRootMotion
 		? (ActiveRootMotionTargetPositionCm
 			- PreviousRootMotionTargetPositionCm) / DeltaSeconds
 		: FVector::ZeroVector;
-	NominalSetpoint.AccelerationCmPerSecSq =
-		(NominalSetpoint.VelocityCmPerSec
+	ActiveRootMotionTargetAccelerationCmPerSecSq =
+		(ActiveRootMotionTargetVelocityCmPerSec
 			- PreviousRootMotionTargetVelocityCmPerSec) / DeltaSeconds;
+	NominalSetpoint.VelocityCmPerSec =
+		ActiveRootMotionTargetVelocityCmPerSec;
+	NominalSetpoint.AccelerationCmPerSecSq =
+		ActiveRootMotionTargetAccelerationCmPerSecSq;
 
 	const FQuat ControlToBody = FlightController
 		? FlightController->GetAircraftControlToBodyRotation()
@@ -1320,9 +1301,45 @@ void UAutopilotComponent::UpdateRootMotionFlightControlSetpoint(
 	}
 	NominalSetpoint.bValid = true;
 
+	FQuat DeltaRotation = (
+		ActiveRootMotionDesiredActorRotation
+		* PreviousRootMotionDesiredActorRotation.Inverse()).GetNormalized();
+	if (DeltaRotation.W < 0.0f)
+	{
+		DeltaRotation.X *= -1.0f;
+		DeltaRotation.Y *= -1.0f;
+		DeltaRotation.Z *= -1.0f;
+		DeltaRotation.W *= -1.0f;
+	}
+	FVector RotationAxis = FVector::UpVector;
+	float RotationAngleRadians = 0.0f;
+	DeltaRotation.ToAxisAndAngle(RotationAxis, RotationAngleRadians);
+	ActiveRootMotionTargetAngularVelocityWorldDegPerSec =
+		DeltaRotation.Equals(FQuat::Identity, UE_SMALL_NUMBER)
+			? FVector::ZeroVector
+			: FMath::RadiansToDegrees(
+				RotationAxis.GetSafeNormal()
+				* (RotationAngleRadians / DeltaSeconds));
+
 	PreviousRootMotionTargetPositionCm = ActiveRootMotionTargetPositionCm;
-	PreviousRootMotionTargetVelocityCmPerSec = NominalSetpoint.VelocityCmPerSec;
+	PreviousRootMotionTargetVelocityCmPerSec =
+		ActiveRootMotionTargetVelocityCmPerSec;
 	PreviousRootMotionTargetYawDegrees = NominalSetpoint.YawDegrees;
+	PreviousRootMotionDesiredActorRotation =
+		ActiveRootMotionDesiredActorRotation;
+
+	if (ActiveRootMotionDriveMode
+		!= EAircraftSimulationDriveMode::FlightController)
+	{
+		InvalidateOutputs();
+		return;
+	}
+	if (!MotionProfile)
+	{
+		InvalidateOutputs();
+		return;
+	}
+	ApplyIntentMotionLimits();
 
 	CachedGuidanceCommand = FGuidanceCommand();
 	CachedTurnCommand = FTurnCommand();
@@ -1347,164 +1364,7 @@ void UAutopilotComponent::UpdateRootMotionFlightControlSetpoint(
 	}
 }
 
-bool UAutopilotComponent::CreateRootMotionPhysicsConstraint(
-	const FAutopilotRootMotionConstraintDrive& ConstraintDrive,
-	const FAutopilotVehicleSnapshot& Snapshot)
-{
-	AActor* Owner = GetOwner();
-	if (!Owner || !IsValid(ActiveRootMotionMesh)
-		|| !ActiveRootMotionMesh->IsSimulatingPhysics(
-			ActiveRootMotionPhysicsBoneName))
-	{
-		return false;
-	}
-
-	const FName ConstraintName = MakeUniqueObjectName(
-		Owner,
-		UPhysicsConstraintComponent::StaticClass(),
-		TEXT("RootMotionPhysicsConstraint"));
-	ActiveRootMotionConstraint = NewObject<UPhysicsConstraintComponent>(
-		Owner, ConstraintName, RF_Transient);
-	if (!ActiveRootMotionConstraint)
-	{
-		return false;
-	}
-	Owner->AddInstanceComponent(ActiveRootMotionConstraint);
-	ActiveRootMotionConstraintReference = FTransform(
-		ActiveRootMotionTrajectoryActorRotation,
-		Snapshot.PositionCm);
-	ActiveRootMotionConstraint->SetWorldTransform(
-		ActiveRootMotionConstraintReference);
-	ActiveRootMotionConstraint->RegisterComponent();
-
-	ActiveRootMotionConstraint->SetLinearXLimit(LCM_Free, 0.0f);
-	ActiveRootMotionConstraint->SetLinearYLimit(LCM_Free, 0.0f);
-	ActiveRootMotionConstraint->SetLinearZLimit(LCM_Free, 0.0f);
-	ActiveRootMotionConstraint->SetAngularSwing1Limit(ACM_Free, 0.0f);
-	ActiveRootMotionConstraint->SetAngularSwing2Limit(ACM_Free, 0.0f);
-	ActiveRootMotionConstraint->SetAngularTwistLimit(ACM_Free, 0.0f);
-	ActiveRootMotionConstraint->SetLinearPositionDrive(true, true, true);
-	ActiveRootMotionConstraint->SetLinearVelocityDrive(true, true, true);
-	ActiveRootMotionConstraint->SetAngularDriveMode(EAngularDriveMode::SLERP);
-	ActiveRootMotionConstraint->SetOrientationDriveSLERP(true);
-	ActiveRootMotionConstraint->SetAngularVelocityDriveSLERP(true);
-	ActiveRootMotionConstraint->SetLinearDriveAccelerationMode(
-		ConstraintDrive.bAccelerationMode);
-	ActiveRootMotionConstraint->SetAngularDriveAccelerationMode(
-		ConstraintDrive.bAccelerationMode);
-	ActiveRootMotionConstraint->SetLinearDriveParams(
-		ConstraintDrive.LinearPositionStrength,
-		ConstraintDrive.LinearVelocityStrength,
-		ConstraintDrive.LinearForceLimit);
-	ActiveRootMotionConstraint->SetAngularDriveParams(
-		ConstraintDrive.AngularPositionStrength,
-		ConstraintDrive.AngularVelocityStrength,
-		ConstraintDrive.AngularTorqueLimit);
-	ActiveRootMotionConstraint->SetProjectionEnabled(false);
-	ActiveRootMotionConstraint->SetDisableCollision(true);
-	ActiveRootMotionConstraint->SetConstrainedComponents(
-		ActiveRootMotionMesh,
-		ActiveRootMotionPhysicsBoneName,
-		nullptr,
-		NAME_None);
-	ActiveRootMotionMesh->WakeAllRigidBodies();
-
-	return ActiveRootMotionConstraint->ConstraintInstance.IsValidConstraintInstance()
-		&& !ActiveRootMotionConstraint->IsBroken();
-}
-
-bool UAutopilotComponent::UpdateRootMotionPhysicsConstraintTarget(
-	const FAutopilotVehicleSnapshot& Snapshot,
-	bool bConsumedRootMotion,
-	float DeltaSeconds)
-{
-	if (!IsValid(ActiveRootMotionConstraint)
-		|| !IsValid(ActiveRootMotionMesh)
-		|| !ActiveRootMotionMesh->IsSimulatingPhysics(
-			ActiveRootMotionPhysicsBoneName)
-		|| !ActiveRootMotionConstraint->ConstraintInstance.IsValidConstraintInstance()
-		|| ActiveRootMotionConstraint->IsBroken()
-		|| DeltaSeconds <= UE_SMALL_NUMBER)
-	{
-		return false;
-	}
-
-	const FVector TargetVelocityCmPerSec = bConsumedRootMotion
-		? (ActiveRootMotionTargetPositionCm
-			- PreviousRootMotionTargetPositionCm) / DeltaSeconds
-		: FVector::ZeroVector;
-	if (bActiveRootMotionApplyRotation)
-	{
-		ActiveRootMotionDesiredActorRotation =
-			ActiveRootMotionTrajectoryActorRotation;
-	}
-	else
-	{
-		FTrajectoryPoint HeadingSetpoint;
-		HeadingSetpoint.PositionCm = ActiveRootMotionTargetPositionCm;
-		HeadingSetpoint.VelocityCmPerSec = TargetVelocityCmPerSec;
-		HeadingSetpoint.YawDegrees = PreviousRootMotionTargetYawDegrees;
-		HeadingSetpoint.bValid = true;
-		MovementExecutor->ApplyHeading(Snapshot, HeadingSetpoint);
-		const FQuat ControlToBody = FlightController
-			? FlightController->GetAircraftControlToBodyRotation()
-			: FQuat::Identity;
-		const FQuat DesiredControlWorld =
-			FRotator(0.0f, HeadingSetpoint.YawDegrees, 0.0f).Quaternion();
-		ActiveRootMotionDesiredActorRotation = (
-			DesiredControlWorld * ControlToBody.Inverse()).GetNormalized();
-		PreviousRootMotionTargetYawDegrees = HeadingSetpoint.YawDegrees;
-	}
-
-	const FVector PositionTarget =
-		ActiveRootMotionConstraintReference.InverseTransformPosition(
-			ActiveRootMotionTargetPositionCm);
-	const FVector VelocityTarget =
-		ActiveRootMotionConstraintReference.InverseTransformVectorNoScale(
-			TargetVelocityCmPerSec);
-	const FQuat OrientationTarget = (
-		ActiveRootMotionConstraintReference.GetRotation().Inverse()
-		* ActiveRootMotionDesiredActorRotation).GetNormalized();
-
-	FVector AngularVelocityTargetRevPerSec = FVector::ZeroVector;
-	FQuat DeltaRotation = (
-		ActiveRootMotionDesiredActorRotation
-		* PreviousRootMotionConstraintTargetRotation.Inverse()).GetNormalized();
-	if (!DeltaRotation.Equals(FQuat::Identity, UE_SMALL_NUMBER))
-	{
-		if (DeltaRotation.W < 0.0f)
-		{
-			DeltaRotation.X *= -1.0f;
-			DeltaRotation.Y *= -1.0f;
-			DeltaRotation.Z *= -1.0f;
-			DeltaRotation.W *= -1.0f;
-		}
-		FVector RotationAxis = FVector::ForwardVector;
-		float RotationAngleRadians = 0.0f;
-		DeltaRotation.ToAxisAndAngle(RotationAxis, RotationAngleRadians);
-		const FVector AngularVelocityWorldRadPerSec =
-			RotationAxis.GetSafeNormal() * (RotationAngleRadians / DeltaSeconds);
-		AngularVelocityTargetRevPerSec =
-			ActiveRootMotionConstraintReference.InverseTransformVectorNoScale(
-				AngularVelocityWorldRadPerSec) / (2.0f * UE_PI);
-	}
-
-	ActiveRootMotionConstraint->SetLinearPositionTarget(PositionTarget);
-	ActiveRootMotionConstraint->SetLinearVelocityTarget(VelocityTarget);
-	ActiveRootMotionConstraint->SetAngularOrientationTarget(
-		OrientationTarget.Rotator());
-	ActiveRootMotionConstraint->SetAngularVelocityTarget(
-		AngularVelocityTargetRevPerSec);
-	ActiveRootMotionMesh->WakeAllRigidBodies();
-
-	PreviousRootMotionTargetPositionCm = ActiveRootMotionTargetPositionCm;
-	PreviousRootMotionTargetVelocityCmPerSec = TargetVelocityCmPerSec;
-	PreviousRootMotionConstraintTargetRotation =
-		ActiveRootMotionDesiredActorRotation;
-	return true;
-}
-
-bool UAutopilotComponent::HasReachedRootMotionPhysicalTarget(
+bool UAutopilotComponent::HasReachedRootMotionTarget(
 	const FAutopilotVehicleSnapshot& Snapshot,
 	float DeltaSeconds)
 {
@@ -1513,7 +1373,8 @@ bool UAutopilotComponent::HasReachedRootMotionPhysicalTarget(
 	const FVector PositionError =
 		ActiveRootMotionTargetPositionCm - Snapshot.PositionCm;
 	const bool bUsesMotionProfile =
-		ActiveRootMotionDriveMode == EAutopilotRootMotionDriveMode::FlightController;
+		ActiveRootMotionDriveMode
+			== EAircraftSimulationDriveMode::FlightController;
 	const FVector SetpointError = bUsesMotionProfile && CachedProfiledSetpoint.bValid
 		? ActiveRootMotionTargetPositionCm - CachedProfiledSetpoint.PositionCm
 		: PositionError;
@@ -1547,12 +1408,6 @@ bool UAutopilotComponent::HasReachedRootMotionPhysicalTarget(
 
 void UAutopilotComponent::CleanupRootMotionIntent(bool bStopMontage)
 {
-	if (IsValid(ActiveRootMotionConstraint))
-	{
-		ActiveRootMotionConstraint->TermComponentConstraint();
-		ActiveRootMotionConstraint->DestroyComponent();
-		ActiveRootMotionConstraint = nullptr;
-	}
 	if (ActiveRootMotionAnimInstance)
 	{
 		if (ActiveRootMotionMontage)
@@ -1579,9 +1434,8 @@ void UAutopilotComponent::CleanupRootMotionIntent(bool bStopMontage)
 	ActiveRootMotionAnimInstance = nullptr;
 	ActiveRootMotionMontage = nullptr;
 	ActiveRootMotionHandle = FAutopilotIntentHandle();
-	ActiveRootMotionDriveMode = EAutopilotRootMotionDriveMode::FlightController;
-	ActiveRootMotionPhysicsBoneName = NAME_None;
-	bActiveRootMotionSweep = true;
+	ActiveRootMotionDriveMode =
+		EAircraftSimulationDriveMode::FlightController;
 	bActiveRootMotionApplyRotation = true;
 	bRootMotionMontageEnded = false;
 	bRootMotionMontageInterrupted = false;
@@ -1589,12 +1443,16 @@ void UAutopilotComponent::CleanupRootMotionIntent(bool bStopMontage)
 	PreviousRootMotionTargetPositionCm = FVector::ZeroVector;
 	ActiveRootMotionTrajectoryActorRotation = FQuat::Identity;
 	ActiveRootMotionDesiredActorRotation = FQuat::Identity;
-	PreviousRootMotionConstraintTargetRotation = FQuat::Identity;
-	ActiveRootMotionConstraintReference = FTransform::Identity;
+	PreviousRootMotionDesiredActorRotation = FQuat::Identity;
 	PreviousRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	ActiveRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	ActiveRootMotionTargetAccelerationCmPerSecSq = FVector::ZeroVector;
+	ActiveRootMotionTargetAngularVelocityWorldDegPerSec =
+		FVector::ZeroVector;
 	PreviousRootMotionTargetYawDegrees = 0.0f;
 	RootMotionArrivalStableTimeSeconds = 0.0f;
 	ActiveRootMotionStartPositionSeconds = 0.0f;
+	RefreshSimulationDriveSelection();
 	RefreshSimulationTickEnabled();
 }
 
@@ -1603,29 +1461,9 @@ bool UAutopilotComponent::CaptureActiveRootMotionSnapshot(
 	float DeltaSeconds,
 	const FVector& PreviousLocation) const
 {
-	if (ActiveRootMotionDriveMode != EAutopilotRootMotionDriveMode::Kinematic)
+	if (ActiveRootMotionDriveMode
+		!= EAircraftSimulationDriveMode::Kinematic)
 	{
-		if (ActiveRootMotionDriveMode
-			== EAutopilotRootMotionDriveMode::PhysicsConstraint)
-		{
-			const AActor* Owner = GetOwner();
-			if (!Owner || !IsValid(ActiveRootMotionMesh))
-			{
-				return false;
-			}
-			OutSnapshot = FAutopilotVehicleSnapshot();
-			OutSnapshot.PositionCm =
-				ActiveRootMotionMesh->GetComponentLocation();
-			OutSnapshot.VelocityCmPerSec =
-				ActiveRootMotionMesh->GetPhysicsLinearVelocity(
-					ActiveRootMotionPhysicsBoneName);
-			const FQuat ControlWorld = FlightController
-				? ActiveRootMotionMesh->GetComponentQuat()
-					* FlightController->GetAircraftControlToBodyRotation()
-				: ActiveRootMotionMesh->GetComponentQuat();
-			OutSnapshot.YawDegrees = ControlWorld.Rotator().Yaw;
-			return true;
-		}
 		return CaptureSnapshot(OutSnapshot);
 	}
 	if (!GetOwner())

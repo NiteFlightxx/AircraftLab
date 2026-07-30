@@ -4,46 +4,69 @@
 
 namespace AircraftSimulationLODPolicy
 {
-	EAircraftSimulationTier SelectNominalTier(
-		const UAircraftSimulationLODProfileAsset& Profile, float NearestPlayerDistanceCm)
+	int32 SelectNominalLOD(
+		const UAircraftSimulationLODProfileAsset& Profile,
+		float NearestPlayerDistanceCm)
 	{
+		if (Profile.LODs.IsEmpty()) return INDEX_NONE;
 		const float Distance = FMath::Max(NearestPlayerDistanceCm, 0.0f);
-		if (Distance <= Profile.FullPhysics.MaxDistanceCm) return EAircraftSimulationTier::FullPhysics;
-		if (Distance <= Profile.ReducedPhysics.MaxDistanceCm) return EAircraftSimulationTier::ReducedPhysics;
-		if (Distance <= Profile.Kinematic.MaxDistanceCm) return EAircraftSimulationTier::Kinematic;
-		return EAircraftSimulationTier::Dormant;
+		for (int32 Index = 0; Index < Profile.LODs.Num() - 1; ++Index)
+		{
+			if (Distance <= FMath::Max(Profile.LODs[Index].MaxDistanceCm, 0.0f))
+			{
+				return Index;
+			}
+		}
+		return Profile.LODs.Num() - 1;
 	}
 
-	EAircraftSimulationTier ResolveTier(
+	int32 ResolveLOD(
 		const UAircraftSimulationLODProfileAsset& Profile,
-		EAircraftSimulationTier CurrentTier,
-		float SecondsInCurrentTier,
+		int32 CurrentLODIndex,
+		float SecondsInCurrentLOD,
 		const FAircraftSimulationSnapshot& Snapshot)
 	{
-		if (Snapshot.Importance.RequiresFullPhysics())
+		if (Profile.LODs.IsEmpty()) return INDEX_NONE;
+		const int32 CurrentIndex = Profile.LODs.IsValidIndex(CurrentLODIndex)
+			? CurrentLODIndex : 0;
+		if (Snapshot.DriveOverride.bValid)
 		{
-			return EAircraftSimulationTier::FullPhysics;
+			const int32 OverrideLOD = Profile.FindLODForDriveMode(
+				Snapshot.DriveOverride.DriveMode, CurrentIndex);
+			if (OverrideLOD != INDEX_NONE)
+			{
+				return OverrideLOD;
+			}
 		}
-		if (SecondsInCurrentTier + UE_SMALL_NUMBER < Profile.MinimumTierResidenceSeconds)
+		if (Snapshot.Importance.RequiresHighestPriorityLOD())
 		{
-			return CurrentTier;
+			return 0;
+		}
+		if (SecondsInCurrentLOD + UE_SMALL_NUMBER
+			< Profile.MinimumLODResidenceSeconds)
+		{
+			return CurrentIndex;
 		}
 
-		const EAircraftSimulationTier Nominal = SelectNominalTier(Profile, Snapshot.NearestPlayerDistanceCm);
-		if (Nominal == CurrentTier) return CurrentTier;
+		const int32 NominalIndex = SelectNominalLOD(
+			Profile, Snapshot.NearestPlayerDistanceCm);
+		if (NominalIndex == CurrentIndex) return CurrentIndex;
 
-		const int32 NominalIndex = static_cast<int32>(Nominal);
-		const int32 CurrentIndex = static_cast<int32>(CurrentTier);
-		const float Hysteresis = FMath::Max(Profile.DistanceHysteresisCm, 0.0f);
+		const float Hysteresis =
+			FMath::Max(Profile.DistanceHysteresisCm, 0.0f);
 		if (NominalIndex > CurrentIndex)
 		{
-			const float CurrentBoundary = Profile.GetTierSettings(CurrentTier).MaxDistanceCm;
-			return Snapshot.NearestPlayerDistanceCm > CurrentBoundary + Hysteresis
-				? Nominal : CurrentTier;
+			const float CurrentBoundary = FMath::Max(
+				Profile.LODs[CurrentIndex].MaxDistanceCm, 0.0f);
+			return Snapshot.NearestPlayerDistanceCm
+				> CurrentBoundary + Hysteresis
+				? NominalIndex : CurrentIndex;
 		}
 
-		const float TargetBoundary = Profile.GetTierSettings(Nominal).MaxDistanceCm;
-		return Snapshot.NearestPlayerDistanceCm < FMath::Max(TargetBoundary - Hysteresis, 0.0f)
-			? Nominal : CurrentTier;
+		const float TargetBoundary = FMath::Max(
+			Profile.LODs[NominalIndex].MaxDistanceCm, 0.0f);
+		return Snapshot.NearestPlayerDistanceCm
+			< FMath::Max(TargetBoundary - Hysteresis, 0.0f)
+			? NominalIndex : CurrentIndex;
 	}
 }
