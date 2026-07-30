@@ -7,7 +7,6 @@
 #include "AutopilotMovementTypes.generated.h"
 
 class UAnimMontage;
-class USkeletalMeshComponent;
 
 UENUM(BlueprintType)
 enum class EAutopilotIntentStatus : uint8
@@ -241,26 +240,22 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotVelocityCommand
 	float TimeoutSeconds = 0.0f;
 };
 
-/** 三种 Root Motion 命令共享的动画播放参数。 */
+/** 普通 Montage 与三种 Root Motion 命令共享的动画播放参数。 */
 USTRUCT(BlueprintType)
-struct AIRCRAFTAUTOPILOT_API FAutopilotRootMotionPlayback
+struct AIRCRAFTAUTOPILOT_API FAutopilotMontagePlayback
 {
 	GENERATED_BODY()
 
-	/** 必须是 Autopilot Owner 的根组件。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Playback", meta = (DisplayName = "骨骼网格体"))
-	TObjectPtr<USkeletalMeshComponent> SkeletalMesh = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Playback", meta = (DisplayName = "动画蒙太奇"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Animation|Playback", meta = (DisplayName = "动画蒙太奇"))
 	TObjectPtr<UAnimMontage> Montage = nullptr;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Playback", meta = (ClampMin = "0.01", DisplayName = "播放速率"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Animation|Playback", meta = (ClampMin = "0.01", DisplayName = "播放速率"))
 	float PlayRate = 1.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Playback", meta = (ClampMin = "0.0", DisplayName = "起始时间（秒）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Animation|Playback", meta = (ClampMin = "0.0", DisplayName = "起始时间（秒）"))
 	float StartPositionSeconds = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Playback", meta = (DisplayName = "停止其他 Montage"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Animation|Playback", meta = (DisplayName = "停止其他 Montage"))
 	bool bStopAllMontages = true;
 };
 
@@ -271,7 +266,7 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotKinematicRootMotionCommand
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion", meta = (DisplayName = "播放参数"))
-	FAutopilotRootMotionPlayback Playback;
+	FAutopilotMontagePlayback Playback;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|Kinematic", meta = (DisplayName = "使用 Root Motion 旋转"))
 	bool bApplyRootMotionRotation = true;
@@ -290,7 +285,7 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotFlightControllerRootMotionCommand
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion", meta = (DisplayName = "播放参数"))
-	FAutopilotRootMotionPlayback Playback;
+	FAutopilotMontagePlayback Playback;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|FlightController", meta = (DisplayName = "使用 Root Motion 偏航"))
 	bool bApplyRootMotionRotation = true;
@@ -317,7 +312,7 @@ struct AIRCRAFTAUTOPILOT_API FAutopilotPhysicsConstraintRootMotionCommand
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion", meta = (DisplayName = "播放参数"))
-	FAutopilotRootMotionPlayback Playback;
+	FAutopilotMontagePlayback Playback;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|RootMotion|PhysicsConstraint", meta = (DisplayName = "使用 Root Motion 旋转"))
 	bool bApplyRootMotionRotation = true;

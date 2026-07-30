@@ -1,129 +1,150 @@
 # Aircraft Simulation LOD 使用文档
 
-## 1. 目标与边界
+## 1. 架构边界
 
-Aircraft Simulation LOD 是飞控和自动驾驶之上的可选预算层。它不包含 PID、旋翼、轨迹或 AI 类型，也不改变 `UFlightControllerProfileAsset` 和 `UAutopilotProfileAsset` 的参数。
+Simulation LOD 只负责根据距离、玩法重要性、临时驱动请求和网络角色选择飞行模拟模式，并分发慢速逻辑、碰撞与网络预算。它不创建物理约束、不移动 Actor，也不执行飞控。
 
-核心类型：
+实际飞行模拟全部由 `UFlightControllerComponent` 拥有：
 
-- `UAircraftSimulationWorldSubsystem`：按所有玩家位置、玩法重要性和分帧预算选择等级。
-- `UAircraftSimulationLODProfileAsset`：保存距离、迟滞、驻留时间、网络和各等级策略。
-- `UAircraftSimulationLODComponent`：每架飞机的适配器，负责物理/运动学安全切换。
-- `IAircraftSimulationLODConsumer`：飞控、Autopilot、旋翼或其他功能可选实现的通用接口。
+- `FlightController`：旋翼、级联控制器和 Chaos 物理线程完整运行。
+- `PhysicsConstraint`：飞控组件创建并更新连接到世界的六自由度软约束。
+- `Kinematic`：飞控组件关闭根 Mesh 的物理模拟并执行 Transform/Sweep 移动。
+- `None`：不执行本地飞行驱动，用于休眠或网络代理。
 
-Subsystem 不引用 `UFlightControllerComponent`、`UAutopilotComponent` 或 `UAirscrewComponent`。
+主要类型：
 
-## 2. 接入步骤
+- `UAircraftSimulationWorldSubsystem`：按玩家距离分帧评估策略。
+- `UAircraftSimulationLODProfileAsset`：用一个可变长度数组配置全部 LOD。
+- `UAircraftSimulationLODComponent`：选择、复制当前数组索引并分发预算。
+- `UFlightControllerProfileAsset`：配置飞控、通用物理约束后端和运动学后端。
+- `FAircraftMotionTarget`：Autopilot、Root Motion、动画或 Gameplay 发布的统一运动目标。
+- `IAircraftSimulationLODConsumer`：接收预算，也可发布运动目标或临时驱动模式请求。
 
-`AAircraftPawn` 已默认创建名为 `SimulationLOD` 的 `UAircraftSimulationLODComponent`。其他飞机 Actor/Pawn 只需手动添加该组件。
+## 2. LOD 数组
 
-`AAircraftPawn` 默认不再 `AutoPossess Player 0`，符合NPC无人机的服务器控制路径。未来玩家控制玩法应在对应蓝图或生成流程中显式设置Controller/Ownership；已有蓝图若保存过Auto Possess覆盖值，需要手动检查一次。
+`UAircraftSimulationLODProfileAsset.LODs` 是唯一的等级配置来源：
 
-在内容浏览器中创建 `Aircraft Simulation LOD Profile Asset`，然后赋给飞机蓝图的 `SimulationLOD.SimulationProfile`。不赋资产时使用类默认策略。
+- 数组按由近到远排列，索引 0 是最高优先级。
+- 数组长度可自由增减，不限定为四级。
+- 每个元素单独配置 `Name`、`DriveMode`、`MaxDistanceCm`、是否运行慢速逻辑及其间隔、碰撞、复制频率、调试和网络休眠。
+- 除最后一个元素外，`MaxDistanceCm` 应按数组顺序递增；距离选择采用第一个满足上限的元素。
+- 最后一个元素是无限距离兜底，因此它的 `MaxDistanceCm` 不参与选择。
+- 玩法重要性升级到数组索引 0，但索引 0 使用什么驱动仍由你配置。
 
-默认距离：
+构造函数仅为新 Profile 填写以下默认数组，代码逻辑不依赖这些名称或驱动映射：
 
-| 等级 | 最近玩家距离 | 运行行为 |
+| 默认元素 | 最近玩家距离 | 默认驱动 |
 |---|---:|---|
-| FullPhysics | 0～60 m | 每个 Chaos 物理步运行飞控；Autopilot 每游戏帧更新 |
-| ReducedPhysics | 60～150 m | 保留完整物理飞控；Autopilot 默认 20 Hz 更新 |
-| Kinematic | 150～500 m | 停止飞控和 Chaos 模拟；Autopilot 默认 10 Hz 生成目标，由管理器逐帧平滑移动并 Sweep |
-| Dormant | 500 m 以上 | 停止飞控、Autopilot、运动和碰撞；服务器进入网络 Dormancy |
+| LOD0 | 0～60 m | FlightController |
+| LOD1 | 60～150 m | PhysicsConstraint |
+| LOD2 | 150～500 m | Kinematic |
+| LOD3 | 500 m 以上 | None，并启用网络休眠 |
 
-距离单位均为厘米。服务器使用到所有有效玩家 Pawn 的最小距离，而不是摄像机距离。
+距离单位为厘米。服务器使用所有有效玩家 Pawn 的最小距离，不使用摄像机距离。
 
-## 3. 玩法重要性
+`AAircraftPawn` 已默认创建 `SimulationLOD`。其他飞机 Actor/Pawn 需要自行添加 `UAircraftSimulationLODComponent`。视觉 `USkeletalMeshComponent` 必须是 Actor 根组件，并由它承担飞行刚体。
 
-以下状态会无视距离，立即强制 FullPhysics：
+## 3. 统一运动目标
+
+三个运行后端消费同一个 `FAircraftMotionTarget`：
+
+- 世界位置、速度、加速度
+- Actor 世界旋转
+- 世界角速度
+- 发布优先级
+
+飞控组件会从同一 Actor 上所有实现目标接口的组件中选择优先级最高的有效目标。因此 Gameplay 可以新增自己的组件发布目标，不需要依赖 Autopilot 的具体类型。
+
+Gameplay 发布者如果改变了 `FAircraftSimulationDriveOverride`，应对同一 Actor 的 `UAircraftSimulationLODComponent` 调用 `RefreshAircraftSimulationDrive` 立即应用；只更新普通运动目标时不需要通知 LOD。运行期动态添加目标发布组件后，调用飞控组件的 `RefreshReferences` 刷新目标源缓存。
+
+普通巡逻由 `UAutopilotComponent` 发布 `FProfiledSetpoint`。`PlayMontage` 会在 Actor 根骨骼网格体上播放完整 Montage；普通 Montage 只播放动画，带 Root Motion 的 Montage 会在播放过程中提取动画增量、累积目标并发布 `FAircraftMotionTarget`。Root Motion 不再自己创建约束或直接移动 Actor。
+
+Montage 的 Slot 必须接入动画蓝图的最终 Pose，否则动画时间和 Root Motion 会正常运行，但视觉姿势不会显示。
+
+三种 Root Motion 命令会临时请求精确驱动模式：
+
+- `SubmitRootMotionFlightController`
+- `SubmitRootMotionPhysicsConstraint`
+- `SubmitRootMotionKinematic`
+
+`UAircraftSimulationLODComponent` 会在数组中查找具有所需 `DriveMode` 的元素，优先复用当前元素，否则使用第一个匹配元素。如果数组中没有所需驱动，命令会被拒绝。命令结束后立即恢复进入 Root Motion 前的 LOD 索引，再重新触发距离策略评估。临时请求不受最短驻留时间阻挡。
+
+## 4. 飞控配置
+
+约束与运动学参数位于 `UFlightControllerProfileAsset`，不在 LOD Profile 中：
+
+- `ConstraintSimulation`
+  - 线性位置强度、速度阻尼、最大力
+  - 角度位置强度、角速度阻尼、最大力矩
+  - 加速度驱动开关
+- `KinematicSimulation`
+  - Sweep 开关
+  - 位置纠偏速率
+  - 旋转插值速度
+
+模式切换由飞控组件完成状态交接：
+
+- 离开完整飞控时停止旋翼输出并重置控制历史。
+- 进入运动学前保存刚体线速度和角速度并关闭根 Mesh 物理。
+- 离开运动学恢复物理时使用当前运动学目标速度进行交接并唤醒刚体。
+- 进入物理约束模式时创建约束；离开时销毁约束。
+
+## 5. 玩法重要性
+
+以下状态会无视距离，选择数组索引 0。索引 0 的驱动模式仍完全由 Profile 配置：
 
 - 玩家控制
-- 正在战斗
-- 正在开火
-- 最近受伤
-- 正在执行受击恢复
-- 带外部玩法物理约束（吊挂、绳索、连接世界或其他Actor）
+- 正在战斗或开火
+- 最近受伤或处于受击恢复
+- 带外部玩法物理约束
 - 任务关键对象
-- 玩法强制保持物理
+- Gameplay 强制保持物理
 
-蓝图/C++入口：
+常用入口：
 
-- `SetInCombat(bool)`
-- `SetFiring(bool)`
-- `NotifyCombatActivity()`
-- `NotifyRecentlyDamaged()`
-- `SetMustRemainPhysical(bool)`
-- `SetHasExternalPhysicsConstraint(bool)`
-- `SetSimulationImportance(...)`
+- `SetInCombat`
+- `SetFiring`
+- `NotifyCombatActivity`
+- `NotifyRecentlyDamaged`
+- `SetMustRemainPhysical`
+- `SetHasExternalPhysicsConstraint`
+- `SetSimulationImportance`
 
-`NotifyCombatActivity` 和 `NotifyRecentlyDamaged` 会按照 Profile 的 `CombatKeepAliveSeconds` 保持完整物理，避免攻击刚结束便立即降级。
+`bHasExternalPhysicsConstraint` 只描述吊挂、绳索、世界关节或连接其他 Actor 的约束。飞控组件内部用于飞行模拟的通用约束不设置此标记。
 
-AI进入警戒或准备射击时应提前调用 `SetInCombat(true)`；攻击完全结束后调用 `SetInCombat(false)`。受到伤害时调用 `NotifyRecentlyDamaged()`。
+## 6. 网络行为
 
-## 4. 网络行为
+默认 `bAuthoritySimulationOnly=true`：
 
-默认 `bAuthoritySimulationOnly=true`，当前采用服务器权威的 UE 移动/刚体复制，不使用 `UNetworkPhysicsComponent`：
+- 服务器运行 NPC 的 Autopilot、飞行驱动和 LOD 策略。
+- 客户端模拟代理的 `DriveMode=None`，不产生第二套本地控制输出。
+- 配置为 FlightController/PhysicsConstraint 的客户端代理可保留 Chaos，用于 UE 默认物理复制插值。
+- 配置为 Kinematic/None 的客户端代理关闭 Chaos，跟随服务器移动复制。
+- LOD 数组索引由服务器复制，客户端不按自己的距离重新选择权威模式。
+- 每个元素独立配置建议复制频率和是否启用 `DORM_DormantAll`。
 
-- 服务器运行 NPC 飞控、Autopilot、物理和 LOD 选择。
-- `AAircraftPawn` 默认启用 `bReplicates` 和 Replicate Movement。
-- 非权威客户端关闭 NPC FlightController 和 Autopilot，不会产生第二套控制输出。
-- FullPhysics/ReducedPhysics 客户端代理默认保留 Chaos；`AAircraftPawn::BeginPlay` 会在联网服务器和 `ROLE_SimulatedProxy` 上显式启用 `EPhysicsReplicationMode::PredictiveInterpolation`，对服务器根刚体状态进行速度预测插值与纠偏。
-- Kinematic/Dormant 客户端按照服务器复制的 LOD 等级关闭物理，不自行选择另一套模拟模式。
-- LOD 等级由服务器复制，客户端不会根据自己的玩家距离独立改变权威模拟等级。
-- 命中、伤害和攻击判定仍必须由服务器负责。
-- 服务器按等级调整 Actor 建议复制频率。
-- Dormant 等级进入 `DORM_DormantAll`；重新升级时自动 Flush Dormancy 并强制网络更新。
+玩家控制无人机若需要客户端预测和物理重模拟，应单独接入 `UNetworkPhysicsComponent`，并把输入、飞行模式、LOD 切换、旋翼故障和刚体状态纳入同一网络物理状态。
 
-`bClientProxyUsesDefaultPhysicsReplication` 默认开启（编辑器显示为“客户端代理启用物理复制”）。变量名为了保持已有 DataAsset 序列化兼容而保留；当前实际复制模式是 `PredictiveInterpolation`。如果项目以后改为纯 Transform 插值代理，可以关闭它；此时客户端不会保留本地 Chaos。
+## 7. 调参建议
 
-### 4.1 为什么当前不使用 UNetworkPhysicsComponent
+- `EvaluationIntervalSeconds`：LOD 策略评估周期，不是飞控周期。
+- `MaxEvaluationsPerFrame`：每帧最多评估的飞机数量。
+- `DistanceHysteresisCm`：距离切换迟滞。
+- `MinimumLODResidenceSeconds`：普通策略切换后的最短驻留时间。
+- `CombatKeepAliveSeconds`：战斗或受伤后的高精度保持时间。
+- `SlowLogicIntervalSeconds`：对应数组元素下 Autopilot 等慢速逻辑的更新间隔。
 
-`UNetworkPhysicsComponent` 主要用于“通过输入控制物理”的 Actor/Pawn，维护输入/状态历史，并支持自主代理预测和物理重模拟。当前无人机是服务器控制的 NPC，没有客户端本地输入；UE 移动/刚体复制配合 `PredictiveInterpolation` 已经覆盖远程模拟代理的平滑需求，而且成本和接入复杂度更低。
+建议依次测试：
 
-未来增加玩家控制无人机时再接入 `UNetworkPhysicsComponent`。届时必须把以下内容作为同一网络物理状态处理：玩家输入、飞控模式、LOD切换帧、旋翼故障状态和刚体状态；自主代理与服务器都必须保持 FullPhysics，不能由客户端距离 LOD 关闭物理。当前代码明确不对 `ROLE_AutonomousProxy` 强制使用 `PredictiveInterpolation`，玩家控制路径需要单独选择预测/重模拟方案。
+1. 60 m、150 m、500 m 边界的升降级与迟滞。
+2. 物理约束和运动学切换时的位置、线速度与朝向连续性。
+3. 三种 Root Motion 命令在动画结束后的到达判据和 LOD 索引恢复。
+4. 战斗、受伤、外部约束导致的强制升级。
+5. 网络代理的物理复制、Kinematic 复制和 Dormancy 唤醒。
 
-## 5. 运动学巡逻
+## 8. 不属于 Simulation LOD 的内容
 
-Kinematic 等级通过 `IAircraftSimulationLODConsumer::GetAircraftKinematicTarget` 获取通用位置、速度和朝向目标。现有 `UAutopilotComponent` 已实现该接口，目标来自 `FProfiledSetpoint`。
-
-管理器每帧用目标速度推进，再用 `KinematicPositionCorrectionRate` 向轨迹位置收敛，并用 `KinematicRotationInterpSpeed` 平滑朝向。默认启用 Sweep，基础 Box/Sphere/Capsule 碰撞会阻止运动学代理穿进阻挡物。
-
-从物理降级时保存线速度和角速度；恢复物理时恢复速度、唤醒刚体，并在飞控重新启用前重置控制器历史。旋翼自身的 SpinUp 动态负责恢复推力时的渐入。
-
-### 5.1 Body与旋翼碰撞体/约束
-
-存在Box Body和球形旋翼碰撞体，并不必然意味着需要 `UPhysicsConstraintComponent`：
-
-- 如果旋翼球体仅用于命中判定，推荐附着到Body并使用 QueryOnly，不独立模拟物理，也不需要约束。
-- 如果旋翼球体确实是独立的 Simulate Physics 刚体，并通过约束连接Body，它属于“机内结构约束”，不应设置 `bHasExternalPhysicsConstraint`。
-- `bHasExternalPhysicsConstraint` 只表示连接载荷、绳索、世界或其他Actor，降级会破坏外部系统语义，因此强制FullPhysics。
-
-LOD组件现在会把所属Actor中的Root Body和所有Primitive统一作为物理组管理：降级时保存每个模拟Body的相对Transform、碰撞模式、线速度和角速度并统一停止物理；运动学移动时维持旋翼相对Body的位置；升级时统一恢复刚体、速度和内部约束求解。QueryOnly旋翼碰撞不会被错误升级为Physics碰撞。
-
-如果某架飞机没有提供运动学目标，它在 Kinematic 等级不会被管理器移动。此类飞机应关闭 Kinematic 等级，或者实现通用目标接口。
-
-## 6. 迟滞与调参
-
-- `EvaluationIntervalSeconds`：多久重新评估一次，默认 0.25 秒；不是飞控频率。
-- `MaxEvaluationsPerFrame`：管理器每帧最多评估的飞机数量。
-- `DistanceHysteresisCm`：距离边界内的保持带，防止反复切换。
-- `MinimumTierResidenceSeconds`：一次切换后至少停留的时间。
-- `CombatKeepAliveSeconds`：战斗/受伤结束后的完整物理保持时间。
-- `SlowLogicIntervalSeconds`：该等级 Autopilot 等慢速逻辑的 Tick 间隔。
-
-建议先保持默认值进行场景测试，重点观察150 m和500 m边界、玩家高速靠近、受击后升级、Dormancy唤醒及运动学/物理切换时的高度连续性。
-
-## 7. 已同时完成的低风险优化
-
-- `AAircraftPawn` 不再注册空 Tick。
-- 旋翼 DebugDraw 和文本默认关闭，只有预算与本地开关都允许时才 Tick。
-- Autopilot轨迹、Setpoint、LookAhead和速度调试绘制默认关闭。
-- FlightController详细日志默认关闭。
-- Autopilot未激活、Dormant或作为远程网络代理时关闭组件 Tick。
-
-## 8. 当前刻意没有包含的内容
-
-- 没有恢复 `ControlLoopRateHz`；完整飞控仍与 Chaos 物理步一一对应。
-- ReducedPhysics 当前只降低 Autopilot/慢速逻辑频率，不跳过姿态和角速率内环。
-- 尚未合并每旋翼施力，也没有改变控制分配算法。
-- 不自动切换渲染网格、材质或阴影 LOD；渲染组件可通过通用消费者接口自行响应预算。
-- 不负责 AI 感知、目标选择、攻击行为或服务器伤害判定。
+- PID、控制分配、旋翼推力和故障策略。
+- 物理约束或运动学移动的具体实现。
+- AI 感知、导航点生成、目标选择、攻击和伤害判定。
+- 渲染 Mesh、材质、阴影和动画预算；这些可由 Gameplay 或独立渲染 LOD 系统消费预算实现。

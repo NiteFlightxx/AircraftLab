@@ -18,7 +18,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogAutopilot, Log, All);
 
 struct FAutopilotRootMotionRequest
 {
-	const FAutopilotRootMotionPlayback* Playback = nullptr;
+	const FAutopilotMontagePlayback* Playback = nullptr;
 	FAutopilotMovementIntent Intent;
 	EAircraftSimulationDriveMode DriveMode =
 		EAircraftSimulationDriveMode::FlightController;
@@ -58,43 +58,61 @@ UAutopilotComponent::UAutopilotComponent()
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 }
 
-bool UAutopilotComponent::ConsumeAndApplyRootMotion(
-	USkeletalMeshComponent* SkeletalMesh,
-	FTransform& OutWorldRootMotion,
-	FHitResult& OutHitResult,
-	bool bSweep)
+bool UAutopilotComponent::PlayMontage(
+	const FAutopilotMontagePlayback& Playback,
+	FAutopilotIntentHandle& OutRootMotionHandle)
 {
-	OutWorldRootMotion = FTransform::Identity;
-	OutHitResult = FHitResult();
-
-	// Typed Root Motion intents exclusively own the extracted delta while active.
-	if (ActiveRootMotionHandle.IsValid())
-	{
-		return false;
-	}
-
+	OutRootMotionHandle = FAutopilotIntentHandle();
+	CreateRuntimeObjects();
 	AActor* Owner = GetOwner();
-	USceneComponent* RootComponent = Owner ? Owner->GetRootComponent() : nullptr;
-	if (!SkeletalMesh || !Owner || !RootComponent || SkeletalMesh->GetOwner() != Owner)
+	USkeletalMeshComponent* SkeletalMesh = Owner
+		? Cast<USkeletalMeshComponent>(Owner->GetRootComponent()) : nullptr;
+	UAnimInstance* AnimInstance =
+		SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
+	if (!SkeletalMesh
+		|| !AnimInstance
+		|| !Playback.Montage
+		|| !FMath::IsFinite(Playback.PlayRate)
+		|| Playback.PlayRate <= UE_SMALL_NUMBER
+		|| !FMath::IsFinite(Playback.StartPositionSeconds)
+		|| Playback.StartPositionSeconds < 0.0f
+		|| Playback.StartPositionSeconds >= Playback.Montage->GetPlayLength())
 	{
 		return false;
 	}
 
-	if (!ConsumeRootMotionDelta(SkeletalMesh, OutWorldRootMotion))
+	if (!Playback.Montage->HasRootMotion())
+	{
+		if (ActiveRootMotionHandle.IsValid())
+		{
+			return false;
+		}
+		return AnimInstance->Montage_Play(
+			Playback.Montage,
+			Playback.PlayRate,
+			EMontagePlayReturnType::MontageLength,
+			Playback.StartPositionSeconds,
+			Playback.bStopAllMontages) > 0.0f;
+	}
+
+	FAutopilotRootMotionRequest Request;
+	Request.Playback = &Playback;
+	Request.Intent.Type = EAutopilotMovementIntentType::RootMotion;
+	Request.DriveMode = SimulationBudget.DriveMode;
+	Request.bApplyRootMotionRotation = true;
+	if (Request.DriveMode == EAircraftSimulationDriveMode::None)
 	{
 		return false;
 	}
-
-	const FQuat NewWorldRotation = (
-		OutWorldRootMotion.GetRotation() * RootComponent->GetComponentQuat()).GetNormalized();
-	RootComponent->MoveComponent(
-		OutWorldRootMotion.GetTranslation(),
-		NewWorldRotation,
-		bSweep,
-		&OutHitResult,
-		MOVECOMP_NoFlags,
-		ETeleportType::None);
-	return true;
+	if (Request.DriveMode == EAircraftSimulationDriveMode::FlightController)
+	{
+		Request.Intent.MotionConstraints = FTrajectoryMotionConstraints();
+		Request.Intent.HeadingMode = EAutopilotHeadingMode::KeepCurrent;
+	}
+	OutRootMotionHandle = SubmitRootMotionRequest(Request);
+	return MovementExecutor
+		&& MovementExecutor->GetResult(OutRootMotionHandle).Status
+			== EAutopilotIntentStatus::Accepted;
 }
 
 void UAutopilotComponent::OnRegister()
@@ -569,9 +587,9 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionRequest(
 		CleanupRootMotionIntent(true);
 	}
 
-	const FAutopilotRootMotionPlayback* Playback = Request.Playback;
-	USkeletalMeshComponent* SkeletalMesh =
-		Playback ? Playback->SkeletalMesh.Get() : nullptr;
+	const FAutopilotMontagePlayback* Playback = Request.Playback;
+	USkeletalMeshComponent* SkeletalMesh = GetOwner()
+		? Cast<USkeletalMeshComponent>(GetOwner()->GetRootComponent()) : nullptr;
 	UAnimInstance* AnimInstance =
 		SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
 	FAutopilotVehicleSnapshot Snapshot;
@@ -599,8 +617,6 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionRequest(
 	else if (!Playback
 		|| !SkeletalMesh
 		|| !GetOwner()
-		|| SkeletalMesh->GetOwner() != GetOwner()
-		|| SkeletalMesh != GetOwner()->GetRootComponent()
 		|| !Playback->Montage
 		|| !AnimInstance
 		|| !Playback->Montage->HasRootMotion()

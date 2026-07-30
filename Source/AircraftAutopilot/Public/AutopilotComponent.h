@@ -137,21 +137,19 @@ public:
 	float GetEstimatedHoverThrust() const;
 
 	/**
-	 * 消费 SkeletalMesh 本帧已提取的 Root Motion，并将世界空间增量应用到 Owner 根组件。
-	 * 本函数不负责播放动画、切换物理、暂停飞控或安排 Tick；蓝图应在 Mesh 完成动画更新后调用。
+	 * 播放 Owner 根骨骼网格体上的完整 Montage。
+	 * 普通 Montage 仅播放动画；带 Root Motion 的 Montage 会按当前模拟驱动模式
+	 * 自动创建并执行 Root Motion Intent。
 	 *
-	 * @param SkeletalMesh          提供 Root Motion 的骨骼网格体，必须属于本组件的 Owner。
-	 * @param OutWorldRootMotion    实际消费到的世界空间位移/旋转增量。
-	 * @param OutHitResult          Sweep 时的碰撞结果。
-	 * @param bSweep                移动 Owner 根组件时是否执行碰撞扫描。
-	 * @return 本帧是否消费到了有效 Root Motion。
+	 * @param Playback             Montage 播放参数。
+	 * @param OutRootMotionHandle  带 Root Motion 时返回有效 Intent Handle；
+	 *                             普通 Montage 播放成功时保持无效。
+	 * @return Montage 是否成功开始播放。
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Autopilot|RootMotion", meta = (DisplayName = "Consume And Apply Root Motion"))
-	bool ConsumeAndApplyRootMotion(
-		USkeletalMeshComponent* SkeletalMesh,
-		FTransform& OutWorldRootMotion,
-		FHitResult& OutHitResult,
-		bool bSweep = true);
+	UFUNCTION(BlueprintCallable, Category = "Autopilot|Animation")
+	bool PlayMontage(
+		const FAutopilotMontagePlayback& Playback,
+		FAutopilotIntentHandle& OutRootMotionHandle);
 
 	UPROPERTY(BlueprintAssignable, Category = "Autopilot|Intent")
 	FOnAutopilotIntentChanged OnIntentStarted;

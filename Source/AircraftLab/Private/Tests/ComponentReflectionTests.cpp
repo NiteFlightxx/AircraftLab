@@ -50,14 +50,18 @@ bool FAircraftComponentReflectionBoundaryTest::RunTest(const FString& Parameters
 	TestNull(TEXT("Rotor failure manager is not reflected"),
 		FindFProperty<FProperty>(UFlightControllerComponent::StaticClass(), TEXT("RotorFailureManager")));
 
-	const UFunction* ConsumeRootMotionFunction =
-		UAutopilotComponent::StaticClass()->FindFunctionByName(TEXT("ConsumeAndApplyRootMotion"));
-	TestNotNull(TEXT("Autopilot exposes Root Motion consumption to Blueprint"), ConsumeRootMotionFunction);
-	if (ConsumeRootMotionFunction)
+	const UFunction* PlayMontageFunction =
+		UAutopilotComponent::StaticClass()->FindFunctionByName(TEXT("PlayMontage"));
+	TestNotNull(TEXT("Autopilot exposes Montage playback to Blueprint"),
+		PlayMontageFunction);
+	if (PlayMontageFunction)
 	{
-		TestTrue(TEXT("Root Motion consumption remains Blueprint-callable"),
-			ConsumeRootMotionFunction->HasAnyFunctionFlags(FUNC_BlueprintCallable));
+		TestTrue(TEXT("Montage playback remains Blueprint-callable"),
+			PlayMontageFunction->HasAnyFunctionFlags(FUNC_BlueprintCallable));
 	}
+	TestNull(TEXT("The extraction-only Root Motion API has been removed"),
+		UAutopilotComponent::StaticClass()->FindFunctionByName(
+			TEXT("ConsumeAndApplyRootMotion")));
 	TestNull(TEXT("The coupled SubmitRootMotion API has been removed"),
 		UAutopilotComponent::StaticClass()->FindFunctionByName(TEXT("SubmitRootMotion")));
 	const auto TestBlueprintFunction =
@@ -101,6 +105,17 @@ bool FAircraftComponentReflectionBoundaryTest::RunTest(const FString& Parameters
 		FAutopilotFlightControllerRootMotionCommand::StaticStruct();
 	const UScriptStruct* PhysicsConstraintStruct =
 		FAutopilotPhysicsConstraintRootMotionCommand::StaticStruct();
+	const UScriptStruct* MontagePlaybackStruct =
+		FAutopilotMontagePlayback::StaticStruct();
+	TestNotNull(TEXT("Montage playback parameters are reflected"),
+		MontagePlaybackStruct);
+	if (MontagePlaybackStruct)
+	{
+		TestNotNull(TEXT("Montage playback exposes the Montage asset"),
+			FindFProperty<FProperty>(MontagePlaybackStruct, TEXT("Montage")));
+		TestNull(TEXT("Montage playback resolves the Owner root mesh internally"),
+			FindFProperty<FProperty>(MontagePlaybackStruct, TEXT("SkeletalMesh")));
+	}
 	TestNotNull(TEXT("Kinematic Root Motion command is reflected"), KinematicStruct);
 	TestNotNull(TEXT("Flight-controller Root Motion command is reflected"),
 		FlightControllerStruct);
