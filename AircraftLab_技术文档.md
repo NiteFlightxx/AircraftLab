@@ -1,1119 +1,574 @@
-# AircraftLab 无人机技术文档
+# AircraftLab 技术文档
 
-> 面向团队成员的无人机控制原理与代码实现指南。
-> 本文档将 **多旋翼飞行的数学/物理原理** 与 **AircraftLab 插件的 C++ 实现** 一一对应，帮助你从“公式”到“代码”建立完整心智模型。
+本文面向接入、维护和扩展 AircraftLab 的程序开发者。内容以当前仓库源代码为准，只描述已经存在的架构、接口与运行行为。
 
----
+## 1. 插件定位
 
-## 目录
+AircraftLab 是一套基于 Unreal Engine Chaos 的多旋翼飞行运行时，包含：
 
-1. [总体架构](#1-总体架构)
-2. [坐标系与单位约定](#2-坐标系与单位约定)
-3. [刚体动力学基础](#3-刚体动力学基础)
-4. [旋翼空气动力学模型](#4-旋翼空气动力学模型)
-5. [级联 PID 控制架构](#5-级联-pid-控制架构)
-6. [各控制回路详解](#6-各控制回路详解)
-7. [控制分配（混合器）算法](#7-控制分配混合器算法)
-8. [线性方程组求解器](#8-线性方程组求解器)
-9. [飞行模式与状态机](#9-飞行模式与状态机)
-10. [状态估计](#10-状态估计)
-11. [旋翼健康与故障系统](#11-旋翼健康与故障系统)
-12. [输入系统](#12-输入系统)
-13. [完整参数参考表](#13-完整参数参考表)
-14. [已知限制与未来工作](#14-已知限制与未来工作)
+- 刚体飞行、旋翼动力学、级联控制和控制分配；
+- 手动 Enhanced Input 输入链；
+- MoveTo、路径、速度、环绕、圆弧和 Root Motion 自动驾驶；
+- 飞控、物理约束、运动学三种运动后端；
+- 按距离、玩法重要性和临时运动需求切换后端的模拟 LOD；
+- 旋翼失效、剩余控制权限计算和 Failure Policy。
 
----
+导航网格查询、避障、目标选择、巡逻状态机、感知、攻击和其他 Gameplay 决策不属于插件。Gameplay 负责产生目标点、路径点和注视目标，插件负责将它们转换为可执行运动。
 
-## 1. 总体架构
+## 2. 模块划分
 
-### 1.1 设计目标
+| 模块 | 依赖 | 职责 |
+|---|---|---|
+| `AircraftCore` | Core、CoreUObject、Engine | 模块间稳定数据契约：MovementIntent、飞控接口、Autopilot Provider、模拟 LOD 类型和接口 |
+| `AircraftAutopilot` | `AircraftCore` | Intent 生命周期、轨迹生成、路径制导、运动整形、前馈、协调转弯、Montage/Root Motion |
+| `AircraftLab` | `AircraftCore`、`AircraftAutopilot`、EnhancedInput、Chaos | Pawn、输入、飞控、旋翼、控制分配、故障管理、三种运动后端和 LOD 管理 |
 
-AircraftLab 是一个基于 Unreal Engine Chaos 物理引擎的多旋翼无人机仿真插件，其目标是：
+依赖方向的关键点是：`AircraftAutopilot` 不依赖具体飞控类，而是通过 `IAircraftFlightControllerInterface` 工作；飞控也不直接依赖 Autopilot 实现，而是通过 `IAutopilotProvider` 拉取设定值。
 
-- **物理真实**：用动量理论（$T \propto \omega^2$）和一阶电机动力学建模旋翼，用 Chaos 刚体积分真实受力。
-- **工程级飞控**：实现完整的级联 PID + 控制分配（混合器）管线，与真实开源飞控（PX4/ArduPilot）思想一致。
-- **故障容错**：支持单桨/多桨失效与降效，混合器自动重新分配控制权限。
-- **物理线程执行**：控制循环与 Chaos 异步物理步一一对应，频率由项目的异步物理固定步长统一决定。
+## 3. 默认 Pawn 组成
 
-### 1.2 三组件架构
+`AAircraftPawn` 构造以下原生组件：
 
-无人机由一个 `AAircraftPawn` 组合三个核心组件构成（`AircraftPawn.cpp:16-33`）：
-
-```
+```text
 AAircraftPawn
-├── BodyMesh            (USkeletalMeshComponent)   ── 物理刚体（根组件）
-├── AircraftInput          (UAircraftInputComponent)     ── 输入采集（Enhanced Input）
-└── FlightController    (UFlightControllerComponent) ── 飞控大脑（PID + 混合器）
-        │
-        ├── 发现并驱动 N 个 UAirscrewComponent（旋翼）
-        │   每个 Airscrew 在物理线程对刚体施加力/力矩
-        │
-        └── 运行级联 PID 控制回路 + 控制分配
+├─ BodyMesh              USkeletalMeshComponent，Actor 根组件和唯一刚体
+├─ AircraftInput         UAircraftInputComponent
+├─ FlightController      UFlightControllerComponent
+├─ AutopilotComponent    UAutopilotComponent
+└─ SimulationLOD         UAircraftSimulationLODComponent
 ```
 
-| 组件 | 文件 | 职责 |
-|---|---|---|
-| `USkeletalMeshComponent BodyMesh` | — | 唯一的物理刚体。`SetSimulatePhysics(true)`、`SetEnableGravity(true)`。质量/惯量来自物理资产 `SK_Aircraft_Physics*`。 |
-| `UAircraftInputComponent` | `AircraftInputComponent.h/cpp` | 事件驱动（不 Tick），把 Enhanced Input 的 `IA_Move`/`IA_Throttle`/`IA_Turn` 转成 `FAircraftPilotInput`（归一化 [-1,1]）。 |
-| `UFlightControllerComponent` | `FlightControllerComponent.h/cpp` | 飞控大脑：每个 Chaos 物理步执行一次级联 PID + 阻尼伪逆混合器。 |
-| `UAirscrewComponent` | `AirscrewComponent.h/cpp` | 单个旋翼的物理仿真：电机动力学、推力/反扭矩计算、对刚体施力。 |
+`BodyMesh` 默认开启物理、重力、`PhysicsActor` 碰撞，并复制 Actor Movement。Pawn 不自动被玩家占有。
 
-### 1.3 双线程数据流
+开始运行时的实际状态：
 
-飞控的关键设计是 **游戏线程与物理线程分离**：
+- `FlightControllerProfileAsset` 是飞控必需配置；缺失或校验失败时飞控停止 Tick；
+- 每个 `UAirscrewComponent` 必须配置有效的 `AirscrewProfileAsset`；
+- 飞控和 Pawn 的 `BeginPlay` 会将无人机解锁并切到 `PositionHold + Angle`；
+- Autopilot 默认未激活；
+- Simulation LOD Profile 和 Autopilot Profile 未显式赋值时使用各自类默认对象。
 
-```
-┌─────────────── 游戏线程 (TickComponent) ───────────────┐
-│  1. 缓存重力 Z（物理线程不能调用 GetWorld()）           │
-│  2. 读取 AircraftInput->GetPilotInput()                    │
-│  3. 更新解锁/归航状态                                    │
-│  4. 写入 CachedPilotInput ─────────────┐                │
-└─────────────────────────────────────────│────────────────┘
-                                          │ (跨线程数据)
-┌─────────────── 物理线程 (AsyncPhysicsTick) ─────────────▼────────┐
-│  1. 从 BodyInstance 取 Chaos 刚体句柄                            │
-│  2. UpdateEstimatedState_PhysicsThread → 读取真值位姿/速度        │
-│  3. 固定步长累加器（ControlAccumulator，上限 0.25s）             │
-│     while (累加器 >= 1/250s):                                    │
-│         RunControlLoop(4ms, CachedPilotInput)                    │
-│             ├─ ComputeVerticalControl       (高度→总距)          │
-│             ├─ ComputeDesiredAttitude       (位置/速度→姿态角)   │
-│             ├─ ComputeDesiredYawRate        (偏航保持)           │
-│             ├─ ComputeDesiredBodyRates      (姿态角→角速率)      │
-│             ├─ ComputeBodyTorqueCommand     (角速率→力矩指令)    │
-│             └─ AllocateToRotors             (混合器→各旋翼指令)  │
-│  4. 对每个 Airscrew：ApplyThrustForce_PhysicsThread(BodyHandle)  │
-│     → AddForce / AddTorque 直接写入 Chaos 刚体                  │
-└──────────────────────────────────────────────────────────────────┘
-```
+## 4. 坐标、单位和机体前向
 
-**为什么跟随物理步？** PID 的积分项和微分项必须使用产生当前测量状态的同一个 Δt。飞控读取一次新物理状态、解算一次并立即施力，避免在冻结状态上重复积分。固定频率由 Chaos `AsyncFixedTimeStepSize` 统一配置。
+### 4.1 单位
 
-> 参考：`FlightControllerComponent.cpp:205-254`（Tick + AsyncPhysicsTick）、`RunControlLoop` `cpp:498-535`。
-
-### 1.4 关键文件清单
-
-```
-Source/AircraftLab/
-├── Public/
-│   ├── AircraftTypes.h                 # 全部 UENUM/USTRUCT 数据类型（1681 行，几乎全是数据定义）
-│   ├── AircraftPawn.h               # Pawn 定义（3 个组件）
-│   ├── AircraftInputComponent.h        # 输入组件
-│   ├── AirscrewComponent.h          # 旋翼组件
-│   └── FlightControllerComponent.h  # 飞控组件（含缓存、运行时状态、诊断结构）
-└── Private/
-    ├── AircraftPawn.cpp             # 组件装配
-    ├── AircraftInputComponent.cpp      # Enhanced Input 绑定
-    ├── AirscrewComponent.cpp        # 旋翼物理（~300 行）
-    └── FlightControllerComponent.cpp # 飞控实现（~1500 行，核心）
-```
-
----
-
-## 2. 坐标系与单位约定
-
-理解坐标系是理解一切飞控代码的前提。AircraftLab 严格遵守以下约定。
-
-### 2.1 坐标系
-
-| 坐标系 | 方向约定 | 说明 |
-|---|---|---|
-| **世界系 (World)** | Unreal：X 前、Y 右、Z 上（左手系） | Chaos 刚体积分在此进行。`BodyHandle->X()/V()/W()` 均为世界量。 |
-| **机体系 (Body)** | 与刚体姿态绑定，原点在质心 | 推力轴、旋翼位置、角速度均用此系表达。**注意代码对角速度做了 X/Y 翻转**（见下）。 |
-| **推力轴系** | 默认 `FVector::UpVector`（机体 Z） | 单个旋翼的推力方向，可在 `ThrustAxisLocal` 自定义（如倾斜旋翼）。 |
-
-**关键符号翻转**（`FlightControllerComponent.cpp:459-461`）：从 Chaos 读出的世界角速度逆变换到机体后，X、Y 分量被取负：
-
-```
-AngVelBody = (-Raw.X, -Raw.Y, Raw.Z)
-```
-
-这是为了把 Unreal/Chaos 的角速度约定对齐到飞控常用的“右手机体系”（滚转为绕前轴、俯仰绕右轴）。修改角速度相关代码时务必牢记这一点。
-
-### 2.2 单位约定（全代码统一）
-
-| 物理量 | 单位 | 示例 |
-|---|---|---|
-| 长度/位置 | **厘米 (cm)** | `PositionLocalCm`、`MaxHorizontalSpeedCmPerSec` |
-| 速度 | cm/s | `MaxClimbRate=400`（即 4 m/s） |
-| 加速度 | cm/s² | 重力默认 `980`（即 9.8 m/s²） |
-| 角度（欧拉） | **度 (°)** | `AttitudeDegrees`、`MaxTiltAngleDegrees=35` |
-| 角速度 | 度/秒 (°/s) | `MaxYawRateDegreesPerSec=180` |
-| Chaos 内部 | **弧度 (rad)** | `BodyHandle->W()` 是 rad/s，代码在 `cpp:459` 转换 |
-| 力 | **牛顿 (N)** | `MaxThrustForce=900` |
-| 力矩 | **牛顿·米 (N·m)** | 力臂在雅可比里 `×0.01` 把 cm 转成 m（`cpp:1126`） |
-| 质量 | 千克 (kg) | `MassKg=1.2` |
-| 转动惯量 | kg·cm² | `InertiaDiagonalKgCmSq=(5000,5000,9000)` |
-| 时间 | 秒 (s) | 所有时间常数 |
-
-> **易错点**：力矩 = 力臂 × 力。力臂单位是米，所以代码里 `MomentArmMeters = LocalPositionFromCenterOfMassCm * 0.01f`。如果忘了 `*0.01`，力矩会放大 100 倍。
-
-### 2.3 旋转方向符号
-
-旋翼旋转方向用 `EAircraftRotorSpinDirection`（`AircraftTypes.h:104-112`），符号映射（`AircraftTypes.h:1058-1061`）：
-
-```
-Clockwise        (CW)  → sign = -1
-CounterClockwise (CCW) → sign = +1
-```
-
-反扭矩方向 = 推力轴方向 × sign。这意味着 **CW 桨产生沿推力轴负向的反扭矩，CCW 桨产生正向**。四旋翼的标准布局是 2 个 CW + 2 个 CCW 交替排列，使偏航反扭矩在悬停时相互抵消。
-
----
-
-## 3. 刚体动力学基础
-
-无人机是一个 6 自由度刚体，其运动由 **牛顿-欧拉方程 (Newton-Euler equations)** 描述。
-
-### 3.1 牛顿-欧拉方程
-
-**平动**（质心运动，世界系）：
-$$
-m\dot{\mathbf{v}} = \sum \mathbf{F} = \mathbf{F}_{thrust} + m\mathbf{g}
-$$
-
-**转动**（绕质心，机体系）：
-$$
-\mathbf{I}\dot{\boldsymbol{\omega}} + \boldsymbol{\omega} \times \mathbf{I}\boldsymbol{\omega} = \sum \boldsymbol{\tau}
-$$
-
-其中：
-- $m$ = 质量，$\mathbf{v}$ = 质心速度，$\mathbf{g}$ = 重力加速度
-- $\mathbf{I}$ = 转动惯量张量（对角化后为 `InertiaDiagonal`）
-- $\boldsymbol{\omega}$ = 角速度，$\boldsymbol{\omega} \times \mathbf{I}\boldsymbol{\omega}$ 是陀螺耦合力矩（高速旋转时显著）
-
-**在 AircraftLab 中，Chaos 物理引擎负责求解上述方程**——开发者只需对刚体施加正确的合外力 $\sum\mathbf{F}$ 和合外力矩 $\sum\boldsymbol{\tau}$。
-
-### 3.2 多旋翼的合外力/力矩分解
-
-对每个旋翼 $i$，它对刚体贡献三类作用（`AirscrewComponent.cpp:191-210` 注释详述）：
-
-1. **推力** $\mathbf{F}_i$：沿推力轴方向，大小由转速决定。
-2. **偏心力矩** $\boldsymbol{\tau}_{pos,i} = \mathbf{r}_i \times \mathbf{F}_i$：推力不经过质心时产生。$\mathbf{r}_i$ 是旋翼位置相对质心的矢量。这是滚转/俯仰力矩的来源。
-3. **空气反扭矩** $\boldsymbol{\tau}_{reaction,i}$：螺旋桨旋转时空气对桨叶的周向阻力，方向沿推力轴 ± sign。这是偏航力矩的来源。
-
-**合成**：
-$$
-\sum\mathbf{F} = \sum_i \mathbf{F}_i + m\mathbf{g}
-$$
-$$
-\sum\boldsymbol{\tau} = \sum_i \left(\mathbf{r}_i \times \mathbf{F}_i + \boldsymbol{\tau}_{reaction,i}\right)
-$$
-
-### 3.3 对应代码：`ApplyThrustForce_PhysicsThread`
-
-`AirscrewComponent.cpp:212-231` 把上述数学逐行翻译成对 Chaos 刚体的调用：
-
-```cpp
-void UAirscrewComponent::ApplyThrustForce_PhysicsThread(...)
-{
-    // 1. 推力（非累加，每帧覆盖）
-    BodyHandle->AddForce(CurrentThrustVectorWorld, false);
-
-    // 2. 偏心力矩 τ_pos = r × F_thrust
-    const FVector ArmWorld = CurrentApplicationPointWorld - FVector(BodyHandle->X());
-    const FVector ThrustMoment = FVector::CrossProduct(ArmWorld, CurrentThrustVectorWorld);
-    BodyHandle->AddTorque(ThrustMoment, false);
-
-    // 3. 反扭矩（累加模式，多个旋翼叠加）
-    BodyHandle->AddTorque(CurrentReactionTorqueVectorWorld, true);
-}
-```
-
-`AddForce/AddTorque` 的第二个参数：`false` = 覆盖（每帧重置），`true` = 累加。推力和偏心力矩用覆盖（因为 `CurrentThrustVectorWorld` 已是本旋翼的当前值），反扭矩用累加（历史遗留，确保多旋翼叠加安全）。
-
-> **物理直觉**：为什么偏心推力能产生滚转/俯仰？想象四旋翼右侧两个桨推力增大，合力仍向上但作用点偏右，于是产生一个让机体向左滚的力矩。这就是“差速控制姿态”的本质。
-
----
-
-## 4. 旋翼空气动力学模型
-
-每个 `UAirscrewComponent` 是一个完整的电机+螺旋桨仿真单元。核心函数 `UpdateRotorState`（`AirscrewComponent.cpp:120-189`）是一个五步管线。
-
-### 4.1 物理原理：动量理论
-
-螺旋桨推力与转速的平方成正比（动量理论 / Momentum Theory）：
-
-$$
-T = C_T \cdot \rho \cdot A \cdot (\omega R)^2 \propto \omega^2
-$$
-
-其中 $C_T$ 是推力系数，$\rho$ 空气密度，$A$ 桨盘面积，$\omega$ 角速度，$R$ 桨半径。
-
-AircraftLab 把它简化为（`AirscrewComponent.cpp:175-178`）：
-
-$$
-T = T_{max} \cdot \left(\frac{\omega}{\omega_{max}}\right)^2 \cdot C_T \cdot \eta
-$$
-
-- $T_{max}$ = `MaxThrustForce`（默认 900 N）
-- $\omega/\omega_{max}$ = `CurrentRpm / MaxRpm`（归一化转速比）
-- $C_T$ = `ThrustCoefficient`（默认 1.0）
-- $\eta$ = `Efficiency`（效率，1.0 健康，0 完全失效）
-
-**反扭矩**同样与推力（进而与 $\omega^2$）成正比：
-
-$$
-\tau_{reaction} = T \cdot k_\tau
-$$
-
-方向沿推力轴乘以旋向符号 sign（`AirscrewComponent.cpp:185-188`）。$k_\tau$ = `ReactionTorqueCoefficient`（默认 0.03）。
-
-### 4.2 五步电机管线
-
-`UpdateRotorState`（`cpp:120-189`）按顺序执行：
-
-#### 步骤 1：指令斜率限制（Slew Rate Limiter）
-
-```cpp
-CurrentNormalizedCommand = FInterpConstantTo(
-    CurrentNormalizedCommand, EffectiveTargetCommand,
-    DeltaTime, MaxCommandSlewPerSecond);
-```
-
-**数学**：$|dc/dt| \le$ `MaxCommandSlewPerSecond`（默认 8.0/s，即满量程变化至少需 0.125 s）。
-
-**物理意义**：真实电调（ESC）不能瞬间改变电流，过快的指令阶跃会导致电流尖峰烧毁元件。斜率限制模拟这一约束，也让控制器更平滑。
-
-#### 步骤 2：目标转速（指令整形）
-
-```cpp
-// ω_target = ω_idle + (ω_max - ω_idle) × Command^exp
-const float TargetRpm = ComputeTargetRpm(CurrentNormalizedCommand);
-```
-
-**数学**（`ComputeTargetRpm` `cpp:281-297`）：
-
-$$
-\omega_{target} = \omega_{idle} + (\omega_{max} - \omega_{idle}) \cdot c^{exp}
-$$
-
-其中 $c \in [0,1]$ 是归一化指令，`exp` = `CommandExponent`（默认 2.0）。
-
-**为什么用指数？** 因为 $T \propto \omega^2$，若直接用 $c$ 映射转速，则 $T \propto c^2$——低指令区推力变化太迟钝。用 $c^{exp}$ 整形后，推力与指令近似线性：$T \propto (c^{exp})^2 = c^{2\cdot exp}$，当 exp=0.5 时 $T \propto c$。这里 exp=2.0 是另一种风格的曲线，可在蓝图里调。
-
-#### 步骤 3：一阶电机响应
-
-```cpp
-// ω = lerp(ω_prev, ω_target, 1 - e^(-Δt/τ))
-const float ResponseAlpha = 1.0f - FMath::Exp(-DeltaTime / ResponseTime);
-CurrentRpm = FMath::Lerp(CurrentRpm, TargetRpm, ResponseAlpha);
-```
-
-**数学**：一阶低通系统的离散解。
-
-$$
-\omega[n] = \omega[n-1] + \alpha \cdot (\omega_{target} - \omega[n-1]), \quad \alpha = 1 - e^{-\Delta t / \tau}
-$$
-
-**不对称时间常数**：加速用 `SpinUpTimeSeconds`（默认 0.06s），减速用 `SpinDownTimeSeconds`（默认 0.10s）。物理上电机加速靠电流驱动（快），减速靠摩擦和反电动势（慢），所以 $\tau_{up} < \tau_{down}$。
-
-> **为什么用一阶模型？** 真实无刷电机+桨+气动的传递函数很复杂，但主导极点通常是一阶。用单时间常数 $\tau$ 足够捕捉“指令变化后推力滞后”这一核心动态，同时计算量极小。
-
-#### 步骤 4：推力计算
-
-```cpp
-const float ThrustRatio = FMath::Clamp(CurrentRpm / MaxRpm, 0.0f, 1.0f);
-CurrentThrustForce = GetEffectiveMaxThrust() * Square(ThrustRatio) * Max(ThrustCoefficient, 0);
-```
-
-即 $T = T_{max,eff} \cdot (\omega/\omega_{max})^2 \cdot C_T$。
-
-#### 步骤 5：反扭矩计算
-
-```cpp
-CurrentReactionTorqueMagnitude = CurrentThrustForce * GetEffectiveReactionTorqueCoefficient();
-CurrentReactionTorqueVectorWorld = ThrustDirWorld * (Magnitude * GetSpinDirectionSign());
-```
-
-即 $\boldsymbol{\tau}_{reaction} = \hat{n} \cdot T \cdot k_\tau \cdot sign$。
-
-### 4.3 默认旋翼参数表
-
-| 参数 | 默认值 | 含义 |
-|---|---|---|
-| `MaxThrustForce` | 900 N | 单桨最大静推力 |
-| `ThrustCoefficient` | 1.0 | 推力系数 $C_T$ |
-| `ReactionTorqueCoefficient` | 0.03 | 反扭矩系数 $k_\tau$ |
-| `Efficiency` | 1.0 | 效率 $\eta$（0=失效） |
-| `RadiusCm` | 12.0 | 桨半径（cm） |
-| `Motor.IdleRpm` | 1500 | 怠速转速 |
-| `Motor.MaxRpm` | 12000 | 最大转速 |
-| `Motor.SpinUpTimeSeconds` | 0.06 | 加速时间常数 $\tau_{up}$ |
-| `Motor.SpinDownTimeSeconds` | 0.10 | 减速时间常数 $\tau_{down}$ |
-| `Motor.CommandExponent` | 2.0 | 指令整形指数 |
-| `Motor.MaxCommandSlewPerSecond` | 8.0 | 指令斜率上限 |
-
-> **悬停推力校验**：4 桨 × 900 N = 3600 N 最大推力。无人机质量 1.2 kg，重力 ~11.76 N。悬停推重比约 300，远大于 1，说明这是个大功率无人机（或参数偏激进）。实际悬停时每桨只需 ~2.94 N，对应转速比 $\sqrt{2.94/900} \approx 0.057$，即 ~850 RPM（接近怠速）。
-
----
-
-## 5. 级联 PID 控制架构
-
-这是飞控的核心。AircraftLab 采用与 PX4/ArduPilot 一致的 **串级 PID（Cascaded PID）** 架构。
-
-### 5.1 控制金字塔
-
-```
-        ┌─────────────────────────────────┐
-        │  位置环 (Position)              │  ← 外环（仅 PositionHold/Mission/RTH）
-        │  误差 → 期望速度                 │
-        └────────────────┬────────────────┘
-                         ▼
-        ┌─────────────────────────────────┐
-        │  速度环 (Velocity)              │  ← 内环
-        │  误差 → 期望加速度 → 期望倾角    │
-        └────────────────┬────────────────┘
-                         ▼
-        ┌─────────────────────────────────┐
-        │  姿态角环 (Attitude Angle)      │  ← 外环
-        │  倾角误差 → 期望角速率           │
-        └────────────────┬────────────────┘
-                         ▼
-        ┌─────────────────────────────────┐
-        │  角速率环 (Attitude Rate)       │  ← 内环（最内层，带宽最高）
-        │  角速率误差 → 归一化力矩指令     │
-        └────────────────┬────────────────┘
-                         ▼
-        ┌─────────────────────────────────┐
-        │  控制分配 / 混合器 (Mixer)      │  ← 把 4 维指令分配给 N 个旋翼
-        │  [总距, 滚转, 俯仰, 偏航] → 转速 │
-        └────────────────┬────────────────┘
-                         ▼
-        ┌─────────────────────────────────┐
-        │  电机 + 螺旋桨 (Airscrew)       │
-        │  转速 → 推力 + 反扭矩 → 刚体     │
-        └─────────────────────────────────┘
-```
-
-**并行垂直通道**（高度）：
-```
-高度环 → 垂直速度环 → 总距指令 (Collective)
-```
-
-**为什么要串级？** 单环 PID 无法同时兼顾“快速抑制扰动”和“无超调跟踪”。串级让外环慢（保证稳定）、内环快（抑制扰动）。例如角速率环带宽 ~25 Hz，能瞬间抵抗阵风扰动；姿态角环带宽 ~6 Hz，保证倾角平滑跟随。
-
-### 5.2 PID 原始方程
-
-理想 PID（`AircraftTypes.h:507-544`，`UpdateFromError`）：
-
-$$
-u = K_p \cdot e + K_i \int e \, dt + K_d \frac{de}{dt} + K_{ff} \cdot ff
-$$
-
-其中 $e = SP - PV$（设定值 - 测量值），$ff$ 是前馈量。
-
-**离散实现**：
-- 积分：$I[n] = I[n-1] + e \cdot \Delta t$，并 clamp 到 $\pm I_{limit}$
-- 微分：$D = (e[n] - e[n-1]) / \Delta t$（向后差分）
-- 输出 clamp 到 $\pm O_{limit}$
-
-### 5.3 两种 PID 实现
-
-AircraftLab 提供两个更新方法，**选择哪一个很关键**：
-
-#### (a) `UpdateFromError`（`AircraftTypes.h:507-544`）
-
-导数对误差求导：$D = de/dt$。**问题**：当设定值 $SP$ 阶跃变化时，$de/dt$ 会产生巨大尖峰（“设定值踢击 / setpoint kick”），导致输出冲击。
-
-**适用**：设定值缓慢变化或本身就是连续 PID 输出的场景（如姿态角环的设定值来自速度环，已是平滑信号）。
-
-#### (b) `UpdateFromMeasurement`（`AircraftTypes.h:564-605`）
-
-导数对**测量值**求导：$D = -d(PV)/dt$。注意负号——因为 $e = SP - PV$，对 $PV$ 求导要取负才能等价。
-
-**优点**：设定值阶跃时，$d(PV)/dt$ 几乎不变（因为物理量不能瞬变），彻底消除 setpoint kick。
-
-**适用**：内环（角速率环、速度环），因为它们的设定值来自外环输出，可能阶跃。
-
-> Airscrew 速率环用 `UpdateFromMeasurement`（`cpp:869-876`），姿态角环用 `UpdateFromError`（`cpp:860-861`）。位置/速度/高度环也用 `UpdateFromMeasurement`。
-
-### 5.4 抗积分饱和（Anti-Windup）
-
-积分饱和是 PID 的经典陷阱：若输出已到限幅但积分还在累加，一旦误差反向，积分要先“还债”才能响应，造成巨大超调。
-
-AircraftLab 采用 **条件积分冻结（Conditional Integration）**（`AircraftTypes.h:538-541`）：
-
-```cpp
-// 若输出饱和且开启了饱和冻结，则回滚积分到上一拍值
-if (bFreezeIntegralWhenSaturated && OutputWasClamped)
-    Integral = PreviousIntegral;
-```
-
-逻辑：输出饱和时停止积分累加，防止“积压”。当误差反向、输出脱离饱和后，积分重新开始累加。配合积分限幅 $\pm I_{limit}$，双重保险。
-
-### 5.5 导数低通滤波
-
-微分天然放大高频噪声（$de/dt$ 对噪声极其敏感）。AircraftLab 对导数项施加 **一阶低通滤波器**（`AircraftTypes.h:614-628`）：
-
-$$
-\alpha = \frac{\Delta t}{1/(2\pi f_c) + \Delta t}
-$$
-$$
-D_{filtered}[n] = D_{filtered}[n-1] + \alpha \cdot (D_{raw} - D_{filtered}[n-1])
-$$
-
-其中 $f_c$ = `DerivativeCutoffHz`（如速率环 25 Hz）。这是一个指数加权移动平均（EWMA），截止频率以上的噪声被衰减。
-
-**为什么用这个 $\alpha$ 公式？** 它是把连续一阶低通 $H(s) = 2\pi f_c / (s + 2\pi f_c)$ 双线性近似到离散域的结果，保证数字滤波器的截止频率与连续设计一致。
-
-### 5.6 各回路 PID 默认参数
-
-> 来源：`FlightControllerComponent.cpp:401-444`（`InitializeDefaultControllerConfig`）
-
-| 回路 | 轴 | Kp | Ki | Kd | I_limit | O_limit | D 截止 |
-|---|---|---|---|---|---|---|---|
-| **位置**（→期望速度） | X, Y | 0.80 | 0 | 0 | 0 | 1200 cm/s | — |
-| 位置 | Z | 1.80 | 0 | 0 | 0 | 400 cm/s | — |
-| **速度**（→期望加速度） | X, Y | 2.20 | 0.02 | 0.35 | 4000 | 1200 cm/s² | 20 Hz |
-| 速度 | Z | 0.0018 | 0.00025 | 0.00060 | 2500 | 0.35 | 15 Hz |
-| **姿态角**（→期望角速率） | Roll, Pitch | 6.0 | 0 | 0.15 | 25 | 360 °/s | 18 Hz |
-| 姿态角 | Yaw | 4.0 | 0 | 0.08 | 30 | 180 °/s | 12 Hz |
-| **角速率**（→归一化力矩） | Roll, Pitch | 0.0028 | 0.00035 | 0.00018 | 150 | 0.40 | 25 Hz |
-| 角速率 | Yaw | 0.0018 | 0.00020 | 0.00010 | 150 | 0.25 | 20 Hz |
-| **高度**（→期望垂直速度） | — | 1.80 | 0 | 0 | 0 | 400 cm/s | — |
-| **垂直速度**（→总距偏移） | — | 0.0018 | 0.00025 | 0.00060 | 2500 | 0.35 | 15 Hz |
-
-> **注意单位差异**：角速率环的 OutputLimit 是 0.40（无量纲归一化力矩，喂给混合器），而速度环的 OutputLimit 是 1200 cm/s²（物理加速度）。增益数值的差异正源于输出单位不同，不能直接跨回路比较大小。
-
----
-
-## 6. 各控制回路详解
-
-`RunControlLoop`（`cpp:498-535`）是控制循环主入口，每个 4 ms 步长调用一次，按固定顺序执行各子回路。
-
-### 6.1 垂直控制（高度 / 总距）
-
-`ComputeVerticalControl`（`cpp:725-787`）。
-
-#### 无高度保持模式（Manual/Acro/Angle）
-
-油门直接映射到总距和垂直速度：
-
-```cpp
-DesiredVerticalVelocity = map(Throttle ∈ [-1,1] → [-MaxDescentRate, +MaxClimbRate]);
-Collective = MapCenteredThrottleToCollective(Throttle);
-```
-
-`MapCenteredThrottleToCollective`（`cpp:1306-1317`）以悬停点为中心：
-- Throttle ≥ 0：`Lerp(HoverCollective, MaxCollective, Throttle)`
-- Throttle < 0：`Lerp(HoverCollective, MinCollective, -Throttle)`
-
-这样油门中位 = 悬停油门（0.5），符合真实遥控器手感。
-
-#### 高度保持模式（AltHold/PosHold/...）
-
-两级串级 PID（`cpp:745-786`）：
-
-1. **外环（高度 → 垂直速度）**：
-   $$v_{des} = PID_{alt}(z_{held} - z_{current})$$
-   油门杆在中位死区内时锁定 $z_{held}$；杆超出死区时切换为爬升/下降率指令，并重新锚定 $z_{held}$。
-
-2. **内环（垂直速度 → 总距偏移）**：
-   $$\Delta c = PID_{vz}(v_{des} - v_{z,current})$$
-   $$Collective = Clamp(HoverCollective + \Delta c, MinCollective, MaxCollective)$$
-
-**特殊模式**：
-- ReturnToHome：$z_{held} = \max(z_{current}, z_{home} + ClimbOffset)$（`cpp:753-754`）
-- AutoLand：$v_{des} = -DescentRate$（`cpp:758-760`），直接下降。
-
-### 6.2 期望姿态角（水平控制）
-
-`ComputeDesiredAttitude`（`cpp:789-816`）。
-
-#### 非速度模式（Manual/Acro/Angle/AltHold）
-
-摇杆直接映射倾角：
-$$\theta_{pitch} = -stick_{pitch} \cdot \theta_{max}, \quad \phi_{roll} = stick_{roll} \cdot \theta_{max}$$
-
-注意 Pitch 取负——因为“前推杆”= 正 Y 输入 = 期望“低头”= 负俯仰角（标准飞控约定）。
-
-#### 速度/位置模式（VelHold/PosHold/Mission/RTH/AutoLand）
-
-摇杆 → 期望水平速度 → 期望水平加速度 → **悬停倾斜方程** → 期望倾角。
-
-**悬停倾斜方程推导**（`cpp:807-811`）：
-
-无人机悬停时，推力 $T$ 与重力 $mg$ 平衡。要产生水平加速度 $a$，需倾斜机体让推力分量提供 $a$：
-
-$$
-T\sin\theta = ma, \quad T\cos\theta = mg
-$$
-
-两式相除：
-$$
-\tan\theta = \frac{a}{g}
-$$
-
-即：
-$$\theta_{pitch} = -\arctan\frac{a_{forward}}{g}, \quad \phi_{roll} = \arctan\frac{a_{right}}{g}$$
-
-代码：
-```cpp
-DesiredPitchDegrees = -RadiansToDegrees(Atan2(ForwardAccel, Gravity));
-DesiredRollDegrees  =  RadiansToDegrees(Atan2(RightAccel, Gravity));
-```
-
-这是小角度假设下的精确解（大角度时推力损失需补偿，但 35° 以内误差可接受）。最后 clamp 到 `MaxTiltAngleDegrees`。
-
-### 6.3 期望水平速度与加速度
-
-`ComputeDesiredHorizontalVelocity`（`cpp:1010-1018`）和 `ComputeDesiredHorizontalAcceleration`（`cpp:1020-1102`）。
-
-#### 速度设定
-
-```cpp
-DesiredVel = Forward × (stick.Pitch × MaxSpeed) + Right × (stick.Roll × MaxSpeed);
-```
-
-#### 位置保持
-
-无摇杆输入时，位置 PID 把无人机拉回锁定点（`cpp:1033-1067`）：
-$$v_{des,x} = PID_{pos,x}(x_{held} - x_{current})$$
-
-有摇杆输入时重新锚定 $x_{held} = x_{current}$，避免位置 PID 与手动指令打架。ReturnToHome 时 $x_{held} = x_{home}$。
-
-#### 速度 → 加速度
-
-$$a_{des,x} = PID_{vel,x}(v_{des,x} - v_{x,current})$$
-
-输出 clamp 到 `MaxHorizontalAcceleration`，再喂给上面的悬停倾斜方程。
-
-### 6.4 期望偏航角速率
-
-`ComputeDesiredYawRate`（`cpp:818-847`）。
-
-- 手动：$\dot\psi_{des} = stick_{yaw} \cdot \dot\psi_{max}$
-- 偏航保持（杆在中位死区）：偏航角 PID 锁定航向：
-  $$\dot\psi_{des} = PID_{yaw}(\psi_{held} - \psi_{current})$$
-
-### 6.5 期望机体角速率
-
-`ComputeDesiredBodyRates`（`cpp:849-867`）。
-
-- **Acro/Manual 模式**：摇杆直接映射角速率，绕过姿态角环（`cpp:855-856`）：
-  $$\dot\phi_{des} = stick_{roll} \cdot \dot\phi_{max}$$
-- **Angle 模式**：姿态角环把倾角误差转成期望角速率（`cpp:860-861`）：
-  $$\dot\phi_{des} = PID_{angle,roll}(\phi_{des} - \phi_{current})$$
-
-输出 clamp 到最大角速率。
-
-### 6.6 机体力矩指令
-
-`ComputeBodyTorqueCommand`（`cpp:869-876`）——**最内层 PID**。
-
-角速率环用 `UpdateFromMeasurement`（避免 setpoint kick）：
-$$u_{roll} = PID_{rate,roll}(\dot\phi_{des} - \dot\phi_{current})$$
-
-输出是归一化力矩指令 $\in [-1, 1]$（由 OutputLimit=0.40 保证），喂给混合器。
-
----
-
-## 7. 控制分配（混合器）算法
-
-这是 AircraftLab 最精巧、最值得学习的部分。它解决一个核心问题：**给定 4 维控制指令 [总距, 滚转, 俯仰, 偏航]，如何分配给 N 个旋翼的推力？**
-
-### 7.1 问题定义
-
-设旋翼数为 $N$（四旋翼 $N=4$，六旋翼 $N=6$，etc.）。每个旋翼 $i$ 产生最大推力 $T_{i,max}$，对应一个 4 维 **wrench**（力旋量）列向量：
-
-$$
-\mathbf{w}_i = \begin{bmatrix} F_{z,i} \\ -\tau_{x,i} \\ -\tau_{y,i} \\ \tau_{z,i} \end{bmatrix}
-$$
-
-分别为：垂直力、滚转力矩、俯仰力矩、偏航力矩（符号约定见代码 `cpp:1130`）。
-
-设每个旋翼的推力分数 $u_i \in [0, 1]$（0=最小推力，1=最大推力），则总 wrench 为：
-
-$$
-\mathbf{W} = \sum_{i=1}^{N} \mathbf{w}_i \cdot u_i = \mathbf{J} \cdot \mathbf{u}
-$$
-
-其中 $\mathbf{J} = [\mathbf{w}_1, \mathbf{w}_2, \ldots, \mathbf{w}_N]$ 是 $4 \times N$ 的 **控制效率矩阵（雅可比）**。
-
-**给定期望 wrench $\mathbf{W}_{des}$（来自 PID），求 $\mathbf{u}$，满足 $0 \le u_i \le 1$。**
-
-当 $N > 4$ 时系统欠定（多解），需选最优解；当 $N = 4$ 时唯一解但可能违反约束；当存在失效旋翼时需重新分配。
-
-### 7.2 雅可比列的构造
-
-`BuildJacobianColumn`（`cpp:1120-1131`）为每个旋翼计算其 wrench 列：
-
-```cpp
-MaxAllocatedThrust = MaxPhysicalThrust × ControlAuthorityScale;
-ForceAtMax = ThrustAxisBody × MaxAllocatedThrust;
-MomentArm (m) = LocalPositionFromCOM (cm) × 0.01;     // cm → m
-ReactionTorque = ThrustAxisBody × (MaxAllocatedThrust × k_τ × SpinSign);
-PhysicalTorque = Cross(MomentArm, ForceAtMax) + ReactionTorque;
-Column = (ForceAtMax.Z, -PhysicalTorque.X, -PhysicalTorque.Y, PhysicalTorque.Z);
-```
-
-**物理分解**：
-- **垂直力** $F_z$：推力在机体 Z 的分量。
-- **滚转/俯仰力矩**：来自偏心推力叉积 $\mathbf{r} \times \mathbf{F}$（旋翼不在质心正上方）。
-- **偏航力矩**：来自空气反扭矩 $T \cdot k_\tau \cdot sign$。
-
-### 7.3 阻尼伪逆（Damped Pseudo-Inverse）
-
-#### 为什么不用普通伪逆？
-
-普通右伪逆 $\mathbf{u} = \mathbf{J}^T(\mathbf{J}\mathbf{J}^T)^{-1}\mathbf{W}$ 在 $\mathbf{J}\mathbf{J}^T$ 接近奇异（某轴权限很低）时，解会爆炸——某些旋翼被分配到极大的负推力或超满推力，违反 $[0,1]$ 约束。
-
-#### 阻尼伪逆公式
-
-加入 Tikhonov 正则化（$\lambda^2 \mathbf{I}$）：
-
-$$
-\boxed{\mathbf{u} = \mathbf{J}^T (\mathbf{J}\mathbf{J}^T + \lambda^2 \mathbf{I})^{-1} \mathbf{W}}
-$$
-
-- $\lambda$ = `DampedPseudoInverseLambda`（默认 0.05，`cpp:443`）
-- $\lambda^2 \mathbf{I}$ 使矩阵恒正定，保证可逆。
-- 代价：解略有偏差（$\lambda$ 越大偏差越大），但数值稳定。
-
-**直观理解**：$\lambda$ 是“解的范数”与“残差”之间的权衡系数。$\lambda \to 0$ 退化为普通伪逆（精确但可能爆炸），$\lambda \to \infty$ 退化为梯度下降（保守但稳定）。
-
-#### 等价的法方程形式
-
-代码实际求解的是等价的法方程（normal equations），避免显式构造 $4\times4$ 逆矩阵（`cpp:934-950`）：
-
-1. 构造法矩阵 $\mathbf{N} = \mathbf{J}\mathbf{J}^T + \lambda^2\mathbf{I}$（$4\times4$）
-2. 解 $\mathbf{N} \cdot \mathbf{y} = \mathbf{W}_{residual}$（高斯消元）
-3. $\mathbf{u} = \mathbf{J}^T \mathbf{y}$（每个旋翼 $u_i = \sum_{axis} J_{axis,i} \cdot y_{axis}$）
-
-```cpp
-// 法矩阵 N = J·J^T（cpp:934-942）
-for (free rotor i):
-    for (row, col in 0..3):
-        N[row][col] += Column_i[row] * Column_i[col];
-
-// 加阻尼（cpp:944-947）
-for axis: N[axis][axis] += λ²;
-
-// 解 N·y = residual（cpp:950）
-SolveLinearSystem4(N, Residual, DualSolution);
-
-// 每旋翼分数 u_i = J^T · y（cpp:955-965）
-for (free rotor i):
-    Candidate_i = Σ_axis Column_i[axis] * DualSolution[axis];
-```
-
-### 7.4 迭代主动集（Active-Set）处理约束
-
-阻尼伪逆解出的 $u_i$ 可能超出 $[0,1]$。AircraftLab 用 **迭代主动集法**（`cpp:921-974`）逐步修正：
-
-```
-循环（最多 N 次）:
-  1. 计算残差 = W_des - Σ(已锁定旋翼的贡献)
-  2. 对自由旋翼解阻尼伪逆 → 候选分数 u_i
-  3. 找违反 [0,1] 最严重的旋翼
-  4. 若无违反（残差 < 容差）→ 收敛，退出
-  5. 把该旋翼锁定到 0 或 1，标记为"已解"，加入饱和列表
-  6. 回到步骤 1（剩余旋翼重新分配残差）
-```
-
-**物理含义**：当某桨已满推仍不够，系统知道“这个桨尽力了”，把它的贡献固定，让剩余桨分担不足的部分。这保证了在接近物理极限时仍能尽可能接近期望 wrench。
-
-### 7.5 行归一化与权限
-
-为了让不同轴的指令在 $[-1, 1]$ 范围内有可比的物理含义，代码对雅可比行做归一化（`RebuildAllocationCache` `cpp:593-723`）。
-
-**RowScale**（每行的归一化因子）：
-- 行 0（总距）：$S_0 = \sum_i \max(w_{i,0}, 0)$（所有旋翼垂直力之和）
-- 行 1/2/3（滚转/俯仰/偏航）：用 `GetBalancedAuthority`（`cpp:111-116`）：
-  $$S_k = \begin{cases} \min(|\sum^+|, |\sum^-|) & \text{正负权限都存在} \\ \max(|\sum^+|, |\sum^-|) & \text{否则} \end{cases}$$
-
-`GetBalancedAuthority` 取正负权限的**较小值**，代表该轴的“对称可用权限”——因为某方向最多能用到较弱的那侧。
-
-归一化后：$\tilde{\mathbf{w}}_i = \mathbf{w}_i / \mathbf{S}$（逐行除），控制器输出的 $[-1,1]$ 指令就对应“该轴最大权限的百分比”。
-
-### 7.6 故障容错机制
-
-关键设计（`cpp:614-715`）：**旋翼失效（Efficiency 下降）不改变雅可比列的几何，只缩放该旋翼的 `MaxAllocatedThrusts`**。
-
-```
-JacobianColumns[i]      = 原始物理列（健康状态几何）
-MaxAllocatedThrusts[i]  = MaxAllocatedThrust × Effectiveness
-```
-
-**为什么这样设计？**
-- RowScale 基于全健康基线计算，保持稳定，避免失效时整个归一化剧烈跳变。
-- 失效旋翼的 `MaxAllocatedThrusts ≈ 0`，混合器分配给它的推力分数转成指令时趋近 0（`ConvertThrustToCommand` 返回 0）。
-- 剩余健康旋翼通过主动集算法自动承担更多负载。
-
-`bAllocatorDirty` 标志在 `FailRotor`/`RecoverRotor` 时置位，触发下一次分配前重建缓存。
-
-### 7.7 推力 → 指令的反演
-
-混合器输出的是推力分数 $u_i \in [0,1]$，但 Airscrew 接收的是归一化指令 $c_i \in [0,1]$。需反演 §4.2 的电机模型（`ConvertThrustToCommand` `cpp:96-109`）：
-
-$$
-\omega_{target} = \sqrt{T / T_{max}} \cdot \omega_{max}
-$$
-$$
-c_{shaped} = \frac{\omega_{target} - \omega_{idle}}{\omega_{max} - \omega_{idle}}
-$$
-$$
-c = c_{shaped}^{1/exp}
-$$
-
-即把推力开方还原成转速，再线性映射到整形指令区间，最后开 `1/exp` 次方抵消整形。这保证混合器输出的推力分数能精确对应到 Airscrew 的指令输入。
-
----
-
-## 8. 线性方程组求解器
-
-`SolveLinearSystem4`（`cpp:118-158`）实现 $4 \times 4$ 线性方程组 $\mathbf{A}\mathbf{x} = \mathbf{b}$ 的高斯-约旦消元，带 **部分主元选取（partial pivoting）**。
-
-### 8.1 算法
-
-1. 构造增广矩阵 $[\mathbf{A} | \mathbf{b}]$（$4 \times 5$）。
-2. 对每一列 $k$：
-   - 在剩余行中找绝对值最大的元素作主元（部分主元，`cpp:130-136`）。
-   - 若主元接近 0 → 矩阵奇异，返回 false（`cpp:137`）。
-   - 交换主元行到第 $k$ 行。
-   - 把主元行除以主元，使主元为 1（`cpp:143-145`）。
-   - 消去其他行的第 $k$ 列（`cpp:146-153`）。
-3. 最终增广矩阵的第 5 列即为解 $\mathbf{x}$。
-
-### 8.2 为什么用部分主元？
-
-避免主元过小导致除法放大数值误差。选列中绝对值最大的元素作主元，显著提升数值稳定性。代价是行交换改变顺序，但对解无影响。
-
-> 这个求解器每秒被调用 250 次 ×（迭代次数，最多 N 次），所以必须高效。$4 \times 4$ 高斯消元约 ~100 次浮点运算，完全可接受。
-
----
-
-## 9. 飞行模式与状态机
-
-AircraftLab 用三层枚举描述无人机状态。
-
-### 9.1 解锁状态 `EAircraftArmState`（`AircraftTypes.h:10-27`）
-
-```
-Disarmed      ── 未解锁（电机停转）
-Arming        ── 解锁中（过渡）
-Armed         ── 已解锁（可控飞行）
-Failsafe      ── 失效保护（遥控丢失等触发）
-EmergencyStop ── 紧急停止
-```
-
-只有 `Armed` 状态下飞控才在物理线程运行控制循环（`cpp:229`）。
-
-### 9.2 姿态模式 `EAircraftAttitudeMode`（`AircraftTypes.h:32-43`）
-
-```
-Manual ── 无任何自稳（裸速率/直通）
-Acro   ── 角速率控制（无自动水平）
-Angle  ── 姿态角控制（自动水平）
-```
-
-决定 `ComputeDesiredBodyRates` 是绕过姿态角环（Manual/Acro）还是经过它（Angle）。
-
-### 9.3 飞行模式 `EAircraftFlightMode`（`AircraftTypes.h:48-77`）
-
-```
-Manual / Acro / Angle       ── 基础姿态模式
-AltitudeHold                ── 加高度保持
-VelocityHold                ── 加速度/位置保持（GPS 速度）
-PositionHold                ── 全功能位置保持
-Mission / ReturnToHome / AutoLand ── 自动模式
-```
-
-### 9.4 模式 → 能力映射
-
-`SetFlightMode`（`cpp:278-319`）和 `UpdateModeCapabilities`（`cpp:384-399`）决定每种模式启用哪些控制回路：
-
-| 模式 | 姿态模式 | 高度保持 | 位置保持 | 速度保持 |
-|---|---|---|---|---|
-| Manual | Manual | ✗ | ✗ | ✗ |
-| Acro | Acro | ✗ | ✗ | ✗ |
-| Angle | Angle | ✗ | ✗ | ✗ |
-| AltitudeHold | Angle | ✓ | ✗ | ✗ |
-| VelocityHold | Angle | ✓ | ✗ | ✓ |
-| PositionHold | Angle | ✓ | ✓ | ✓ |
-| Mission / RTH / AutoLand | Angle | ✓ | ✓ | ✓ |
-
-`ModeCapabilities` 标志（`cpp:377-386`）：
-- `CanHoldYaw` = 姿态模式 ≠ Manual 且 ≠ Acro
-- `CanHoldAltitude` = `bAltitudeHoldEnabled` || 自动模式
-- `CanUseVelocityControl` = `bVelocityHoldEnabled` || `bPositionHoldEnabled` || 自动模式
-- `CanUsePositionControl` = `bPositionHoldEnabled` || 自动模式
-
-各 `Compute*` 函数读取这些标志决定走完整串级还是退化到手动映射。
-
----
-
-## 10. 状态估计
-
-### 10.1 当前实现：直接读取 Chaos 真值
-
-`UpdateEstimatedState_PhysicsThread`（`cpp:446-480`）直接从 Chaos 刚体句柄读取：
-
-```cpp
-Position  = BodyHandle->X();
-Rotation  = BodyHandle->R();   // FQuat → FRotator
-Velocity  = BodyHandle->V();
-AngVel    = BodyHandle->W();   // rad/s → 转 °/s，再逆变换到机体并翻转 X/Y
-```
-
-- 加速度由速度差分得到：$\mathbf{a} = (\mathbf{v}[n] - \mathbf{v}[n-1]) / \Delta t$（`cpp:463-465`）。
-- 置信度硬编码为 1.0（`cpp:478-479`），即“完美估计”。
-
-**这是仿真特权**：因为 Chaos 知道真值，无需 IMU/气压计/GPS 融合。真实飞控必须用 EKF/互补滤波从带噪传感器估计这些量。
-
-### 10.2 已定义但未启用的传感器/滤波结构
-
-`AircraftTypes.h` 完整定义了未来传感器融合所需的全部数据结构（但当前无实现代码）：
-
-- `FAircraftImuConfig`（IMU 噪声、采样率）
-- `FAircraftBarometerConfig`（气压计）
-- `FAircraftGpsConfig`（GPS）
-- `FAircraftMagnetometerConfig`（磁力计）
-- `FAircraftOpticalFlowConfig`（光流）
-- `FAircraftRangefinderConfig`（测距仪）
-- `FAircraftEstimatorConfig`（互补滤波/EKF 融合系数，`AircraftTypes.h:1434-1470`）
-
-这些是“未来工作”的占位，标记在 §14。
-
----
-
-## 11. 旋翼健康与故障系统
-
-### 11.1 健康状态 `FRotorHealthState`（`FlightControllerComponent.h:40-80`）
-
-| 字段 | 含义 |
+| 量 | 单位 |
 |---|---|
-| `Effectiveness` (0–1) | 旋翼效率 $\eta$，缩放最大可用推力。1=全健康，0=完全失效。 |
-| `bIsFailed` | 是否标记为完全失效 |
-| `FailureTimestamp` | 失效时间戳 |
-| `FailureMode` | 失效类型（`CompleteFailure`/`PartialFailure`/...） |
+| 位置、路径、半径 | cm |
+| 线速度 | cm/s |
+| 线加速度 | cm/s² |
+| Jerk | cm/s³ |
+| 欧拉角 | degree |
+| 角速度 | degree/s |
+| 角加速度 | degree/s² |
+| 推力 | N |
+| 力矩 | N·m |
+| 质量 | kg |
+| 转动惯量 | kg·m² |
 
-### 11.2 失效 API（`cpp:1347-1423`）
+旋翼和控制分配内部保持 SI 力/力矩，只在 Chaos API 边界转换到 UE 的厘米制力和力矩。
 
-| 函数 | 行为 |
+### 4.2 飞控标准坐标
+
+飞控标准坐标恒定为：
+
+- `X = Forward`
+- `Y = Right`
+- `Z = Up`
+
+模型局部前向由 `FAircraftBodyAxesConfig::ForwardAxis` 配置，支持 `+X/+Y/-X/-Y`，默认 `+Y`。该配置统一参与：
+
+- 当前姿态和水平航向提取；
+- Roll/Pitch/Yaw 角速度符号转换；
+- 控制器力矩到模型局部力矩的转换；
+- Autopilot 航向到 Actor 旋转的转换；
+- Root Motion 目标旋转。
+
+模型 Up 固定为局部 `+Z`。修改模型前向时只改 `ForwardAxis`，不应在不同子系统中再分别补旋转。
+
+## 5. 总体运行链
+
+```text
+Gameplay / Enhanced Input / Montage
+            │
+            ▼
+FAutopilotMovementIntent 或 FAircraftPilotInput
+            │
+            ├─ Autopilot:
+            │  MovementExecutor
+            │    → TrajectoryGenerator
+            │    → PathFollowing
+            │    → TurnBehavior
+            │    → MotionProfile
+            │    → FeedForward
+            │    → FAutopilotInjection / FAircraftMotionTarget
+            │
+            ▼
+UFlightControllerComponent
+  位置/速度/高度环
+    → 姿态四元数环
+    → 角速度 PID
+    → 阻尼伪逆控制分配
+    → 每个 UAirscrewComponent
+    → Chaos 刚体
+```
+
+### 5.1 游戏线程
+
+飞控组件在 `TG_PrePhysics`：
+
+1. 读取 `UAircraftInputComponent` 的当前输入；
+2. 生成手动 MovementIntent，或拉取 Autopilot Injection；
+3. 评估 Failure Policy；
+4. 将输入和注入结果缓存给物理线程。
+
+Autopilot 同样在 `TG_PrePhysics`，并被设置为 FlightController 的 Tick 前置条件，所以当帧先生成设定值，再由飞控拉取。
+
+### 5.2 物理线程
+
+只有 `FlightController` 驱动模式启用异步物理 Tick：
+
+1. 直接从 Chaos 刚体读取位置、速度、姿态、角速度、质量、惯量和阻尼；
+2. 用本次物理步 `DeltaTime` 运行一次完整控制循环；
+3. 计算各旋翼目标；
+4. 更新电机一阶响应、推力和反扭矩；
+5. 将力和力矩施加到 Chaos 刚体。
+
+控制循环与物理步一一对应，不在同一份冻结物理状态上重复积分 PID。
+
+## 6. 手动输入与飞行模式
+
+`UAircraftInputComponent` 使用蓝图配置的 Enhanced Input 资产：
+
+| Action | 类型 | 写入 |
+|---|---|---|
+| `IA_Move` | Axis2D | X → Roll，Y → Pitch |
+| `IA_Throttle` | Axis1D | Throttle |
+| `IA_Turn` | Axis1D | Yaw |
+
+Triggered 更新轴值，Completed/Canceled 将对应轴归零。Mapping Context 在本地 Pawn 接管或 Controller 复制完成后添加。
+
+飞控将输入转换为一个内部 `FAutopilotMovementIntent`，因此手动和自动路径最终共享控制解算器。摇杆低于死区时相应轴被视为无输入。
+
+### 6.1 当前模式能力
+
+| 飞行模式 | Roll/Pitch | 高度 | 水平速度 | 水平位置 | 航向保持 |
+|---|---|---|---|---|---|
+| `Manual` | 机体角速度指令 | 无 | 无 | 无 | 无 |
+| `Acro` | 机体角速度指令 | 无 | 无 | 无 | 无 |
+| `Angle` | 目标倾角 | 无 | 无 | 无 | 有 |
+| `AltitudeHold` | 目标倾角 | 有 | 无 | 无 | 有 |
+| `VelocityHold` | 速度闭环 | 有 | 有 | 无 | 有 |
+| `PositionHold` | 位置/速度闭环 | 有 | 有 | 有 | 有 |
+| `Mission/ReturnToHome/AutoLand` | 完整闭环 | 有 | 有 | 有 | 有 |
+
+当前 `Manual` 和 `Acro` 都绕过姿态角外环，但仍经过角速度 PID 和控制分配，不是原始电机直通。
+
+### 6.2 松杆制动
+
+在 PositionHold 中，水平摇杆松开后不会立即把松手位置设为返回目标。飞控先持续将位置锚点跟随机体，并给出零速度目标；当水平速度低于 `HorizontalBrakeToHoldSpeedCmPerSec` 后，再锁定实际停止位置。
+
+垂直摇杆松开后保持最后一次手动升降过程中持续更新的高度锚点。偏航摇杆松开后保持当前航向。
+
+## 7. 飞控控制链
+
+### 7.1 水平位置和速度
+
+位置环输出期望水平速度：
+
+```text
+v_des = PID_position(position_setpoint - position)
+      + Kff_position * trajectory_velocity
+```
+
+速度环输出期望水平加速度：
+
+```text
+a_des = PID_velocity(velocity_setpoint - velocity)
+      + Kff_velocity * trajectory_acceleration
+      + linear_damping_feed_forward
+```
+
+期望水平加速度再通过悬停倾斜关系转换为 Roll/Pitch：
+
+```text
+pitch = -atan2(forward_acceleration, gravity)
+roll  =  atan2(right_acceleration, gravity)
+```
+
+最终倾角同时受 `MaxTiltAngleDegrees` 和水平加速度硬限制约束。
+
+### 7.2 高度
+
+高度外环产生垂直速度，垂直速度环产生相对悬停总距的偏移。Autopilot 模式下，推力前馈替代固定的 `HoverCollectiveCommand` 作为基准。
+
+### 7.3 姿态和角速度
+
+Roll/Pitch 使用当前刚体四元数与期望倾斜四元数计算误差；Yaw 使用水平机头方向单独闭环，避免航向误差污染倾斜控制。
+
+可选二阶临界阻尼参考模型先平滑 Roll/Pitch 目标，并把参考模型角速度作为前馈加入角速度设定值。角速度内环对 Roll/Pitch/Yaw 分别运行 PID。
+
+### 7.4 Chaos 阻尼补偿
+
+代码直接读取物理刚体的线性和角阻尼：
+
+- 水平恒速前馈：`a_ff = damping * desired_velocity`；
+- 垂直阻尼补偿换算为总距偏移；
+- 角阻尼补偿根据惯量和剩余力矩权限换算为归一化轴指令；
+- 可达巡航速度还会按阻尼消耗的加速度权限自动降低，并保留配置比例的控制余量。
+
+因此物理阻尼不需要设为零，但 Profile 中的三类阻尼前馈比例必须与实际物理资产共同调节。
+
+### 7.5 控制分配
+
+控制分配输入为：
+
+```text
+[Collective, Roll, Pitch, Yaw]
+```
+
+每个旋翼按位置、推力轴、最大可分配推力和旋向构建一列 Jacobian。分配器使用阻尼伪逆和带约束迭代，将目标 Wrench 转换为各旋翼推力，再反算为电机归一化指令。
+
+分配饱和结果会在下一物理步回传角速度 PID，用于阻止不可实现方向上的积分继续累积。
+
+## 8. 旋翼模型与故障
+
+### 8.1 旋翼运行模型
+
+单个 `UAirscrewComponent` 的处理顺序：
+
+1. `CommandScale` 和 `[0,1]` 限幅；
+2. `MaxCommandSlewPerSecond` 指令变化率限制；
+3. 指令指数映射到目标 RPM；
+4. 使用不同的 SpinUp/SpinDown 时间常数做一阶响应；
+5. 以 RPM 比例平方计算推力；
+6. 以 `Thrust × ReactionTorqueCoefficient` 计算反扭矩；
+7. 在物理线程施加推力、偏心力矩和反扭矩。
+
+旋翼组件位置决定力臂；`ThrustAxisLocal` 使用机体局部坐标，不随 Airscrew 组件自身旋转改变。
+
+### 8.2 健康状态
+
+公开接口包括：
+
+- `FailRotor`
+- `FailRotors`
+- `RecoverRotor`
+- `RecoverAllRotors`
+- `SetRotorEffectiveness`
+- `GetRotorHealthStates`
+- `GetControlAuthorityInfo`
+
+旋翼必须具有唯一、稳定、非空的 `RotorName` 才能可靠寻址。完全失效会立即停桨并重建分配矩阵；部分效能会降低最大可分配推力和该列权重。
+
+`FControlAuthorityInfo` 给出相对于全健康布局的 Collective/Roll/Pitch/Yaw 剩余权限以及健康、失效旋翼数量。
+
+### 8.3 Failure Policy
+
+当前 `FFlightControllerFailurePolicyConfig` 可根据健康旋翼数量和各轴权限阈值触发：
+
+- 仅警告；
+- 切换飞行模式；
+- 进入 `Failsafe` 并停桨；
+- 进入 `EmergencyStop` 并停桨。
+
+判定支持故障确认时间、恢复确认时间、仅解锁时评估和锁存。锁存后通过 `ResetFailurePolicyLatch` 清除；也可临时暂停评估，但暂停不改变旋翼健康和控制分配。
+
+## 9. Autopilot 命令模型
+
+Autopilot 同一时间只执行一个外部 Intent。提交新 Intent 会将旧 Intent 标记为 `Interrupted/Replaced`。
+
+### 9.1 激活
+
+```cpp
+UAutopilotComponent* Autopilot = Aircraft->GetAutopilotComponent();
+Autopilot->SetAutopilotActive(true);
+```
+
+激活时：
+
+- 飞控切到 `Mission`；
+- 飞控开始消费 Autopilot Injection；
+- Motion Profile 从当前运动状态初始化；
+- Autopilot 先进入当前位置 Hold。
+
+停用时会取消当前 Intent、停止 Root Motion、恢复激活前飞行模式并清空自动驾驶输出。
+
+### 9.2 类型化命令接口
+
+蓝图和 Gameplay 应优先使用：
+
+| 接口 | 语义 | 自动完成 |
+|---|---|---|
+| `SubmitMoveTo` | 飞到世界点或 Actor 相对偏移 | 是 |
+| `SubmitFollowPath` | 跟随世界空间点列 | 是 |
+| `SubmitOrbit` | 持续环绕世界点或 Actor | 否，依靠取消或超时 |
+| `SubmitCircleArc` | 飞有限水平圆弧 | 是 |
+| `SubmitVelocity` | 持续世界速度 | 否，依靠取消或超时 |
+| `SubmitHold` | 保持提交瞬间位置 | 否 |
+| 三种 `SubmitRootMotion*` | Montage Root Motion 运动 | 是 |
+
+`SubmitMovementIntent` 和 `UpdateMovementIntent` 是 C++ 低层入口，不暴露给蓝图。类型化 `Update*` 只允许更新当前 Handle 且命令类型必须保持一致；更新航向可单独调用 `UpdateHeadingTarget`，不会重建运动轨迹。
+
+Intent Handle 用于：
+
+- `CancelMovementIntent`
+- `GetIntentResult`
+- 关联开始/结束事件
+
+结果状态包含 Accepted、Executing、Succeeded、Failed、Cancelled、Interrupted、Rejected。组件最多保留最近 64 个终态结果。
+
+### 9.3 到达模式
+
+`StopAndComplete` 需要同时满足：
+
+- 水平位置误差；
+- 垂直位置误差；
+- 速度误差；
+- 航向误差；
+- 连续稳定时间。
+
+`PassThrough` 在轨迹到达终点后立即成功，并自动转为内部速度运动以保留退出速度。
+
+### 9.4 Actor 目标
+
+当命令同时提供 Actor 和位置时，位置解释为 Actor 世界位置的偏移：
+
+```text
+resolved_target = ActorLocation + TargetPositionCm
+```
+
+Actor 移动超过 1 cm 时，MoveTo、Orbit 和 CircleArc 会重建对应轨迹。Actor 失效会使 Intent 失败。
+
+## 10. 航向系统
+
+航向与移动目标解耦，所有运动命令都可组合以下模式：
+
+| 模式 | 行为 |
 |---|---|
-| `FailRotor(i)` | `Effectiveness=0`, `bIsFailed=true`, `Airscrew->ForceStopRotor()`, `bAllocatorDirty=true` |
-| `RecoverRotor(i)` | 恢复到全健康，`ClearForceStop()` |
-| `SetRotorEffectiveness(i, e)` | 部分失效（$0 < e < 1$）；$e \approx 0$ 时强制停止 |
-| `FailRotors(indices)` | 批量失效 |
-| `RecoverAllRotors()` | 全部恢复 |
+| `KeepCurrent` | 保持提交 Intent 时的航向 |
+| `FixedYaw` | 转到固定世界 Yaw；转速受命令和硬限制共同约束，并按剩余角度提前减速 |
+| `FaceVelocity` | 机头朝向当前轨迹速度方向 |
+| `FaceTarget` | 朝向独立注视目标；未启用独立目标时朝向运动目标，FollowPath 则朝向最后一个路径点 |
 
-`ForceStopRotor`（`AirscrewComponent.cpp:42-52`）跳过电机模型，瞬间把推力/反扭矩清零——模拟桨叶断裂或电机卡死。
+独立注视目标同样支持世界位置或 Actor 相对偏移。因此 Gameplay 可以让无人机飞向航点，同时始终面向锁定玩家。
 
-### 11.3 权限诊断 `FControlAuthorityInfo`（`cpp:1425-1484`）
+## 11. 轨迹、制导和运动整形
 
-`UpdateControlAuthorityInfo` 计算每轴的归一化权限（当前有效权限 / 全健康基线）：
+### 11.1 轨迹模式
 
-$$
-\text{Authority}_k = \frac{\text{EffectiveAuthority}_k}{\text{BaselineAuthority}_k} \in [0,1]
-$$
+| 模式 | 实现 | 语义 |
+|---|---|---|
+| `PiecewiseLinear` | 多个 `ULineTrajectorySegment` | 精确经过每个路径点；折角不做几何圆滑 |
+| `Bezier` | `UBezierTrajectorySegment` | 全部路径点作为一条 Bezier 的控制点；中间控制点通常不是必经点 |
+| `MinimumSnap` | `UMinSnapTrajectorySegment` | 分段七阶、原生时间参数化；经过所有点并保证内部导数连续 |
 
-也统计健康/失效旋翼数。可用于 UI 显示或触发失效保护（如权限低于阈值自动降落）。
+其他内部轨迹段包括有限圆弧 `UCircleTrajectorySegment` 和无限环绕 `UOrbitTrajectorySegment`。
 
----
+FollowPath 至少需要两个有限世界坐标点。PiecewiseLinear 的相邻点必须形成有效非零长度线段；尖锐折角保持连续名义速度，实际过角能力取决于速度、制导前瞻、加速度/倾角限制和机体物理。
 
-## 12. 输入系统
+### 11.2 速度时间化
 
-### 12.1 Enhanced Input 映射
+普通有限轨迹使用梯形或三角形速度剖面。终点制动距离由当前速度、目标终点速度和最大减速度计算，因此 MoveTo 和 StopAndComplete 路径会在终点前降低名义速度。
 
-`UAircraftInputComponent`（`AircraftInputComponent.h/cpp`）事件驱动（不 Tick），绑定三个 Input Action：
+MinimumSnap 使用自身时间参数化，不走普通梯形重定时。Orbit 使用恒定循环速度。
 
-| Action | 值类型 | 映射到 | 语义 |
+### 11.3 路径制导
+
+制导策略只应用于 FollowPath、Orbit 和 CircleArc：
+
+- `PurePursuit`：从当前投影弧长向前取前瞻点，以指向前瞻点的速度方向修正轨迹；
+- `VectorField`：使用路径切向和横向误差构造速度场；
+- `Direct`：直接使用轨迹名义速度。
+
+MoveTo 始终直接使用直线轨迹设定值。
+
+### 11.4 Motion Profile 和前馈
+
+Motion Profile 对名义速度、加速度、Jerk 和 Yaw 进行逐帧限制，生成 `FProfiledSetpoint`。随后 Feed Forward 计算器产生：
+
+- 位置环的速度前馈；
+- 速度环的加速度前馈；
+- 高度环的垂直速度前馈；
+- 含重力和加速度的总距前馈；
+- 偏航角速度前馈。
+
+命令软限制最终还会与飞控硬限制、倾角可实现加速度以及阻尼可达速度取最小值。
+
+## 12. Montage 与 Root Motion
+
+### 12.1 统一播放接口
+
+`PlayMontage` 接收 `FAutopilotMontagePlayback`：
+
+- 普通 Montage：只播放动画，不创建 Intent；
+- 含 Root Motion 的 Montage：按当前 Simulation LOD 的 DriveMode 自动创建 Root Motion Intent；
+- 当前 DriveMode 为 `None` 时拒绝 Root Motion；
+- 已有 Root Motion Intent 时不接受普通 Montage。
+
+含 Root Motion 时 Autopilot 必须已激活。
+
+### 12.2 三种显式 Root Motion 接口
+
+| 接口 | 后端 | 行为 |
+|---|---|---|
+| `SubmitRootMotionFlightController` | FlightController | Root Motion 累积为位置/速度/加速度/Yaw 参考，经 Motion Profile 和飞控闭环跟踪 |
+| `SubmitRootMotionPhysicsConstraint` | PhysicsConstraint | Root Motion 生成六自由度运动目标，由临时 Chaos Constraint 跟踪 |
+| `SubmitRootMotionKinematic` | Kinematic | Root Motion 生成运动目标，由 Transform 预测、位置纠偏和旋转插值执行 |
+
+Root Motion 执行期间会请求精确驱动模式，优先级为 1000，并要求 Simulation LOD Profile 中存在使用该 DriveMode 的条目。手动驱动覆盖优先级更高；若覆盖到其他模式，Root Motion 请求无法生效。
+
+### 12.3 运行要求
+
+- Actor 根组件必须是正在使用的 `USkeletalMeshComponent`；
+- Skeletal Mesh 必须有 AnimInstance；
+- Montage 必须真正包含 Root Motion；
+- 动画蓝图需要可评估 Montage 的 Slot；
+- Mesh Tick 是 Autopilot Tick 的前置条件，保证本帧动画先产出 Root Motion，再由 Autopilot 消费；
+- Montage 自然结束后，Intent 会等待机体满足最终到达判据；
+- Montage 被打断时 Intent 返回 `Interrupted/AnimationInterrupted`。
+
+## 13. 模拟驱动和 LOD
+
+### 13.1 三种驱动
+
+| DriveMode | 物理 | 执行者 | 适用 |
 |---|---|---|---|
-| `IA_Move` | `FVector2D` | `Roll`(X), `Pitch`(Y) | X=右滚，Y=前俯 |
-| `IA_Throttle` | `float` | `Throttle` | 正=爬升，负=下降 |
-| `IA_Turn` | `float` | `Yaw` | 正=顺时针 |
+| `FlightController` | 开 | 飞控、旋翼、Chaos 力/力矩 | 玩家、近距离、战斗、高质量飞行 |
+| `PhysicsConstraint` | 开 | FlightController 持有的临时六自由度 Constraint | 中距离、动画/轨迹需要保留碰撞物理 |
+| `Kinematic` | 关 | FlightController 的 Transform 后端 | 远距离低成本运动 |
+| `None` | 关 | 无 | 极远、休眠或只依赖网络代理 |
 
-每个 Action 绑定 `Triggered`（按下/持续）和 `Completed`/`Canceled`（释放）。**释放时归零**（`AircraftInputComponent.cpp:106-122`），实现“自动回中”。
+LOD 本身不实现运动算法，只选择 Profile 数组中配置的预算和 DriveMode。物理约束、运动学实现都由飞行模拟组件拥有。
 
-### 12.2 `FAircraftPilotInput` 语义（`AircraftTypes.h:136-165`）
+### 13.2 默认 LOD 数组
 
-所有轴 clamp 到 $[-1, 1]$：
-- `Throttle`：负=下降，正=爬升
-- `Roll`：正=右
-- `Pitch`：正=前（但飞控在 `cpp:797, 856` 取负后才映射到姿态角）
-- `Yaw`：正=顺时针
+| 默认条目 | 距离上限 | 驱动 | 慢速逻辑 | 碰撞 | 网络频率 |
+|---|---:|---|---:|---|---:|
+| LOD0 | 6000 cm | FlightController | 每帧 | QueryAndPhysics | 30 Hz |
+| LOD1 | 15000 cm | PhysicsConstraint | 0.05 s | QueryAndPhysics | 15 Hz |
+| LOD2 | 50000 cm | Kinematic | 0.10 s | QueryOnly | 8 Hz |
+| LOD3 | 无限 | None | 关闭 | Disabled | 2 Hz，网络休眠 |
 
-### 12.3 死区（在飞控侧处理）
+数组可完全修改，最后一个条目始终是无限距离兜底，其 `MaxDistanceCm` 不参与选择。
 
-输入组件不做死区/曲线，原始摇杆值直传飞控。死区在飞控的保持逻辑中应用（`FlightControllerComponent.h`）：
-- `HorizontalHoldStickDeadband = 0.08`
-- `VerticalHoldStickDeadband = 0.08`
-- `YawHoldStickDeadband = 0.05`
+### 13.3 选择优先级
 
-杆在中位死区内时触发“保持”逻辑（锁高度/位置/航向）；超出死区时切回手动指令。
+```text
+手动 DriveMode 覆盖
+  > 运动源临时 DriveMode 请求
+  > 玩家/战斗/开火/受伤/任务关键等最高优先级标记
+  > 最近玩家距离
+```
 
----
+距离选择使用评估间隔、每帧评估预算、滞回距离和最短停留时间。玩家控制状态会自动提升到数组第 0 项。
 
-## 13. 完整参数参考表
+当前 `bRunSlowLogic` 和 `SlowLogicIntervalSeconds` 直接控制 Autopilot 是否 Tick 以及 Tick 间隔；Root Motion 执行期间强制每帧 Tick。飞控物理循环不使用该慢速间隔。
 
-### 13.1 控制限幅 `FAircraftControlLimits`
+### 13.4 网络
 
-| 参数 | 默认值 | 含义 |
-|---|---|---|
-| `MaxTiltAngleDegrees` | 35° | 最大倾角 |
-| `MaxYawRateDegreesPerSec` | 180 °/s | 最大偏航角速率 |
-| `MaxRollRateDegreesPerSec` | 360 °/s | 最大滚转角速率 |
-| `MaxPitchRateDegreesPerSec` | 360 °/s | 最大俯仰角速率 |
-| `MaxClimbRateCmPerSec` | 400 cm/s | 最大爬升率（4 m/s） |
-| `MaxDescentRateCmPerSec` | 250 cm/s | 最大下降率（2.5 m/s） |
-| `MaxHorizontalSpeedCmPerSec` | 1200 cm/s | 最大水平速度（12 m/s） |
-| `MaxHorizontalAccelerationCmPerSecSq` | 1200 cm/s² | 最大水平加速度 |
-| `MaxVerticalAccelerationCmPerSecSq` | 1000 cm/s² | 最大垂直加速度 |
-| `MinCollectiveCommand` | 0.0 | 最小总距 |
-| `HoverCollectiveCommand` | 0.50 | 悬停总距 |
-| `MaxCollectiveCommand` | 1.0 | 最大总距 |
+默认策略是服务器权威模拟：
 
-### 13.2 质量惯量 `FAircraftMassProperties`
+- Authority 选择并复制 `CurrentLODIndex`；
+- Simulated Proxy 不执行飞控或 Autopilot；
+- 可选保持 Chaos 物理开启，让 UE Physics Replication 做预测插值；
+- LOD 预算可调整 Actor 网络更新频率和休眠；
+- `AAircraftPawn` 在网络环境为 Authority 和 Simulated Proxy 使用 Predictive Interpolation。
 
-| 参数 | 默认值 |
-|---|---|
-| `MassKg` | 1.2 |
-| `InertiaDiagonalKgCmSq` | (5000, 5000, 9000) |
+当前没有为 Autonomous Proxy 实现专用的网络物理重模拟路径。
 
-> 注意：当前运行时质量/惯量实际来自物理资产 `SK_Aircraft_Physics*`，此结构体未在代码中被消费（见 §14）。
+## 14. Gameplay 接入范式
 
-### 13.3 空气动力学 `FAircraftAerodynamicsConfig`
+### 14.1 巡逻
 
-| 参数 | 默认值 |
-|---|---|
-| `LinearDragPerAxis` | (0.12, 0.12, 0.18) |
-| `AngularDragPerAxis` | (0.02, 0.02, 0.03) |
-| `GroundEffectStartHeightCm` | 80 |
-| `GroundEffectStrength` | 0.15 |
-| `WindVelocityCmPerSec` | (0, 0, 0) |
+1. Gameplay 或导航插件生成下一个可达世界点或完整点列；
+2. 激活 Autopilot；
+3. 调用 `SubmitMoveTo` 或 `SubmitFollowPath`；
+4. 保存 Handle；
+5. 监听 `OnIntentFinished`；
+6. 成功后提交下一段，失败或超时由 Gameplay 决定重算路径、等待或退出巡逻。
 
-> 注意：此结构体当前未被控制器/旋翼代码消费（见 §14）。
+插件不会自动循环巡逻点。
 
-### 13.4 控制分配 `FAircraftControlAllocationConfig`
+### 14.2 飞向航点并锁定目标
 
-| 参数 | 默认值 | 含义 |
-|---|---|---|
-| `DampedPseudoInverseLambda` | 0.05 | 阻尼系数 $\lambda$ |
+```cpp
+FAutopilotMoveToCommand Command;
+Command.TargetPositionCm = Waypoint;
+Command.Options.Heading.Mode = EAutopilotHeadingMode::FaceTarget;
+Command.Options.Heading.bUseLookAtTarget = true;
+Command.Options.Heading.LookAtActor = LockedTarget;
+const FAutopilotIntentHandle Handle = Autopilot->SubmitMoveTo(Command);
+```
 
-### 13.5 飞控行为参数（`FlightControllerComponent.h`）
+锁定对象移动时无需重建移动轨迹；可用 `UpdateHeadingTarget` 更新注视目标。
 
-| 参数 | 默认值 | 含义 |
-|---|---|---|
-| `bControllerEnabled` | true | 飞控使能 |
-| `InitialFlightMode` | Angle | 初始飞行模式 |
-| `HorizontalHoldStickDeadband` | 0.08 | 水平保持死区 |
-| `VerticalHoldStickDeadband` | 0.08 | 垂直保持死区 |
-| `YawHoldStickDeadband` | 0.05 | 偏航保持死区 |
-| `ReturnHomeClimbAltitudeOffsetCm` | 300 | RTH 爬升偏移 |
-| `AutoLandDescentRateCmPerSec` | 120 | 自动降落下降率 |
+### 14.3 玩家接管
 
----
+玩家控制通常应：
 
-## 14. 未使用参数审计与未来工作
+- 保持 Profile 第 0 项为 `FlightController`；
+- 让 Pawn 被本地 PlayerController 占有，以应用 Mapping Context；
+- 停用 Autopilot，使飞控恢复激活前模式并消费手动输入；
+- 如需强制后端，调用 `SetManualDriveModeOverride(FlightController)`，结束后调用 `ClearManualDriveModeOverride`。
 
-### 14.1 已删除的无效定义
+## 15. 公开接口速查
 
-以下定义没有任何运行时读取路径，而且已有明确的权威数据源，因此已经删除：
+### `AAircraftPawn`
 
-| 已删除项 | 删除原因 | 当前权威路径 |
-|---|---|---|
-| `FAircraftFlightConfig` | 从未实例化或传入飞控；只是把多个互不相连的配置再次聚合 | 飞控参数由 `UFlightControllerProfileAsset` 管理，Autopilot 参数由 `UAutopilotProfileAsset` 管理 |
-| `EAircraftFrameType` | 只被 `FAircraftFlightConfig` 引用，类型标签不会生成布局或改变混控 | 旋翼数量、位置、推力轴和旋向来自实际 `UAirscrewComponent`，控制分配由实时几何计算 |
-| `FAutopilotMovementIntent.DesiredAccelerationCmPerSecSq` | Submit/轨迹代码均不读取；轨迹加速度由 Motion Profile 产生 | `FProfiledSetpoint.AccelerationCmPerSecSq` → `FAutopilotInjection` |
-| `FAutopilotMovementIntent.ThrustFeedForward` | 与真正的飞控注入字段重名但从未读取 | `FFeedForward.ThrustFF` → `FAutopilotInjection.ThrustFeedForward` |
-| `FFeedForward.bEnabled` | 只被写为 `true`，从未参与分支判断 | `FProfiledSetpoint.bValid` 决定前馈是否有效 |
+- `GetBodyMesh`
+- `GetAircraftInputComponent`
+- `GetFlightControllerComponent`
+- `GetAutopilotComponent`
+- `GetSimulationLODComponent`
 
-旧蓝图若拆分过 `FAutopilotMovementIntent` 引脚，首次打开时应刷新节点并重新编译。移除的两个字段以前没有进入控制链，因此刷新不会改变有效飞行行为。
+### `UFlightControllerComponent`
 
-### 14.2 保留：物理与旋翼模型的预留参数
+- 状态：Arm/Disarm、飞行模式、保持开关、Controller Enabled；
+- Autopilot：Provider、是否消费设定值；
+- 旋翼：失效、恢复、效能、健康状态、控制权限；
+- Failure Policy：状态、重置锁存、暂停评估；
+- 诊断 C++ Getter：估计状态、控制输出、分配诊断、保持目标。
 
-以下定义当前未被运行时消费，但含义明确，不能仅因“暂时未接线”而删除：
+### `UAutopilotComponent`
 
-| 保留项 | 预期作用 | 当前状态及未来影响 |
-|---|---|---|
-| `FAircraftMassProperties` | 质量、质心偏移、惯量对角线 | 当前以 Chaos 物理资产为准；未来若支持纯数据驱动机体，质量影响加速度，质心影响耦合力矩，惯量影响角响应 |
-| `FAircraftAerodynamicsConfig` | 分轴线性/角阻力、地效、风速 | 当前没有专用施力代码；接线后会影响极速、滑行衰减、转动阻尼、近地推力和抗风表现 |
-| `FAircraftMotorModelConfig.MinRpm` | 电机允许维持的最低机械转速 | 当前停机使用 0、解锁使用 `IdleRpm`；未来若模拟 ESC 最低转速或空中停转保护，需要与怠速区分 |
-| `FAircraftRotorDefinition.RadiusCm` | 桨盘面积及气动尺度 | 当前推力由 `MaxThrustForce` 标定；接入叶素/动量模型后会影响推力、功率、地效和桨间干扰 |
-| `FAircraftRotorDefinition.bUseSocketTransform` | 在骨骼插槽布局和显式局部布局间选择 | 当前以组件实际 Transform 为权威；未来导入纯结构配置或自动生成旋翼组件时有用 |
-| `FAircraftFirstOrderFilterState` | 保存低通滤波器历史值 | 当前传感器仿真未启用；接线后用于抑制 IMU 等高频噪声，同时会引入相位延迟 |
+- 激活与 Profile；
+- 类型化 Submit/Update；
+- 单独更新航向；
+- Cancel、结果查询、进度；
+- Profiled Setpoint、Guidance、悬停推力估计；
+- `PlayMontage` 和三种 Root Motion；
+- Intent 开始/结束事件。
 
-### 14.3 保留：传感器与状态估计配置
+### `UAircraftSimulationLODComponent`
 
-`FAircraftScalarNoiseModel`、`FAircraftVectorNoiseModel`、`FAircraftImuConfig`、`FAircraftBarometerConfig`、`FAircraftGpsConfig`、`FAircraftMagnetometerConfig`、`FAircraftOpticalFlowConfig`、`FAircraftRangefinderConfig`、`FAircraftSensorSuiteConfig` 和 `FAircraftEstimatorConfig` 当前没有运行时实现。飞控仍直接读取 Chaos 真值，而不是带采样率、延迟、量程、偏置和噪声的传感器输出。
+- 当前 LOD、重要性、战斗/开火/受伤通知；
+- 外部约束和必须保留物理标记；
+- 强制重新评估；
+- 手动 DriveMode 覆盖；
+- LOD 变化事件。
 
-这些配置对物理无人机和后续网络预测仍有明确价值，因此保留：采样率和延迟决定反馈时效；噪声、偏置和滤波决定抖动及漂移；GPS/气压计/磁力计/光流融合权重决定位置、高度、航向的长期稳定性。正式接线前不应把它们开放给策划调参，因为修改它们目前不会产生任何效果。
+## 16. 当前运行边界
 
-### 14.4 保留：安全启动与故障保护
+- 状态估计直接使用 Chaos 真值；传感器噪声、延迟和融合配置结构未接入控制运行时；
+- `FAircraftAerodynamicsConfig` 未接入，当前阻尼来自物理资产；
+- `FAircraftFailsafeConfig` 未接入，旋翼权限故障由 FlightController Failure Policy 处理；
+- ReturnToHome 和 AutoLand 目前只提供飞行模式能力，不内置任务规划；
+- Autopilot 不进行导航查询和避障；
+- FollowPath 点必须由外部系统保证有效，PiecewiseLinear 相邻点不能重合；
+- CircleArc 是世界 XY 平面圆弧，角度 0° 指向世界 +X；
+- Orbit 不会因完成一圈而自动结束；
+- Root Motion 只消费 Actor 根 Skeletal Mesh 的 Montage Root Motion。
 
-`UAircraftInputComponent.bStartArmed` 当前未被读取，`UFlightControllerComponent::BeginPlay()` 会直接把运行时状态设为 `Armed`。它表达的“出生时是否解锁”是有效的安全策略，后续应迁移到统一的飞控/世界初始化流程，而不是简单删除。
+## 17. 接入检查清单
 
-`FAircraftFailsafeConfig` 中的指令丢失超时、GPS 丢失宽限、低电量返航、临界电量降落和最大倾角急停也尚未接线。它与当前只处理旋翼控制权不足的 `FFlightControllerFailurePolicyConfig` 不重复；接线后会直接决定失联、失定位和低电量时的行为，因此保留。
-
-### 14.5 保留：分层控制设定值契约
-
-`FVelocitySetpoint`、`FAccelerationSetpoint`、`FAttitudeThrustSetpoint`、`FBodyRateSetpoint` 和 `FAxisCommand` 当前没有实例化。它们描述位置环→速度环→加速度环→姿态环→角速率环之间的强类型数据边界，适合后续拆分控制器、遥测和单元测试。它们不是可调参数，保留不会影响运行时性能。
-
-### 14.6 旋翼身份 = 数组下标
-
-`FailRotor(int32)` 等函数的下标来自 `GetComponents<UAirscrewComponent>` 的迭代顺序。若在蓝图中重排组件，下标含义会变，故障脚本可能失效。生产环境建议用 `RotorName` 稳定标识。
-
----
-
-## 附录：核心公式速查表
-
-| 公式 | 位置 |
-|---|---|
-| PID: $u = K_p e + K_i\int e\,dt + K_d\dot e + K_{ff}ff$ | `AircraftTypes.h:530` |
-| 导数滤波: $\alpha = \Delta t/(1/(2\pi f_c)+\Delta t)$ | `AircraftTypes.h:623` |
-| 悬停倾斜: $\tan\theta = a/g$ | `FlightController.cpp:810` |
-| 目标转速: $\omega = \omega_{idle}+(\omega_{max}-\omega_{idle})c^{exp}$ | `AirscrewComponent.cpp:295` |
-| 一阶响应: $\alpha = 1-e^{-\Delta t/\tau}$ | `AirscrewComponent.cpp:172` |
-| 推力: $T = T_{max}(\omega/\omega_{max})^2 C_T \eta$ | `AirscrewComponent.cpp:178` |
-| 反扭矩: $\tau = T k_\tau \cdot sign$ | `AirscrewComponent.cpp:187` |
-| 偏心力矩: $\tau = \mathbf{r}\times\mathbf{F}$ | `AirscrewComponent.cpp:226` |
-| 雅可比列: $[F_z, -\tau_x, -\tau_y, \tau_z]$ | `FlightController.cpp:1130` |
-| 阻尼伪逆: $\mathbf{u}=\mathbf{J}^T(\mathbf{J}\mathbf{J}^T+\lambda^2\mathbf{I})^{-1}\mathbf{W}$ | `FlightController.cpp:934-962` |
-| 推力反演: $c = ((\sqrt{T/T_{max}}\omega_{max}-\omega_{idle})/(\omega_{max}-\omega_{idle}))^{1/exp}$ | `FlightController.cpp:96-108` |
-| 平衡权限: $\min(\sum^+,\sum^-)$ 若双侧存在 | `FlightController.cpp:111-116` |
-
----
-
-## 附录：关键代码位置索引
-
-| 功能 | 文件 | 行号 |
-|---|---|---|
-| 控制循环主入口 | `FlightControllerComponent.cpp` | 498 |
-| 物理/游戏线程分发 | `FlightControllerComponent.cpp` | 205, 226 |
-| 垂直控制 | `FlightControllerComponent.cpp` | 725 |
-| 期望姿态角 | `FlightControllerComponent.cpp` | 789 |
-| 期望水平加速度 | `FlightControllerComponent.cpp` | 1020 |
-| 期望偏航速率 | `FlightControllerComponent.cpp` | 818 |
-| 期望机体角速率 | `FlightControllerComponent.cpp` | 849 |
-| 力矩指令（速率环） | `FlightControllerComponent.cpp` | 869 |
-| 控制分配主算法 | `FlightControllerComponent.cpp` | 878 |
-| 雅可比列构造 | `FlightControllerComponent.cpp` | 1120 |
-| 分配缓存重建 | `FlightControllerComponent.cpp` | 593 |
-| 线性求解器 | `FlightControllerComponent.cpp` | 118 |
-| 默认 PID 参数 | `FlightControllerComponent.cpp` | 401 |
-| 旋翼状态更新（5 步） | `AirscrewComponent.cpp` | 120 |
-| 推力/反扭矩施加 | `AirscrewComponent.cpp` | 212 |
-| PID 引擎（两种更新） | `AircraftTypes.h` | 507, 564 |
-| 抗饱和 | `AircraftTypes.h` | 538 |
-| 导数滤波 | `AircraftTypes.h` | 614 |
-| 所有 UENUM/USTRUCT | `AircraftTypes.h` | 全文 |
-| 输入绑定 | `AircraftInputComponent.cpp` | 52 |
-| 组件装配 | `AircraftPawn.cpp` | 16 |
-
----
-
-*文档基于 AircraftLab 插件源码生成，对应代码版本为当前 `Source/AircraftLab/` 目录。如代码更新请同步修订引用行号。*
-# AircraftCore 模块边界（2026-07-15）
-
-飞行器公共契约已拆分到 `Source/AircraftCore`：
-
-- `AircraftMovementIntent.h`：玩家、GameplayPolicy 与 Autopilot 共用的移动意图。
-- `AutopilotProvider.h`：Autopilot 向飞控提交设定值的接口与数据结构。
-- `AircraftFlightControllerInterface.h`：Autopilot 读取飞控状态、能力限制和物理参考值的窄接口。
-- `AircraftSimulationLODTypes.h` / `AircraftSimulationLODConsumer.h`：与具体飞控和 Autopilot 无关的 LOD 契约。
-
-当前依赖方向为 `AircraftCore ← AircraftAutopilot ← AircraftLab`。`AAircraftPawn` 因此可以在 C++ 中创建
-`UAutopilotComponent`，同时 AircraftAutopilot 不再直接包含或链接 `UFlightControllerComponent`。
-旧脚本类型路径通过 `Config/DefaultAircraftLab.ini` 的 Core Redirect 保持资产兼容。
+1. Actor 根组件是 `USkeletalMeshComponent`，物理资产质量、质心、惯量和碰撞正确。
+2. FlightController 配置了有效 `UFlightControllerProfileAsset`。
+3. 每个 Airscrew 配置有效 Profile、唯一名称、正确位置和交替旋向。
+4. `ForwardAxis` 与模型真实机头方向一致，Up 为局部 +Z。
+5. 玩家 Pawn 已被本地 Controller 占有，IMC 和 IA 均在蓝图赋值。
+6. 自动任务先调用 `SetAutopilotActive(true)`。
+7. Simulation LOD 数组包含任务可能请求的所有 DriveMode。
+8. 导航插件输出世界厘米坐标，FollowPath 至少两个有效点且无相邻重复点。
+9. Root Motion Montage 可在根 Mesh 的 AnimInstance 中通过 Slot 正常播放。
+10. Gameplay 持有 Intent Handle，并处理成功、失败、取消、替换和超时。
