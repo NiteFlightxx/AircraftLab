@@ -529,6 +529,8 @@ Jerk 限制会让实际制动力不能瞬间达到最大值，因此需要额外
 - Orbit 的线速度由 `abs(radius × angular_rate)` 决定；
 - 停止需要取消、替换命令或 Timeout。
 
+此外，持续命令在应用时会把 `MaxDeceleration` 强制设为 `MaxAcceleration`，形成单一对称速率限制，不产生独立制动阶段。因此持续命令中只需调 `MaxAcceleration`。
+
 ### 6.3 到达判据
 
 | 参数 | 默认值 | 调大后的影响 |
@@ -611,6 +613,13 @@ PiecewiseLinear 尖角没有独立的拐角速度参数。减小 CruiseSpeed、�
 | `RadiusCm` | 500 | 环绕半径，必须大于 0 |
 | `AngularRateDegPerSec` | 45 | 正值逆时针，负值顺时针，不能为 0 |
 | `TimeoutSeconds` | 0 | 0 表示持续到取消 |
+
+Orbit 轨迹段自身还支持圈数限制（不在命令结构中，由轨迹段 `UOrbitTrajectorySegment` 持有）：
+
+| 参数 | 默认值 | 作用 |
+|---|---:|---|
+| `bLoopLimitEnabled` | false | 是否启用圈数上限（默认关闭，无限盘旋） |
+| `LoopCount` | 1 | 限定圈数（`bLoopLimitEnabled = true` 时有效） |
 
 线速度：
 
@@ -709,6 +718,19 @@ Direct 没有额外参数，直接使用轨迹名义速度。
 4. 估计抖动先提高 AccelNoise 或降低 ProcessNoise。
 5. 载荷变化跟踪太慢则小幅提高 ProcessNoise。
 6. 激烈机动污染估计时降低 GateSize。
+
+### 7.4 Motion Profile
+
+Motion Profile 的大部分限幅值（`FMotionProfileLimits`：最大速度、加速度、Jerk、偏航率等）不从 Profile 资产配置，而是每帧由 `ApplyIntentMotionLimits` 从当前 Intent 的 `FTrajectoryMotionConstraints` 与飞控硬限制取最小值重新推送。因此调运动限幅应改命令结构中的 `FTrajectoryMotionConstraints`，不是改 `UMotionProfile` 对象上的 `Limits`。
+
+`UMotionProfile` 上有两个不被推送、保留自身默认值的独立增益：
+
+| 参数 | 默认值 | 作用 |
+|---|---:|---|
+| `PositionCorrectionGain` | 1.5 | 位置误差→速度修正的比例增益（1/s）。越大收敛越快但越接近阶跃 |
+| `PositionCorrectionFraction` | 0.5 | 位置闭合修正的最大速度占 `MaxHorizontalSpeed` 的比例 |
+
+位置闭合修正仅在名义速度接近零时（停点/终态设定值）应用，用于把机体拉到精确目标位置。`PositionCorrectionGain` 过大会产生阶跃式修正和超调；过小则到点后残余偏差收敛慢。`PositionCorrectionFraction` 限制修正速度，避免末段冲过目标。
 
 ## 8. Montage 与 Root Motion 参数
 
