@@ -4,6 +4,7 @@
 // 与 Public 头里的 Get* 一一对应。
 
 #include "AircraftAsset/AircraftCollection.h"
+#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 
 #define LOCTEXT_NAMESPACE "AircraftCollection"
 
@@ -152,6 +153,7 @@ namespace UE::AircraftLab::AircraftAsset
 			OutErrors.Add(LOCTEXT("InvalidSolverSubsteps", "Solver substeps must be between 1 and 16."));
 		}
 
+		TSet<FName> MotorNames;
 		TSet<FName> EnabledMotorNames;
 		const int32 MotorCount = MotorName ? MotorName->Num() : 0;
 		for (int32 MotorIndex = 0; MotorIndex < MotorCount; ++MotorIndex)
@@ -162,22 +164,35 @@ namespace UE::AircraftLab::AircraftAsset
 			{
 				OutErrors.Add(FText::Format(LOCTEXT("UnnamedMotor", "Motor {0} has no name."), MotorIndex));
 			}
-			else if (EnabledMotorNames.Contains(Name))
+			else if (MotorNames.Contains(Name))
 			{
 				OutErrors.Add(FText::Format(LOCTEXT("DuplicateMotor", "Motor name '{0}' is duplicated."), FText::FromName(Name)));
 			}
-			else if (bEnabled)
+			else
 			{
-				EnabledMotorNames.Add(Name);
+				MotorNames.Add(Name);
+				if (bEnabled)
+				{
+					EnabledMotorNames.Add(Name);
+				}
 			}
 
 			const float MinRpm = MotorMinRpm && MotorIndex < MotorMinRpm->Num() ? (*MotorMinRpm)[MotorIndex] : 0.0f;
 			const float IdleRpm = MotorIdleRpm && MotorIndex < MotorIdleRpm->Num() ? (*MotorIdleRpm)[MotorIndex] : 0.0f;
 			const float MaxRpm = MotorMaxRpm && MotorIndex < MotorMaxRpm->Num() ? (*MotorMaxRpm)[MotorIndex] : 0.0f;
+			const float SpinUp = MotorSpinUpTimeSeconds && MotorIndex < MotorSpinUpTimeSeconds->Num() ? (*MotorSpinUpTimeSeconds)[MotorIndex] : 0.0f;
+			const float SpinDown = MotorSpinDownTimeSeconds && MotorIndex < MotorSpinDownTimeSeconds->Num() ? (*MotorSpinDownTimeSeconds)[MotorIndex] : 0.0f;
+			const float Exponent = MotorCommandExponent && MotorIndex < MotorCommandExponent->Num() ? (*MotorCommandExponent)[MotorIndex] : 0.0f;
+			const float Slew = MotorMaxCommandSlewPerSecond && MotorIndex < MotorMaxCommandSlewPerSecond->Num() ? (*MotorMaxCommandSlewPerSecond)[MotorIndex] : -1.0f;
 			if (!FMath::IsFinite(MinRpm) || !FMath::IsFinite(IdleRpm) || !FMath::IsFinite(MaxRpm)
 				|| MinRpm < 0.0f || IdleRpm < MinRpm || MaxRpm <= IdleRpm)
 			{
 				OutErrors.Add(FText::Format(LOCTEXT("InvalidMotorRpm", "Motor '{0}' must satisfy 0 <= Min RPM <= Idle RPM < Max RPM."), FText::FromName(Name)));
+			}
+			if (!FMath::IsFinite(SpinUp) || !FMath::IsFinite(SpinDown) || !FMath::IsFinite(Exponent)
+				|| !FMath::IsFinite(Slew) || SpinUp <= 0.0f || SpinDown <= 0.0f || Exponent <= 0.0f || Slew < 0.0f)
+			{
+				OutErrors.Add(FText::Format(LOCTEXT("InvalidMotorDynamics", "Motor '{0}' requires positive response times and command exponent, with non-negative command slew."), FText::FromName(Name)));
 			}
 		}
 
@@ -207,10 +222,10 @@ namespace UE::AircraftLab::AircraftAsset
 
 			const FName LinkedMotor = PropellerMotorName && PropellerIndex < PropellerMotorName->Num()
 				? (*PropellerMotorName)[PropellerIndex] : NAME_None;
-			if (!EnabledMotorNames.Contains(LinkedMotor))
+			if (!MotorNames.Contains(LinkedMotor))
 			{
 				OutErrors.Add(FText::Format(
-					LOCTEXT("MissingPropellerMotor", "Propeller '{0}' references missing or disabled motor '{1}'."),
+					LOCTEXT("MissingPropellerMotor", "Propeller '{0}' references missing motor '{1}'."),
 					FText::FromName(Name), FText::FromName(LinkedMotor)));
 			}
 
@@ -236,12 +251,18 @@ namespace UE::AircraftLab::AircraftAsset
 				? (*PropellerThrustCoefficient)[PropellerIndex] : 0.0f;
 			const float Efficiency = PropellerEfficiency && PropellerIndex < PropellerEfficiency->Num()
 				? (*PropellerEfficiency)[PropellerIndex] : 0.0f;
+			const float ReactionCoefficient = PropellerReactionTorqueCoefficient && PropellerIndex < PropellerReactionTorqueCoefficient->Num()
+				? (*PropellerReactionTorqueCoefficient)[PropellerIndex] : -1.0f;
+			const float AuthorityScale = PropellerControlAuthorityScale && PropellerIndex < PropellerControlAuthorityScale->Num()
+				? (*PropellerControlAuthorityScale)[PropellerIndex] : -1.0f;
 			if (!FMath::IsFinite(MaxThrust) || !FMath::IsFinite(Coefficient) || !FMath::IsFinite(Efficiency)
-				|| MaxThrust <= 0.0f || Coefficient <= 0.0f || Efficiency <= 0.0f)
+				|| !FMath::IsFinite(ReactionCoefficient) || !FMath::IsFinite(AuthorityScale)
+				|| MaxThrust <= 0.0f || Coefficient <= 0.0f || Efficiency <= 0.0f || Efficiency > 1.0f
+				|| ReactionCoefficient < 0.0f || AuthorityScale < 0.0f || AuthorityScale > 1.0f)
 			{
 				OutErrors.Add(FText::Format(LOCTEXT("InvalidPropellerThrust", "Propeller '{0}' requires positive finite thrust, coefficient, and efficiency values."), FText::FromName(Name)));
 			}
-			else
+			else if (EnabledMotorNames.Contains(LinkedMotor))
 			{
 				TotalMaximumThrustN += MaxThrust * Coefficient * Efficiency;
 			}
@@ -300,6 +321,63 @@ namespace UE::AircraftLab::AircraftAsset
 			|| !FMath::IsFinite(ResponseTime) || ResponseTime < 0.0f)
 		{
 			OutErrors.Add(LOCTEXT("InvalidGameFeel", "Input deadzone must be in [0, 1), and stick response time must be non-negative."));
+		}
+
+		const FCollectionAircraftPropertyConstFacade Properties(ManagedArrayCollection);
+		if (Properties.IsValid())
+		{
+			const float MinimumCollective = Properties.GetValue<float>(TEXT("FlightController.MinCollectiveCommand"), 0.0f);
+			const float HoverCollective = Properties.GetValue<float>(TEXT("FlightController.HoverCollectiveCommand"), 0.5f);
+			const float MaximumCollective = Properties.GetValue<float>(TEXT("FlightController.MaxCollectiveCommand"), 1.0f);
+			if (MinimumCollective < 0.0f || MaximumCollective > 1.0f
+				|| MinimumCollective > HoverCollective || HoverCollective > MaximumCollective)
+			{
+				OutErrors.Add(LOCTEXT("InvalidCollectiveOrder", "Flight-controller collective limits must satisfy 0 <= Min <= Hover <= Max <= 1."));
+			}
+
+			const float MinimumCosTilt = Properties.GetValue<float>(TEXT("FlightController.Allocator.MinimumCosTilt"), 0.1f);
+			if (!FMath::IsFinite(MinimumCosTilt) || MinimumCosTilt < 0.05f || MinimumCosTilt > 1.0f)
+			{
+				OutErrors.Add(LOCTEXT("InvalidMinimumCosTilt", "Flight-controller minimum cos tilt must be in [0.05, 1]."));
+			}
+
+			for (int32 PropellerIndex = 0; PropellerIndex < PropellerCount; ++PropellerIndex)
+			{
+				const float CommandScale = Properties.GetValue<float>(
+					*FString::Printf(TEXT("Airscrew.%d.CommandScale"), PropellerIndex), 1.0f);
+				if (!FMath::IsFinite(CommandScale) || CommandScale < 0.0f)
+				{
+					OutErrors.Add(FText::Format(LOCTEXT("InvalidAirscrewCommandScale", "Airscrew {0} command scale must be finite and non-negative."), PropellerIndex));
+				}
+			}
+
+			const int32 LODCount = Properties.GetValue<int32>(TEXT("SimulationLOD.Count"), 0);
+			if (LODCount <= 0 || LODCount > 32)
+			{
+				OutErrors.Add(LOCTEXT("InvalidSimulationLODCount", "Simulation LOD Profile must contain between 1 and 32 entries."));
+			}
+			float PreviousDistance = -1.0f;
+			for (int32 LODIndex = 0; LODIndex < FMath::Clamp(LODCount, 0, 32); ++LODIndex)
+			{
+				const FString Prefix = FString::Printf(TEXT("SimulationLOD.%d."), LODIndex);
+				const FString LODName = Properties.GetStringValue(*(Prefix + TEXT("Name")));
+				const int32 DriveMode = Properties.GetValue<int32>(*(Prefix + TEXT("DriveMode")), -1);
+				const int32 CollisionMode = Properties.GetValue<int32>(*(Prefix + TEXT("CollisionMode")), -1);
+				const float Distance = Properties.GetValue<float>(*(Prefix + TEXT("MaxDistanceCm")), -1.0f);
+				const float SlowInterval = Properties.GetValue<float>(*(Prefix + TEXT("SlowLogicIntervalSeconds")), -1.0f);
+				const float NetFrequency = Properties.GetValue<float>(*(Prefix + TEXT("SuggestedNetUpdateFrequency")), 0.0f);
+				if (LODName.IsEmpty() || DriveMode < 0 || DriveMode > 3 || CollisionMode < 0 || CollisionMode > 2
+					|| !FMath::IsFinite(Distance) || Distance < 0.0f || !FMath::IsFinite(SlowInterval)
+					|| SlowInterval < 0.0f || !FMath::IsFinite(NetFrequency) || NetFrequency < 1.0f)
+				{
+					OutErrors.Add(FText::Format(LOCTEXT("InvalidSimulationLOD", "Simulation LOD {0} contains invalid name, mode, distance, interval, or network frequency."), LODIndex));
+				}
+				if (LODIndex + 1 < LODCount && Distance <= PreviousDistance)
+				{
+					OutErrors.Add(FText::Format(LOCTEXT("UnorderedSimulationLOD", "Simulation LOD {0} maximum distance must be greater than the preceding LOD."), LODIndex));
+				}
+				PreviousDistance = Distance;
+			}
 		}
 
 		return OutErrors.IsEmpty();

@@ -7,11 +7,10 @@
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSolverConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
-#include "Dataflow/AircraftMotorConfigNode.h"
-#include "Dataflow/AircraftPropellerConfigNode.h"
 #include "Dataflow/AircraftBatteryConfigNode.h"
-#include "Dataflow/AircraftPIDConfigNode.h"
-#include "Dataflow/AircraftGameFeelNode.h"
+#include "Dataflow/AircraftAirscrewProfileNode.h"
+#include "Dataflow/AircraftFlightControllerProfileNode.h"
+#include "Dataflow/AircraftSimulationLODProfileNode.h"
 
 #include "AircraftAsset/AircraftAsset.h"
 
@@ -31,11 +30,10 @@ void FAircraftAssetDataflowNodesModule::StartupModule()
 	/* Config 节点（按顶层 → 局部 → 控制器 → 手感的顺序，与典型图布局一致） */
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftSolverConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftFrameConfigNode);
-	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftMotorConfigNode);
-	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftPropellerConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftAirscrewProfileNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftBatteryConfigNode);
-	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftPIDConfigNode);
-	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftGameFeelNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftFlightControllerProfileNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftSimulationLODProfileNode);
 
 	/* Terminal 节点 */
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftAssetTerminalNode);

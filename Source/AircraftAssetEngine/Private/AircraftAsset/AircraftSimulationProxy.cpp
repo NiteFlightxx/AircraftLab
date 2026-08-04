@@ -288,7 +288,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			const float Diag = M[i][i];
 			const float U = (FMath::Abs(Diag) > UE_SMALL_NUMBER) ? (V[i] / Diag) : 0.f;
 			const FDroneRotorDefinition& Rotor = Model.Rotors[i];
-			OutCommands[i] = FMath::Clamp(U, 0.f, Rotor.ControlAuthorityScale);
+			OutCommands[i] = FMath::Clamp(
+				U * FMath::Max(Rotor.CommandScale, 0.0f), 0.f, Rotor.ControlAuthorityScale);
 		}
 
 		// 剩余的 i ≥ NClamped 部分（理论上不应发生）保持 0。
@@ -382,19 +383,19 @@ void FAircraftSimulationProxy::PostConstructor()
 		PositionConfig.PositionGains.X = MakeGains(Config.PositionKp.X, Config.PositionKi.X, Config.PositionKd.X, 0.0f, Config.MaxHorizontalSpeedCmPerSec, 0.0f, 1.0f);
 		PositionConfig.PositionGains.Y = MakeGains(Config.PositionKp.Y, Config.PositionKi.Y, Config.PositionKd.Y, 0.0f, Config.MaxHorizontalSpeedCmPerSec, 0.0f, 1.0f);
 		PositionConfig.PositionGains.Z = MakeGains(Config.PositionKp.Z, Config.PositionKi.Z, Config.PositionKd.Z, 0.0f, Config.MaxClimbRateCmPerSec, 0.0f, 1.0f);
-		PositionConfig.VelocityGains.X = MakeGains(Config.VelocityKp.X, Config.VelocityKi.X, Config.VelocityKd.X, 3000.0f, Config.MaxHorizontalAccelerationCmPerSecSq, Config.DerivativeCutoffHz, 1.0f);
-		PositionConfig.VelocityGains.Y = MakeGains(Config.VelocityKp.Y, Config.VelocityKi.Y, Config.VelocityKd.Y, 3000.0f, Config.MaxHorizontalAccelerationCmPerSecSq, Config.DerivativeCutoffHz, 1.0f);
-		PositionConfig.VelocityGains.Z = MakeGains(Config.VelocityKp.Z, Config.VelocityKi.Z, Config.VelocityKd.Z, 2500.0f, Config.MaxVerticalAccelerationCmPerSecSq, Config.DerivativeCutoffHz, 1.0f);
+		PositionConfig.VelocityGains.X = MakeGains(Config.VelocityKp.X, Config.VelocityKi.X, Config.VelocityKd.X, 3000.0f, Config.MaxHorizontalAccelerationCmPerSecSq, Config.VelocityDerivativeCutoffHz, 1.0f);
+		PositionConfig.VelocityGains.Y = MakeGains(Config.VelocityKp.Y, Config.VelocityKi.Y, Config.VelocityKd.Y, 3000.0f, Config.MaxHorizontalAccelerationCmPerSecSq, Config.VelocityDerivativeCutoffHz, 1.0f);
+		PositionConfig.VelocityGains.Z = MakeGains(Config.VelocityKp.Z, Config.VelocityKi.Z, Config.VelocityKd.Z, 2500.0f, Config.MaxVerticalAccelerationCmPerSecSq, Config.VerticalVelocityDerivativeCutoffHz, 1.0f);
 
 		AttitudeConfig.AngleGains.Roll = MakeGains(Config.AttitudeGains.X, 0.0f, 0.0f, 0.0f, Config.MaxRollRateDegreesPerSec, 0.0f);
 		AttitudeConfig.AngleGains.Pitch = MakeGains(Config.AttitudeGains.Y, 0.0f, 0.0f, 0.0f, Config.MaxPitchRateDegreesPerSec, 0.0f);
 		AttitudeConfig.AngleGains.Yaw = MakeGains(Config.AttitudeGains.Z, 0.0f, 0.0f, 0.0f, Config.MaxYawRateDegreesPerSec, 0.0f);
-		AttitudeConfig.RateGains.Roll = MakeGains(Config.RateKp.X, Config.RateKi.X, Config.RateKd.X, 120.0f, 0.35f, Config.DerivativeCutoffHz);
-		AttitudeConfig.RateGains.Pitch = MakeGains(Config.RateKp.Y, Config.RateKi.Y, Config.RateKd.Y, 120.0f, 0.35f, Config.DerivativeCutoffHz);
-		AttitudeConfig.RateGains.Yaw = MakeGains(Config.RateKp.Z, Config.RateKi.Z, Config.RateKd.Z, 120.0f, 0.20f, Config.DerivativeCutoffHz);
+		AttitudeConfig.RateGains.Roll = MakeGains(Config.RateKp.X, Config.RateKi.X, Config.RateKd.X, 120.0f, 0.35f, Config.RateDerivativeCutoffHz.X);
+		AttitudeConfig.RateGains.Pitch = MakeGains(Config.RateKp.Y, Config.RateKi.Y, Config.RateKd.Y, 120.0f, 0.35f, Config.RateDerivativeCutoffHz.Y);
+		AttitudeConfig.RateGains.Yaw = MakeGains(Config.RateKp.Z, Config.RateKi.Z, Config.RateKd.Z, 120.0f, 0.20f, Config.RateDerivativeCutoffHz.Z);
 
 		AltitudeConfig.AltitudeGains = MakeGains(Config.AltitudeKp, Config.AltitudeKi, Config.AltitudeKd, 0.0f, Config.MaxClimbRateCmPerSec, 0.0f, 1.0f);
-		AltitudeConfig.VerticalVelocityGains = MakeGains(Config.VerticalVelocityKp, Config.VerticalVelocityKi, Config.VerticalVelocityKd, 2500.0f, 0.30f, Config.DerivativeCutoffHz);
+		AltitudeConfig.VerticalVelocityGains = MakeGains(Config.VerticalVelocityKp, Config.VerticalVelocityKi, Config.VerticalVelocityKd, 2500.0f, 0.30f, Config.VerticalVelocityDerivativeCutoffHz);
 
 		ControlLimits.MaxTiltAngleDegrees = Config.MaxTiltAngleDegrees;
 		ControlLimits.MaxYawRateDegreesPerSec = Config.MaxYawRateDegreesPerSec;
@@ -542,7 +543,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		Targets = PendingTargets;
 	}
 
-	// Dataflow GameFeel 节点是输入整形的唯一来源：死区、Expo、响应时间均在 PT 上消费，
+	// Flight Controller Profile 的 Input 分组是输入整形的唯一来源：死区、Expo、响应时间均在 PT 上消费，
 	// 这样输入采样频率不会改变飞控实际看到的曲线。
 	const FAircraftGameFeelRuntimeConfig& GameFeel = SimulationModel->GameFeel;
 	auto ShapeAxis = [&GameFeel](float Value, float Expo)

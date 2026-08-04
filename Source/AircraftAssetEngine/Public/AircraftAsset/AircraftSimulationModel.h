@@ -68,6 +68,35 @@ struct AIRCRAFTASSETENGINE_API FAircraftFlightControllerRuntimeConfig
 	float DerivativeCutoffHz = 15.0f;
 	float AllocationDamping = 0.05f;
 
+	/** Profile 中按职责拆分、由不同驱动后端消费的扩展配置。 */
+	float VelocityDerivativeCutoffHz = 12.0f;
+	FVector3f RateDerivativeCutoffHz = FVector3f(18.0f, 18.0f, 15.0f);
+	float VerticalVelocityDerivativeCutoffHz = 10.0f;
+	float LinearDampingFeedForwardScale = 1.0f;
+	float DampingAccelerationReserveFraction = 0.2f;
+	float AngularDampingFeedForwardScale = 1.0f;
+	float VerticalDampingFeedForwardScale = 1.0f;
+	bool bEnableAttitudeReferenceModel = true;
+	float ReferenceModelNaturalFrequency = 6.0f;
+	float ReferenceModelRateFeedForwardLimitDegPerSec = 100.0f;
+	bool bEnableTiltCompensation = true;
+	float MinimumCosTilt = 0.1f;
+	float HorizontalHoldStickDeadband = 0.08f;
+	float VerticalHoldStickDeadband = 0.08f;
+	float YawHoldStickDeadband = 0.05f;
+	float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
+	bool bControllerEnabledByDefault = true;
+	float ConstraintLinearPositionStrength = 100.0f;
+	float ConstraintLinearVelocityStrength = 20.0f;
+	float ConstraintLinearForceLimit = 0.0f;
+	float ConstraintAngularPositionStrength = 100.0f;
+	float ConstraintAngularVelocityStrength = 20.0f;
+	float ConstraintAngularTorqueLimit = 0.0f;
+	bool bConstraintAccelerationMode = true;
+	bool bKinematicSweepMovement = true;
+	float KinematicPositionCorrectionRate = 8.0f;
+	float KinematicRotationInterpSpeed = 8.0f;
+
 	float GetForwardYawOffsetDegrees() const
 	{
 		switch (ForwardAxis)
@@ -112,6 +141,33 @@ struct AIRCRAFTASSETENGINE_API FAircraftFlightControllerRuntimeConfig
 			+ GetRightAxisBody() * -ControllerTorque.Y
 			+ FVector::UpVector * ControllerTorque.Z;
 	}
+};
+
+/** Dataflow 编译后的单级模拟 LOD 策略。枚举以稳定的 uint8 保存，避免运行时模块依赖编辑器节点类型。 */
+struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODRuntimeSettings
+{
+	FName Name = NAME_None;
+	uint8 DriveMode = 0;
+	float MaxDistanceCm = 6000.0f;
+	bool bRunSlowLogic = true;
+	float SlowLogicIntervalSeconds = 0.0f;
+	uint8 CollisionMode = 2;
+	float SuggestedNetUpdateFrequency = 30.0f;
+	bool bAllowDebugDraw = false;
+	bool bEnableNetworkDormancy = false;
+};
+
+/** Dataflow 编译后的模拟 LOD Profile。 */
+struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODProfileRuntimeConfig
+{
+	float EvaluationIntervalSeconds = 0.25f;
+	int32 MaxEvaluationsPerFrame = 8;
+	float DistanceHysteresisCm = 2000.0f;
+	float MinimumResidenceSeconds = 1.0f;
+	float CombatKeepAliveSeconds = 5.0f;
+	bool bAuthoritySimulationOnly = true;
+	bool bClientProxyUsesDefaultPhysicsReplication = true;
+	TArray<FAircraftSimulationLODRuntimeSettings> LODs;
 };
 
 /** Dataflow 编译后的输入手感参数。 */
@@ -331,6 +387,10 @@ struct AIRCRAFTASSETENGINE_API FDroneRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float ControlAuthorityScale = 1.0f;
 
+	/** 共享型号对最终电机指令的统一标定缩放。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+	float CommandScale = 1.0f;
+
 	/** 电机动态模型参数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
 	FDroneMotorModelConfig Motor;
@@ -400,6 +460,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 	FAircraftBatteryRuntimeConfig Battery;
 	FAircraftFlightControllerRuntimeConfig FlightController;
 	FAircraftGameFeelRuntimeConfig GameFeel;
+	FAircraftSimulationLODProfileRuntimeConfig SimulationLOD;
 
 	/** 旋翼定义（按机架顺序） */
 	TArray<FDroneRotorDefinition> Rotors;
@@ -418,6 +479,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 		Battery = FAircraftBatteryRuntimeConfig();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
 		GameFeel = FAircraftGameFeelRuntimeConfig();
+		SimulationLOD = FAircraftSimulationLODProfileRuntimeConfig();
 		Rotors.Reset();
 	}
 

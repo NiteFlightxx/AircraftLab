@@ -135,21 +135,89 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		if (Properties.IsValid())
 		{
 			OutModel.FlightController.ForwardAxis = static_cast<uint8>(FMath::Clamp(
-				Properties.GetValue<int32>(TEXT("ForwardAxis"), OutModel.FlightController.ForwardAxis), 0, 3));
+				Properties.GetValue<int32>(TEXT("FlightController.ForwardAxis"), OutModel.FlightController.ForwardAxis), 0, 3));
 			OutModel.FlightController.MaxRollRateDegreesPerSec = Properties.GetValue<float>(
-				TEXT("MaxRollRateDegreesPerSec"), OutModel.FlightController.MaxRollRateDegreesPerSec);
+				TEXT("FlightController.MaxRollRateDegreesPerSec"), OutModel.FlightController.MaxRollRateDegreesPerSec);
 			OutModel.FlightController.MaxPitchRateDegreesPerSec = Properties.GetValue<float>(
-				TEXT("MaxPitchRateDegreesPerSec"), OutModel.FlightController.MaxPitchRateDegreesPerSec);
+				TEXT("FlightController.MaxPitchRateDegreesPerSec"), OutModel.FlightController.MaxPitchRateDegreesPerSec);
 			OutModel.FlightController.MaxHorizontalAccelerationCmPerSecSq = Properties.GetValue<float>(
-				TEXT("MaxHorizontalAccelerationCmPerSecSq"), OutModel.FlightController.MaxHorizontalAccelerationCmPerSecSq);
+				TEXT("FlightController.MaxHorizontalAccelerationCmPerSecSq"), OutModel.FlightController.MaxHorizontalAccelerationCmPerSecSq);
 			OutModel.FlightController.MaxVerticalAccelerationCmPerSecSq = Properties.GetValue<float>(
-				TEXT("MaxVerticalAccelerationCmPerSecSq"), OutModel.FlightController.MaxVerticalAccelerationCmPerSecSq);
+				TEXT("FlightController.MaxVerticalAccelerationCmPerSecSq"), OutModel.FlightController.MaxVerticalAccelerationCmPerSecSq);
 			OutModel.FlightController.MinCollectiveCommand = Properties.GetValue<float>(
-				TEXT("MinCollectiveCommand"), OutModel.FlightController.MinCollectiveCommand);
+				TEXT("FlightController.MinCollectiveCommand"), OutModel.FlightController.MinCollectiveCommand);
 			OutModel.FlightController.HoverCollectiveCommand = Properties.GetValue<float>(
-				TEXT("HoverCollectiveCommand"), OutModel.FlightController.HoverCollectiveCommand);
+				TEXT("FlightController.HoverCollectiveCommand"), OutModel.FlightController.HoverCollectiveCommand);
 			OutModel.FlightController.MaxCollectiveCommand = Properties.GetValue<float>(
-				TEXT("MaxCollectiveCommand"), OutModel.FlightController.MaxCollectiveCommand);
+				TEXT("FlightController.MaxCollectiveCommand"), OutModel.FlightController.MaxCollectiveCommand);
+			OutModel.FlightController.VelocityDerivativeCutoffHz = Properties.GetValue<float>(
+				TEXT("FlightController.Position.VelocityDerivativeCutoffHz"), OutModel.FlightController.VelocityDerivativeCutoffHz);
+			OutModel.FlightController.LinearDampingFeedForwardScale = Properties.GetValue<float>(
+				TEXT("FlightController.Position.LinearDampingFeedForwardScale"), OutModel.FlightController.LinearDampingFeedForwardScale);
+			OutModel.FlightController.DampingAccelerationReserveFraction = Properties.GetValue<float>(
+				TEXT("FlightController.Position.DampingAccelerationReserveFraction"), OutModel.FlightController.DampingAccelerationReserveFraction);
+			OutModel.FlightController.RateDerivativeCutoffHz = Properties.GetValue<FVector3f>(
+				TEXT("FlightController.Attitude.RateDerivativeCutoffHz"), OutModel.FlightController.RateDerivativeCutoffHz);
+			OutModel.FlightController.AngularDampingFeedForwardScale = Properties.GetValue<float>(
+				TEXT("FlightController.Attitude.AngularDampingFeedForwardScale"), OutModel.FlightController.AngularDampingFeedForwardScale);
+			OutModel.FlightController.bEnableAttitudeReferenceModel = Properties.GetValue<bool>(
+				TEXT("FlightController.Attitude.EnableReferenceModel"), OutModel.FlightController.bEnableAttitudeReferenceModel);
+			OutModel.FlightController.ReferenceModelNaturalFrequency = Properties.GetValue<float>(
+				TEXT("FlightController.Attitude.ReferenceModelNaturalFrequency"), OutModel.FlightController.ReferenceModelNaturalFrequency);
+			OutModel.FlightController.ReferenceModelRateFeedForwardLimitDegPerSec = Properties.GetValue<float>(
+				TEXT("FlightController.Attitude.ReferenceModelRateFeedForwardLimit"), OutModel.FlightController.ReferenceModelRateFeedForwardLimitDegPerSec);
+			OutModel.FlightController.VerticalVelocityDerivativeCutoffHz = Properties.GetValue<float>(
+				TEXT("FlightController.Altitude.VerticalVelocityDerivativeCutoffHz"), OutModel.FlightController.VerticalVelocityDerivativeCutoffHz);
+			OutModel.FlightController.VerticalDampingFeedForwardScale = Properties.GetValue<float>(
+				TEXT("FlightController.Altitude.VerticalDampingFeedForwardScale"), OutModel.FlightController.VerticalDampingFeedForwardScale);
+			OutModel.FlightController.bEnableTiltCompensation = Properties.GetValue<bool>(
+				TEXT("FlightController.Allocator.EnableTiltCompensation"), OutModel.FlightController.bEnableTiltCompensation);
+			OutModel.FlightController.MinimumCosTilt = Properties.GetValue<float>(
+				TEXT("FlightController.Allocator.MinimumCosTilt"), OutModel.FlightController.MinimumCosTilt);
+			OutModel.FlightController.HorizontalHoldStickDeadband = Properties.GetValue<float>(
+				TEXT("FlightController.Input.HorizontalHoldStickDeadband"), OutModel.FlightController.HorizontalHoldStickDeadband);
+			OutModel.FlightController.VerticalHoldStickDeadband = Properties.GetValue<float>(
+				TEXT("FlightController.Input.VerticalHoldStickDeadband"), OutModel.FlightController.VerticalHoldStickDeadband);
+			OutModel.FlightController.YawHoldStickDeadband = Properties.GetValue<float>(
+				TEXT("FlightController.Input.YawHoldStickDeadband"), OutModel.FlightController.YawHoldStickDeadband);
+			OutModel.FlightController.HorizontalBrakeToHoldSpeedCmPerSec = Properties.GetValue<float>(
+				TEXT("FlightController.Input.HorizontalBrakeToHoldSpeedCmPerSec"), OutModel.FlightController.HorizontalBrakeToHoldSpeedCmPerSec);
+			OutModel.FlightController.bControllerEnabledByDefault = Properties.GetValue<bool>(
+				TEXT("FlightController.Execution.ControllerEnabledByDefault"), OutModel.FlightController.bControllerEnabledByDefault);
+			OutModel.FlightController.ConstraintLinearPositionStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearPositionStrength"), OutModel.FlightController.ConstraintLinearPositionStrength);
+			OutModel.FlightController.ConstraintLinearVelocityStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearVelocityStrength"), OutModel.FlightController.ConstraintLinearVelocityStrength);
+			OutModel.FlightController.ConstraintLinearForceLimit = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearForceLimit"), OutModel.FlightController.ConstraintLinearForceLimit);
+			OutModel.FlightController.ConstraintAngularPositionStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularPositionStrength"), OutModel.FlightController.ConstraintAngularPositionStrength);
+			OutModel.FlightController.ConstraintAngularVelocityStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularVelocityStrength"), OutModel.FlightController.ConstraintAngularVelocityStrength);
+			OutModel.FlightController.ConstraintAngularTorqueLimit = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularTorqueLimit"), OutModel.FlightController.ConstraintAngularTorqueLimit);
+			OutModel.FlightController.bConstraintAccelerationMode = Properties.GetValue<bool>(TEXT("FlightController.Constraint.AccelerationMode"), OutModel.FlightController.bConstraintAccelerationMode);
+			OutModel.FlightController.bKinematicSweepMovement = Properties.GetValue<bool>(TEXT("FlightController.Kinematic.SweepMovement"), OutModel.FlightController.bKinematicSweepMovement);
+			OutModel.FlightController.KinematicPositionCorrectionRate = Properties.GetValue<float>(TEXT("FlightController.Kinematic.PositionCorrectionRate"), OutModel.FlightController.KinematicPositionCorrectionRate);
+			OutModel.FlightController.KinematicRotationInterpSpeed = Properties.GetValue<float>(TEXT("FlightController.Kinematic.RotationInterpSpeed"), OutModel.FlightController.KinematicRotationInterpSpeed);
+
+			OutModel.SimulationLOD.EvaluationIntervalSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.EvaluationIntervalSeconds"), OutModel.SimulationLOD.EvaluationIntervalSeconds);
+			OutModel.SimulationLOD.MaxEvaluationsPerFrame = Properties.GetValue<int32>(TEXT("SimulationLOD.MaxEvaluationsPerFrame"), OutModel.SimulationLOD.MaxEvaluationsPerFrame);
+			OutModel.SimulationLOD.DistanceHysteresisCm = Properties.GetValue<float>(TEXT("SimulationLOD.DistanceHysteresisCm"), OutModel.SimulationLOD.DistanceHysteresisCm);
+			OutModel.SimulationLOD.MinimumResidenceSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.MinimumResidenceSeconds"), OutModel.SimulationLOD.MinimumResidenceSeconds);
+			OutModel.SimulationLOD.CombatKeepAliveSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.CombatKeepAliveSeconds"), OutModel.SimulationLOD.CombatKeepAliveSeconds);
+			OutModel.SimulationLOD.bAuthoritySimulationOnly = Properties.GetValue<bool>(TEXT("SimulationLOD.AuthoritySimulationOnly"), OutModel.SimulationLOD.bAuthoritySimulationOnly);
+			OutModel.SimulationLOD.bClientProxyUsesDefaultPhysicsReplication = Properties.GetValue<bool>(TEXT("SimulationLOD.ClientProxyUsesPhysicsReplication"), OutModel.SimulationLOD.bClientProxyUsesDefaultPhysicsReplication);
+			const int32 LODCount = FMath::Clamp(Properties.GetValue<int32>(TEXT("SimulationLOD.Count"), 0), 0, 32);
+			OutModel.SimulationLOD.LODs.SetNum(LODCount);
+			for (int32 LODIndex = 0; LODIndex < LODCount; ++LODIndex)
+			{
+				FAircraftSimulationLODRuntimeSettings& LOD = OutModel.SimulationLOD.LODs[LODIndex];
+				const FString Prefix = FString::Printf(TEXT("SimulationLOD.%d."), LODIndex);
+				LOD.Name = *Properties.GetStringValue(*(Prefix + TEXT("Name")), LOD.Name.ToString());
+				LOD.DriveMode = static_cast<uint8>(FMath::Clamp(Properties.GetValue<int32>(*(Prefix + TEXT("DriveMode")), LOD.DriveMode), 0, 3));
+				LOD.MaxDistanceCm = Properties.GetValue<float>(*(Prefix + TEXT("MaxDistanceCm")), LOD.MaxDistanceCm);
+				LOD.bRunSlowLogic = Properties.GetValue<bool>(*(Prefix + TEXT("RunSlowLogic")), LOD.bRunSlowLogic);
+				LOD.SlowLogicIntervalSeconds = Properties.GetValue<float>(*(Prefix + TEXT("SlowLogicIntervalSeconds")), LOD.SlowLogicIntervalSeconds);
+				LOD.CollisionMode = static_cast<uint8>(FMath::Clamp(Properties.GetValue<int32>(*(Prefix + TEXT("CollisionMode")), LOD.CollisionMode), 0, 2));
+				LOD.SuggestedNetUpdateFrequency = Properties.GetValue<float>(*(Prefix + TEXT("SuggestedNetUpdateFrequency")), LOD.SuggestedNetUpdateFrequency);
+				LOD.bAllowDebugDraw = Properties.GetValue<bool>(*(Prefix + TEXT("AllowDebugDraw")), LOD.bAllowDebugDraw);
+				LOD.bEnableNetworkDormancy = Properties.GetValue<bool>(*(Prefix + TEXT("EnableNetworkDormancy")), LOD.bEnableNetworkDormancy);
+			}
 		}
 
 		/* Input/game-feel preprocessing */
@@ -222,7 +290,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		{
 			FDroneRotorDefinition Rotor;
 			Rotor.RotorName = (*PropNames)[i];
-			Rotor.bEnabled = true;
 			Rotor.SocketName = (PropSockets && i < PropSockets->Num()) ? (*PropSockets)[i] : NAME_None;
 			Rotor.bUseSocketTransform = (PropUseSockets && i < PropUseSockets->Num()) ? (*PropUseSockets)[i] : false;
 			Rotor.PositionLocalCm = FVector3fToVector(
@@ -239,12 +306,20 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			Rotor.ReactionTorqueCoefficient = (PropKQ && i < PropKQ->Num()) ? (*PropKQ)[i] : 0.03f;
 			Rotor.Efficiency = (PropEff && i < PropEff->Num()) ? (*PropEff)[i] : 1.f;
 			Rotor.ControlAuthorityScale = (PropAuth && i < PropAuth->Num()) ? (*PropAuth)[i] : 1.f;
+			Rotor.CommandScale = Properties.IsValid()
+				? Properties.GetValue<float>(*FString::Printf(TEXT("Airscrew.%d.CommandScale"), i), 1.0f)
+				: 1.0f;
 
 			// 关联同名 Motor；若未指定或找不到，则用默认电机参数。
 			const FName MotorName = (PropMotorNames && i < PropMotorNames->Num()) ? (*PropMotorNames)[i] : NAME_None;
 			if (const FDroneMotorModelConfig* Motor = MotorByName.Find(MotorName))
 			{
+				Rotor.bEnabled = true;
 				Rotor.Motor = *Motor;
+			}
+			else
+			{
+				Rotor.bEnabled = false;
 			}
 
 			OutModel.Rotors.Add(Rotor);

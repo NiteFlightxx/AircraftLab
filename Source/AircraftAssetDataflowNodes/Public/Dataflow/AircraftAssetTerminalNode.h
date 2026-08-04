@@ -36,7 +36,7 @@ public:
 	//~ End FDataflowNode interface
 
 private:
-	/** 计算 Collection 的几何/结构性数据校验和（Import / Solver / Frame / Motors / Propellers / Battery / FlightController / GameFeel）。 */
+	/** 计算 Collection 与三个 Profile 配置层的完整校验和。 */
 	static uint32 ComputeCollectionChecksum(const FManagedArrayCollection& InCollection);
 
 	/** 上一次 Build 时记录的校验和，用于检测几何/结构变化。 */

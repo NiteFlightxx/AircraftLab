@@ -11,11 +11,10 @@
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSolverConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
-#include "Dataflow/AircraftMotorConfigNode.h"
-#include "Dataflow/AircraftPropellerConfigNode.h"
 #include "Dataflow/AircraftBatteryConfigNode.h"
-#include "Dataflow/AircraftPIDConfigNode.h"
-#include "Dataflow/AircraftGameFeelNode.h"
+#include "Dataflow/AircraftAirscrewProfileNode.h"
+#include "Dataflow/AircraftFlightControllerProfileNode.h"
+#include "Dataflow/AircraftSimulationLODProfileNode.h"
 
 #include "Editor.h"
 #include "Subsystems/AssetEditorSubsystem.h"
@@ -221,20 +220,19 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			//           x
 			//     3(CCW)  4(CW)
 			constexpr float DefaultArmLengthCm = 30.0f;
-			const FName DefaultMotorName(TEXT("Motor"));
 
 			struct FQuadXEntry
 			{
 				FName RotorName;
 				FVector3f Position;
-				EAircraftRotorSpinDirectionNode SpinDirection;
+				EAircraftAirscrewSpinDirection SpinDirection;
 			};
 			const FQuadXEntry QuadXEntries[] =
 			{
-				{ TEXT("Rotor1_FR"), FVector3f( DefaultArmLengthCm, -DefaultArmLengthCm, 0.f), EAircraftRotorSpinDirectionNode::CounterClockwise },
-				{ TEXT("Rotor2_FL"), FVector3f( DefaultArmLengthCm,  DefaultArmLengthCm, 0.f), EAircraftRotorSpinDirectionNode::Clockwise },
-				{ TEXT("Rotor3_RL"), FVector3f(-DefaultArmLengthCm,  DefaultArmLengthCm, 0.f), EAircraftRotorSpinDirectionNode::CounterClockwise },
-				{ TEXT("Rotor4_RR"), FVector3f(-DefaultArmLengthCm, -DefaultArmLengthCm, 0.f), EAircraftRotorSpinDirectionNode::Clockwise },
+				{ TEXT("Rotor1_FR"), FVector3f( DefaultArmLengthCm, -DefaultArmLengthCm, 0.f), EAircraftAirscrewSpinDirection::CounterClockwise },
+				{ TEXT("Rotor2_FL"), FVector3f( DefaultArmLengthCm,  DefaultArmLengthCm, 0.f), EAircraftAirscrewSpinDirection::Clockwise },
+				{ TEXT("Rotor3_RL"), FVector3f(-DefaultArmLengthCm,  DefaultArmLengthCm, 0.f), EAircraftAirscrewSpinDirection::CounterClockwise },
+				{ TEXT("Rotor4_RR"), FVector3f(-DefaultArmLengthCm, -DefaultArmLengthCm, 0.f), EAircraftAirscrewSpinDirection::Clockwise },
 			};
 
 			int32 NodeIndex = 0;
@@ -279,64 +277,39 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.GroundEffectStrength = 0.15f;
 				});
 
-			/* ---------- 4. Motors 节点（4 个默认电机） ---------- */
-			const FCreatedTemplateNode MotorNode = AddConfiguredTemplateNode<FAircraftMotorConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftMotorConfig"),
-				NodeIndex++,
-				[QuadXCount = static_cast<int32>(UE_ARRAY_COUNT(QuadXEntries))](FAircraftMotorConfigNode& Node)
-				{
-					Node.Motors.Reset();
-					Node.Motors.Reserve(QuadXCount);
-					for (int32 i = 0; i < QuadXCount; ++i)
-					{
-						FAircraftMotorEntry Entry;
-						Entry.Name = *FString::Printf(TEXT("Motor%d"), i + 1);
-						Entry.bEnabled = true;
-						Entry.MinRpm = 0.f;
-						Entry.IdleRpm = 1500.f;
-						Entry.MaxRpm = 12000.f;
-						Entry.SpinUpTimeSeconds = 0.06f;
-						Entry.SpinDownTimeSeconds = 0.10f;
-						Entry.CommandExponent = 2.f;
-						Entry.MaxCommandSlewPerSecond = 8.f;
-						Node.Motors.Add(Entry);
-					}
-				});
-
-			/* ---------- 5. Propellers 节点（4 个默认旋翼） ---------- */
+			/* ---------- 4. Airscrew Profile（型号只配置一次，安装实例引用型号） ---------- */
 			TArray<FQuadXEntry> QuadXEntriesCopy(QuadXEntries, UE_ARRAY_COUNT(QuadXEntries));
-			const FCreatedTemplateNode PropellerNode = AddConfiguredTemplateNode<FAircraftPropellerConfigNode>(
+			const FCreatedTemplateNode AirscrewNode = AddConfiguredTemplateNode<FAircraftAirscrewProfileNode>(
 				DataflowAsset,
-				TEXT("AircraftPropellerConfig"),
+				TEXT("AircraftAirscrewProfile"),
 				NodeIndex++,
-				[QuadXEntriesCopy](FAircraftPropellerConfigNode& Node)
+				[QuadXEntriesCopy](FAircraftAirscrewProfileNode& Node)
 				{
-					Node.Propellers.Reset();
-					Node.Propellers.Reserve(QuadXEntriesCopy.Num());
-					for (int32 i = 0; i < QuadXEntriesCopy.Num(); ++i)
+					Node.Profiles.SetNum(1);
+					Node.Profiles[0].Name = TEXT("DefaultAirscrew");
+					Node.Profiles[0].ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
+					Node.Profiles[0].MaxThrustForce = 9.f;
+					Node.Profiles[0].ThrustCoefficient = 1.f;
+					Node.Profiles[0].ReactionTorqueCoefficient = 0.03f;
+					Node.Profiles[0].Efficiency = 1.f;
+					Node.Profiles[0].ControlAuthorityScale = 1.f;
+					Node.Profiles[0].CommandScale = 1.f;
+					Node.Installations.Reset();
+					Node.Installations.Reserve(QuadXEntriesCopy.Num());
+					for (const FQuadXEntry& Entry : QuadXEntriesCopy)
 					{
-						const FQuadXEntry& E = QuadXEntriesCopy[i];
-						FAircraftPropellerEntry Entry;
-						Entry.Name = E.RotorName;
-						Entry.MotorName = *FString::Printf(TEXT("Motor%d"), i + 1);
-						Entry.SocketName = NAME_None;
-						Entry.bUseSocketTransform = false;
-						Entry.PositionLocalCm = E.Position;
-						Entry.RotationLocalEulerDeg = FVector3f::ZeroVector;
-						Entry.ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
-						Entry.SpinDirection = E.SpinDirection;
-						Entry.RadiusCm = 12.f;
-						Entry.MaxThrustForce = 9.f;
-						Entry.ThrustCoefficient = 1.f;
-						Entry.ReactionTorqueCoefficient = 0.03f;
-						Entry.Efficiency = 1.f;
-						Entry.ControlAuthorityScale = 1.f;
-						Node.Propellers.Add(Entry);
+						FAircraftAirscrewInstallation Installation;
+						Installation.Name = Entry.RotorName;
+						Installation.ProfileName = TEXT("DefaultAirscrew");
+						Installation.bEnabled = true;
+						Installation.SpinDirection = Entry.SpinDirection;
+						Installation.bUseSocketTransform = false;
+						Installation.PositionLocalCm = Entry.Position;
+						Node.Installations.Add(Installation);
 					}
 				});
 
-			/* ---------- 6. Battery 节点 ---------- */
+			/* ---------- 5. Battery 节点 ---------- */
 			const FCreatedTemplateNode BatteryNode = AddConfiguredTemplateNode<FAircraftBatteryConfigNode>(
 				DataflowAsset,
 				TEXT("AircraftBatteryConfig"),
@@ -350,35 +323,27 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.InternalResistanceOhm = 0.012f;
 				});
 
-			/* ---------- 7. PID 节点 ---------- */
-			const FCreatedTemplateNode PidNode = AddConfiguredTemplateNode<FAircraftPIDConfigNode>(
+			/* ---------- 6. Flight Controller Profile ---------- */
+			const FCreatedTemplateNode FlightControllerNode = AddConfiguredTemplateNode<FAircraftFlightControllerProfileNode>(
 				DataflowAsset,
-				TEXT("AircraftPIDConfig"),
+				TEXT("AircraftFlightControllerProfile"),
 				NodeIndex++,
-				[](FAircraftPIDConfigNode& Node)
+				[](FAircraftFlightControllerProfileNode& Node)
 				{
-					// 默认值已在节点结构体中给出（位置/速度/角度/角速率四级 + 高度通道 + 限幅 + 分配阻尼）。
-					// 模板节点不需要覆盖默认值。
 					(void)Node;
 				});
 
-			/* ---------- 8. GameFeel 节点 ---------- */
-			const FCreatedTemplateNode GameFeelNode = AddConfiguredTemplateNode<FAircraftGameFeelNode>(
+			/* ---------- 7. Simulation LOD Profile ---------- */
+			const FCreatedTemplateNode SimulationLODNode = AddConfiguredTemplateNode<FAircraftSimulationLODProfileNode>(
 				DataflowAsset,
-				TEXT("AircraftGameFeel"),
+				TEXT("AircraftSimulationLODProfile"),
 				NodeIndex++,
-				[](FAircraftGameFeelNode& Node)
+				[](FAircraftSimulationLODProfileNode& Node)
 				{
-					Node.RcExpoRoll = 0.3f;
-					Node.RcExpoPitch = 0.3f;
-					Node.RcExpoYaw = 0.2f;
-					Node.RcExpoThrottle = 0.f;
-					Node.InputDeadzone = 0.05f;
-					Node.StickResponseTimeSeconds = 0.04f;
-					Node.CameraShakeScale = 0.f;
+					(void)Node;
 				});
 
-			/* ---------- 9. Terminal 节点 ---------- */
+			/* ---------- 8. Terminal 节点 ---------- */
 			const FCreatedTemplateNode TerminalNode = AddConfiguredTemplateNode<FAircraftAssetTerminalNode>(
 				DataflowAsset,
 				TEXT("AircraftAssetTerminal"),
@@ -388,17 +353,16 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.AircraftAsset = nullptr;
 				});
 
-			/* ---------- 串联 9 个节点（Collection passthrough 链） ---------- */
+			/* ---------- 串联 8 个节点（Collection passthrough 链） ---------- */
 			TArray<UDataflowEdNode*> NodeChain;
-			NodeChain.Reserve(9);
+			NodeChain.Reserve(8);
 			NodeChain.Add(SourceNode.EdNode);
 			NodeChain.Add(SolverNode.EdNode);
 			NodeChain.Add(FrameNode.EdNode);
-			NodeChain.Add(MotorNode.EdNode);
-			NodeChain.Add(PropellerNode.EdNode);
+			NodeChain.Add(AirscrewNode.EdNode);
 			NodeChain.Add(BatteryNode.EdNode);
-			NodeChain.Add(PidNode.EdNode);
-			NodeChain.Add(GameFeelNode.EdNode);
+			NodeChain.Add(FlightControllerNode.EdNode);
+			NodeChain.Add(SimulationLODNode.EdNode);
 			NodeChain.Add(TerminalNode.EdNode);
 
 			for (int32 ChainIndex = 0; ChainIndex + 1 < NodeChain.Num(); ++ChainIndex)

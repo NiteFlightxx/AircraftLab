@@ -121,20 +121,20 @@ void UAircraftPidTuningTool::RefreshFromAsset()
 	Properties->RateKi = ReadVec3(ConstCol.GetFcRateKi());
 	Properties->RateKd = ReadVec3(ConstCol.GetFcRateKd());
 
-	Properties->AltitudeKp = ReadFloat(ConstCol.GetFcAltitudeKp(), 2.f);
+	Properties->AltitudeKp = ReadFloat(ConstCol.GetFcAltitudeKp(), 1.2f);
 	Properties->AltitudeKi = ReadFloat(ConstCol.GetFcAltitudeKi(), 0.f);
-	Properties->AltitudeKd = ReadFloat(ConstCol.GetFcAltitudeKd(), 0.f);
-	Properties->VerticalVelocityKp = ReadFloat(ConstCol.GetFcVerticalVelocityKp(), 3.f);
-	Properties->VerticalVelocityKi = ReadFloat(ConstCol.GetFcVerticalVelocityKi(), 0.5f);
-	Properties->VerticalVelocityKd = ReadFloat(ConstCol.GetFcVerticalVelocityKd(), 0.1f);
+	Properties->AltitudeKd = ReadFloat(ConstCol.GetFcAltitudeKd(), 0.2f);
+	Properties->VerticalVelocityKp = ReadFloat(ConstCol.GetFcVerticalVelocityKp(), 0.0015f);
+	Properties->VerticalVelocityKi = ReadFloat(ConstCol.GetFcVerticalVelocityKi(), 0.00020f);
+	Properties->VerticalVelocityKd = ReadFloat(ConstCol.GetFcVerticalVelocityKd(), 0.00050f);
 
-	Properties->MaxTiltAngleDegrees = ReadFloat(ConstCol.GetFcMaxTiltAngleDegrees(), 35.f);
-	Properties->MaxYawRateDegreesPerSec = ReadFloat(ConstCol.GetFcMaxYawRateDegreesPerSec(), 180.f);
-	Properties->MaxClimbRateCmPerSec = ReadFloat(ConstCol.GetFcMaxClimbRateCmPerSec(), 400.f);
-	Properties->MaxDescentRateCmPerSec = ReadFloat(ConstCol.GetFcMaxDescentRateCmPerSec(), 250.f);
-	Properties->MaxHorizontalSpeedCmPerSec = ReadFloat(ConstCol.GetFcMaxHorizontalSpeedCmPerSec(), 1200.f);
-	Properties->DerivativeCutoffHz = ReadFloat(ConstCol.GetFcDerivativeCutoffHz(), 80.f);
-	Properties->AllocationDamping = ReadFloat(ConstCol.GetFcAllocationDamping(), 1e-3f);
+	Properties->MaxTiltAngleDegrees = ReadFloat(ConstCol.GetFcMaxTiltAngleDegrees(), 25.f);
+	Properties->MaxYawRateDegreesPerSec = ReadFloat(ConstCol.GetFcMaxYawRateDegreesPerSec(), 90.f);
+	Properties->MaxClimbRateCmPerSec = ReadFloat(ConstCol.GetFcMaxClimbRateCmPerSec(), 300.f);
+	Properties->MaxDescentRateCmPerSec = ReadFloat(ConstCol.GetFcMaxDescentRateCmPerSec(), 200.f);
+	Properties->MaxHorizontalSpeedCmPerSec = ReadFloat(ConstCol.GetFcMaxHorizontalSpeedCmPerSec(), 800.f);
+	Properties->DerivativeCutoffHz = ReadFloat(ConstCol.GetFcDerivativeCutoffHz(), 15.f);
+	Properties->AllocationDamping = ReadFloat(ConstCol.GetFcAllocationDamping(), 0.05f);
 }
 
 void UAircraftPidTuningTool::ApplyToAsset() const
