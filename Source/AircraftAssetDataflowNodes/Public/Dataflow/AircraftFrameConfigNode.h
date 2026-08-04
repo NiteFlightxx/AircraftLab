@@ -26,6 +26,16 @@ enum class EAircraftFrameTypeNode : uint8
 	Custom UMETA(DisplayName = "Custom"),
 };
 
+/** 模型局部前向轴；飞控标准坐标始终为 X=Forward、Y=Right、Z=Up。 */
+UENUM()
+enum class EAircraftForwardAxisNode : uint8
+{
+	PositiveX UMETA(DisplayName = "+X"),
+	PositiveY UMETA(DisplayName = "+Y"),
+	NegativeX UMETA(DisplayName = "-X"),
+	NegativeY UMETA(DisplayName = "-Y"),
+};
+
 /**
  * 机架配置节点：写入 Frame 单元素组的全部字段（机架类型 + 质量惯性 + 气动 + 风场）。
  */
@@ -52,6 +62,10 @@ public:
 	/** 机架布局类型（决定默认旋翼放置）。 */
 	UPROPERTY(EditAnywhere, Category = "Frame")
 	EAircraftFrameTypeNode FrameType = EAircraftFrameTypeNode::QuadX;
+
+	/** 视觉模型的局部机头方向。 */
+	UPROPERTY(EditAnywhere, Category = "Frame")
+	EAircraftForwardAxisNode ForwardAxis = EAircraftForwardAxisNode::PositiveY;
 
 	/** 机体总质量（千克）。 */
 	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (DataflowInput, ClampMin = "0.01"))

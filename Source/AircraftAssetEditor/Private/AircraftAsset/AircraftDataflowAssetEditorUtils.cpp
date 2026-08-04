@@ -11,9 +11,8 @@
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSolverConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
-#include "Dataflow/AircraftBatteryConfigNode.h"
 #include "Dataflow/AircraftAirscrewProfileNode.h"
-#include "Dataflow/AircraftFlightControllerProfileNode.h"
+#include "Dataflow/AircraftFlightControllerConfigNodes.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 
 #include "Editor.h"
@@ -271,6 +270,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				{
 					Node.RootBone = RootBoneName;
 					Node.FrameType = EAircraftFrameTypeNode::QuadX;
+					Node.ForwardAxis = EAircraftForwardAxisNode::PositiveY;
 					Node.MassKg = 1.2f;
 					Node.CenterOfMassOffsetCm = FVector3f::ZeroVector;
 					Node.InertiaDiagonalKgCmSq = FVector3f(5000.f, 5000.f, 9000.f);
@@ -308,31 +308,35 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					}));
 			}
 
-			/* ---------- 8. Battery 节点 ---------- */
-			const FCreatedTemplateNode BatteryNode = AddConfiguredTemplateNode<FAircraftBatteryConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftBatteryConfig"),
-				NodeIndex++,
-				[](FAircraftBatteryConfigNode& Node)
-				{
-					Node.CapacityMilliAmpHour = 2200.f;
-					Node.NominalVoltageV = 14.8f;
-					Node.MinVoltageV = 13.2f;
-					Node.MaxDischargeC = 75.f;
-					Node.InternalResistanceOhm = 0.012f;
-				});
+			/* ---------- 8-15. 单职责飞控配置节点 ---------- */
+			TArray<FCreatedTemplateNode> ControllerConfigNodes;
+			ControllerConfigNodes.Reserve(8);
+			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftFlightControlLimitsConfigNode>(
+				DataflowAsset, TEXT("AircraftFlightControlLimitsConfig"), NodeIndex++,
+				[](FAircraftFlightControlLimitsConfigNode& Node) { (void)Node; }));
+			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftPositionControllerConfigNode>(
+				DataflowAsset, TEXT("AircraftPositionControllerConfig"), NodeIndex++,
+				[](FAircraftPositionControllerConfigNode& Node) { (void)Node; }));
+			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftAttitudeControllerConfigNode>(
+				DataflowAsset, TEXT("AircraftAttitudeControllerConfig"), NodeIndex++,
+				[](FAircraftAttitudeControllerConfigNode& Node) { (void)Node; }));
+			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftAltitudeControllerConfigNode>(
+				DataflowAsset, TEXT("AircraftAltitudeControllerConfig"), NodeIndex++,
+				[](FAircraftAltitudeControllerConfigNode& Node) { (void)Node; }));
+			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftControlAllocatorConfigNode>(
+				DataflowAsset, TEXT("AircraftControlAllocatorConfig"), NodeIndex++,
+				[](FAircraftControlAllocatorConfigNode& Node) { (void)Node; }));
+			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftControllerInputConfigNode>(
+				DataflowAsset, TEXT("AircraftControllerInputConfig"), NodeIndex++,
+				[](FAircraftControllerInputConfigNode& Node) { (void)Node; }));
+			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftConstraintSimulationConfigNode>(
+				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), NodeIndex++,
+				[](FAircraftConstraintSimulationConfigNode& Node) { (void)Node; }));
+			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftKinematicSimulationConfigNode>(
+				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), NodeIndex++,
+				[](FAircraftKinematicSimulationConfigNode& Node) { (void)Node; }));
 
-			/* ---------- 9. Flight Controller Profile ---------- */
-			const FCreatedTemplateNode FlightControllerNode = AddConfiguredTemplateNode<FAircraftFlightControllerProfileNode>(
-				DataflowAsset,
-				TEXT("AircraftFlightControllerProfile"),
-				NodeIndex++,
-				[](FAircraftFlightControllerProfileNode& Node)
-				{
-					(void)Node;
-				});
-
-			/* ---------- 10-13. 每个 Collection LOD 一个独立 Profile 节点 ---------- */
+			/* ---------- 16-19. 每个 Collection LOD 一个独立 Profile 节点 ---------- */
 			struct FDefaultLodEntry
 			{
 				FName Name;
@@ -363,7 +367,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					}));
 			}
 
-			/* ---------- 14. Terminal 节点 ---------- */
+			/* ---------- 20. Terminal 节点 ---------- */
 			const FCreatedTemplateNode TerminalNode = AddConfiguredTemplateNode<FAircraftAssetTerminalNode>(
 				DataflowAsset,
 				TEXT("AircraftAssetTerminal"),
@@ -375,7 +379,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 
 			/* ---------- 串联配置节点，并把结果送入四个独立的 Terminal LOD 输入 ---------- */
 			TArray<UDataflowEdNode*> NodeChain;
-			NodeChain.Reserve(9);
+			NodeChain.Reserve(15);
 			NodeChain.Add(SourceNode.EdNode);
 			NodeChain.Add(SolverNode.EdNode);
 			NodeChain.Add(FrameNode.EdNode);
@@ -383,8 +387,10 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			{
 				NodeChain.Add(AirscrewNode.EdNode);
 			}
-			NodeChain.Add(BatteryNode.EdNode);
-			NodeChain.Add(FlightControllerNode.EdNode);
+			for (const FCreatedTemplateNode& ControllerConfigNode : ControllerConfigNodes)
+			{
+				NodeChain.Add(ControllerConfigNode.EdNode);
+			}
 
 			for (int32 ChainIndex = 0; ChainIndex + 1 < NodeChain.Num(); ++ChainIndex)
 			{
@@ -403,7 +409,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				{
 					ConnectTemplateNodes(
 						DataflowAsset,
-						FlightControllerNode.EdNode,
+						ControllerConfigNodes.Last().EdNode,
 						TEXT("Collection"),
 						SimulationLODNodes[LodIndex].EdNode,
 						TEXT("Collection"));

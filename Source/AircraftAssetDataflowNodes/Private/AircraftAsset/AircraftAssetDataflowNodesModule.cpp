@@ -7,9 +7,8 @@
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSolverConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
-#include "Dataflow/AircraftBatteryConfigNode.h"
 #include "Dataflow/AircraftAirscrewProfileNode.h"
-#include "Dataflow/AircraftFlightControllerProfileNode.h"
+#include "Dataflow/AircraftFlightControllerConfigNodes.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 
 #include "AircraftAsset/AircraftAsset.h"
@@ -31,8 +30,14 @@ void FAircraftAssetDataflowNodesModule::StartupModule()
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftSolverConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftFrameConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftAirscrewProfileNode);
-	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftBatteryConfigNode);
-	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftFlightControllerProfileNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftFlightControlLimitsConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftPositionControllerConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftAttitudeControllerConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftAltitudeControllerConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftControlAllocatorConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftControllerInputConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftConstraintSimulationConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftKinematicSimulationConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftSimulationLODProfileNode);
 
 	/* Terminal 节点 */

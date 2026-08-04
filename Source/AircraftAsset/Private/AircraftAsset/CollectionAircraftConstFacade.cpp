@@ -16,7 +16,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName Frame(TEXT("Frame"));
 		const FName Motors(TEXT("Motors"));
 		const FName Propellers(TEXT("Propellers"));
-		const FName Battery(TEXT("Battery"));
 		const FName FlightController(TEXT("FlightController"));
 		const FName GameFeel(TEXT("GameFeel"));
 	}
@@ -67,12 +66,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
 		const FName PropellerEfficiency(TEXT("Efficiency"));
 		const FName PropellerControlAuthorityScale(TEXT("ControlAuthorityScale"));
-
-		const FName BatteryCapacityMilliAmpHour(TEXT("CapacityMilliAmpHour"));
-		const FName BatteryNominalVoltageV(TEXT("NominalVoltageV"));
-		const FName BatteryMinVoltageV(TEXT("MinVoltageV"));
-		const FName BatteryMaxDischargeC(TEXT("MaxDischargeC"));
-		const FName BatteryInternalResistanceOhm(TEXT("InternalResistanceOhm"));
 
 		const FName FcPositionKp(TEXT("PositionKp"));
 		const FName FcPositionKi(TEXT("PositionKi"));

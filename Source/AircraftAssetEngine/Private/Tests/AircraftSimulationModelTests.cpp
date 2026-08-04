@@ -52,6 +52,15 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("An empty Solver group uses project iteration settings"), ProjectSettingsLOD->bOverrideSolverIterationCounts);
 	TestEqual(TEXT("No override stores a zero solver delta"), ProjectSettingsLOD->SolverAsyncDeltaTime, 0.0f);
 
+	FCollectionAircraftPropertyMutableFacade FrameProperties(Collection);
+	FrameProperties.DefineSchema();
+	const int32 ForwardAxisIndex = FrameProperties.AddProperty(
+		TEXT("Frame.ForwardAxis"), EAircraftCollectionPropertyFlags::Enabled);
+	FrameProperties.SetValue(ForwardAxisIndex, 3);
+	const FAircraftSimulationModel FrameConfigModel(CollectionsWithoutOverride, TEXT("FrameConfig"));
+	TestEqual(TEXT("Frame config owns the runtime forward axis"),
+		FrameConfigModel.GetLodModel(0)->FlightController.ForwardAxis, uint8(3));
+
 	Collection->AddElements(1, AircraftCollectionGroup::Solver);
 	AircraftCollection.UpdateArrays();
 	(*AircraftCollection.GetAsyncFixedTimeStepSize())[0] = 1.0f / 120.0f;

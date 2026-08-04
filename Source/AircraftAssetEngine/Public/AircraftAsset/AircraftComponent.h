@@ -88,9 +88,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Estimator")
 	void GetEstimatedState(FDroneEstimatedState& OutState) const;
 
-	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Battery")
-	void GetBatteryState(FDroneBatteryState& OutState) const;
-
 	/** Gameplay camera systems can consume this normalized motor-load signal; the plugin never drives a camera directly. */
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|GameFeel")
 	float GetCameraShakeIntensity() const;

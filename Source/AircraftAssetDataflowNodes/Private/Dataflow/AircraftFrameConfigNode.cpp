@@ -2,6 +2,7 @@
 
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
+#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftFrameConfigNode)
 
@@ -78,6 +79,15 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	{
 		GeStrengthArr[0] = GetValue(Context, &GroundEffectStrength);
 	}
+
+	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
+	Properties.DefineSchema();
+	int32 ForwardAxisIndex = Properties.GetKeyNameIndex(TEXT("Frame.ForwardAxis"));
+	if (ForwardAxisIndex == INDEX_NONE)
+	{
+		ForwardAxisIndex = Properties.AddProperty(TEXT("Frame.ForwardAxis"), EAircraftCollectionPropertyFlags::Enabled);
+	}
+	Properties.SetValue(ForwardAxisIndex, static_cast<int32>(ForwardAxis));
 
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

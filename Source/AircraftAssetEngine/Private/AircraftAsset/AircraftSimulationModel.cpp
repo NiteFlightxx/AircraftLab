@@ -71,18 +71,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		OutModel.Aero.GroundEffectStartHeightCm = ReadFirst<float>(ConstCollection.GetFrameGroundEffectStartHeightCm(), 80.f);
 		OutModel.Aero.GroundEffectStrength = ReadFirst<float>(ConstCollection.GetFrameGroundEffectStrength(), 0.15f);
 
-		/* Battery */
-		OutModel.Battery.CapacityMilliAmpHour = ReadFirst<float>(
-			ConstCollection.GetBatteryCapacityMilliAmpHour(), 2200.0f);
-		OutModel.Battery.NominalVoltageV = ReadFirst<float>(
-			ConstCollection.GetBatteryNominalVoltageV(), 14.8f);
-		OutModel.Battery.MinVoltageV = ReadFirst<float>(
-			ConstCollection.GetBatteryMinVoltageV(), 13.2f);
-		OutModel.Battery.MaxDischargeC = ReadFirst<float>(
-			ConstCollection.GetBatteryMaxDischargeC(), 75.0f);
-		OutModel.Battery.InternalResistanceOhm = ReadFirst<float>(
-			ConstCollection.GetBatteryInternalResistanceOhm(), 0.012f);
-
 		/* Flight controller. Dataflow values override the authoritative runtime defaults. */
 		OutModel.FlightController.PositionKp = ReadFirst<FVector3f>(
 			ConstCollection.GetFcPositionKp(), OutModel.FlightController.PositionKp);
@@ -135,7 +123,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		if (Properties.IsValid())
 		{
 			OutModel.FlightController.ForwardAxis = static_cast<uint8>(FMath::Clamp(
-				Properties.GetValue<int32>(TEXT("FlightController.ForwardAxis"), OutModel.FlightController.ForwardAxis), 0, 3));
+				Properties.GetValue<int32>(TEXT("Frame.ForwardAxis"), OutModel.FlightController.ForwardAxis), 0, 3));
 			OutModel.FlightController.MaxRollRateDegreesPerSec = Properties.GetValue<float>(
 				TEXT("FlightController.MaxRollRateDegreesPerSec"), OutModel.FlightController.MaxRollRateDegreesPerSec);
 			OutModel.FlightController.MaxPitchRateDegreesPerSec = Properties.GetValue<float>(
@@ -182,8 +170,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.Input.YawHoldStickDeadband"), OutModel.FlightController.YawHoldStickDeadband);
 			OutModel.FlightController.HorizontalBrakeToHoldSpeedCmPerSec = Properties.GetValue<float>(
 				TEXT("FlightController.Input.HorizontalBrakeToHoldSpeedCmPerSec"), OutModel.FlightController.HorizontalBrakeToHoldSpeedCmPerSec);
-			OutModel.FlightController.bControllerEnabledByDefault = Properties.GetValue<bool>(
-				TEXT("FlightController.Execution.ControllerEnabledByDefault"), OutModel.FlightController.bControllerEnabledByDefault);
 			OutModel.FlightController.ConstraintLinearPositionStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearPositionStrength"), OutModel.FlightController.ConstraintLinearPositionStrength);
 			OutModel.FlightController.ConstraintLinearVelocityStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearVelocityStrength"), OutModel.FlightController.ConstraintLinearVelocityStrength);
 			OutModel.FlightController.ConstraintLinearForceLimit = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearForceLimit"), OutModel.FlightController.ConstraintLinearForceLimit);

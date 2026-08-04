@@ -18,7 +18,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FrameGroup(TEXT("Frame"));
 		const FName MotorsGroup(TEXT("Motors"));
 		const FName PropellersGroup(TEXT("Propellers"));
-		const FName BatteryGroup(TEXT("Battery"));
 		const FName FlightControllerGroup(TEXT("FlightController"));
 		const FName GameFeelGroup(TEXT("GameFeel"));
 
@@ -71,13 +70,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
 		const FName PropellerEfficiency(TEXT("Efficiency"));
 		const FName PropellerControlAuthorityScale(TEXT("ControlAuthorityScale"));
-
-		/* Battery attributes */
-		const FName BatteryCapacityMilliAmpHour(TEXT("CapacityMilliAmpHour"));
-		const FName BatteryNominalVoltageV(TEXT("NominalVoltageV"));
-		const FName BatteryMinVoltageV(TEXT("MinVoltageV"));
-		const FName BatteryMaxDischargeC(TEXT("MaxDischargeC"));
-		const FName BatteryInternalResistanceOhm(TEXT("InternalResistanceOhm"));
 
 		/* FlightController attributes */
 		const FName FcPositionKp(TEXT("PositionKp"));
@@ -299,25 +291,6 @@ namespace UE::AircraftLab::AircraftAsset
 				FText::AsNumber(TotalMaximumThrustN), FText::AsNumber(MassKg * 9.80665f)));
 		}
 
-		const float CapacityMilliAmpHour = BatteryCapacityMilliAmpHour && BatteryCapacityMilliAmpHour->Num() > 0
-			? (*BatteryCapacityMilliAmpHour)[0] : 0.0f;
-		const float NominalVoltage = BatteryNominalVoltageV && BatteryNominalVoltageV->Num() > 0
-			? (*BatteryNominalVoltageV)[0] : 0.0f;
-		const float MinimumVoltage = BatteryMinVoltageV && BatteryMinVoltageV->Num() > 0
-			? (*BatteryMinVoltageV)[0] : 0.0f;
-		const float MaximumDischargeC = BatteryMaxDischargeC && BatteryMaxDischargeC->Num() > 0
-			? (*BatteryMaxDischargeC)[0] : 0.0f;
-		const float InternalResistance = BatteryInternalResistanceOhm && BatteryInternalResistanceOhm->Num() > 0
-			? (*BatteryInternalResistanceOhm)[0] : -1.0f;
-		if (!FMath::IsFinite(CapacityMilliAmpHour) || !FMath::IsFinite(NominalVoltage)
-			|| !FMath::IsFinite(MinimumVoltage) || !FMath::IsFinite(MaximumDischargeC)
-			|| !FMath::IsFinite(InternalResistance) || CapacityMilliAmpHour <= 0.0f
-			|| MinimumVoltage <= 0.0f || NominalVoltage <= MinimumVoltage
-			|| MaximumDischargeC <= 0.0f || InternalResistance < 0.0f)
-		{
-			OutErrors.Add(LOCTEXT("InvalidBattery", "Battery requires positive capacity and C-rate, 0 < minimum voltage < nominal voltage, and non-negative internal resistance."));
-		}
-
 		auto IsValidPositiveLimit = [](const TManagedArray<float>* Values)
 		{
 			return Values && Values->Num() > 0 && FMath::IsFinite((*Values)[0]) && (*Values)[0] > 0.0f;
@@ -446,13 +419,6 @@ namespace UE::AircraftLab::AircraftAsset
 		PropellerEfficiency = Collection.FindAttributeTyped<float>(Private::PropellerEfficiency, Private::PropellersGroup);
 		PropellerControlAuthorityScale = Collection.FindAttributeTyped<float>(Private::PropellerControlAuthorityScale, Private::PropellersGroup);
 
-		/* Battery */
-		BatteryCapacityMilliAmpHour = Collection.FindAttributeTyped<float>(Private::BatteryCapacityMilliAmpHour, Private::BatteryGroup);
-		BatteryNominalVoltageV = Collection.FindAttributeTyped<float>(Private::BatteryNominalVoltageV, Private::BatteryGroup);
-		BatteryMinVoltageV = Collection.FindAttributeTyped<float>(Private::BatteryMinVoltageV, Private::BatteryGroup);
-		BatteryMaxDischargeC = Collection.FindAttributeTyped<float>(Private::BatteryMaxDischargeC, Private::BatteryGroup);
-		BatteryInternalResistanceOhm = Collection.FindAttributeTyped<float>(Private::BatteryInternalResistanceOhm, Private::BatteryGroup);
-
 		/* FlightController */
 		FcPositionKp = Collection.FindAttributeTyped<FVector3f>(Private::FcPositionKp, Private::FlightControllerGroup);
 		FcPositionKi = Collection.FindAttributeTyped<FVector3f>(Private::FcPositionKi, Private::FlightControllerGroup);
@@ -580,15 +546,6 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::PropellersGroup, Private::PropellerReactionTorqueCoefficient, float(0));
 		AddAttribute(Private::PropellersGroup, Private::PropellerEfficiency, float(1));
 		AddAttribute(Private::PropellersGroup, Private::PropellerControlAuthorityScale, float(1));
-
-		/* Battery */
-		AddOrFindGroup(Private::BatteryGroup);
-		AddAttribute(Private::BatteryGroup, Private::BatteryCapacityMilliAmpHour, float(0));
-		AddAttribute(Private::BatteryGroup, Private::BatteryNominalVoltageV, float(0));
-		AddAttribute(Private::BatteryGroup, Private::BatteryMinVoltageV, float(0));
-		AddAttribute(Private::BatteryGroup, Private::BatteryMaxDischargeC, float(0));
-		AddAttribute(Private::BatteryGroup, Private::BatteryInternalResistanceOhm, float(0));
-		EnsureSingleElement(Private::BatteryGroup);
 
 		/* FlightController */
 		AddOrFindGroup(Private::FlightControllerGroup);

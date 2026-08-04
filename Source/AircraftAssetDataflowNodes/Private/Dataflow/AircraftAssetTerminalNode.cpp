@@ -131,14 +131,6 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetPropellerEfficiency());
 	AccumulateArray(Facade.GetPropellerControlAuthorityScale());
 
-	/* Battery：电池容量 / 电压决定续航，但不会改变运行时模型结构。
-	 * 仍纳入校验和以便 PID 重算时可获取最新参数。 */
-	AccumulateArray(Facade.GetBatteryCapacityMilliAmpHour());
-	AccumulateArray(Facade.GetBatteryNominalVoltageV());
-	AccumulateArray(Facade.GetBatteryMinVoltageV());
-	AccumulateArray(Facade.GetBatteryMaxDischargeC());
-	AccumulateArray(Facade.GetBatteryInternalResistanceOhm());
-
 	/* FlightController：PID 增益本身是属性而非结构，但限幅与分配阻尼会
 	 * 影响 SimulationProxy 的初始化路径，需要触发重建。 */
 	AccumulateArray(Facade.GetFcPositionKp());

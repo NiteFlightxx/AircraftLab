@@ -14,16 +14,6 @@ class UPhysicsAsset;
 class USkeletalMesh;
 struct FManagedArrayCollection;
 
-/** Dataflow 编译后的电池参数。当前作为运行时只读数据保留，供电量模型和 Gameplay 查询使用。 */
-struct AIRCRAFTASSETENGINE_API FAircraftBatteryRuntimeConfig
-{
-	float CapacityMilliAmpHour = 2200.0f;
-	float NominalVoltageV = 14.8f;
-	float MinVoltageV = 13.2f;
-	float MaxDischargeC = 75.0f;
-	float InternalResistanceOhm = 0.012f;
-};
-
 /**
  * Dataflow 编译后的飞控参数快照。
  *
@@ -32,7 +22,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftBatteryRuntimeConfig
  */
 struct AIRCRAFTASSETENGINE_API FAircraftFlightControllerRuntimeConfig
 {
-	/** 0=+X, 1=+Y, 2=-X, 3=-Y。默认遵循权威飞控的 +Y 机头约定。 */
+	/** 来自 AircraftFrameConfig：0=+X, 1=+Y, 2=-X, 3=-Y。 */
 	uint8 ForwardAxis = 1;
 
 	FVector3f PositionKp = FVector3f(0.40f, 0.40f, 0.0f);
@@ -85,7 +75,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftFlightControllerRuntimeConfig
 	float VerticalHoldStickDeadband = 0.08f;
 	float YawHoldStickDeadband = 0.05f;
 	float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
-	bool bControllerEnabledByDefault = true;
 	float ConstraintLinearPositionStrength = 100.0f;
 	float ConstraintLinearVelocityStrength = 20.0f;
 	float ConstraintLinearForceLimit = 0.0f;
@@ -454,8 +443,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	/** 气动 */
 	FDroneAerodynamicsConfig Aero;
 
-	/** 电池、飞控和输入手感的运行时只读快照。 */
-	FAircraftBatteryRuntimeConfig Battery;
+	/** 飞控和输入手感的运行时只读快照。 */
 	FAircraftFlightControllerRuntimeConfig FlightController;
 	FAircraftGameFeelRuntimeConfig GameFeel;
 
@@ -475,7 +463,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 		ProjectionSolverIterationCount = 1;
 		Mass = FDroneMassProperties();
 		Aero = FDroneAerodynamicsConfig();
-		Battery = FAircraftBatteryRuntimeConfig();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
 		GameFeel = FAircraftGameFeelRuntimeConfig();
 		Rotors.Reset();

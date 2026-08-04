@@ -12,7 +12,6 @@
 //   Frame              | 1                 | 机架类型 + 质量惯性 + 气动 + 风场 + 地面效应
 //   Motors             | N（电机数）       | 电机一阶滞后参数 + 怠速/最大转速
 //   Propellers         | N（与电机对齐）   | 旋翼位置/方向/旋向 + 推力/反扭矩系数
-//   Battery            | 1                 | 容量、电压、放电倍率、内阻
 //   FlightController   | 1                 | 串级 PID 12 通道增益 + 限幅 + 控制器配置
 //   GameFeel           | 1                 | RC 曲线、死区、手感倾角与悬停油门
 
@@ -104,13 +103,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* GetPropellerReactionTorqueCoefficient() const { return PropellerReactionTorqueCoefficient; }
 		const TManagedArray<float>* GetPropellerEfficiency() const { return PropellerEfficiency; }
 		const TManagedArray<float>* GetPropellerControlAuthorityScale() const { return PropellerControlAuthorityScale; }
-
-		/* ------------------------- Battery group (1 element) ------------------------- */
-		const TManagedArray<float>* GetBatteryCapacityMilliAmpHour() const { return BatteryCapacityMilliAmpHour; }
-		const TManagedArray<float>* GetBatteryNominalVoltageV() const { return BatteryNominalVoltageV; }
-		const TManagedArray<float>* GetBatteryMinVoltageV() const { return BatteryMinVoltageV; }
-		const TManagedArray<float>* GetBatteryMaxDischargeC() const { return BatteryMaxDischargeC; }
-		const TManagedArray<float>* GetBatteryInternalResistanceOhm() const { return BatteryInternalResistanceOhm; }
 
 		/* ------------------------- FlightController group (1 element) ------------------------- */
 		// 串级 PID（Position→Velocity→Angle→Rate）。每个 FVector3f 编码一个三轴增益（X/Y/Z 或 Roll/Pitch/Yaw）。
@@ -208,13 +200,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* PropellerReactionTorqueCoefficient = nullptr;
 		const TManagedArray<float>* PropellerEfficiency = nullptr;
 		const TManagedArray<float>* PropellerControlAuthorityScale = nullptr;
-
-		/* Battery */
-		const TManagedArray<float>* BatteryCapacityMilliAmpHour = nullptr;
-		const TManagedArray<float>* BatteryNominalVoltageV = nullptr;
-		const TManagedArray<float>* BatteryMinVoltageV = nullptr;
-		const TManagedArray<float>* BatteryMaxDischargeC = nullptr;
-		const TManagedArray<float>* BatteryInternalResistanceOhm = nullptr;
 
 		/* FlightController */
 		const TManagedArray<FVector3f>* FcPositionKp = nullptr;
@@ -351,12 +336,6 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerReactionTorqueCoefficient)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerEfficiency)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerControlAuthorityScale)
-
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryCapacityMilliAmpHour)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryNominalVoltageV)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryMinVoltageV)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryMaxDischargeC)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, BatteryInternalResistanceOhm)
 
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcPositionKp)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcPositionKi)

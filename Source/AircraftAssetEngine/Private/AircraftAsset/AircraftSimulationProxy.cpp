@@ -439,17 +439,6 @@ void FAircraftSimulationProxy::PostConstructor()
 	VerticalVelocityPidState.Reset();
 	FilteredPilotInput.ResetAxes();
 	CameraShakeIntensity.store(0.0f, std::memory_order_relaxed);
-	RemainingBatteryCapacityMilliAmpHour = ActiveLodModel
-		? FMath::Max(ActiveLodModel->Battery.CapacityMilliAmpHour, 0.0f)
-		: 0.0f;
-	{
-		FScopeLock Lock(&OutputCriticalSection);
-		LatestBattery.StateOfCharge = RemainingBatteryCapacityMilliAmpHour > 0.0f ? 1.0f : 0.0f;
-		LatestBattery.RemainingCapacityMilliAmpHour = RemainingBatteryCapacityMilliAmpHour;
-		LatestBattery.VoltageV = ActiveLodModel ? ActiveLodModel->Battery.NominalVoltageV : 0.0f;
-		LatestBattery.CurrentA = 0.0f;
-		LatestBattery.AvailableThrustScale = 1.0f;
-	}
 
 	CurrentArmState.store(static_cast<uint8>(EDroneArmState::Disarmed), std::memory_order_relaxed);
 }
@@ -490,12 +479,6 @@ void FAircraftSimulationProxy::GetEstimatedState_GameThread(FDroneEstimatedState
 void FAircraftSimulationProxy::SetGroundDistance_GameThread(float DistanceCm)
 {
 	GroundDistanceCm.store(FMath::Max(DistanceCm, 0.0f), std::memory_order_relaxed);
-}
-
-void FAircraftSimulationProxy::GetBatteryState_GameThread(FDroneBatteryState& OutState) const
-{
-	FScopeLock Lock(&OutputCriticalSection);
-	OutState = LatestBattery;
 }
 
 float FAircraftSimulationProxy::GetCameraShakeIntensity_GameThread() const
@@ -928,10 +911,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		Commands.Append(Tmp);
 	}
 
-	// Battery node runtime model. Current draw is derived from aggregate motor load and the configured
-	// maximum C-rate; voltage sag uses the configured internal resistance. The resulting voltage ratio
-	// limits available rotor thrust, so battery parameters are not authoring-only metadata.
-	const FAircraftBatteryRuntimeConfig& BatteryConfig = ActiveLodModel->Battery;
 	float MotorLoad = 0.0f;
 	for (const float Command : Commands)
 	{
@@ -941,29 +920,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	CameraShakeIntensity.store(
 		FMath::Clamp(MotorLoad * FMath::Max(ActiveLodModel->GameFeel.CameraShakeScale, 0.0f), 0.0f, 1.0f),
 		std::memory_order_relaxed);
-	const float CapacityAmpHour = FMath::Max(BatteryConfig.CapacityMilliAmpHour, 0.0f) * 0.001f;
-	const float CurrentA = bMotorsOn ? CapacityAmpHour * FMath::Max(BatteryConfig.MaxDischargeC, 0.0f) * MotorLoad : 0.0f;
-	RemainingBatteryCapacityMilliAmpHour = FMath::Max(
-		RemainingBatteryCapacityMilliAmpHour - CurrentA * DeltaTime * (1000.0f / 3600.0f), 0.0f);
-	const float StateOfCharge = BatteryConfig.CapacityMilliAmpHour > UE_SMALL_NUMBER
-		? FMath::Clamp(RemainingBatteryCapacityMilliAmpHour / BatteryConfig.CapacityMilliAmpHour, 0.0f, 1.0f)
-		: 0.0f;
-	const float OpenCircuitVoltage = FMath::Lerp(
-		FMath::Max(BatteryConfig.MinVoltageV, 0.0f),
-		FMath::Max(BatteryConfig.NominalVoltageV, 0.0f), StateOfCharge);
-	const float LoadedVoltage = FMath::Max(OpenCircuitVoltage - CurrentA * FMath::Max(BatteryConfig.InternalResistanceOhm, 0.0f), 0.0f);
-	const float AvailableThrustScale = RemainingBatteryCapacityMilliAmpHour > UE_SMALL_NUMBER
-		&& BatteryConfig.NominalVoltageV > UE_SMALL_NUMBER
-		? FMath::Square(FMath::Clamp(LoadedVoltage / BatteryConfig.NominalVoltageV, 0.0f, 1.0f))
-		: 0.0f;
-	{
-		FScopeLock Lock(&OutputCriticalSection);
-		LatestBattery.StateOfCharge = StateOfCharge;
-		LatestBattery.RemainingCapacityMilliAmpHour = RemainingBatteryCapacityMilliAmpHour;
-		LatestBattery.VoltageV = LoadedVoltage;
-		LatestBattery.CurrentA = CurrentA;
-		LatestBattery.AvailableThrustScale = AvailableThrustScale;
-	}
 	const float GroundEffectStartHeightCm = FMath::Max(ActiveLodModel->Aero.GroundEffectStartHeightCm, 0.0f);
 	const float GroundDistance = GroundDistanceCm.load(std::memory_order_relaxed);
 	const float GroundEffectAlpha = GroundEffectStartHeightCm > UE_SMALL_NUMBER
@@ -971,7 +927,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		: 0.0f;
 	const float GroundEffectScale = 1.0f
 		+ FMath::Max(ActiveLodModel->Aero.GroundEffectStrength, 0.0f) * FMath::Square(GroundEffectAlpha);
-	const float RotorThrustScale = AvailableThrustScale * GroundEffectScale;
+	const float RotorThrustScale = GroundEffectScale;
 
 	/* ----------------------------------------------------------------------
 	 * 6) 电机一阶滞后 + 把推力/反扭矩作用到 Chaos 刚体

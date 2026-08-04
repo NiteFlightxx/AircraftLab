@@ -25,7 +25,6 @@ namespace UE::AircraftLab::AircraftAsset
 		extern AIRCRAFTASSET_API const FName Frame;
 		extern AIRCRAFTASSET_API const FName Motors;
 		extern AIRCRAFTASSET_API const FName Propellers;
-		extern AIRCRAFTASSET_API const FName Battery;
 		extern AIRCRAFTASSET_API const FName FlightController;
 		extern AIRCRAFTASSET_API const FName GameFeel;
 	}
@@ -84,13 +83,6 @@ namespace UE::AircraftLab::AircraftAsset
 		extern AIRCRAFTASSET_API const FName PropellerReactionTorqueCoefficient;
 		extern AIRCRAFTASSET_API const FName PropellerEfficiency;
 		extern AIRCRAFTASSET_API const FName PropellerControlAuthorityScale;
-
-		/* Battery */
-		extern AIRCRAFTASSET_API const FName BatteryCapacityMilliAmpHour;
-		extern AIRCRAFTASSET_API const FName BatteryNominalVoltageV;
-		extern AIRCRAFTASSET_API const FName BatteryMinVoltageV;
-		extern AIRCRAFTASSET_API const FName BatteryMaxDischargeC;
-		extern AIRCRAFTASSET_API const FName BatteryInternalResistanceOhm;
 
 		/* FlightController */
 		extern AIRCRAFTASSET_API const FName FcPositionKp;
@@ -232,13 +224,6 @@ namespace UE::AircraftLab::AircraftAsset
 		TConstArrayView<float> GetPropellerReactionTorqueCoefficient() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerReactionTorqueCoefficient()); }
 		TConstArrayView<float> GetPropellerEfficiency() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerEfficiency()); }
 		TConstArrayView<float> GetPropellerControlAuthorityScale() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerControlAuthorityScale()); }
-
-		/* ------------------------- Battery ------------------------- */
-		TConstArrayView<float> GetBatteryCapacityMilliAmpHour() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetBatteryCapacityMilliAmpHour()); }
-		TConstArrayView<float> GetBatteryNominalVoltageV() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetBatteryNominalVoltageV()); }
-		TConstArrayView<float> GetBatteryMinVoltageV() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetBatteryMinVoltageV()); }
-		TConstArrayView<float> GetBatteryMaxDischargeC() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetBatteryMaxDischargeC()); }
-		TConstArrayView<float> GetBatteryInternalResistanceOhm() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetBatteryInternalResistanceOhm()); }
 
 		/* ------------------------- FlightController ------------------------- */
 		TConstArrayView<FVector3f> GetFcPositionKp() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFcPositionKp()); }
@@ -395,13 +380,6 @@ namespace UE::AircraftLab::AircraftAsset
 		TArrayView<float> GetPropellerReactionTorqueCoefficient()  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerReactionTorqueCoefficient()); }
 		TArrayView<float> GetPropellerEfficiency()                 { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerEfficiency()); }
 		TArrayView<float> GetPropellerControlAuthorityScale()      { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerControlAuthorityScale()); }
-
-		/* Battery */
-		TArrayView<float> GetBatteryCapacityMilliAmpHour()         { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetBatteryCapacityMilliAmpHour()); }
-		TArrayView<float> GetBatteryNominalVoltageV()              { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetBatteryNominalVoltageV()); }
-		TArrayView<float> GetBatteryMinVoltageV()                  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetBatteryMinVoltageV()); }
-		TArrayView<float> GetBatteryMaxDischargeC()                { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetBatteryMaxDischargeC()); }
-		TArrayView<float> GetBatteryInternalResistanceOhm()        { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetBatteryInternalResistanceOhm()); }
 
 		/* FlightController */
 		TArrayView<FVector3f> GetFcPositionKp() { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFcPositionKp()); }

@@ -807,18 +807,6 @@ FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance() const
 	return MutableThis->GetBodyInstance();
 }
 
-void UAircraftComponent::GetBatteryState(FDroneBatteryState& OutState) const
-{
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->GetBatteryState_GameThread(OutState);
-	}
-	else
-	{
-		OutState = FDroneBatteryState();
-	}
-}
-
 float UAircraftComponent::GetCameraShakeIntensity() const
 {
 	return AircraftSimulationProxy.IsValid()

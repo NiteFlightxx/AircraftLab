@@ -1,5 +1,6 @@
 #include "Dataflow/AircraftAirscrewProfileNode.h"
-#include "Dataflow/AircraftFlightControllerProfileNode.h"
+#include "Dataflow/AircraftFlightControllerConfigNodes.h"
+#include "Dataflow/AircraftFrameConfigNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 #include "Misc/AutomationTest.h"
 
@@ -14,11 +15,21 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
 
-	const FAircraftFlightControllerProfileData FlightController;
-	TestEqual(TEXT("Flight controller profile defaults to +Y forward"), FlightController.ForwardAxis, EAircraftProfileForwardAxis::PositiveY);
+	const FAircraftFrameConfigNode Frame(UE::Dataflow::FNodeParameters{});
+	TestEqual(TEXT("Aircraft frame defaults to +Y forward"), Frame.ForwardAxis, EAircraftForwardAxisNode::PositiveY);
+
+	const FAircraftFlightControlLimitsConfig Limits;
 	TestTrue(TEXT("Collective limits are ordered"),
-		FlightController.Limits.MinCollectiveCommand <= FlightController.Limits.HoverCollectiveCommand
-		&& FlightController.Limits.HoverCollectiveCommand <= FlightController.Limits.MaxCollectiveCommand);
+		Limits.MinCollectiveCommand <= Limits.HoverCollectiveCommand
+		&& Limits.HoverCollectiveCommand <= Limits.MaxCollectiveCommand);
+	TestTrue(TEXT("Position controller has positive velocity derivative cutoff"),
+		FAircraftPositionControllerConfig().VelocityDerivativeCutoffHz > 0.0f);
+	TestTrue(TEXT("Attitude controller has a positive reference-model frequency"),
+		FAircraftAttitudeControllerConfig().ReferenceModelNaturalFrequency > 0.0f);
+	TestTrue(TEXT("Altitude controller has a positive vertical-velocity derivative cutoff"),
+		FAircraftAltitudeControllerConfig().VerticalVelocityDerivativeCutoffHz > 0.0f);
+	TestTrue(TEXT("Control allocator has non-negative damping"),
+		FAircraftControlAllocatorConfig().DampedPseudoInverseLambda >= 0.0f);
 
 	const FAircraftAirscrewProfileData Airscrew;
 	TestFalse(TEXT("A single airscrew profile has an identity"), Airscrew.Name.IsNone());
