@@ -3,7 +3,7 @@
 // 多旋翼资产的 schema 容器。FConstAircraftCollection / FAircraftCollection 是 ManagedArrayCollection
 // 的强类型只读/可写包装，按"Group → Attribute → ManagedArray<T>"三层结构暴露所有 schema 字段。
 //
-// schema 全景（多旋翼版，与 Phase 2 计划完全一致）：
+// schema 全景（多旋翼版）：
 //
 //   Group              | 元素数量          | 内容
 //   -------------------+-------------------+--------------------------------------------------
@@ -36,6 +36,8 @@ namespace UE::AircraftLab::AircraftAsset
 		explicit FConstAircraftCollection(const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection);
 
 		bool IsValid() const;
+		/** 验证可构建、可飞行所需的结构关系；不修改 Collection。 */
+		bool Validate(TArray<FText>& OutErrors) const;
 		int32 GetNumElements(const FName& GroupName) const;
 
 		template<typename T>
@@ -142,7 +144,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* GetGameFeelRcExpoYaw() const { return GameFeelRcExpoYaw; }
 		const TManagedArray<float>* GetGameFeelRcExpoThrottle() const { return GameFeelRcExpoThrottle; }
 		const TManagedArray<float>* GetGameFeelInputDeadzone() const { return GameFeelInputDeadzone; }
-		const TManagedArray<float>* GetGameFeelHoverCollectiveCommand() const { return GameFeelHoverCollectiveCommand; }
 		const TManagedArray<float>* GetGameFeelStickResponseTimeSeconds() const { return GameFeelStickResponseTimeSeconds; }
 		const TManagedArray<float>* GetGameFeelCameraShakeScale() const { return GameFeelCameraShakeScale; }
 
@@ -242,7 +243,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* GameFeelRcExpoYaw = nullptr;
 		const TManagedArray<float>* GameFeelRcExpoThrottle = nullptr;
 		const TManagedArray<float>* GameFeelInputDeadzone = nullptr;
-		const TManagedArray<float>* GameFeelHoverCollectiveCommand = nullptr;
 		const TManagedArray<float>* GameFeelStickResponseTimeSeconds = nullptr;
 		const TManagedArray<float>* GameFeelCameraShakeScale = nullptr;
 	};
@@ -365,7 +365,6 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoYaw)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoThrottle)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelInputDeadzone)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelHoverCollectiveCommand)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelStickResponseTimeSeconds)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelCameraShakeScale)
 

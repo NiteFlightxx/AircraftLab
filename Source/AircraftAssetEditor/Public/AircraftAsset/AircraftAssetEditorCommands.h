@@ -22,4 +22,13 @@ public:
 	const static FString ToggleSimulationSuspendedIdentifier;
 	TSharedPtr<FUICommandInfo> ToggleSimulationSuspended;
 
+	const static FString MotorPlacementIdentifier;
+	TSharedPtr<FUICommandInfo> MotorPlacement;
+
+	const static FString PidTuningIdentifier;
+	TSharedPtr<FUICommandInfo> PidTuning;
+
+	const static FString ThrustVectorOrientationIdentifier;
+	TSharedPtr<FUICommandInfo> ThrustVectorOrientation;
+
 };

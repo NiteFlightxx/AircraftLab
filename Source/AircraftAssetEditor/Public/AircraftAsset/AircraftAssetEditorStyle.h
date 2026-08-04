@@ -13,7 +13,7 @@ class FAircraftAssetEditorStyle final : public FSlateStyleSet
 {
 public:
 	static FAircraftAssetEditorStyle& Get();
-	static const FName& GetStyleSetName();
+	static const FName& GetStyleName();
 
 private:
 	FAircraftAssetEditorStyle();

@@ -15,8 +15,7 @@ public:
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 
 	void SetAircraftAsset(UAircraftAssetBase* InAircraftAsset);
-	
-	/*
+
 	void SoftResetSimulation();
 	void HardResetSimulation();
 	void SuspendSimulation();
@@ -24,10 +23,9 @@ public:
 	bool IsSimulationSuspended() const;
 	void SetEnableSimulation(bool bEnable);
 	bool IsSimulationEnabled() const;
-*/
+
 	UAircraftComponent* GetAircraftComponent() const;
 
-	//TODO:动画相关接口
 private:
 	void InitializePreviewAircraft();
 	void UpdateInitialAircraftTransform();

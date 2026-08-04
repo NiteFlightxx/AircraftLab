@@ -5,6 +5,8 @@
 
 #include "AircraftAsset/AircraftCollection.h"
 
+#define LOCTEXT_NAMESPACE "AircraftCollection"
+
 namespace UE::AircraftLab::AircraftAsset
 {
 	namespace Private
@@ -105,7 +107,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName GameFeelRcExpoYaw(TEXT("RcExpoYaw"));
 		const FName GameFeelRcExpoThrottle(TEXT("RcExpoThrottle"));
 		const FName GameFeelInputDeadzone(TEXT("InputDeadzone"));
-		const FName GameFeelHoverCollectiveCommand(TEXT("HoverCollectiveCommand"));
 		const FName GameFeelStickResponseTimeSeconds(TEXT("StickResponseTimeSeconds"));
 		const FName GameFeelCameraShakeScale(TEXT("CameraShakeScale"));
 	}
@@ -123,6 +124,185 @@ namespace UE::AircraftLab::AircraftAsset
 			SkeletalMeshSoftObjectPathName &&
 			PhysicsAssetSoftObjectPathName &&
 			ManagedArrayCollection->NumElements(Private::ImportGroup) > 0;
+	}
+
+	bool FConstAircraftCollection::Validate(TArray<FText>& OutErrors) const
+	{
+		if (!IsValid())
+		{
+			OutErrors.Add(LOCTEXT("InvalidSchema", "Aircraft Collection schema is incomplete."));
+			return false;
+		}
+
+		if (!SkeletalMeshSoftObjectPathName || SkeletalMeshSoftObjectPathName->Num() == 0
+			|| (*SkeletalMeshSoftObjectPathName)[0].IsNull())
+		{
+			OutErrors.Add(LOCTEXT("MissingSkeletalMesh", "A Skeletal Mesh is required."));
+		}
+
+		const float MassKg = FrameMassKg && FrameMassKg->Num() > 0 ? (*FrameMassKg)[0] : 0.0f;
+		if (!FMath::IsFinite(MassKg) || MassKg <= 0.0f)
+		{
+			OutErrors.Add(LOCTEXT("InvalidMass", "Frame mass must be finite and greater than zero."));
+		}
+
+		const int32 SolverSubsteps = MaxSolverSubsteps && MaxSolverSubsteps->Num() > 0 ? (*MaxSolverSubsteps)[0] : 0;
+		if (SolverSubsteps < 1 || SolverSubsteps > 16)
+		{
+			OutErrors.Add(LOCTEXT("InvalidSolverSubsteps", "Solver substeps must be between 1 and 16."));
+		}
+
+		TSet<FName> EnabledMotorNames;
+		const int32 MotorCount = MotorName ? MotorName->Num() : 0;
+		for (int32 MotorIndex = 0; MotorIndex < MotorCount; ++MotorIndex)
+		{
+			const FName Name = (*MotorName)[MotorIndex];
+			const bool bEnabled = !MotorEnabled || MotorIndex >= MotorEnabled->Num() || (*MotorEnabled)[MotorIndex];
+			if (Name.IsNone())
+			{
+				OutErrors.Add(FText::Format(LOCTEXT("UnnamedMotor", "Motor {0} has no name."), MotorIndex));
+			}
+			else if (EnabledMotorNames.Contains(Name))
+			{
+				OutErrors.Add(FText::Format(LOCTEXT("DuplicateMotor", "Motor name '{0}' is duplicated."), FText::FromName(Name)));
+			}
+			else if (bEnabled)
+			{
+				EnabledMotorNames.Add(Name);
+			}
+
+			const float MinRpm = MotorMinRpm && MotorIndex < MotorMinRpm->Num() ? (*MotorMinRpm)[MotorIndex] : 0.0f;
+			const float IdleRpm = MotorIdleRpm && MotorIndex < MotorIdleRpm->Num() ? (*MotorIdleRpm)[MotorIndex] : 0.0f;
+			const float MaxRpm = MotorMaxRpm && MotorIndex < MotorMaxRpm->Num() ? (*MotorMaxRpm)[MotorIndex] : 0.0f;
+			if (!FMath::IsFinite(MinRpm) || !FMath::IsFinite(IdleRpm) || !FMath::IsFinite(MaxRpm)
+				|| MinRpm < 0.0f || IdleRpm < MinRpm || MaxRpm <= IdleRpm)
+			{
+				OutErrors.Add(FText::Format(LOCTEXT("InvalidMotorRpm", "Motor '{0}' must satisfy 0 <= Min RPM <= Idle RPM < Max RPM."), FText::FromName(Name)));
+			}
+		}
+
+		const int32 PropellerCount = PropellerName ? PropellerName->Num() : 0;
+		if (PropellerCount == 0)
+		{
+			OutErrors.Add(LOCTEXT("MissingPropellers", "At least one propeller is required."));
+		}
+
+		TSet<FName> PropellerNames;
+		float TotalMaximumThrustN = 0.0f;
+		for (int32 PropellerIndex = 0; PropellerIndex < PropellerCount; ++PropellerIndex)
+		{
+			const FName Name = (*PropellerName)[PropellerIndex];
+			if (Name.IsNone())
+			{
+				OutErrors.Add(FText::Format(LOCTEXT("UnnamedPropeller", "Propeller {0} has no name."), PropellerIndex));
+			}
+			else if (PropellerNames.Contains(Name))
+			{
+				OutErrors.Add(FText::Format(LOCTEXT("DuplicatePropeller", "Propeller name '{0}' is duplicated."), FText::FromName(Name)));
+			}
+			else
+			{
+				PropellerNames.Add(Name);
+			}
+
+			const FName LinkedMotor = PropellerMotorName && PropellerIndex < PropellerMotorName->Num()
+				? (*PropellerMotorName)[PropellerIndex] : NAME_None;
+			if (!EnabledMotorNames.Contains(LinkedMotor))
+			{
+				OutErrors.Add(FText::Format(
+					LOCTEXT("MissingPropellerMotor", "Propeller '{0}' references missing or disabled motor '{1}'."),
+					FText::FromName(Name), FText::FromName(LinkedMotor)));
+			}
+
+			const bool bUsesSocket = PropellerUseSocketTransform && PropellerIndex < PropellerUseSocketTransform->Num()
+				&& (*PropellerUseSocketTransform)[PropellerIndex];
+			const FName Socket = PropellerSocketName && PropellerIndex < PropellerSocketName->Num()
+				? (*PropellerSocketName)[PropellerIndex] : NAME_None;
+			if (bUsesSocket && Socket.IsNone())
+			{
+				OutErrors.Add(FText::Format(LOCTEXT("MissingPropellerSocket", "Propeller '{0}' uses socket placement but has no socket name."), FText::FromName(Name)));
+			}
+
+			const FVector3f Axis = PropellerThrustAxisLocal && PropellerIndex < PropellerThrustAxisLocal->Num()
+				? (*PropellerThrustAxisLocal)[PropellerIndex] : FVector3f::ZeroVector;
+			if (!FMath::IsFinite(Axis.X) || !FMath::IsFinite(Axis.Y) || !FMath::IsFinite(Axis.Z) || Axis.IsNearlyZero())
+			{
+				OutErrors.Add(FText::Format(LOCTEXT("InvalidPropellerAxis", "Propeller '{0}' must have a finite non-zero thrust axis."), FText::FromName(Name)));
+			}
+
+			const float MaxThrust = PropellerMaxThrustForce && PropellerIndex < PropellerMaxThrustForce->Num()
+				? (*PropellerMaxThrustForce)[PropellerIndex] : 0.0f;
+			const float Coefficient = PropellerThrustCoefficient && PropellerIndex < PropellerThrustCoefficient->Num()
+				? (*PropellerThrustCoefficient)[PropellerIndex] : 0.0f;
+			const float Efficiency = PropellerEfficiency && PropellerIndex < PropellerEfficiency->Num()
+				? (*PropellerEfficiency)[PropellerIndex] : 0.0f;
+			if (!FMath::IsFinite(MaxThrust) || !FMath::IsFinite(Coefficient) || !FMath::IsFinite(Efficiency)
+				|| MaxThrust <= 0.0f || Coefficient <= 0.0f || Efficiency <= 0.0f)
+			{
+				OutErrors.Add(FText::Format(LOCTEXT("InvalidPropellerThrust", "Propeller '{0}' requires positive finite thrust, coefficient, and efficiency values."), FText::FromName(Name)));
+			}
+			else
+			{
+				TotalMaximumThrustN += MaxThrust * Coefficient * Efficiency;
+			}
+		}
+
+		if (MassKg > 0.0f && TotalMaximumThrustN <= MassKg * 9.80665f)
+		{
+			OutErrors.Add(FText::Format(
+				LOCTEXT("InsufficientThrust", "Total maximum thrust ({0} N) must exceed aircraft weight ({1} N)."),
+				FText::AsNumber(TotalMaximumThrustN), FText::AsNumber(MassKg * 9.80665f)));
+		}
+
+		const float CapacityMilliAmpHour = BatteryCapacityMilliAmpHour && BatteryCapacityMilliAmpHour->Num() > 0
+			? (*BatteryCapacityMilliAmpHour)[0] : 0.0f;
+		const float NominalVoltage = BatteryNominalVoltageV && BatteryNominalVoltageV->Num() > 0
+			? (*BatteryNominalVoltageV)[0] : 0.0f;
+		const float MinimumVoltage = BatteryMinVoltageV && BatteryMinVoltageV->Num() > 0
+			? (*BatteryMinVoltageV)[0] : 0.0f;
+		const float MaximumDischargeC = BatteryMaxDischargeC && BatteryMaxDischargeC->Num() > 0
+			? (*BatteryMaxDischargeC)[0] : 0.0f;
+		const float InternalResistance = BatteryInternalResistanceOhm && BatteryInternalResistanceOhm->Num() > 0
+			? (*BatteryInternalResistanceOhm)[0] : -1.0f;
+		if (!FMath::IsFinite(CapacityMilliAmpHour) || !FMath::IsFinite(NominalVoltage)
+			|| !FMath::IsFinite(MinimumVoltage) || !FMath::IsFinite(MaximumDischargeC)
+			|| !FMath::IsFinite(InternalResistance) || CapacityMilliAmpHour <= 0.0f
+			|| MinimumVoltage <= 0.0f || NominalVoltage <= MinimumVoltage
+			|| MaximumDischargeC <= 0.0f || InternalResistance < 0.0f)
+		{
+			OutErrors.Add(LOCTEXT("InvalidBattery", "Battery requires positive capacity and C-rate, 0 < minimum voltage < nominal voltage, and non-negative internal resistance."));
+		}
+
+		auto IsValidPositiveLimit = [](const TManagedArray<float>* Values)
+		{
+			return Values && Values->Num() > 0 && FMath::IsFinite((*Values)[0]) && (*Values)[0] > 0.0f;
+		};
+		auto IsValidNonNegative = [](const TManagedArray<float>* Values)
+		{
+			return Values && Values->Num() > 0 && FMath::IsFinite((*Values)[0]) && (*Values)[0] >= 0.0f;
+		};
+		if (!IsValidPositiveLimit(FcMaxTiltAngleDegrees)
+			|| !IsValidPositiveLimit(FcMaxYawRateDegreesPerSec)
+			|| !IsValidPositiveLimit(FcMaxClimbRateCmPerSec)
+			|| !IsValidPositiveLimit(FcMaxDescentRateCmPerSec)
+			|| !IsValidPositiveLimit(FcMaxHorizontalSpeedCmPerSec)
+			|| !IsValidNonNegative(FcDerivativeCutoffHz)
+			|| !IsValidPositiveLimit(FcAllocationDamping))
+		{
+			OutErrors.Add(LOCTEXT("InvalidFlightControllerLimits", "Flight-controller limits, derivative cutoff, and allocation damping must be finite and greater than zero."));
+		}
+
+		const float Deadzone = GameFeelInputDeadzone && GameFeelInputDeadzone->Num() > 0
+			? (*GameFeelInputDeadzone)[0] : -1.0f;
+		const float ResponseTime = GameFeelStickResponseTimeSeconds && GameFeelStickResponseTimeSeconds->Num() > 0
+			? (*GameFeelStickResponseTimeSeconds)[0] : -1.0f;
+		if (!FMath::IsFinite(Deadzone) || Deadzone < 0.0f || Deadzone >= 1.0f
+			|| !FMath::IsFinite(ResponseTime) || ResponseTime < 0.0f)
+		{
+			OutErrors.Add(LOCTEXT("InvalidGameFeel", "Input deadzone must be in [0, 1), and stick response time must be non-negative."));
+		}
+
+		return OutErrors.IsEmpty();
 	}
 
 	int32 FConstAircraftCollection::GetNumElements(const FName& GroupName) const
@@ -220,7 +400,6 @@ namespace UE::AircraftLab::AircraftAsset
 		GameFeelRcExpoYaw = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoYaw, Private::GameFeelGroup);
 		GameFeelRcExpoThrottle = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoThrottle, Private::GameFeelGroup);
 		GameFeelInputDeadzone = Collection.FindAttributeTyped<float>(Private::GameFeelInputDeadzone, Private::GameFeelGroup);
-		GameFeelHoverCollectiveCommand = Collection.FindAttributeTyped<float>(Private::GameFeelHoverCollectiveCommand, Private::GameFeelGroup);
 		GameFeelStickResponseTimeSeconds = Collection.FindAttributeTyped<float>(Private::GameFeelStickResponseTimeSeconds, Private::GameFeelGroup);
 		GameFeelCameraShakeScale = Collection.FindAttributeTyped<float>(Private::GameFeelCameraShakeScale, Private::GameFeelGroup);
 	}
@@ -358,7 +537,6 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoYaw, float(0));
 		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoThrottle, float(0));
 		AddAttribute(Private::GameFeelGroup, Private::GameFeelInputDeadzone, float(0));
-		AddAttribute(Private::GameFeelGroup, Private::GameFeelHoverCollectiveCommand, float(0.5f));
 		AddAttribute(Private::GameFeelGroup, Private::GameFeelStickResponseTimeSeconds, float(0));
 		AddAttribute(Private::GameFeelGroup, Private::GameFeelCameraShakeScale, float(0));
 		EnsureSingleElement(Private::GameFeelGroup);
@@ -408,3 +586,5 @@ namespace UE::AircraftLab::AircraftAsset
 		}
 	}
 }
+
+#undef LOCTEXT_NAMESPACE

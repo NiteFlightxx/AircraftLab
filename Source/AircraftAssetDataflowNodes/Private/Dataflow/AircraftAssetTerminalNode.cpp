@@ -185,9 +185,27 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetGameFeelRcExpoYaw());
 	AccumulateArray(Facade.GetGameFeelRcExpoThrottle());
 	AccumulateArray(Facade.GetGameFeelInputDeadzone());
-	AccumulateArray(Facade.GetGameFeelHoverCollectiveCommand());
 	AccumulateArray(Facade.GetGameFeelStickResponseTimeSeconds());
 	AccumulateArray(Facade.GetGameFeelCameraShakeScale());
+
+	// Chaos Cloth 把 Collection Property Facade 作为可扩展配置层。键、值、字符串和标记都必须
+	// 进入校验和，否则只修改扩展飞控参数时 Terminal 会错误地认为资产没有变化。
+	const FCollectionAircraftPropertyConstFacade Properties(SharedCollection);
+	if (Properties.IsValid())
+	{
+		for (int32 PropertyIndex = 0; PropertyIndex < Properties.Num(); ++PropertyIndex)
+		{
+			Checksum = HashCombineFast(Checksum, GetTypeHash(Properties.GetKeyName(PropertyIndex)));
+			const FVector3f LowValue = Properties.GetLowValue<FVector3f>(PropertyIndex);
+			const FVector3f HighValue = Properties.GetHighValue<FVector3f>(PropertyIndex);
+			Checksum = FCrc::MemCrc32(&LowValue, sizeof(LowValue), Checksum);
+			Checksum = FCrc::MemCrc32(&HighValue, sizeof(HighValue), Checksum);
+			const FString& StringValue = Properties.GetStringValue(PropertyIndex);
+			Checksum = FCrc::StrCrc32(*StringValue, Checksum);
+			const uint8 PropertyFlags = static_cast<uint8>(Properties.GetFlags(PropertyIndex));
+			Checksum = FCrc::MemCrc32(&PropertyFlags, sizeof(PropertyFlags), Checksum);
+		}
+	}
 
 	return Checksum;
 }
@@ -207,22 +225,35 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 	}
 
 	FManagedArrayCollection AircraftCollection = GetValue(Context, &Collection);
+	const TSharedRef<const FManagedArrayCollection> SharedAircraftCollection = MakeShared<FManagedArrayCollection>(AircraftCollection);
+	const UE::AircraftLab::AircraftAsset::FConstAircraftCollection CollectionFacade(SharedAircraftCollection);
+	TArray<FText> ValidationErrors;
+	if (!CollectionFacade.Validate(ValidationErrors))
+	{
+		for (const FText& ValidationError : ValidationErrors)
+		{
+			Context.Error(ValidationError, this);
+		}
+		return;
+	}
 
 	const uint32 NewChecksum = ComputeCollectionChecksum(AircraftCollection);
-	const bool bGeometryChanged = (NewChecksum != CollectionChecksum);
-
-	if (!bGeometryChanged && !bPropertyStructureChanged)
+	if (NewChecksum == CollectionChecksum && !bPropertyStructureChanged
+		&& AircraftAssetObject->HasValidAircraftSimulationModels())
 	{
-		// 增量路径：当前阶段直接 fall-through 到 Build()；Phase 4 后可以加上"仅属性更新"的快路径
-		// （直接对 SimulationProxy 写新参数而无需重新 Build SimulationModel）。
+		return;
 	}
 
 	TArray<TSharedRef<const FManagedArrayCollection>> Collections;
-	Collections.Add(MakeShared<FManagedArrayCollection>(MoveTemp(AircraftCollection)));
+	Collections.Add(SharedAircraftCollection);
 
 	FText ErrorText;
 	FText VerboseText;
 	AircraftAssetObject->Build(Collections, &ErrorText, &VerboseText);
+	if (!VerboseText.IsEmpty())
+	{
+		Context.Warning(VerboseText, this);
+	}
 
 	CollectionChecksum = NewChecksum;
 	bPropertyStructureChanged = false;

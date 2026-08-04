@@ -25,6 +25,27 @@ class UAircraftComponent;
 class UWorld;
 struct FBodyInstance;
 
+USTRUCT(BlueprintType)
+struct AIRCRAFTASSETENGINE_API FDroneBatteryState
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Battery")
+	float StateOfCharge = 1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Battery")
+	float RemainingCapacityMilliAmpHour = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Battery")
+	float VoltageV = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Battery")
+	float CurrentA = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|Battery")
+	float AvailableThrustScale = 1.0f;
+};
+
 /* ===========================================================================
  *  飞行员摇杆/上层指令（蓝图侧入参）
  * =========================================================================== */
@@ -501,7 +522,7 @@ class FAircraftSimulationSolver;
  *   - PhysicsThread 内单线程执行串级 PID + 控制分配 + 电机一阶滞后动力学；
  *   - 通过 BodyInstance::AddForceAtLocation / AddTorqueInRadians 把结果作用到 Chaos。
  *
- * Phase 1 阶段为骨架，仅声明接口；Phase 4 实现实际算法。
+ * 运行时实现串级控制、控制分配、电机、电池和气动模型。
  */
 class AIRCRAFTASSETENGINE_API FAircraftSimulationProxy : public FDataflowPhysicsSolverProxy
 {
@@ -524,8 +545,11 @@ public:
 	void SetFlightMode_GameThread(EDroneFlightMode InMode);
 	void SetArmRequest_GameThread(bool bArm);
 	void SetEmergencyStop_GameThread(bool bStop);
+	void SetGroundDistance_GameThread(float DistanceCm);
 
 	void GetEstimatedState_GameThread(FDroneEstimatedState& OutState) const;
+	void GetBatteryState_GameThread(FDroneBatteryState& OutState) const;
+	float GetCameraShakeIntensity_GameThread() const;
 	EDroneArmState GetArmState_GameThread() const;
 	EDroneFlightMode GetFlightMode_GameThread() const;
 	//~ End GameThread API
@@ -535,7 +559,7 @@ public:
 	 * 物理线程子步入口。AsyncPhysicsTickComponent 路径下 DeltaTime 是物理子步长（恒定高频），
 	 * 适合直接作为 PID 的离散步长。
 	 */
-	void TickPhysicsThread(float DeltaTime, float SimTime);
+	void TickPhysicsThread(float DeltaTime, float SimTime, float ForceAccumulationScale = 1.0f);
 	//~ End PhysicsThread API
 
 	void SetAircraftBodyInstance(FBodyInstance* BodyInstance);
@@ -566,12 +590,15 @@ private:
 	/* PT → GT 输出缓冲 */
 	mutable FCriticalSection OutputCriticalSection;
 	FDroneEstimatedState LatestEstimated;
+	FDroneBatteryState LatestBattery;
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EDroneArmState::Disarmed) };
 	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EDroneFlightMode::Angle) };
 
 	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
 	std::atomic<float> SimulationTime{ 0.f };
+	std::atomic<float> GroundDistanceCm{ TNumericLimits<float>::Max() };
+	std::atomic<float> CameraShakeIntensity{ 0.0f };
 
 	/* PT 内部 PID 状态（只在 PT 上访问，不需要锁） */
 	FDroneCartesianPidState PositionPidState;
@@ -581,13 +608,15 @@ private:
 	FDronePidState AltitudePidState;
 	FDronePidState VerticalVelocityPidState;
 
-	/* PID 增益（由 Build() 时从 SimulationModel 派生；目前从默认/TODO 注入） */
+	/* Dataflow Build() 编译出的飞控参数；PostConstructor 在 GT 初始化，PT 只读。 */
 	FDronePositionControllerConfig PositionConfig;
 	FDroneAttitudeControllerConfig AttitudeConfig;
 	FDroneAltitudeControllerConfig AltitudeConfig;
 	FDroneControlLimits ControlLimits;
-	float AllocationDamping = 1e-3f;
-	float DerivativeCutoffHz = 80.f;
+	float AllocationDamping = 0.05f;
+	float DerivativeCutoffHz = 15.f;
+	FDronePilotInput FilteredPilotInput;
+	float RemainingBatteryCapacityMilliAmpHour = 0.0f;
 
 	/* 单旋翼运行时状态（与 SimulationModel.Rotors 一一对应，索引一致） */
 	TArray<struct FAircraftRotorRuntimeState> RotorStates;

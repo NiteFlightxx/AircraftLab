@@ -101,7 +101,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName GameFeelRcExpoYaw(TEXT("RcExpoYaw"));
 		const FName GameFeelRcExpoThrottle(TEXT("RcExpoThrottle"));
 		const FName GameFeelInputDeadzone(TEXT("InputDeadzone"));
-		const FName GameFeelHoverCollectiveCommand(TEXT("HoverCollectiveCommand"));
 		const FName GameFeelStickResponseTimeSeconds(TEXT("StickResponseTimeSeconds"));
 		const FName GameFeelCameraShakeScale(TEXT("CameraShakeScale"));
 	}

@@ -33,7 +33,7 @@ struct FAircraftPropellerEntry
 	UPROPERTY(EditAnywhere, Category = "Propeller")
 	FName Name = NAME_None;
 
-	/** 引用 Motors 组中某行的 Name；Phase 4 阶段做交叉验证。 */
+	/** 引用 Motors 组中某行的 Name；Terminal 构建时做交叉验证。 */
 	UPROPERTY(EditAnywhere, Category = "Propeller")
 	FName MotorName = NAME_None;
 

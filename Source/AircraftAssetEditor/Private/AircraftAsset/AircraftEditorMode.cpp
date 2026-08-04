@@ -1,6 +1,7 @@
 #include "AircraftAsset/AircraftEditorMode.h"
 
 #include "AircraftAsset/AircraftAssetEditorPreviewScene.h"
+#include "AircraftAsset/AircraftAssetEditorCommands.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftEditorContextObject.h"
 #include "AircraftAsset/AircraftEditorModeToolkit.h"
@@ -160,11 +161,12 @@ void UAircraftAssetEditorMode::RegisterTools()
 		return;
 	}
 
-	Manager->RegisterToolType(TEXT("AircraftMotorPlacement"),
+	const FAircraftAssetEditorCommands& Commands = FAircraftAssetEditorCommands::Get();
+	RegisterTool(Commands.MotorPlacement, FAircraftAssetEditorCommands::MotorPlacementIdentifier,
 		NewObject<UAircraftMotorPlacementToolBuilder>(Manager));
-	Manager->RegisterToolType(TEXT("AircraftPidTuning"),
+	RegisterTool(Commands.PidTuning, FAircraftAssetEditorCommands::PidTuningIdentifier,
 		NewObject<UAircraftPidTuningToolBuilder>(Manager));
-	Manager->RegisterToolType(TEXT("AircraftThrustVectorOrientation"),
+	RegisterTool(Commands.ThrustVectorOrientation, FAircraftAssetEditorCommands::ThrustVectorOrientationIdentifier,
 		NewObject<UAircraftThrustVectorOrientationToolBuilder>(Manager));
 }
 

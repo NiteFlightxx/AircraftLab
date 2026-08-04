@@ -312,6 +312,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		const FDroneRotorDefinition& Rotor,
 		float NormalizedCommand,
 		float DeltaTime,
+		float AvailableThrustScale,
 		FAircraftRotorRuntimeState& State)
 	{
 		const FDroneMotorModelConfig& Motor = Rotor.Motor;
@@ -339,12 +340,12 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		const float Alpha = DeltaTime / (Tau + DeltaTime);
 		State.CurrentRpm += (TargetRpm - State.CurrentRpm) * Alpha;
 
-		// 推力 F = kT · ω²；这里用归一化形式：F = MaxThrust · (ω/ω_max)²·CommandExp 简化为
-		// F = MaxThrust · u_eff，其中 u_eff = (ω - ω_idle)/(ω_max - ω_idle)。
-		// 物理表达上等价于 kT · ω²，差异被 ThrustCoefficient 吸收。
-		const float OmegaSpan = FMath::Max(Motor.MaxRpm - Motor.IdleRpm, 1.f);
-		const float UEff = FMath::Clamp((State.CurrentRpm - Motor.IdleRpm) / OmegaSpan, 0.f, 1.f);
-		State.LastThrustForce = Rotor.MaxThrustForce * Rotor.Efficiency * Rotor.ThrustCoefficient * UEff;
+		// 与权威 AirscrewComponent 一致：T = T_max * (RPM / RPM_max)^2 * C_T * efficiency。
+		const float MaxRpm = FMath::Max(Motor.MaxRpm, 1.0f);
+		const float ThrustRatio = FMath::Clamp(State.CurrentRpm / MaxRpm, 0.0f, 1.0f);
+		State.LastThrustForce = Rotor.GetEffectiveMaxThrust() * FMath::Square(ThrustRatio)
+			* FMath::Max(Rotor.ThrustCoefficient, 0.0f)
+			* FMath::Max(AvailableThrustScale, 0.0f);
 		State.LastReactionTorque = State.LastThrustForce * Rotor.GetEffectiveReactionTorqueCoefficient();
 	}
 }
@@ -356,25 +357,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 FAircraftSimulationProxy::FAircraftSimulationProxy(const UAircraftComponent& InAircraftComponent)
 	: AircraftComponent(InAircraftComponent)
 {
-	// 默认 PID 增益（对应 PIDConfigNode 默认值）
-	PositionConfig.PositionGains.X = FDronePidGains(2.f, 0.f, 0.f, 0.f, 1000.f);
-	PositionConfig.PositionGains.Y = FDronePidGains(2.f, 0.f, 0.f, 0.f, 1000.f);
-	PositionConfig.PositionGains.Z = FDronePidGains(2.f, 0.f, 0.f, 0.f, 1000.f);
-	PositionConfig.VelocityGains.X = FDronePidGains(3.f, 0.5f, 0.1f, 400.f, 1000.f);
-	PositionConfig.VelocityGains.Y = FDronePidGains(3.f, 0.5f, 0.1f, 400.f, 1000.f);
-	PositionConfig.VelocityGains.Z = FDronePidGains(3.f, 0.5f, 0.1f, 400.f, 1000.f);
-
-	AttitudeConfig.AngleGains.Roll  = FDronePidGains(6.f, 0.f, 0.f, 0.f, 360.f);
-	AttitudeConfig.AngleGains.Pitch = FDronePidGains(6.f, 0.f, 0.f, 0.f, 360.f);
-	AttitudeConfig.AngleGains.Yaw   = FDronePidGains(4.f, 0.f, 0.f, 0.f, 180.f);
-	AttitudeConfig.RateGains.Roll   = FDronePidGains(0.15f, 0.10f, 0.005f, 100.f, 5.f);
-	AttitudeConfig.RateGains.Pitch  = FDronePidGains(0.15f, 0.10f, 0.005f, 100.f, 5.f);
-	AttitudeConfig.RateGains.Yaw    = FDronePidGains(0.20f, 0.15f, 0.000f, 100.f, 5.f);
-
-	for (FDronePidGains* Gains : { &AttitudeConfig.RateGains.Roll, &AttitudeConfig.RateGains.Pitch, &AttitudeConfig.RateGains.Yaw })
-	{
-		Gains->DerivativeCutoffHz = DerivativeCutoffHz;
-	}
 }
 
 FAircraftSimulationProxy::~FAircraftSimulationProxy() = default;
@@ -384,6 +366,50 @@ void FAircraftSimulationProxy::PostConstructor()
 	if (const UAircraftAssetBase* const Asset = AircraftComponent.GetAsset())
 	{
 		SimulationModel = Asset->GetAircraftSimulationModel(0);
+	}
+
+	if (SimulationModel.IsValid())
+	{
+		const FAircraftFlightControllerRuntimeConfig& Config = SimulationModel->FlightController;
+		auto MakeGains = [](float Kp, float Ki, float Kd, float IntegralLimit, float OutputLimit, float CutoffHz, float Kff = 0.0f)
+		{
+			FDronePidGains Gains(Kp, Ki, Kd, IntegralLimit, OutputLimit);
+			Gains.Kff = Kff;
+			Gains.DerivativeCutoffHz = CutoffHz;
+			return Gains;
+		};
+
+		PositionConfig.PositionGains.X = MakeGains(Config.PositionKp.X, Config.PositionKi.X, Config.PositionKd.X, 0.0f, Config.MaxHorizontalSpeedCmPerSec, 0.0f, 1.0f);
+		PositionConfig.PositionGains.Y = MakeGains(Config.PositionKp.Y, Config.PositionKi.Y, Config.PositionKd.Y, 0.0f, Config.MaxHorizontalSpeedCmPerSec, 0.0f, 1.0f);
+		PositionConfig.PositionGains.Z = MakeGains(Config.PositionKp.Z, Config.PositionKi.Z, Config.PositionKd.Z, 0.0f, Config.MaxClimbRateCmPerSec, 0.0f, 1.0f);
+		PositionConfig.VelocityGains.X = MakeGains(Config.VelocityKp.X, Config.VelocityKi.X, Config.VelocityKd.X, 3000.0f, Config.MaxHorizontalAccelerationCmPerSecSq, Config.DerivativeCutoffHz, 1.0f);
+		PositionConfig.VelocityGains.Y = MakeGains(Config.VelocityKp.Y, Config.VelocityKi.Y, Config.VelocityKd.Y, 3000.0f, Config.MaxHorizontalAccelerationCmPerSecSq, Config.DerivativeCutoffHz, 1.0f);
+		PositionConfig.VelocityGains.Z = MakeGains(Config.VelocityKp.Z, Config.VelocityKi.Z, Config.VelocityKd.Z, 2500.0f, Config.MaxVerticalAccelerationCmPerSecSq, Config.DerivativeCutoffHz, 1.0f);
+
+		AttitudeConfig.AngleGains.Roll = MakeGains(Config.AttitudeGains.X, 0.0f, 0.0f, 0.0f, Config.MaxRollRateDegreesPerSec, 0.0f);
+		AttitudeConfig.AngleGains.Pitch = MakeGains(Config.AttitudeGains.Y, 0.0f, 0.0f, 0.0f, Config.MaxPitchRateDegreesPerSec, 0.0f);
+		AttitudeConfig.AngleGains.Yaw = MakeGains(Config.AttitudeGains.Z, 0.0f, 0.0f, 0.0f, Config.MaxYawRateDegreesPerSec, 0.0f);
+		AttitudeConfig.RateGains.Roll = MakeGains(Config.RateKp.X, Config.RateKi.X, Config.RateKd.X, 120.0f, 0.35f, Config.DerivativeCutoffHz);
+		AttitudeConfig.RateGains.Pitch = MakeGains(Config.RateKp.Y, Config.RateKi.Y, Config.RateKd.Y, 120.0f, 0.35f, Config.DerivativeCutoffHz);
+		AttitudeConfig.RateGains.Yaw = MakeGains(Config.RateKp.Z, Config.RateKi.Z, Config.RateKd.Z, 120.0f, 0.20f, Config.DerivativeCutoffHz);
+
+		AltitudeConfig.AltitudeGains = MakeGains(Config.AltitudeKp, Config.AltitudeKi, Config.AltitudeKd, 0.0f, Config.MaxClimbRateCmPerSec, 0.0f, 1.0f);
+		AltitudeConfig.VerticalVelocityGains = MakeGains(Config.VerticalVelocityKp, Config.VerticalVelocityKi, Config.VerticalVelocityKd, 2500.0f, 0.30f, Config.DerivativeCutoffHz);
+
+		ControlLimits.MaxTiltAngleDegrees = Config.MaxTiltAngleDegrees;
+		ControlLimits.MaxYawRateDegreesPerSec = Config.MaxYawRateDegreesPerSec;
+		ControlLimits.MaxRollRateDegreesPerSec = Config.MaxRollRateDegreesPerSec;
+		ControlLimits.MaxPitchRateDegreesPerSec = Config.MaxPitchRateDegreesPerSec;
+		ControlLimits.MaxClimbRateCmPerSec = Config.MaxClimbRateCmPerSec;
+		ControlLimits.MaxDescentRateCmPerSec = Config.MaxDescentRateCmPerSec;
+		ControlLimits.MaxHorizontalSpeedCmPerSec = Config.MaxHorizontalSpeedCmPerSec;
+		ControlLimits.MaxHorizontalAccelerationCmPerSecSq = Config.MaxHorizontalAccelerationCmPerSecSq;
+		ControlLimits.MaxVerticalAccelerationCmPerSecSq = Config.MaxVerticalAccelerationCmPerSecSq;
+		ControlLimits.MinCollectiveCommand = Config.MinCollectiveCommand;
+		ControlLimits.HoverCollectiveCommand = Config.HoverCollectiveCommand;
+		ControlLimits.MaxCollectiveCommand = Config.MaxCollectiveCommand;
+		AllocationDamping = FMath::Max(Config.AllocationDamping, 0.0f);
+		DerivativeCutoffHz = FMath::Max(Config.DerivativeCutoffHz, 0.0f);
 	}
 
 	// 初始化每个旋翼的运行时状态（数量与 SimulationModel.Rotors 对齐）。
@@ -402,6 +428,19 @@ void FAircraftSimulationProxy::PostConstructor()
 	RatePidState.Reset();
 	AltitudePidState.Reset();
 	VerticalVelocityPidState.Reset();
+	FilteredPilotInput.ResetAxes();
+	CameraShakeIntensity.store(0.0f, std::memory_order_relaxed);
+	RemainingBatteryCapacityMilliAmpHour = SimulationModel.IsValid()
+		? FMath::Max(SimulationModel->Battery.CapacityMilliAmpHour, 0.0f)
+		: 0.0f;
+	{
+		FScopeLock Lock(&OutputCriticalSection);
+		LatestBattery.StateOfCharge = RemainingBatteryCapacityMilliAmpHour > 0.0f ? 1.0f : 0.0f;
+		LatestBattery.RemainingCapacityMilliAmpHour = RemainingBatteryCapacityMilliAmpHour;
+		LatestBattery.VoltageV = SimulationModel.IsValid() ? SimulationModel->Battery.NominalVoltageV : 0.0f;
+		LatestBattery.CurrentA = 0.0f;
+		LatestBattery.AvailableThrustScale = 1.0f;
+	}
 
 	CurrentArmState.store(static_cast<uint8>(EDroneArmState::Disarmed), std::memory_order_relaxed);
 }
@@ -439,6 +478,22 @@ void FAircraftSimulationProxy::GetEstimatedState_GameThread(FDroneEstimatedState
 	OutState = LatestEstimated;
 }
 
+void FAircraftSimulationProxy::SetGroundDistance_GameThread(float DistanceCm)
+{
+	GroundDistanceCm.store(FMath::Max(DistanceCm, 0.0f), std::memory_order_relaxed);
+}
+
+void FAircraftSimulationProxy::GetBatteryState_GameThread(FDroneBatteryState& OutState) const
+{
+	FScopeLock Lock(&OutputCriticalSection);
+	OutState = LatestBattery;
+}
+
+float FAircraftSimulationProxy::GetCameraShakeIntensity_GameThread() const
+{
+	return CameraShakeIntensity.load(std::memory_order_relaxed);
+}
+
 EDroneArmState FAircraftSimulationProxy::GetArmState_GameThread() const
 {
 	return static_cast<EDroneArmState>(CurrentArmState.load(std::memory_order_relaxed));
@@ -449,7 +504,7 @@ EDroneFlightMode FAircraftSimulationProxy::GetFlightMode_GameThread() const
 	return static_cast<EDroneFlightMode>(CurrentFlightMode.load(std::memory_order_relaxed));
 }
 
-void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
+void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime, float ForceAccumulationScale)
 {
 	using namespace UE::AircraftLab::AircraftAsset::Private;
 
@@ -486,6 +541,39 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 		Pilot = PendingPilotInput;
 		Targets = PendingTargets;
 	}
+
+	// Dataflow GameFeel 节点是输入整形的唯一来源：死区、Expo、响应时间均在 PT 上消费，
+	// 这样输入采样频率不会改变飞控实际看到的曲线。
+	const FAircraftGameFeelRuntimeConfig& GameFeel = SimulationModel->GameFeel;
+	auto ShapeAxis = [&GameFeel](float Value, float Expo)
+	{
+		const float Clamped = FMath::Clamp(Value, -1.0f, 1.0f);
+		const float Magnitude = FMath::Abs(Clamped);
+		const float Deadzone = FMath::Clamp(GameFeel.InputDeadzone, 0.0f, 0.99f);
+		if (Magnitude <= Deadzone)
+		{
+			return 0.0f;
+		}
+		const float Remapped = (Magnitude - Deadzone) / (1.0f - Deadzone);
+		const float ClampedExpo = FMath::Clamp(Expo, 0.0f, 1.0f);
+		const float Shaped = FMath::Lerp(Remapped, Remapped * Remapped * Remapped, ClampedExpo);
+		return FMath::Sign(Clamped) * Shaped;
+	};
+
+	FDronePilotInput ShapedPilot;
+	ShapedPilot.Roll = ShapeAxis(Pilot.Roll, GameFeel.RcExpoRoll);
+	ShapedPilot.Pitch = ShapeAxis(Pilot.Pitch, GameFeel.RcExpoPitch);
+	ShapedPilot.Yaw = ShapeAxis(Pilot.Yaw, GameFeel.RcExpoYaw);
+	ShapedPilot.Throttle = ShapeAxis(Pilot.Throttle, GameFeel.RcExpoThrottle);
+	const float ResponseTime = FMath::Max(GameFeel.StickResponseTimeSeconds, 0.0f);
+	const float InputAlpha = ResponseTime > UE_SMALL_NUMBER
+		? FMath::Clamp(DeltaTime / (ResponseTime + DeltaTime), 0.0f, 1.0f)
+		: 1.0f;
+	FilteredPilotInput.Roll = FMath::Lerp(FilteredPilotInput.Roll, ShapedPilot.Roll, InputAlpha);
+	FilteredPilotInput.Pitch = FMath::Lerp(FilteredPilotInput.Pitch, ShapedPilot.Pitch, InputAlpha);
+	FilteredPilotInput.Yaw = FMath::Lerp(FilteredPilotInput.Yaw, ShapedPilot.Yaw, InputAlpha);
+	FilteredPilotInput.Throttle = FMath::Lerp(FilteredPilotInput.Throttle, ShapedPilot.Throttle, InputAlpha);
+	Pilot = FilteredPilotInput;
 
 	const EDroneFlightMode Mode = static_cast<EDroneFlightMode>(PendingFlightMode.load(std::memory_order_relaxed));
 	const bool bArmRequest = bPendingArmRequest.load(std::memory_order_relaxed);
@@ -547,8 +635,13 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 	const FQuat WorldQuat = WorldXform.GetRotation();
 	const FVector WorldPosCm = WorldXform.GetLocation();
 	const FVector AngularVelBodyRadPerSec = WorldQuat.UnrotateVector(AngularVelWorldRadPerSec);
-
-	const FRotator AttitudeDeg = WorldQuat.Rotator();
+	const FAircraftFlightControllerRuntimeConfig& FlightConfig = SimulationModel->FlightController;
+	const FQuat ControlWorldQuat = FlightConfig.GetControlWorldRotation(WorldQuat);
+	const FVector AngularVelControllerDegPerSec = FVector(
+		FMath::RadiansToDegrees(FlightConfig.BodyAngularToController(AngularVelBodyRadPerSec).X),
+		FMath::RadiansToDegrees(FlightConfig.BodyAngularToController(AngularVelBodyRadPerSec).Y),
+		FMath::RadiansToDegrees(FlightConfig.BodyAngularToController(AngularVelBodyRadPerSec).Z));
+	const FRotator AttitudeDeg = ControlWorldQuat.Rotator();
 
 	/* ----------------------------------------------------------------------
 	 * 4) 串级 PID
@@ -557,11 +650,27 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 	 * ---------------------------------------------------------------------- */
 	FVector DesiredVelocityCmPerSec = FVector::ZeroVector;
 	FRotator DesiredAttitudeDeg = FRotator::ZeroRotator;
-	FVector DesiredBodyRateRadPerSec = FVector::ZeroVector;
+	FVector DesiredControllerRateDegPerSec = FVector::ZeroVector;
 	float DesiredCollectiveThrust = 0.f;
 
-	const float MassKg = FMath::Max(SimulationModel->Mass.MassKg, 0.01f);
-	const float HoverThrustN = MassKg * 980.f * 0.01f; // 把 cm/s² 转回 m/s²：g≈9.8 m/s² ⇒ 重力 = m·g 牛顿
+	float AvailableThrustN = 0.0f;
+	for (const FDroneRotorDefinition& Rotor : SimulationModel->Rotors)
+	{
+		if (Rotor.IsEnabled())
+		{
+			AvailableThrustN += Rotor.GetEffectiveMaxThrust() * FMath::Max(Rotor.ThrustCoefficient, 0.0f);
+		}
+	}
+	auto ResolveManualCollectiveThrust = [this, &Pilot, AvailableThrustN]()
+	{
+		const float Hover = FMath::Clamp(ControlLimits.HoverCollectiveCommand,
+			ControlLimits.MinCollectiveCommand, ControlLimits.MaxCollectiveCommand);
+		const float Command = Pilot.Throttle >= 0.0f
+			? FMath::Lerp(Hover, ControlLimits.MaxCollectiveCommand, Pilot.Throttle)
+			: FMath::Lerp(Hover, ControlLimits.MinCollectiveCommand, -Pilot.Throttle);
+		return FMath::Clamp(Command, ControlLimits.MinCollectiveCommand,
+			ControlLimits.MaxCollectiveCommand) * AvailableThrustN;
+	};
 
 	switch (Mode)
 	{
@@ -569,38 +678,58 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 	case EDroneFlightMode::Mission:
 	case EDroneFlightMode::ReturnToHome:
 	{
-		// Position 外环（X/Y/Z）→ 期望速度
-		const FVector PositionError = Targets.Position.PositionCm - WorldPosCm;
+		// Position 外环只负责水平速度；垂直方向使用独立的高度/垂直速度串级环。
+		const FVector PositionTarget = Targets.Position.bEnabled ? Targets.Position.PositionCm : WorldPosCm;
+		const FVector PositionError = PositionTarget - WorldPosCm;
 		DesiredVelocityCmPerSec.X = PositionPidState.X.UpdateFromError(static_cast<float>(PositionError.X), DeltaTime, PositionConfig.PositionGains.X);
 		DesiredVelocityCmPerSec.Y = PositionPidState.Y.UpdateFromError(static_cast<float>(PositionError.Y), DeltaTime, PositionConfig.PositionGains.Y);
-		DesiredVelocityCmPerSec.Z = PositionPidState.Z.UpdateFromError(static_cast<float>(PositionError.Z), DeltaTime, PositionConfig.PositionGains.Z);
-		// 落入 VelocityHold 分支
+		DesiredVelocityCmPerSec.Z = AltitudePidState.UpdateFromError(
+			static_cast<float>(PositionError.Z), DeltaTime, AltitudeConfig.AltitudeGains);
+		DesiredAttitudeDeg.Yaw = Targets.Position.bEnabled
+			? Targets.Position.YawDegrees
+			: static_cast<float>(AttitudeDeg.Yaw);
 	}
 	[[fallthrough]];
 	case EDroneFlightMode::VelocityHold:
 	{
 		if (Mode == EDroneFlightMode::VelocityHold)
 		{
-			DesiredVelocityCmPerSec = Targets.Velocity.VelocityCmPerSec;
+			DesiredVelocityCmPerSec = Targets.Velocity.bEnabled
+				? Targets.Velocity.VelocityCmPerSec
+				: FVector::ZeroVector;
+			DesiredAttitudeDeg.Yaw = static_cast<float>(AttitudeDeg.Yaw);
 		}
+		const FVector2D DesiredHorizontalVelocity(DesiredVelocityCmPerSec.X, DesiredVelocityCmPerSec.Y);
+		const FVector2D LimitedHorizontalVelocity = DesiredHorizontalVelocity.GetClampedToMaxSize(
+			ControlLimits.MaxHorizontalSpeedCmPerSec);
+		DesiredVelocityCmPerSec.X = LimitedHorizontalVelocity.X;
+		DesiredVelocityCmPerSec.Y = LimitedHorizontalVelocity.Y;
+		DesiredVelocityCmPerSec.Z = FMath::Clamp(
+			static_cast<float>(DesiredVelocityCmPerSec.Z),
+			-ControlLimits.MaxDescentRateCmPerSec,
+			ControlLimits.MaxClimbRateCmPerSec);
 
-		// Velocity 内环 → 期望加速度（这里用作期望倾角的近似）
+		// 水平 Velocity 内环 → 期望加速度（用于倾角目标）。
 		const FVector VelError = DesiredVelocityCmPerSec - LinearVelCmPerSec;
 		const float AccX = VelocityPidState.X.UpdateFromError(static_cast<float>(VelError.X), DeltaTime, PositionConfig.VelocityGains.X);
 		const float AccY = VelocityPidState.Y.UpdateFromError(static_cast<float>(VelError.Y), DeltaTime, PositionConfig.VelocityGains.Y);
-		const float AccZ = VelocityPidState.Z.UpdateFromError(static_cast<float>(VelError.Z), DeltaTime, PositionConfig.VelocityGains.Z);
 
 		// 期望加速度 → 期望倾角（小角度近似：tan θ ≈ a / g）
-		// roll≈atan2(-Ay, g), pitch≈atan2(Ax, g)（机体 X 前 / Y 右 / Z 上）
+		// 先把世界水平加速度转到飞控坐标（X=Forward/Y=Right），再生成 Roll/Pitch。
 		const float G = 980.f; // cm/s²
-		const float Pitch = FMath::RadiansToDegrees(FMath::Atan2(AccX, G));
-		const float Roll = FMath::RadiansToDegrees(FMath::Atan2(-AccY, G));
+		const FVector AccelerationControl = ControlWorldQuat.UnrotateVector(FVector(AccX, AccY, 0.0f));
+		const float Pitch = FMath::RadiansToDegrees(FMath::Atan2(AccelerationControl.X, G));
+		const float Roll = FMath::RadiansToDegrees(FMath::Atan2(-AccelerationControl.Y, G));
 		DesiredAttitudeDeg.Roll = FMath::Clamp(Roll, -ControlLimits.MaxTiltAngleDegrees, ControlLimits.MaxTiltAngleDegrees);
 		DesiredAttitudeDeg.Pitch = FMath::Clamp(Pitch, -ControlLimits.MaxTiltAngleDegrees, ControlLimits.MaxTiltAngleDegrees);
-		DesiredAttitudeDeg.Yaw = static_cast<float>(AttitudeDeg.Yaw); // 保持当前偏航
-
-		// Z 加速度 → 总推力修正：F_z_des = m·g + m·AccZ
-		DesiredCollectiveThrust = HoverThrustN + MassKg * AccZ * 0.01f;
+		// 垂直速度环输出的是相对悬停总距的归一化修正，不是牛顿。
+		const float CollectiveCorrection = VerticalVelocityPidState.UpdateFromMeasurement(
+			static_cast<float>(DesiredVelocityCmPerSec.Z), static_cast<float>(LinearVelCmPerSec.Z),
+			DeltaTime, AltitudeConfig.VerticalVelocityGains);
+		const float CollectiveCommand = FMath::Clamp(
+			ControlLimits.HoverCollectiveCommand + CollectiveCorrection,
+			ControlLimits.MinCollectiveCommand, ControlLimits.MaxCollectiveCommand);
+		DesiredCollectiveThrust = CollectiveCommand * AvailableThrustN;
 		break;
 	}
 	case EDroneFlightMode::AltitudeHold:
@@ -610,12 +739,19 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 		DesiredAttitudeDeg.Yaw = static_cast<float>(AttitudeDeg.Yaw);
 
 		// Altitude 外环 → 期望垂直速度
-		const float AltError = Targets.Position.PositionCm.Z - static_cast<float>(WorldPosCm.Z);
+		const float TargetAltitudeCm = Targets.Position.bEnabled
+			? static_cast<float>(Targets.Position.PositionCm.Z)
+			: static_cast<float>(WorldPosCm.Z);
+		const float AltError = TargetAltitudeCm - static_cast<float>(WorldPosCm.Z);
 		const float DesiredClimbRate = AltitudePidState.UpdateFromError(AltError, DeltaTime, AltitudeConfig.AltitudeGains);
-		// Vertical-velocity 内环 → 推力
-		const float VzError = DesiredClimbRate - static_cast<float>(LinearVelCmPerSec.Z);
-		const float ThrustCorrection = VerticalVelocityPidState.UpdateFromError(VzError, DeltaTime, AltitudeConfig.VerticalVelocityGains);
-		DesiredCollectiveThrust = HoverThrustN + ThrustCorrection;
+		const float LimitedClimbRate = FMath::Clamp(
+			DesiredClimbRate, -ControlLimits.MaxDescentRateCmPerSec, ControlLimits.MaxClimbRateCmPerSec);
+		const float CollectiveCorrection = VerticalVelocityPidState.UpdateFromMeasurement(
+			LimitedClimbRate, static_cast<float>(LinearVelCmPerSec.Z), DeltaTime, AltitudeConfig.VerticalVelocityGains);
+		const float CollectiveCommand = FMath::Clamp(
+			ControlLimits.HoverCollectiveCommand + CollectiveCorrection,
+			ControlLimits.MinCollectiveCommand, ControlLimits.MaxCollectiveCommand);
+		DesiredCollectiveThrust = CollectiveCommand * AvailableThrustN;
 		break;
 	}
 	case EDroneFlightMode::Angle:
@@ -624,18 +760,18 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 		DesiredAttitudeDeg.Roll = Pilot.Roll * ControlLimits.MaxTiltAngleDegrees;
 		DesiredAttitudeDeg.Pitch = Pilot.Pitch * ControlLimits.MaxTiltAngleDegrees;
 		DesiredAttitudeDeg.Yaw = static_cast<float>(AttitudeDeg.Yaw); // 偏航维持
-		DesiredCollectiveThrust = HoverThrustN * (0.5f + Pilot.Throttle); // 0.5 油门 ≈ 悬停
+		DesiredCollectiveThrust = ResolveManualCollectiveThrust();
 		break;
 	}
 	case EDroneFlightMode::Acro:
 	case EDroneFlightMode::Manual:
 	default:
 	{
-		// 摇杆直接当机体角速率目标（rad/s）
-		DesiredBodyRateRadPerSec.X = FMath::DegreesToRadians(Pilot.Roll  * ControlLimits.MaxRollRateDegreesPerSec);
-		DesiredBodyRateRadPerSec.Y = FMath::DegreesToRadians(Pilot.Pitch * ControlLimits.MaxPitchRateDegreesPerSec);
-		DesiredBodyRateRadPerSec.Z = FMath::DegreesToRadians(Pilot.Yaw   * ControlLimits.MaxYawRateDegreesPerSec);
-		DesiredCollectiveThrust = HoverThrustN * (0.5f + Pilot.Throttle);
+		// 摇杆直接给飞控标准坐标的 Roll/Pitch/Yaw 角速率目标。
+		DesiredControllerRateDegPerSec.X = Pilot.Roll * ControlLimits.MaxRollRateDegreesPerSec;
+		DesiredControllerRateDegPerSec.Y = Pilot.Pitch * ControlLimits.MaxPitchRateDegreesPerSec;
+		DesiredControllerRateDegPerSec.Z = Pilot.Yaw * ControlLimits.MaxYawRateDegreesPerSec;
+		DesiredCollectiveThrust = ResolveManualCollectiveThrust();
 		break;
 	}
 	}
@@ -651,19 +787,34 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 		const float PitchRateDeg = AnglePidState.Pitch.UpdateFromError(PitchErr, DeltaTime, AttitudeConfig.AngleGains.Pitch);
 		const float YawRateDeg   = AnglePidState.Yaw  .UpdateFromError(YawErr,   DeltaTime, AttitudeConfig.AngleGains.Yaw);
 
-		DesiredBodyRateRadPerSec.X = FMath::DegreesToRadians(FMath::Clamp(RollRateDeg,  -ControlLimits.MaxRollRateDegreesPerSec,  ControlLimits.MaxRollRateDegreesPerSec));
-		DesiredBodyRateRadPerSec.Y = FMath::DegreesToRadians(FMath::Clamp(PitchRateDeg, -ControlLimits.MaxPitchRateDegreesPerSec, ControlLimits.MaxPitchRateDegreesPerSec));
-		DesiredBodyRateRadPerSec.Z = FMath::DegreesToRadians(FMath::Clamp(YawRateDeg,   -ControlLimits.MaxYawRateDegreesPerSec,   ControlLimits.MaxYawRateDegreesPerSec));
+		DesiredControllerRateDegPerSec.X = FMath::Clamp(RollRateDeg, -ControlLimits.MaxRollRateDegreesPerSec, ControlLimits.MaxRollRateDegreesPerSec);
+		DesiredControllerRateDegPerSec.Y = FMath::Clamp(PitchRateDeg, -ControlLimits.MaxPitchRateDegreesPerSec, ControlLimits.MaxPitchRateDegreesPerSec);
+		DesiredControllerRateDegPerSec.Z = FMath::Clamp(YawRateDeg, -ControlLimits.MaxYawRateDegreesPerSec, ControlLimits.MaxYawRateDegreesPerSec);
+		if (Mode == EDroneFlightMode::Angle || Mode == EDroneFlightMode::AltitudeHold)
+		{
+			DesiredControllerRateDegPerSec.Z = Pilot.Yaw * ControlLimits.MaxYawRateDegreesPerSec;
+		}
+		else if (Mode == EDroneFlightMode::VelocityHold && Targets.Velocity.bEnabled)
+		{
+			DesiredControllerRateDegPerSec.Z = FMath::Clamp(
+				Targets.Velocity.YawRateDegreesPerSec,
+				-ControlLimits.MaxYawRateDegreesPerSec,
+				ControlLimits.MaxYawRateDegreesPerSec);
+		}
 	}
 
-	// Rate 内环 → 机体力矩
-	const float TorqueX = RatePidState.Roll .UpdateFromError(static_cast<float>(DesiredBodyRateRadPerSec.X - AngularVelBodyRadPerSec.X), DeltaTime, AttitudeConfig.RateGains.Roll);
-	const float TorqueY = RatePidState.Pitch.UpdateFromError(static_cast<float>(DesiredBodyRateRadPerSec.Y - AngularVelBodyRadPerSec.Y), DeltaTime, AttitudeConfig.RateGains.Pitch);
-	const float TorqueZ = RatePidState.Yaw  .UpdateFromError(static_cast<float>(DesiredBodyRateRadPerSec.Z - AngularVelBodyRadPerSec.Z), DeltaTime, AttitudeConfig.RateGains.Yaw);
+	// Rate 内环在飞控标准坐标中计算，再把力矩映射回模型物理轴。
+	const float TorqueX = RatePidState.Roll.UpdateFromMeasurement(
+		DesiredControllerRateDegPerSec.X, AngularVelControllerDegPerSec.X, DeltaTime, AttitudeConfig.RateGains.Roll);
+	const float TorqueY = RatePidState.Pitch.UpdateFromMeasurement(
+		DesiredControllerRateDegPerSec.Y, AngularVelControllerDegPerSec.Y, DeltaTime, AttitudeConfig.RateGains.Pitch);
+	const float TorqueZ = RatePidState.Yaw.UpdateFromMeasurement(
+		DesiredControllerRateDegPerSec.Z, AngularVelControllerDegPerSec.Z, DeltaTime, AttitudeConfig.RateGains.Yaw);
+	const FVector BodyTorque = FlightConfig.ControllerTorqueToBody(FVector(TorqueX, TorqueY, TorqueZ));
 
 	FDroneWrenchCommand Wrench;
 	Wrench.CollectiveThrust = bMotorsOn ? FMath::Max(DesiredCollectiveThrust, 0.f) : 0.f;
-	Wrench.BodyTorque = bMotorsOn ? FVector(TorqueX, TorqueY, TorqueZ) : FVector::ZeroVector;
+	Wrench.BodyTorque = bMotorsOn ? BodyTorque : FVector::ZeroVector;
 
 	/* ----------------------------------------------------------------------
 	 * 5) 控制分配 → 单旋翼归一化指令
@@ -674,6 +825,51 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 		AllocateRotorCommands(*SimulationModel, Wrench, AllocationDamping, Tmp);
 		Commands.Append(Tmp);
 	}
+
+	// Battery node runtime model. Current draw is derived from aggregate motor load and the configured
+	// maximum C-rate; voltage sag uses the configured internal resistance. The resulting voltage ratio
+	// limits available rotor thrust, so battery parameters are not authoring-only metadata.
+	const FAircraftBatteryRuntimeConfig& BatteryConfig = SimulationModel->Battery;
+	float MotorLoad = 0.0f;
+	for (const float Command : Commands)
+	{
+		MotorLoad += FMath::Square(FMath::Clamp(Command, 0.0f, 1.0f));
+	}
+	MotorLoad = Commands.IsEmpty() ? 0.0f : MotorLoad / static_cast<float>(Commands.Num());
+	CameraShakeIntensity.store(
+		FMath::Clamp(MotorLoad * FMath::Max(SimulationModel->GameFeel.CameraShakeScale, 0.0f), 0.0f, 1.0f),
+		std::memory_order_relaxed);
+	const float CapacityAmpHour = FMath::Max(BatteryConfig.CapacityMilliAmpHour, 0.0f) * 0.001f;
+	const float CurrentA = bMotorsOn ? CapacityAmpHour * FMath::Max(BatteryConfig.MaxDischargeC, 0.0f) * MotorLoad : 0.0f;
+	RemainingBatteryCapacityMilliAmpHour = FMath::Max(
+		RemainingBatteryCapacityMilliAmpHour - CurrentA * DeltaTime * (1000.0f / 3600.0f), 0.0f);
+	const float StateOfCharge = BatteryConfig.CapacityMilliAmpHour > UE_SMALL_NUMBER
+		? FMath::Clamp(RemainingBatteryCapacityMilliAmpHour / BatteryConfig.CapacityMilliAmpHour, 0.0f, 1.0f)
+		: 0.0f;
+	const float OpenCircuitVoltage = FMath::Lerp(
+		FMath::Max(BatteryConfig.MinVoltageV, 0.0f),
+		FMath::Max(BatteryConfig.NominalVoltageV, 0.0f), StateOfCharge);
+	const float LoadedVoltage = FMath::Max(OpenCircuitVoltage - CurrentA * FMath::Max(BatteryConfig.InternalResistanceOhm, 0.0f), 0.0f);
+	const float AvailableThrustScale = RemainingBatteryCapacityMilliAmpHour > UE_SMALL_NUMBER
+		&& BatteryConfig.NominalVoltageV > UE_SMALL_NUMBER
+		? FMath::Square(FMath::Clamp(LoadedVoltage / BatteryConfig.NominalVoltageV, 0.0f, 1.0f))
+		: 0.0f;
+	{
+		FScopeLock Lock(&OutputCriticalSection);
+		LatestBattery.StateOfCharge = StateOfCharge;
+		LatestBattery.RemainingCapacityMilliAmpHour = RemainingBatteryCapacityMilliAmpHour;
+		LatestBattery.VoltageV = LoadedVoltage;
+		LatestBattery.CurrentA = CurrentA;
+		LatestBattery.AvailableThrustScale = AvailableThrustScale;
+	}
+	const float GroundEffectStartHeightCm = FMath::Max(SimulationModel->Aero.GroundEffectStartHeightCm, 0.0f);
+	const float GroundDistance = GroundDistanceCm.load(std::memory_order_relaxed);
+	const float GroundEffectAlpha = GroundEffectStartHeightCm > UE_SMALL_NUMBER
+		? 1.0f - FMath::Clamp(GroundDistance / GroundEffectStartHeightCm, 0.0f, 1.0f)
+		: 0.0f;
+	const float GroundEffectScale = 1.0f
+		+ FMath::Max(SimulationModel->Aero.GroundEffectStrength, 0.0f) * FMath::Square(GroundEffectAlpha);
+	const float RotorThrustScale = AvailableThrustScale * GroundEffectScale;
 
 	/* ----------------------------------------------------------------------
 	 * 6) 电机一阶滞后 + 把推力/反扭矩作用到 Chaos 刚体
@@ -692,7 +888,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 		FAircraftRotorRuntimeState& State = RotorStates[i];
 
 		const float Cmd = bMotorsOn ? (i < Commands.Num() ? Commands[i] : 0.f) : 0.f;
-		StepRotorDynamics(Rotor, Cmd, DeltaTime, State);
+		StepRotorDynamics(Rotor, Cmd, DeltaTime, RotorThrustScale, State);
 
 		// 推力作用点：旋翼局部位置 → 世界系
 		const FVector LocalPosCm = Rotor.PositionLocalCm;
@@ -704,14 +900,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 
 		const FVector ForceN = WorldAxis * State.LastThrustForce;
 		FChaosEngineInterface::AddForceAtPosition_AssumesLocked(
-			ActorHandle, ForceN * 100.f, WorldPos,
+			ActorHandle, ForceN * 100.f * ForceAccumulationScale, WorldPos,
 			/*bAllowSubstepping=*/false, /*bIsLocalForce=*/false, /*bIsInternal=*/true);
 
 		// 反扭矩沿推力轴反向 SpinSign
 		const float SpinSign = Rotor.GetSpinDirectionSign();
 		const FVector ReactionTorqueWorld = WorldAxis * (-SpinSign) * State.LastReactionTorque * 10000.f; // N·m → kg·cm²/s²
 		FChaosEngineInterface::AddTorque_AssumesLocked(
-			ActorHandle, ReactionTorqueWorld,
+			ActorHandle, ReactionTorqueWorld * ForceAccumulationScale,
 			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
 
 		TotalForce += ForceN;
@@ -721,14 +917,15 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 
 	// 气动阻尼（线性 + 角阻尼），以体坐标系阻尼系数施加。
 	{
-		const FVector LinearVelBodyMps = WorldQuat.UnrotateVector(LinearVelCmPerSec) * 0.01;
+		const FVector RelativeAirVelocityCmPerSec = LinearVelCmPerSec - SimulationModel->Aero.WindVelocityCmPerSec;
+		const FVector LinearVelBodyMps = WorldQuat.UnrotateVector(RelativeAirVelocityCmPerSec) * 0.01;
 		const FVector LinearDragForceBody = -FVector(
 			SimulationModel->Aero.LinearDragPerAxis.X * LinearVelBodyMps.X,
 			SimulationModel->Aero.LinearDragPerAxis.Y * LinearVelBodyMps.Y,
 			SimulationModel->Aero.LinearDragPerAxis.Z * LinearVelBodyMps.Z);
 		const FVector LinearDragForceWorld = WorldQuat.RotateVector(LinearDragForceBody);
 		FChaosEngineInterface::AddForce_AssumesLocked(
-			ActorHandle, LinearDragForceWorld * 100.f,
+			ActorHandle, LinearDragForceWorld * 100.f * ForceAccumulationScale,
 			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
 
 		const FVector AngularDragTorqueBody = -FVector(
@@ -737,7 +934,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime)
 			SimulationModel->Aero.AngularDragPerAxis.Z * AngularVelBodyRadPerSec.Z);
 		const FVector AngularDragTorqueWorld = WorldQuat.RotateVector(AngularDragTorqueBody);
 		FChaosEngineInterface::AddTorque_AssumesLocked(
-			ActorHandle, AngularDragTorqueWorld * 10000.f,
+			ActorHandle, AngularDragTorqueWorld * 10000.f * ForceAccumulationScale,
 			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
 	}
 

@@ -21,8 +21,10 @@
 #include "AircraftAsset/SAircraftAssetEditorViewport.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftAssetEditorPreviewScene.h"
+#include "AircraftAsset/AircraftAssetEditorCommands.h"
 #include "AircraftAsset/AircraftAssetEditorViewportClient.h"
 #include "AircraftAsset/AircraftComponent.h"
+#include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftDataflowEditor.h"
 #include "AircraftAsset/AircraftEditorMode.h"
 #include "AircraftAsset/AircraftEditorModeUILayer.h"
@@ -37,7 +39,7 @@ public:
 		SLATE_ARGUMENT_DEFAULT(UEdGraph*, GraphToEdit) = nullptr;
 		SLATE_ARGUMENT(FGraphEditorEvents, GraphEvents)
 		SLATE_ARGUMENT(TSharedPtr<IStructureDetailsView>, DetailsView)
-		SLATE_ARGUMENT(FDataflowEditorCommands::FGraphEvaluationCallback, EvaluateGraph)
+		SLATE_ARGUMENT(SDataflowGraphEditor::FGraphEvaluationCallback, EvaluateGraph)
 		SLATE_ARGUMENT_DEFAULT(FAircraftAssetEditorToolkit*, AircraftAssetEditorToolkit) = nullptr;
 	SLATE_END_ARGS()
 
@@ -590,6 +592,11 @@ void FAircraftAssetEditorToolkit::PostInitAssetEditor()
 				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"));
 			ResetEntry.StyleNameOverride = FName("Toolbar.BackplateRight");
 			Section.AddEntry(ResetEntry);
+
+			FToolMenuSection& AircraftToolsSection = AssetToolbar->FindOrAddSection("AircraftInteractiveTools");
+			AircraftToolsSection.AddEntry(FToolMenuEntry::InitToolBarButton(FAircraftAssetEditorCommands::Get().MotorPlacement));
+			AircraftToolsSection.AddEntry(FToolMenuEntry::InitToolBarButton(FAircraftAssetEditorCommands::Get().PidTuning));
+			AircraftToolsSection.AddEntry(FToolMenuEntry::InitToolBarButton(FAircraftAssetEditorCommands::Get().ThrustVectorOrientation));
 		}
 	}
 }
@@ -614,14 +621,53 @@ TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_Outliner(const FSpawn
 		[
 			SNew(SVerticalBox)
 			+ SVerticalBox::Slot()
+			.AutoHeight()
 			.Padding(8.0f)
 			[
 				SNew(STextBlock)
-				.Text(LOCTEXT("OutlinerPlaceholder", "Aircraft Outliner panel placeholder."))
+				.Text(LOCTEXT("OutlinerDescription", "Compiled Aircraft Structure"))
+				.Font(FAppStyle::GetFontStyle(TEXT("DetailsView.CategoryFontStyle")))
+			]
+			+ SVerticalBox::Slot()
+			.FillHeight(1.0f)
+			.Padding(8.0f, 0.0f, 8.0f, 8.0f)
+			[
+				SNew(STextBlock)
+				.Text(this, &FAircraftAssetEditorToolkit::GetOutlinerSummaryText)
+				.AutoWrapText(true)
 			]
 		];
 
 	return OutlinerDockTab.ToSharedRef();
+}
+
+FText FAircraftAssetEditorToolkit::GetOutlinerSummaryText() const
+{
+	const UAircraftAssetBase* const AircraftAsset = GetAsset();
+	const TSharedPtr<const FAircraftSimulationModel> Model = AircraftAsset
+		? AircraftAsset->GetAircraftSimulationModel(0)
+		: nullptr;
+	if (!Model.IsValid())
+	{
+		return LOCTEXT("OutlinerNoCompiledModel", "No compiled simulation model. Evaluate the terminal node to build the asset.");
+	}
+
+	FString Summary = FString::Printf(
+		TEXT("Frame\n  Root body: %s\n  Mass: %.3f kg\n  Solver substeps: %d\n\nRotors (%d)"),
+		*Model->RootBone.ToString(), Model->Mass.MassKg, Model->MaxSolverSubsteps, Model->Rotors.Num());
+	for (int32 RotorIndex = 0; RotorIndex < Model->Rotors.Num(); ++RotorIndex)
+	{
+		const FDroneRotorDefinition& Rotor = Model->Rotors[RotorIndex];
+		Summary += FString::Printf(
+			TEXT("\n  [%d] %s\n       Socket: %s\n       Position: (%.1f, %.1f, %.1f) cm\n       Max thrust: %.2f N"),
+			RotorIndex,
+			*Rotor.RotorName.ToString(),
+			Rotor.bUseSocketTransform ? *Rotor.SocketName.ToString() : TEXT("Manual transform"),
+			Rotor.PositionLocalCm.X, Rotor.PositionLocalCm.Y, Rotor.PositionLocalCm.Z,
+			Rotor.GetEffectiveMaxThrust());
+	}
+
+	return FText::FromString(MoveTemp(Summary));
 }
 
 TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_SimulationVisualization(const FSpawnTabArgs& Args)
@@ -809,25 +855,24 @@ void FAircraftAssetEditorToolkit::OnAircraftAssetChanged()
 
 		const UAircraftComponent* const PreviewAircraftComponent = PreviewScene->GetAircraftComponent();
 		const bool bHadAircraftAsset = PreviewAircraftComponent && PreviewAircraftComponent->GetAsset() != nullptr;
-		//const bool bWasSimulationEnabled = bHadAircraftAsset ? PreviewScene->IsSimulationEnabled() : true;
-		//const bool bWasSimulationSuspended = bHadAircraftAsset && PreviewScene->IsSimulationSuspended();
+		const bool bWasSimulationEnabled = bHadAircraftAsset ? PreviewScene->IsSimulationEnabled() : true;
+		const bool bWasSimulationSuspended = bHadAircraftAsset && PreviewScene->IsSimulationSuspended();
 		PreviewScene->SetAircraftAsset(AircraftAsset);
 
 		if (bHadAircraftAsset)
 		{
-			/*
-			 *PreviewScene->SetEnableSimulation(bWasSimulationEnabled);
+			PreviewScene->SetEnableSimulation(bWasSimulationEnabled);
 			if (bWasSimulationEnabled)
 			{
 				if (bWasSimulationSuspended)
 				{
-					//PreviewScene->SuspendSimulation();
+					PreviewScene->SuspendSimulation();
 				}
 				else
 				{
-					//PreviewScene->ResumeSimulation();
+					PreviewScene->ResumeSimulation();
 				}
-			}*/
+			}
 		}
 	}
 }
@@ -889,7 +934,7 @@ TSharedRef<SDataflowGraphEditor> FAircraftAssetEditorToolkit::CreateGraphEditorW
 	UDataflow* const Dataflow = GetDataflow();
 	check(Dataflow);
 
-	const FDataflowEditorCommands::FGraphEvaluationCallback EvaluateGraph =
+	const SDataflowGraphEditor::FGraphEvaluationCallback EvaluateGraph =
 		[this](const FDataflowNode* Node, const FDataflowOutput* Output)
 		{
 			EvaluateNode(Node, Output);

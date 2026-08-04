@@ -16,7 +16,6 @@ FAircraftGameFeelNode::FAircraftGameFeelNode(const UE::Dataflow::FNodeParameters
 	RegisterInputConnection(&RcExpoYaw);
 	RegisterInputConnection(&RcExpoThrottle);
 	RegisterInputConnection(&InputDeadzone);
-	RegisterInputConnection(&HoverCollectiveCommand);
 	RegisterInputConnection(&StickResponseTimeSeconds);
 	RegisterInputConnection(&CameraShakeScale);
 }
@@ -41,7 +40,6 @@ void FAircraftGameFeelNode::Evaluate(UE::Dataflow::FContext& Context, const FDat
 	if (TArrayView<float> A = Facade.GetGameFeelRcExpoYaw(); A.Num() > 0)               { A[0] = GetValue(Context, &RcExpoYaw); }
 	if (TArrayView<float> A = Facade.GetGameFeelRcExpoThrottle(); A.Num() > 0)          { A[0] = GetValue(Context, &RcExpoThrottle); }
 	if (TArrayView<float> A = Facade.GetGameFeelInputDeadzone(); A.Num() > 0)           { A[0] = GetValue(Context, &InputDeadzone); }
-	if (TArrayView<float> A = Facade.GetGameFeelHoverCollectiveCommand(); A.Num() > 0)  { A[0] = GetValue(Context, &HoverCollectiveCommand); }
 	if (TArrayView<float> A = Facade.GetGameFeelStickResponseTimeSeconds(); A.Num() > 0){ A[0] = GetValue(Context, &StickResponseTimeSeconds); }
 	if (TArrayView<float> A = Facade.GetGameFeelCameraShakeScale(); A.Num() > 0)        { A[0] = GetValue(Context, &CameraShakeScale); }
 

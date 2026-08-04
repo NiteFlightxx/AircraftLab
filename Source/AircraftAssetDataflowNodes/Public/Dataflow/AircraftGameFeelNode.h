@@ -21,7 +21,7 @@ struct FAircraftGameFeelNode : public FDataflowNode
 		FAircraftGameFeelNode,
 		"AircraftGameFeel",
 		"Aircraft",
-		"Aircraft Game Feel (RC Expo / Deadzone / Hover)")
+		"Aircraft Game Feel (RC Expo / Deadzone / Response)")
 
 public:
 	FAircraftGameFeelNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
@@ -46,10 +46,6 @@ public:
 	/** 摇杆死区（0~1，绝对值小于此的输入视为 0）。 */
 	UPROPERTY(EditAnywhere, Category = "GameFeel", meta = (DataflowInput, ClampMin = "0.0", ClampMax = "1.0"))
 	float InputDeadzone = 0.05f;
-
-	/** 悬停总距指令（0~1，无风时维持高度的归一化油门）。 */
-	UPROPERTY(EditAnywhere, Category = "GameFeel", meta = (DataflowInput, ClampMin = "0.0", ClampMax = "1.0"))
-	float HoverCollectiveCommand = 0.5f;
 
 	/** 摇杆响应一阶时间常数（秒，用于平滑输入；0 表示不平滑）。 */
 	UPROPERTY(EditAnywhere, Category = "GameFeel", meta = (DataflowInput, ClampMin = "0.0"))

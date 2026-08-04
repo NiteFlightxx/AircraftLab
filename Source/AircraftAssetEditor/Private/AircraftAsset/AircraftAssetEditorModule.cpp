@@ -51,7 +51,7 @@ void FAircraftAssetEditorModule::StartupModule()
 
 	// 主动触发自家 SlateStyle 注册（与 ChaosCloth 模块入口模式一致）。这必须在
 	// FAircraftAssetEditorCommands::Register() 之前调用，因为命令构造函数会通过
-	// FAircraftAssetEditorStyle::GetStyleSetName() 拿 StyleSet 名字。
+	// FAircraftAssetEditorStyle::GetStyleName() 拿 StyleSet 名字。
 	FAircraftAssetEditorStyle::Get();
 
 	FAircraftAssetEditorCommands::Register();

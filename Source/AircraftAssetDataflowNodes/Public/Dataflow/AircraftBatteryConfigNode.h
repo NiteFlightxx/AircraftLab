@@ -15,7 +15,7 @@
  * 电池模型默认为内阻线性模型：
  *     V_terminal = V_oc - I · R_internal
  *     V_oc 在 [MinVoltageV, NominalVoltageV] 之间随 SoC 线性下降
- * Phase 4 在 SimulationProxy 中实现该模型用于"低电量降推力"行为。
+ * SimulationProxy 消费该模型，用于电量、压降与可用推力衰减。
  */
 USTRUCT(meta = (DataflowAircraft))
 struct FAircraftBatteryConfigNode : public FDataflowNode
@@ -41,7 +41,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Battery", meta = (DataflowInput, ClampMin = "0.0"))
 	float NominalVoltageV = 14.8f;
 
-	/** 最低电压（伏特，低于此触发 Failsafe）。 */
+	/** 满放电状态下的开路电压（伏特）。 */
 	UPROPERTY(EditAnywhere, Category = "Battery", meta = (DataflowInput, ClampMin = "0.0"))
 	float MinVoltageV = 13.2f;
 

@@ -121,7 +121,6 @@ namespace UE::AircraftLab::AircraftAsset
 		extern AIRCRAFTASSET_API const FName GameFeelRcExpoYaw;
 		extern AIRCRAFTASSET_API const FName GameFeelRcExpoThrottle;
 		extern AIRCRAFTASSET_API const FName GameFeelInputDeadzone;
-		extern AIRCRAFTASSET_API const FName GameFeelHoverCollectiveCommand;
 		extern AIRCRAFTASSET_API const FName GameFeelStickResponseTimeSeconds;
 		extern AIRCRAFTASSET_API const FName GameFeelCameraShakeScale;
 	}
@@ -254,7 +253,6 @@ namespace UE::AircraftLab::AircraftAsset
 		TConstArrayView<float> GetGameFeelRcExpoYaw() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelRcExpoYaw()); }
 		TConstArrayView<float> GetGameFeelRcExpoThrottle() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelRcExpoThrottle()); }
 		TConstArrayView<float> GetGameFeelInputDeadzone() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelInputDeadzone()); }
-		TConstArrayView<float> GetGameFeelHoverCollectiveCommand() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelHoverCollectiveCommand()); }
 		TConstArrayView<float> GetGameFeelStickResponseTimeSeconds() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelStickResponseTimeSeconds()); }
 		TConstArrayView<float> GetGameFeelCameraShakeScale() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelCameraShakeScale()); }
 
@@ -402,7 +400,6 @@ namespace UE::AircraftLab::AircraftAsset
 		TArrayView<float> GetGameFeelRcExpoYaw()               { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelRcExpoYaw()); }
 		TArrayView<float> GetGameFeelRcExpoThrottle()          { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelRcExpoThrottle()); }
 		TArrayView<float> GetGameFeelInputDeadzone()           { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelInputDeadzone()); }
-		TArrayView<float> GetGameFeelHoverCollectiveCommand()  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelHoverCollectiveCommand()); }
 		TArrayView<float> GetGameFeelStickResponseTimeSeconds(){ return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelStickResponseTimeSeconds()); }
 		TArrayView<float> GetGameFeelCameraShakeScale()        { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelCameraShakeScale()); }
 

@@ -16,6 +16,16 @@
 
 #include "AircraftPIDConfigNode.generated.h"
 
+/** 模型局部前向轴。飞控内部始终使用 X=Forward、Y=Right、Z=Up。 */
+UENUM()
+enum class EAircraftForwardAxisNode : uint8
+{
+	PositiveX UMETA(DisplayName = "+X"),
+	PositiveY UMETA(DisplayName = "+Y"),
+	NegativeX UMETA(DisplayName = "-X"),
+	NegativeY UMETA(DisplayName = "-Y"),
+};
+
 /**
  * 飞控配置节点：写入 FlightController 单元素组（12 路串级 PID + 6 路高度 PID + 7 路限幅）。
  */
@@ -35,32 +45,36 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
 	FManagedArrayCollection Collection;
 
+	/** 美术模型机头方向；默认与权威飞控一致为局部 +Y。 */
+	UPROPERTY(EditAnywhere, Category = "Axes")
+	EAircraftForwardAxisNode ForwardAxis = EAircraftForwardAxisNode::PositiveY;
+
 	/* ----------- 位置外环（笛卡尔 X/Y/Z） ----------- */
 
 	UPROPERTY(EditAnywhere, Category = "PID|Position", meta = (DataflowInput, ClampMin = "0.0"))
-	FVector3f PositionKp = FVector3f(2.f, 2.f, 2.f);
+	FVector3f PositionKp = FVector3f(0.40f, 0.40f, 0.0f);
 
 	UPROPERTY(EditAnywhere, Category = "PID|Position", meta = (DataflowInput, ClampMin = "0.0"))
 	FVector3f PositionKi = FVector3f::ZeroVector;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Position", meta = (DataflowInput, ClampMin = "0.0"))
-	FVector3f PositionKd = FVector3f::ZeroVector;
+	FVector3f PositionKd = FVector3f(0.30f, 0.30f, 0.0f);
 
 	/* ----------- 速度内环（笛卡尔 X/Y/Z） ----------- */
 
 	UPROPERTY(EditAnywhere, Category = "PID|Velocity", meta = (DataflowInput, ClampMin = "0.0"))
-	FVector3f VelocityKp = FVector3f(3.f, 3.f, 3.f);
+	FVector3f VelocityKp = FVector3f(1.50f, 1.50f, 0.0f);
 
 	UPROPERTY(EditAnywhere, Category = "PID|Velocity", meta = (DataflowInput, ClampMin = "0.0"))
-	FVector3f VelocityKi = FVector3f(0.5f, 0.5f, 0.5f);
+	FVector3f VelocityKi = FVector3f(0.01f, 0.01f, 0.0f);
 
 	UPROPERTY(EditAnywhere, Category = "PID|Velocity", meta = (DataflowInput, ClampMin = "0.0"))
-	FVector3f VelocityKd = FVector3f(0.1f, 0.1f, 0.1f);
+	FVector3f VelocityKd = FVector3f(0.60f, 0.60f, 0.0f);
 
 	/* ----------- 角度外环（欧拉角 Roll/Pitch/Yaw） ----------- */
 
 	UPROPERTY(EditAnywhere, Category = "PID|Angle", meta = (DataflowInput, ClampMin = "0.0"))
-	FVector3f AngleKp = FVector3f(6.f, 6.f, 4.f);
+	FVector3f AngleKp = FVector3f(4.5f, 4.5f, 3.0f);
 
 	UPROPERTY(EditAnywhere, Category = "PID|Angle", meta = (DataflowInput, ClampMin = "0.0"))
 	FVector3f AngleKi = FVector3f::ZeroVector;
@@ -71,58 +85,79 @@ public:
 	/* ----------- 角速率内环（机体角速率 Roll/Pitch/Yaw） ----------- */
 
 	UPROPERTY(EditAnywhere, Category = "PID|Rate", meta = (DataflowInput, ClampMin = "0.0"))
-	FVector3f RateKp = FVector3f(0.15f, 0.15f, 0.20f);
+	FVector3f RateKp = FVector3f(0.0080f, 0.0080f, 0.0012f);
 
 	UPROPERTY(EditAnywhere, Category = "PID|Rate", meta = (DataflowInput, ClampMin = "0.0"))
-	FVector3f RateKi = FVector3f(0.10f, 0.10f, 0.15f);
+	FVector3f RateKi = FVector3f(0.0010f, 0.0010f, 0.00015f);
 
 	UPROPERTY(EditAnywhere, Category = "PID|Rate", meta = (DataflowInput, ClampMin = "0.0"))
-	FVector3f RateKd = FVector3f(0.005f, 0.005f, 0.f);
+	FVector3f RateKd = FVector3f(0.00040f, 0.00040f, 0.00008f);
 
 	/* ----------- Altitude / VerticalVelocity（独立通道） ----------- */
 
 	UPROPERTY(EditAnywhere, Category = "PID|Altitude", meta = (DataflowInput, ClampMin = "0.0"))
-	float AltitudeKp = 2.f;
+	float AltitudeKp = 1.20f;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Altitude", meta = (DataflowInput, ClampMin = "0.0"))
 	float AltitudeKi = 0.f;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Altitude", meta = (DataflowInput, ClampMin = "0.0"))
-	float AltitudeKd = 0.f;
+	float AltitudeKd = 0.20f;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Altitude", meta = (DataflowInput, ClampMin = "0.0"))
-	float VerticalVelocityKp = 3.f;
+	float VerticalVelocityKp = 0.0015f;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Altitude", meta = (DataflowInput, ClampMin = "0.0"))
-	float VerticalVelocityKi = 0.5f;
+	float VerticalVelocityKi = 0.00020f;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Altitude", meta = (DataflowInput, ClampMin = "0.0"))
-	float VerticalVelocityKd = 0.1f;
+	float VerticalVelocityKd = 0.00050f;
 
 	/* ----------- 限幅 ----------- */
 
 	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0"))
-	float MaxTiltAngleDegrees = 35.f;
+	float MaxTiltAngleDegrees = 25.f;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0"))
-	float MaxYawRateDegreesPerSec = 180.f;
+	float MaxYawRateDegreesPerSec = 90.f;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0"))
-	float MaxClimbRateCmPerSec = 400.f;
+	float MaxRollRateDegreesPerSec = 180.f;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0"))
-	float MaxDescentRateCmPerSec = 250.f;
+	float MaxPitchRateDegreesPerSec = 180.f;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0"))
-	float MaxHorizontalSpeedCmPerSec = 1200.f;
+	float MaxClimbRateCmPerSec = 300.f;
+
+	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0"))
+	float MaxDescentRateCmPerSec = 200.f;
+
+	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0"))
+	float MaxHorizontalSpeedCmPerSec = 800.f;
+
+	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0"))
+	float MaxHorizontalAccelerationCmPerSecSq = 600.f;
+
+	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0"))
+	float MaxVerticalAccelerationCmPerSecSq = 500.f;
+
+	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0", ClampMax = "1.0"))
+	float MinCollectiveCommand = 0.f;
+
+	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0", ClampMax = "1.0"))
+	float HoverCollectiveCommand = 0.5f;
+
+	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (DataflowInput, ClampMin = "0.0", ClampMax = "1.0"))
+	float MaxCollectiveCommand = 1.f;
 
 	/** 微分项一阶低通截止频率（Hz）；0 表示不滤波。 */
 	UPROPERTY(EditAnywhere, Category = "PID|Filter", meta = (DataflowInput, ClampMin = "0.0"))
-	float DerivativeCutoffHz = 80.f;
+	float DerivativeCutoffHz = 15.f;
 
 	/** 阻尼伪逆控制分配的 λ：u = (BᵀB + λI)⁻¹ Bᵀ τ_des。 */
 	UPROPERTY(EditAnywhere, Category = "PID|Allocation", meta = (DataflowInput, ClampMin = "0.0"))
-	float AllocationDamping = 1e-3f;
+	float AllocationDamping = 0.05f;
 
 	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
 };

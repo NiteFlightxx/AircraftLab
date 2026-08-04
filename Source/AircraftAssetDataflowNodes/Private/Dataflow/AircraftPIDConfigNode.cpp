@@ -2,6 +2,7 @@
 
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
+#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftPIDConfigNode)
 
@@ -33,9 +34,16 @@ FAircraftPIDConfigNode::FAircraftPIDConfigNode(const UE::Dataflow::FNodeParamete
 
 	RegisterInputConnection(&MaxTiltAngleDegrees);
 	RegisterInputConnection(&MaxYawRateDegreesPerSec);
+	RegisterInputConnection(&MaxRollRateDegreesPerSec);
+	RegisterInputConnection(&MaxPitchRateDegreesPerSec);
 	RegisterInputConnection(&MaxClimbRateCmPerSec);
 	RegisterInputConnection(&MaxDescentRateCmPerSec);
 	RegisterInputConnection(&MaxHorizontalSpeedCmPerSec);
+	RegisterInputConnection(&MaxHorizontalAccelerationCmPerSecSq);
+	RegisterInputConnection(&MaxVerticalAccelerationCmPerSecSq);
+	RegisterInputConnection(&MinCollectiveCommand);
+	RegisterInputConnection(&HoverCollectiveCommand);
+	RegisterInputConnection(&MaxCollectiveCommand);
 	RegisterInputConnection(&DerivativeCutoffHz);
 	RegisterInputConnection(&AllocationDamping);
 }
@@ -94,6 +102,40 @@ void FAircraftPIDConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDa
 	UE_AIRCRAFT_WRITE_FLOAT(FcMaxHorizontalSpeedCmPerSec, MaxHorizontalSpeedCmPerSec)
 	UE_AIRCRAFT_WRITE_FLOAT(FcDerivativeCutoffHz, DerivativeCutoffHz)
 	UE_AIRCRAFT_WRITE_FLOAT(FcAllocationDamping, AllocationDamping)
+
+	// 与 Chaos Cloth 配置节点一致：不属于固定几何 schema、但需要随配置扩展的值写入
+	// Collection Property Facade，避免每增加一个运行参数都破坏结构组布局。
+	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
+	Properties.DefineSchema();
+	constexpr EAircraftCollectionPropertyFlags Flags =
+		EAircraftCollectionPropertyFlags::Enabled | EAircraftCollectionPropertyFlags::Animatable;
+	auto SetFloatProperty = [&Properties](const FName Key, float Value)
+	{
+		int32 Index = Properties.GetKeyNameIndex(Key);
+		if (Index == INDEX_NONE)
+		{
+			Index = Properties.AddProperty(Key, Flags);
+		}
+		Properties.SetValue(Index, Value);
+	};
+	auto SetIntProperty = [&Properties](const FName Key, int32 Value)
+	{
+		int32 Index = Properties.GetKeyNameIndex(Key);
+		if (Index == INDEX_NONE)
+		{
+			Index = Properties.AddProperty(Key, Flags);
+		}
+		Properties.SetValue(Index, Value);
+	};
+
+	SetIntProperty(TEXT("ForwardAxis"), static_cast<int32>(ForwardAxis));
+	SetFloatProperty(TEXT("MaxRollRateDegreesPerSec"), GetValue(Context, &MaxRollRateDegreesPerSec));
+	SetFloatProperty(TEXT("MaxPitchRateDegreesPerSec"), GetValue(Context, &MaxPitchRateDegreesPerSec));
+	SetFloatProperty(TEXT("MaxHorizontalAccelerationCmPerSecSq"), GetValue(Context, &MaxHorizontalAccelerationCmPerSecSq));
+	SetFloatProperty(TEXT("MaxVerticalAccelerationCmPerSecSq"), GetValue(Context, &MaxVerticalAccelerationCmPerSecSq));
+	SetFloatProperty(TEXT("MinCollectiveCommand"), GetValue(Context, &MinCollectiveCommand));
+	SetFloatProperty(TEXT("HoverCollectiveCommand"), GetValue(Context, &HoverCollectiveCommand));
+	SetFloatProperty(TEXT("MaxCollectiveCommand"), GetValue(Context, &MaxCollectiveCommand));
 
 #undef UE_AIRCRAFT_WRITE_VEC3F
 #undef UE_AIRCRAFT_WRITE_FLOAT

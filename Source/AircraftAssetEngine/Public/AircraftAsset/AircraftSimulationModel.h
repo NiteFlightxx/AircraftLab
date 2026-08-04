@@ -14,6 +14,118 @@ class UPhysicsAsset;
 class USkeletalMesh;
 struct FManagedArrayCollection;
 
+/** Dataflow 编译后的电池参数。当前作为运行时只读数据保留，供电量模型和 Gameplay 查询使用。 */
+struct AIRCRAFTASSETENGINE_API FAircraftBatteryRuntimeConfig
+{
+	float CapacityMilliAmpHour = 2200.0f;
+	float NominalVoltageV = 14.8f;
+	float MinVoltageV = 13.2f;
+	float MaxDischargeC = 75.0f;
+	float InternalResistanceOhm = 0.012f;
+};
+
+/**
+ * Dataflow 编译后的飞控参数快照。
+ *
+ * 这里故意只保存纯值，不持有 UObject。GameThread 构建完成后，PhysicsThread 可直接读取，
+ * 与 Chaos Cloth 的 SimulationModel/Config 分层一致。
+ */
+struct AIRCRAFTASSETENGINE_API FAircraftFlightControllerRuntimeConfig
+{
+	/** 0=+X, 1=+Y, 2=-X, 3=-Y。默认遵循权威飞控的 +Y 机头约定。 */
+	uint8 ForwardAxis = 1;
+
+	FVector3f PositionKp = FVector3f(0.40f, 0.40f, 0.0f);
+	FVector3f PositionKi = FVector3f::ZeroVector;
+	FVector3f PositionKd = FVector3f(0.30f, 0.30f, 0.0f);
+	FVector3f VelocityKp = FVector3f(1.50f, 1.50f, 0.0f);
+	FVector3f VelocityKi = FVector3f(0.01f, 0.01f, 0.0f);
+	FVector3f VelocityKd = FVector3f(0.60f, 0.60f, 0.0f);
+	FVector3f AttitudeGains = FVector3f(4.5f, 4.5f, 3.0f);
+	FVector3f RateKp = FVector3f(0.0080f, 0.0080f, 0.0012f);
+	FVector3f RateKi = FVector3f(0.0010f, 0.0010f, 0.00015f);
+	FVector3f RateKd = FVector3f(0.00040f, 0.00040f, 0.00008f);
+
+	float AltitudeKp = 1.20f;
+	float AltitudeKi = 0.0f;
+	float AltitudeKd = 0.20f;
+	float VerticalVelocityKp = 0.0015f;
+	float VerticalVelocityKi = 0.00020f;
+	float VerticalVelocityKd = 0.00050f;
+
+	float MaxTiltAngleDegrees = 25.0f;
+	float MaxYawRateDegreesPerSec = 90.0f;
+	float MaxRollRateDegreesPerSec = 180.0f;
+	float MaxPitchRateDegreesPerSec = 180.0f;
+	float MaxClimbRateCmPerSec = 300.0f;
+	float MaxDescentRateCmPerSec = 200.0f;
+	float MaxHorizontalSpeedCmPerSec = 800.0f;
+	float MaxHorizontalAccelerationCmPerSecSq = 600.0f;
+	float MaxVerticalAccelerationCmPerSecSq = 500.0f;
+	float MinCollectiveCommand = 0.0f;
+	float HoverCollectiveCommand = 0.5f;
+	float MaxCollectiveCommand = 1.0f;
+	float DerivativeCutoffHz = 15.0f;
+	float AllocationDamping = 0.05f;
+
+	float GetForwardYawOffsetDegrees() const
+	{
+		switch (ForwardAxis)
+		{
+		case 0: return 0.0f;
+		case 1: return 90.0f;
+		case 2: return 180.0f;
+		case 3: return -90.0f;
+		default: return 90.0f;
+		}
+	}
+
+	FVector GetForwardAxisBody() const
+	{
+		return FQuat(FVector::UpVector, FMath::DegreesToRadians(GetForwardYawOffsetDegrees()))
+			.RotateVector(FVector::ForwardVector);
+	}
+
+	FVector GetRightAxisBody() const
+	{
+		return FVector::CrossProduct(FVector::UpVector, GetForwardAxisBody()).GetSafeNormal();
+	}
+
+	FQuat GetControlWorldRotation(const FQuat& BodyWorldRotation) const
+	{
+		const FQuat ControlToBody(FVector::UpVector, FMath::DegreesToRadians(GetForwardYawOffsetDegrees()));
+		return (BodyWorldRotation * ControlToBody).GetNormalized();
+	}
+
+	FVector BodyAngularToController(const FVector& PhysicalBodyVector) const
+	{
+		const FVector ControlVector(
+			FVector::DotProduct(PhysicalBodyVector, GetForwardAxisBody()),
+			FVector::DotProduct(PhysicalBodyVector, GetRightAxisBody()),
+			PhysicalBodyVector.Z);
+		return FVector(-ControlVector.X, -ControlVector.Y, ControlVector.Z);
+	}
+
+	FVector ControllerTorqueToBody(const FVector& ControllerTorque) const
+	{
+		return GetForwardAxisBody() * -ControllerTorque.X
+			+ GetRightAxisBody() * -ControllerTorque.Y
+			+ FVector::UpVector * ControllerTorque.Z;
+	}
+};
+
+/** Dataflow 编译后的输入手感参数。 */
+struct AIRCRAFTASSETENGINE_API FAircraftGameFeelRuntimeConfig
+{
+	float RcExpoRoll = 0.30f;
+	float RcExpoPitch = 0.30f;
+	float RcExpoYaw = 0.20f;
+	float RcExpoThrottle = 0.0f;
+	float InputDeadzone = 0.05f;
+	float StickResponseTimeSeconds = 0.04f;
+	float CameraShakeScale = 0.0f;
+};
+
 /**
  * 螺旋桨旋转方向枚举
  *
@@ -251,7 +363,7 @@ struct AIRCRAFTASSETENGINE_API FDroneRotorDefinition
  * 多旋翼静态模拟模型
  *
  * 与 FChaosClothSimulationLodModel 同位（资产编译期产物，运行时只读）。
- * Phase 1 阶段为骨架；Phase 2 引入 FAircraftCollection 之后由 Property Facade 解析得到。
+ * 由 FAircraftCollection 与 Property Facade 在资产构建时解析得到。
  */
 struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 {
@@ -263,7 +375,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 	/** 资产/Pawn 名（用于日志与调试） */
 	FName AircraftName = NAME_None;
 
-	/** 关联的骨骼网格（Phase 4 起从 Asset 取） */
+	/** 关联的骨骼网格。 */
 	USkeletalMesh* SkeletalMesh = nullptr;
 
 	/** 可选物理资产（用于 Chaos 刚体配置） */
@@ -272,11 +384,22 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 	/** 机架类型（决定默认混控矩阵） */
 	EDroneFrameType FrameType = EDroneFrameType::QuadX;
 
+	/** 物理底盘根骨骼。NAME_None 时使用组件主 BodyInstance。 */
+	FName RootBone = NAME_None;
+
+	/** 单帧允许的内部控制子步数。 */
+	int32 MaxSolverSubsteps = 1;
+
 	/** 质量与惯性 */
 	FDroneMassProperties Mass;
 
 	/** 气动 */
 	FDroneAerodynamicsConfig Aero;
+
+	/** 电池、飞控和输入手感的运行时只读快照。 */
+	FAircraftBatteryRuntimeConfig Battery;
+	FAircraftFlightControllerRuntimeConfig FlightController;
+	FAircraftGameFeelRuntimeConfig GameFeel;
 
 	/** 旋翼定义（按机架顺序） */
 	TArray<FDroneRotorDefinition> Rotors;
@@ -288,8 +411,13 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 		SkeletalMesh = nullptr;
 		PhysicsAsset = nullptr;
 		FrameType = EDroneFrameType::QuadX;
+		RootBone = NAME_None;
+		MaxSolverSubsteps = 1;
 		Mass = FDroneMassProperties();
 		Aero = FDroneAerodynamicsConfig();
+		Battery = FAircraftBatteryRuntimeConfig();
+		FlightController = FAircraftFlightControllerRuntimeConfig();
+		GameFeel = FAircraftGameFeelRuntimeConfig();
 		Rotors.Reset();
 	}
 

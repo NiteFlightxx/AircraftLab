@@ -1,6 +1,7 @@
 #include "AircraftAsset/AircraftAsset.h"
 
 #include "Engine/SkeletalMesh.h"
+#include "Engine/SkeletalMeshSocket.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "UObject/SoftObjectPath.h"
 #include "AircraftAsset/AircraftCollection.h"
@@ -97,6 +98,66 @@ namespace
 
 		return Cast<UPhysicsAsset>(GetFirstPath(AircraftCollection.GetPhysicsAssetSoftObjectPathName()).TryLoad());
 	}
+
+	FTransform GetReferencePoseComponentTransform(const FReferenceSkeleton& ReferenceSkeleton, int32 BoneIndex)
+	{
+		const TArray<FTransform>& ReferencePose = ReferenceSkeleton.GetRefBonePose();
+		if (!ReferencePose.IsValidIndex(BoneIndex))
+		{
+			return FTransform::Identity;
+		}
+
+		FTransform ComponentTransform = ReferencePose[BoneIndex];
+		for (int32 ParentIndex = ReferenceSkeleton.GetParentIndex(BoneIndex);
+			ParentIndex != INDEX_NONE;
+			ParentIndex = ReferenceSkeleton.GetParentIndex(ParentIndex))
+		{
+			ComponentTransform *= ReferencePose[ParentIndex];
+		}
+		return ComponentTransform;
+	}
+
+	void ResolveRotorSocketTransforms(FAircraftSimulationModel& Model)
+	{
+		const USkeletalMesh* const SkeletalMesh = Model.SkeletalMesh;
+		if (!SkeletalMesh)
+		{
+			return;
+		}
+
+		const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
+		const int32 RootBoneIndex = Model.RootBone.IsNone()
+			? 0
+			: ReferenceSkeleton.FindBoneIndex(Model.RootBone);
+		const FTransform RootComponentTransform = GetReferencePoseComponentTransform(ReferenceSkeleton, RootBoneIndex);
+
+		for (FDroneRotorDefinition& Rotor : Model.Rotors)
+		{
+			if (!Rotor.bUseSocketTransform || Rotor.SocketName.IsNone())
+			{
+				continue;
+			}
+
+			const USkeletalMeshSocket* const Socket = SkeletalMesh->FindSocket(Rotor.SocketName);
+			if (!Socket)
+			{
+				continue;
+			}
+
+			const int32 SocketBoneIndex = ReferenceSkeleton.FindBoneIndex(Socket->BoneName);
+			if (SocketBoneIndex == INDEX_NONE)
+			{
+				continue;
+			}
+
+			const FTransform SocketComponentTransform = Socket->GetSocketLocalTransform()
+				* GetReferencePoseComponentTransform(ReferenceSkeleton, SocketBoneIndex);
+			const FTransform SocketBodyTransform = SocketComponentTransform.GetRelativeTransform(RootComponentTransform);
+			Rotor.PositionLocalCm = SocketBodyTransform.GetLocation();
+			Rotor.RotationLocal = SocketBodyTransform.Rotator();
+			Rotor.ThrustAxisLocal = SocketBodyTransform.TransformVectorNoScale(Rotor.ThrustAxisLocal).GetSafeNormal();
+		}
+	}
 }
 
 using namespace UE::AircraftLab::AircraftAsset;
@@ -137,39 +198,87 @@ void UAircraftAsset::Build(
 	FText* ErrorText,
 	FText* VerboseText)
 {
+	if (ErrorText)
+	{
+		*ErrorText = FText::GetEmpty();
+	}
+	if (VerboseText)
+	{
+		*VerboseText = FText::GetEmpty();
+	}
+
+	auto AppendValidationError = [ErrorText, VerboseText](int32 LodIndex, const FText& ValidationError)
+	{
+		if (ErrorText)
+		{
+			*ErrorText = LOCTEXT("BuildErrorText", "Aircraft asset build failed validation.");
+		}
+		if (VerboseText)
+		{
+			const FText FormattedError = FText::Format(
+				LOCTEXT("BuildValidationError", "LOD {0}: {1}"), LodIndex, ValidationError);
+			*VerboseText = VerboseText->IsEmpty()
+				? FormattedError
+				: FText::Format(LOCTEXT("AppendBuildValidationError", "{0}\n{1}"), *VerboseText, FormattedError);
+		}
+	};
+
+	bool bHasValidationErrors = InAircraftCollections.IsEmpty();
+	if (InAircraftCollections.IsEmpty())
+	{
+		AppendValidationError(0, LOCTEXT("MissingAircraftCollection", "At least one aircraft collection is required."));
+	}
+	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
+	{
+		const FConstAircraftCollection Collection(InAircraftCollections[LodIndex]);
+		TArray<FText> ValidationErrors;
+		if (!Collection.Validate(ValidationErrors))
+		{
+			bHasValidationErrors = true;
+			for (const FText& ValidationError : ValidationErrors)
+			{
+				AppendValidationError(LodIndex, ValidationError);
+			}
+		}
+
+		const USkeletalMesh* const SourceMesh = Cast<USkeletalMesh>(GetFirstPath(Collection.GetSkeletalMeshSoftObjectPathName()).TryLoad());
+		if (SourceMesh)
+		{
+			const TManagedArray<FName>* const RootBones = Collection.GetFrameRootBone();
+			const FName RootBone = RootBones && RootBones->Num() > 0 ? (*RootBones)[0] : NAME_None;
+			if (!RootBone.IsNone() && SourceMesh->GetRefSkeleton().FindBoneIndex(RootBone) == INDEX_NONE)
+			{
+				bHasValidationErrors = true;
+				AppendValidationError(LodIndex, FText::Format(
+					LOCTEXT("MissingRootBone", "Root body bone '{0}' does not exist in the Skeletal Mesh."), FText::FromName(RootBone)));
+			}
+
+			const TManagedArray<FName>* const SocketNames = Collection.GetPropellerSocketName();
+			const TManagedArray<bool>* const UseSocketTransforms = Collection.GetPropellerUseSocketTransform();
+			for (int32 RotorIndex = 0; SocketNames && RotorIndex < SocketNames->Num(); ++RotorIndex)
+			{
+				if (UseSocketTransforms && RotorIndex < UseSocketTransforms->Num() && (*UseSocketTransforms)[RotorIndex]
+					&& !SourceMesh->FindSocket((*SocketNames)[RotorIndex]))
+				{
+					bHasValidationErrors = true;
+					AppendValidationError(LodIndex, FText::Format(
+						LOCTEXT("MissingRotorSocket", "Rotor socket '{0}' does not exist in the Skeletal Mesh."),
+						FText::FromName((*SocketNames)[RotorIndex])));
+				}
+			}
+		}
+	}
+
+	if (bHasValidationErrors)
+	{
+		return;
+	}
+
 	TArray<TSharedRef<const FManagedArrayCollection>>& OutAircraftCollections = GetAircraftCollectionsInternal();
 	OutAircraftCollections.Reset(InAircraftCollections.Num());
 
 	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
 	{
-		const FConstAircraftCollection InAircraftCollection(InAircraftCollections[LodIndex]);
-		if (!InAircraftCollection.IsValid())
-		{
-			if (ErrorText && ErrorText->IsEmpty())
-			{
-				*ErrorText = LOCTEXT("BuildErrorText", "Invalid LOD.");
-				if (VerboseText)
-				{
-					*VerboseText = FText::Format(
-						LOCTEXT("BuildVerboseTextFirstError", "LOD {0} has no valid data."),
-						LodIndex);
-				}
-			}
-			else if (ErrorText && VerboseText)
-			{
-				*VerboseText = FText::Format(
-					LOCTEXT("BuildVerboseTextThereafter", "{0}\nLOD {1} has no valid data."),
-					*VerboseText,
-					LodIndex);
-			}
-
-			TSharedRef<FManagedArrayCollection> EmptyAircraftCollection = MakeShared<FManagedArrayCollection>();
-			FAircraftCollection EmptyAircraftFacade(EmptyAircraftCollection);
-			EmptyAircraftFacade.DefineSchema();
-			OutAircraftCollections.Emplace(MoveTemp(EmptyAircraftCollection));
-			continue;
-		}
-
 		TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(*InAircraftCollections[LodIndex]);
 		FAircraftCollection AircraftFacade(AircraftCollection);
 		AircraftFacade.DefineSchema();
@@ -307,8 +416,9 @@ void UAircraftAsset::BuildAircraftSimulationModel()
 	// 把资产层引用的 SkeletalMesh / PhysicsAsset 同步到运行时只读模型中，供 SimulationProxy 消费。
 	if (AircraftSimulationModel.IsValid())
 	{
-		AircraftSimulationModel->SkeletalMesh = const_cast<USkeletalMesh*>(GetSourceSkeletalMesh());
+		AircraftSimulationModel->SkeletalMesh = ResolveSourceSkeletalMesh(GetAircraftCollections());
 		AircraftSimulationModel->PhysicsAsset = PhysicsAsset;
+		ResolveRotorSocketTransforms(*AircraftSimulationModel);
 	}
 }
 

@@ -1,7 +1,6 @@
 // 对齐 ChaosClothAssetEngine/Private/ChaosClothAsset/ClothComponent.cpp
 //
-// 多旋翼组件实现。Phase 1 阶段：组件生命周期 + 资产绑定 + GT API 转发到 Proxy + 物理子步入口。
-// Phase 4 实现 OnPreEndOfFrameSync 中的渲染同步、调试绘制、估计状态读取等细节。
+// 多旋翼组件实现：组件生命周期 + 资产绑定 + GT API 转发到 Proxy + 物理子步入口。
 
 #include "AircraftAsset/AircraftComponent.h"
 
@@ -12,6 +11,7 @@
 #include "Engine/World.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "Engine/HitResult.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
 
 #include "AircraftAsset/AircraftSimulationModel.h"
@@ -346,7 +346,7 @@ void UAircraftComponent::OnCreatePhysicsState()
 
 	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->SetChassisBodyInstance(ResolveChassisBodyInstance());
+		AircraftSimulationProxy->SetAircraftBodyInstance(ResolveChassisBodyInstance());
 	}
 }
 
@@ -354,7 +354,7 @@ void UAircraftComponent::OnDestroyPhysicsState()
 {
 	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->SetChassisBodyInstance(nullptr);
+		AircraftSimulationProxy->SetAircraftBodyInstance(nullptr);
 	}
 
 	Super::OnDestroyPhysicsState();
@@ -363,6 +363,25 @@ void UAircraftComponent::OnDestroyPhysicsState()
 void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	if (AircraftSimulationProxy.IsValid())
+	{
+		float GroundDistanceCm = TNumericLimits<float>::Max();
+		if (const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
+			Model && Model->Aero.GroundEffectStartHeightCm > UE_SMALL_NUMBER)
+		{
+			const FVector TraceStart = GetComponentTransform().TransformPosition(Model->Mass.CenterOfMassOffsetCm);
+			const FVector TraceEnd = TraceStart - FVector::UpVector * Model->Aero.GroundEffectStartHeightCm;
+			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(AircraftGroundEffect), false, GetOwner());
+			FHitResult Hit;
+			const FCollisionObjectQueryParams ObjectQueryParams(FCollisionObjectQueryParams::InitType::AllStaticObjects);
+			if (GetWorld() && GetWorld()->LineTraceSingleByObjectType(Hit, TraceStart, TraceEnd, ObjectQueryParams, QueryParams))
+			{
+				GroundDistanceCm = Hit.Distance;
+			}
+		}
+		AircraftSimulationProxy->SetGroundDistance_GameThread(GroundDistanceCm);
+	}
 
 	DrawSimulationDebug();
 }
@@ -382,7 +401,15 @@ void UAircraftComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTim
 
 	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->TickPhysicsThread(DeltaTime, SimTime);
+		const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
+		const int32 NumControlSubsteps = Model ? FMath::Clamp(Model->MaxSolverSubsteps, 1, 16) : 1;
+		const float ControlDeltaTime = DeltaTime / static_cast<float>(NumControlSubsteps);
+		const float ForceAccumulationScale = 1.0f / static_cast<float>(NumControlSubsteps);
+		for (int32 SubstepIndex = 0; SubstepIndex < NumControlSubsteps; ++SubstepIndex)
+		{
+			const float ControlSimTime = SimTime - DeltaTime + ControlDeltaTime * static_cast<float>(SubstepIndex + 1);
+			AircraftSimulationProxy->TickPhysicsThread(ControlDeltaTime, ControlSimTime, ForceAccumulationScale);
+		}
 	}
 }
 
@@ -535,7 +562,7 @@ void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 
 	// 通过资产暴露的 GetSkeleton() / GetPhysicsAsset() 与 SimulationModel 的 SkeletalMesh 字段拿到
 	// 实际渲染骨骼网格。优先用 SimulationModel 中的（资产 Build 后的最新值）；否则在编辑器路径上
-	// fall back 到 PreviewSceneSkeletalMesh。
+	// 回退到 PreviewSceneSkeletalMesh。
 	USkeletalMesh* MeshToBind = nullptr;
 	if (const FAircraftSimulationModel* const Model = GetPrimarySimulationModel())
 	{
@@ -560,5 +587,33 @@ void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 
 FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance() const
 {
-	return const_cast<UAircraftComponent*>(this)->GetBodyInstance();
+	UAircraftComponent* const MutableThis = const_cast<UAircraftComponent*>(this);
+	if (const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
+		Model && !Model->RootBone.IsNone())
+	{
+		if (FBodyInstance* const RootBody = MutableThis->GetBodyInstance(Model->RootBone))
+		{
+			return RootBody;
+		}
+	}
+	return MutableThis->GetBodyInstance();
+}
+
+void UAircraftComponent::GetBatteryState(FDroneBatteryState& OutState) const
+{
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->GetBatteryState_GameThread(OutState);
+	}
+	else
+	{
+		OutState = FDroneBatteryState();
+	}
+}
+
+float UAircraftComponent::GetCameraShakeIntensity() const
+{
+	return AircraftSimulationProxy.IsValid()
+		? AircraftSimulationProxy->GetCameraShakeIntensity_GameThread()
+		: 0.0f;
 }

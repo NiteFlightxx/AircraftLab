@@ -213,9 +213,8 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				return;
 			}
 
-			// 默认 QuadX 旋翼布局（用 30cm 臂长作为模板默认）。Phase 1 中 FAircraftSimulationModel
-			// 在 Propellers 组为空时也会回退生成相同的 4 个旋翼，但模板把它们显式列出来便于编辑器
-			// 用户调整位置/旋向。
+			// 默认 QuadX 旋翼布局（用 30cm 臂长作为模板默认）。模板显式列出全部旋翼；
+			// Terminal 不会为缺失数据悄悄生成后备布局，因此图本身始终是唯一事实来源。
 			//
 			// QuadX 编号约定（俯视图）：
 			//     2(CW)   1(CCW)
@@ -375,7 +374,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.RcExpoYaw = 0.2f;
 					Node.RcExpoThrottle = 0.f;
 					Node.InputDeadzone = 0.05f;
-					Node.HoverCollectiveCommand = 0.5f;
 					Node.StickResponseTimeSeconds = 0.04f;
 					Node.CameraShakeScale = 0.f;
 				});
