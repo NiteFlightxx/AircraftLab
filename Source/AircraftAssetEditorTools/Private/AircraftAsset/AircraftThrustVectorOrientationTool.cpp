@@ -76,7 +76,8 @@ void UAircraftThrustVectorOrientationTool::Render(IToolsContextRenderAPI* Render
 	}
 
 	const TSharedPtr<const FAircraftSimulationModel> Model = Asset->GetAircraftSimulationModel(0);
-	if (!Model.IsValid())
+	const FAircraftSimulationLodModel* const LodModel = Model.IsValid() ? Model->GetLodModel(0) : nullptr;
+	if (!LodModel)
 	{
 		return;
 	}
@@ -86,9 +87,9 @@ void UAircraftThrustVectorOrientationTool::Render(IToolsContextRenderAPI* Render
 	Visualizer.BeginFrame(RenderAPI);
 
 	const FTransform XformWorld = Component->GetComponentTransform();
-	for (int32 i = 0; i < Model->Rotors.Num(); ++i)
+	for (int32 i = 0; i < LodModel->Rotors.Num(); ++i)
 	{
-		const FDroneRotorDefinition& Rotor = Model->Rotors[i];
+		const FDroneRotorDefinition& Rotor = LodModel->Rotors[i];
 		const FVector LocalPos = Rotor.PositionLocalCm;
 		const FVector WorldPos = XformWorld.TransformPosition(LocalPos);
 		const FVector WorldAxis = XformWorld.GetRotation().RotateVector(Rotor.GetNormalizedThrustAxisLocal());

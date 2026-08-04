@@ -332,29 +332,50 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					(void)Node;
 				});
 
-			/* ---------- 10. Simulation LOD Profile ---------- */
-			const FCreatedTemplateNode SimulationLODNode = AddConfiguredTemplateNode<FAircraftSimulationLODProfileNode>(
-				DataflowAsset,
-				TEXT("AircraftSimulationLODProfile"),
-				NodeIndex++,
-				[](FAircraftSimulationLODProfileNode& Node)
-				{
-					(void)Node;
-				});
+			/* ---------- 10-13. 每个 Collection LOD 一个独立 Profile 节点 ---------- */
+			struct FDefaultLodEntry
+			{
+				FName Name;
+				EAircraftProfileDriveMode DriveMode;
+				EAircraftProfileCollisionMode CollisionMode;
+			};
+			const FDefaultLodEntry DefaultLods[] =
+			{
+				{ TEXT("LOD0"), EAircraftProfileDriveMode::FlightController, EAircraftProfileCollisionMode::QueryAndPhysics },
+				{ TEXT("LOD1"), EAircraftProfileDriveMode::PhysicsConstraint, EAircraftProfileCollisionMode::QueryAndPhysics },
+				{ TEXT("LOD2"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::QueryOnly },
+				{ TEXT("LOD3"), EAircraftProfileDriveMode::None, EAircraftProfileCollisionMode::Disabled },
+			};
+			TArray<FCreatedTemplateNode> SimulationLODNodes;
+			SimulationLODNodes.Reserve(UE_ARRAY_COUNT(DefaultLods));
+			for (const FDefaultLodEntry& Entry : DefaultLods)
+			{
+				const FDefaultLodEntry EntryCopy = Entry;
+				SimulationLODNodes.Add(AddConfiguredTemplateNode<FAircraftSimulationLODProfileNode>(
+					DataflowAsset,
+					FName(*FString::Printf(TEXT("AircraftSimulationLODProfile_%s"), *Entry.Name.ToString())),
+					NodeIndex++,
+					[EntryCopy](FAircraftSimulationLODProfileNode& Node)
+					{
+						Node.Profile.Name = EntryCopy.Name;
+						Node.Profile.DriveMode = EntryCopy.DriveMode;
+						Node.Profile.CollisionMode = EntryCopy.CollisionMode;
+					}));
+			}
 
-			/* ---------- 11. Terminal 节点 ---------- */
+			/* ---------- 14. Terminal 节点 ---------- */
 			const FCreatedTemplateNode TerminalNode = AddConfiguredTemplateNode<FAircraftAssetTerminalNode>(
 				DataflowAsset,
 				TEXT("AircraftAssetTerminal"),
 				NodeIndex++,
 				[](FAircraftAssetTerminalNode& Node)
 				{
-					Node.AircraftAsset = nullptr;
+					(void)Node;
 				});
 
-			/* ---------- 串联 11 个节点（Collection passthrough 链） ---------- */
+			/* ---------- 串联配置节点，并把结果送入四个独立的 Terminal LOD 输入 ---------- */
 			TArray<UDataflowEdNode*> NodeChain;
-			NodeChain.Reserve(11);
+			NodeChain.Reserve(9);
 			NodeChain.Add(SourceNode.EdNode);
 			NodeChain.Add(SolverNode.EdNode);
 			NodeChain.Add(FrameNode.EdNode);
@@ -364,8 +385,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			}
 			NodeChain.Add(BatteryNode.EdNode);
 			NodeChain.Add(FlightControllerNode.EdNode);
-			NodeChain.Add(SimulationLODNode.EdNode);
-			NodeChain.Add(TerminalNode.EdNode);
 
 			for (int32 ChainIndex = 0; ChainIndex + 1 < NodeChain.Num(); ++ChainIndex)
 			{
@@ -375,6 +394,26 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					TEXT("Collection"),
 					NodeChain[ChainIndex + 1],
 					TEXT("Collection"));
+			}
+
+			if (const FAircraftAssetTerminalNode* const TerminalDataflowNode =
+				TerminalNode.Node.IsValid() ? TerminalNode.Node->AsType<FAircraftAssetTerminalNode>() : nullptr)
+			{
+				for (int32 LodIndex = 0; LodIndex < SimulationLODNodes.Num(); ++LodIndex)
+				{
+					ConnectTemplateNodes(
+						DataflowAsset,
+						FlightControllerNode.EdNode,
+						TEXT("Collection"),
+						SimulationLODNodes[LodIndex].EdNode,
+						TEXT("Collection"));
+					ConnectTemplateNodes(
+						DataflowAsset,
+						SimulationLODNodes[LodIndex].EdNode,
+						TEXT("Collection"),
+						TerminalNode.EdNode,
+						TerminalDataflowNode->GetCollectionLodInputName(LodIndex));
+				}
 			}
 		}
 	

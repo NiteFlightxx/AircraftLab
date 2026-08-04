@@ -51,6 +51,8 @@ void UAircraftComponent::SetAsset(UAircraftAssetBase* InAsset)
 
 	Asset = InAsset;
 	SyncSkeletalMeshComponentFromAsset();
+	CurrentSimulationLOD = INDEX_NONE;
+	UpdateSimulationLOD();
 	ApplySolverSettingsToBodyInstance();
 
 	if (AircraftSimulationProxy.IsValid())
@@ -67,6 +69,8 @@ UAircraftAssetBase* UAircraftComponent::GetAsset() const
 void UAircraftComponent::RefreshAssetState()
 {
 	SyncSkeletalMeshComponentFromAsset();
+	CurrentSimulationLOD = INDEX_NONE;
+	UpdateSimulationLOD();
 
 	// 把 FrameConfig 中的 MassKg / CenterOfMass / InertiaDiagonal 重新写入 BodyInstance —
 	// 与 ChaosCloth 在 RefreshAssetState 中重新同步质量/惯性属性的语义一致。
@@ -83,7 +87,7 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 {
 	// 解析当前 SimulationModel —— 资产 Build 后由 SimulationModel.Mass 持有最新参数；
 	// 没有 Build 过则跳过（仍使用 PhysicsAsset 默认质量）。
-	const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
+	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
 	if (!Model)
 	{
 		return;
@@ -156,7 +160,7 @@ void UAircraftComponent::ApplySolverSettingsToBodyInstance()
 		return;
 	}
 
-	const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
+	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
 	if (!Model || !Model->bOverrideSolverAsyncDeltaTime)
 	{
 		// 不调用 SetSolverAsyncDeltaTime：没有 AircraftSolverConfig 时不能触碰项目/Chaos 的步长。
@@ -206,6 +210,7 @@ void UAircraftComponent::SetPilotInput(const FDronePilotInput& InPilotInput)
 
 void UAircraftComponent::SetControlTargets(const FDroneControlTargets& InTargets)
 {
+	ControlTargets = InTargets;
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->SetTargets_GameThread(InTargets);
@@ -330,7 +335,7 @@ void UAircraftComponent::HardResetSimulation()
 	RefreshAssetState();
 }
 
-const FAircraftSimulationModel* UAircraftComponent::GetPrimarySimulationModel() const
+const FAircraftSimulationModel* UAircraftComponent::GetSimulationModel() const
 {
 	if (!Asset)
 	{
@@ -339,6 +344,159 @@ const FAircraftSimulationModel* UAircraftComponent::GetPrimarySimulationModel() 
 
 	const TSharedPtr<const FAircraftSimulationModel> SimulationModel = Asset->GetAircraftSimulationModel(0);
 	return SimulationModel.Get();
+}
+
+const FAircraftSimulationLodModel* UAircraftComponent::GetCurrentLodModel() const
+{
+	const FAircraftSimulationModel* const Model = GetSimulationModel();
+	return Model ? Model->GetLodModel(CurrentSimulationLOD) : nullptr;
+}
+
+bool UAircraftComponent::SetSimulationLOD(int32 LodIndex)
+{
+	const FAircraftSimulationModel* const Model = GetSimulationModel();
+	if (!Model || !Model->IsValidLodIndex(LodIndex))
+	{
+		return false;
+	}
+
+	ForcedSimulationLOD = LodIndex;
+	ApplySimulationLOD(LodIndex);
+	return true;
+}
+
+void UAircraftComponent::ClearSimulationLODOverride()
+{
+	ForcedSimulationLOD = INDEX_NONE;
+	UpdateSimulationLOD();
+}
+
+EAircraftSimulationDriveMode UAircraftComponent::GetCurrentSimulationDriveMode() const
+{
+	const FAircraftSimulationModel* const Model = GetSimulationModel();
+	if (!Model || Model->SimulationLOD.LODs.IsEmpty())
+	{
+		return EAircraftSimulationDriveMode::FlightController;
+	}
+
+	const int32 SettingsIndex = FMath::Clamp(CurrentSimulationLOD, 0, Model->SimulationLOD.LODs.Num() - 1);
+	return Model->SimulationLOD.LODs[SettingsIndex].DriveMode;
+}
+
+void UAircraftComponent::UpdateSimulationLOD()
+{
+	const FAircraftSimulationModel* const Model = GetSimulationModel();
+	if (!Model || Model->GetNumLods() == 0)
+	{
+		return;
+	}
+
+	const int32 RequestedLOD = ForcedSimulationLOD != INDEX_NONE
+		? ForcedSimulationLOD
+		: FMath::Max(GetPredictedLODLevel(), 0);
+	ApplySimulationLOD(FMath::Clamp(RequestedLOD, 0, Model->GetNumLods() - 1));
+}
+
+void UAircraftComponent::ApplySimulationLOD(int32 LodIndex)
+{
+	const FAircraftSimulationModel* const Model = GetSimulationModel();
+	if (!Model || !Model->IsValidLodIndex(LodIndex) || CurrentSimulationLOD == LodIndex)
+	{
+		return;
+	}
+
+	const int32 PreviousLOD = CurrentSimulationLOD;
+	CurrentSimulationLOD = LodIndex;
+
+	const FAircraftSimulationLODRuntimeSettings* const Settings =
+		Model->SimulationLOD.LODs.IsEmpty()
+			? nullptr
+			: &Model->SimulationLOD.LODs[FMath::Min(LodIndex, Model->SimulationLOD.LODs.Num() - 1)];
+	const EAircraftSimulationDriveMode DriveMode = Settings
+		? Settings->DriveMode
+		: EAircraftSimulationDriveMode::FlightController;
+	SetSimulatePhysics(
+		DriveMode == EAircraftSimulationDriveMode::FlightController
+		|| DriveMode == EAircraftSimulationDriveMode::PhysicsConstraint);
+
+	if (Settings)
+	{
+		switch (Settings->CollisionMode)
+		{
+		case EAircraftSimulationCollisionMode::Disabled:
+			SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			break;
+		case EAircraftSimulationCollisionMode::QueryOnly:
+			SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+			break;
+		case EAircraftSimulationCollisionMode::QueryAndPhysics:
+		default:
+			SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			break;
+		}
+	}
+
+	ApplyMassPropertiesToBodyInstance();
+	ApplySolverSettingsToBodyInstance();
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->PostConstructor();
+	}
+	OnSimulationLODChanged.Broadcast(PreviousLOD, CurrentSimulationLOD);
+}
+
+void UAircraftComponent::TickKinematicDrive(float DeltaTime)
+{
+	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
+	if (!Model || GetCurrentSimulationDriveMode() != EAircraftSimulationDriveMode::Kinematic)
+	{
+		return;
+	}
+
+	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
+	const FVector CurrentLocation = GetComponentLocation();
+	FVector TargetLocation = CurrentLocation;
+	if (ControlTargets.Position.bEnabled)
+	{
+		TargetLocation = ControlTargets.Position.PositionCm;
+	}
+	else if (ControlTargets.Velocity.bEnabled)
+	{
+		TargetLocation += ControlTargets.Velocity.VelocityCmPerSec * DeltaTime;
+	}
+
+	const float PositionAlpha = Config.KinematicPositionCorrectionRate > UE_SMALL_NUMBER
+		? 1.0f - FMath::Exp(-Config.KinematicPositionCorrectionRate * FMath::Max(DeltaTime, 0.0f))
+		: 1.0f;
+	const FVector NewLocation = FMath::Lerp(CurrentLocation, TargetLocation, PositionAlpha);
+
+	const FQuat CurrentBodyRotation = GetComponentQuat();
+	const FQuat ControlToBody(
+		FVector::UpVector,
+		FMath::DegreesToRadians(Config.GetForwardYawOffsetDegrees()));
+	FQuat TargetControlRotation = Config.GetControlWorldRotation(CurrentBodyRotation);
+	if (ControlTargets.Attitude.bEnabled)
+	{
+		TargetControlRotation = ControlTargets.Attitude.AttitudeDegrees.Quaternion();
+	}
+	else if (ControlTargets.Position.bEnabled)
+	{
+		FRotator ControlRotation = TargetControlRotation.Rotator();
+		ControlRotation.Yaw = ControlTargets.Position.YawDegrees;
+		TargetControlRotation = ControlRotation.Quaternion();
+	}
+	const FQuat TargetBodyRotation = (TargetControlRotation * ControlToBody.Inverse()).GetNormalized();
+	const float RotationAlpha = Config.KinematicRotationInterpSpeed > UE_SMALL_NUMBER
+		? 1.0f - FMath::Exp(-Config.KinematicRotationInterpSpeed * FMath::Max(DeltaTime, 0.0f))
+		: 1.0f;
+	const FQuat NewRotation = FQuat::Slerp(CurrentBodyRotation, TargetBodyRotation, RotationAlpha).GetNormalized();
+
+	SetWorldLocationAndRotation(
+		NewLocation,
+		NewRotation,
+		Config.bKinematicSweepMovement,
+		nullptr,
+		ETeleportType::None);
 }
 
 /* ============================ UObject ============================ */
@@ -380,6 +538,8 @@ void UAircraftComponent::OnRegister()
 	// SkeletalMesh 才能正确初始化 BoneSpaceTransforms。
 	SyncSkeletalMeshComponentFromAsset();
 	Super::OnRegister();
+	CurrentSimulationLOD = INDEX_NONE;
+	UpdateSimulationLOD();
 }
 
 void UAircraftComponent::OnUnregister()
@@ -415,11 +575,13 @@ void UAircraftComponent::OnDestroyPhysicsState()
 void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	UpdateSimulationLOD();
+	TickKinematicDrive(DeltaTime);
 
 	if (AircraftSimulationProxy.IsValid())
 	{
 		float GroundDistanceCm = TNumericLimits<float>::Max();
-		if (const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
+		if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
 			Model && Model->Aero.GroundEffectStartHeightCm > UE_SMALL_NUMBER)
 		{
 			const FVector TraceStart = GetComponentTransform().TransformPosition(Model->Mass.CenterOfMassOffsetCm);
@@ -515,7 +677,7 @@ void UAircraftComponent::DrawSimulationDebug() const
 		return;
 	}
 
-	const FAircraftSimulationModel* Model = GetPrimarySimulationModel();
+	const FAircraftSimulationLodModel* Model = GetCurrentLodModel();
 	if (!Model)
 	{
 		return;
@@ -610,7 +772,7 @@ void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 	// 实际渲染骨骼网格。优先用 SimulationModel 中的（资产 Build 后的最新值）；否则在编辑器路径上
 	// 回退到 PreviewSceneSkeletalMesh。
 	USkeletalMesh* MeshToBind = nullptr;
-	if (const FAircraftSimulationModel* const Model = GetPrimarySimulationModel())
+	if (const FAircraftSimulationModel* const Model = GetSimulationModel())
 	{
 		MeshToBind = Model->SkeletalMesh;
 	}
@@ -634,7 +796,7 @@ void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance() const
 {
 	UAircraftComponent* const MutableThis = const_cast<UAircraftComponent*>(this);
-	if (const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
+	if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
 		Model && !Model->RootBone.IsNone())
 	{
 		if (FBodyInstance* const RootBody = MutableThis->GetBodyInstance(Model->RootBone))

@@ -24,38 +24,15 @@ enum class EAircraftProfileCollisionMode : uint8
 	QueryAndPhysics UMETA(DisplayName = "Query And Physics"),
 };
 
-USTRUCT(BlueprintType)
-struct FAircraftSimulationLODProfileEntry
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, Category = "LOD") FName Name = NAME_None;
-	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftProfileDriveMode DriveMode = EAircraftProfileDriveMode::None;
-	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "0.0", Units = "cm")) float MaxDistanceCm = 6000.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD") bool bRunSlowLogic = true;
-	UPROPERTY(EditAnywhere, Category = "LOD", meta = (EditCondition = "bRunSlowLogic", EditConditionHides, ClampMin = "0.0", Units = "s")) float SlowLogicIntervalSeconds = 0.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftProfileCollisionMode CollisionMode = EAircraftProfileCollisionMode::QueryAndPhysics;
-	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "1.0", Units = "Hz")) float SuggestedNetUpdateFrequency = 30.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD") bool bAllowDebugDraw = false;
-	UPROPERTY(EditAnywhere, Category = "LOD") bool bEnableNetworkDormancy = false;
-};
-
-/** 与 UAircraftSimulationLODProfileAsset 对齐的可配置模拟策略。 */
+/** 一个节点只描述一个 Collection LOD；LOD 顺序由 Terminal 的输入数组决定。 */
 USTRUCT(BlueprintType)
 struct FAircraftSimulationLODProfileData
 {
 	GENERATED_BODY()
 
-	FAircraftSimulationLODProfileData();
-
-	UPROPERTY(EditAnywhere, Category = "Evaluation", meta = (ClampMin = "0.02", Units = "s")) float EvaluationIntervalSeconds = 0.25f;
-	UPROPERTY(EditAnywhere, Category = "Evaluation", meta = (ClampMin = "1")) int32 MaxEvaluationsPerFrame = 8;
-	UPROPERTY(EditAnywhere, Category = "Evaluation", meta = (ClampMin = "0.0", Units = "cm")) float DistanceHysteresisCm = 2000.0f;
-	UPROPERTY(EditAnywhere, Category = "Evaluation", meta = (ClampMin = "0.0", Units = "s")) float MinimumLODResidenceSeconds = 1.0f;
-	UPROPERTY(EditAnywhere, Category = "Importance", meta = (ClampMin = "0.0", Units = "s")) float CombatKeepAliveSeconds = 5.0f;
-	UPROPERTY(EditAnywhere, Category = "Networking") bool bAuthoritySimulationOnly = true;
-	UPROPERTY(EditAnywhere, Category = "Networking") bool bClientProxyUsesDefaultPhysicsReplication = true;
-	UPROPERTY(EditAnywhere, Category = "LOD", meta = (TitleProperty = "Name")) TArray<FAircraftSimulationLODProfileEntry> LODs;
+	UPROPERTY(EditAnywhere, Category = "LOD") FName Name = TEXT("LOD");
+	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftProfileDriveMode DriveMode = EAircraftProfileDriveMode::FlightController;
+	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftProfileCollisionMode CollisionMode = EAircraftProfileCollisionMode::QueryAndPhysics;
 };
 
 USTRUCT(meta = (DataflowAircraft))

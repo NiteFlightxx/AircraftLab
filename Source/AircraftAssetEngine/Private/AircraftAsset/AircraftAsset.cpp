@@ -5,6 +5,7 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "UObject/SoftObjectPath.h"
 #include "AircraftAsset/AircraftCollection.h"
+#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 
 #define LOCTEXT_NAMESPACE "AircraftAsset"
@@ -117,9 +118,8 @@ namespace
 		return ComponentTransform;
 	}
 
-	void ResolveRotorSocketTransforms(FAircraftSimulationModel& Model)
+	void ResolveRotorSocketTransforms(FAircraftSimulationLodModel& Model, const USkeletalMesh* SkeletalMesh)
 	{
-		const USkeletalMesh* const SkeletalMesh = Model.SkeletalMesh;
 		if (!SkeletalMesh)
 		{
 			return;
@@ -228,6 +228,7 @@ void UAircraftAsset::Build(
 	{
 		AppendValidationError(0, LOCTEXT("MissingAircraftCollection", "At least one aircraft collection is required."));
 	}
+	TSet<FString> LodNames;
 	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
 	{
 		const FConstAircraftCollection Collection(InAircraftCollections[LodIndex]);
@@ -240,6 +241,19 @@ void UAircraftAsset::Build(
 				AppendValidationError(LodIndex, ValidationError);
 			}
 		}
+
+		const FCollectionAircraftPropertyConstFacade Properties(InAircraftCollections[LodIndex]);
+		const FString LodName = Properties.IsValid()
+			? Properties.GetStringValue(TEXT("SimulationLOD.Name"))
+			: FString();
+		if (!LodName.IsEmpty() && LodNames.Contains(LodName))
+		{
+			bHasValidationErrors = true;
+			AppendValidationError(LodIndex, FText::Format(
+				LOCTEXT("DuplicateSimulationLODName", "Simulation LOD name '{0}' is duplicated."),
+				FText::FromString(LodName)));
+		}
+		LodNames.Add(LodName);
 
 		const USkeletalMesh* const SourceMesh = Cast<USkeletalMesh>(GetFirstPath(Collection.GetSkeletalMeshSoftObjectPathName()).TryLoad());
 		if (SourceMesh)
@@ -310,7 +324,9 @@ void UAircraftAsset::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 
 bool UAircraftAsset::HasValidAircraftSimulationModels() const
 {
-	return AircraftSimulationModel.IsValid() && AircraftSimulationModel->SkeletalMesh != nullptr;
+	return AircraftSimulationModel.IsValid()
+		&& AircraftSimulationModel->SkeletalMesh != nullptr
+		&& AircraftSimulationModel->GetNumLods() > 0;
 }
 
 void UAircraftAsset::SetCollections(TArray<TSharedRef<const FManagedArrayCollection>>&& InCollections)
@@ -418,7 +434,10 @@ void UAircraftAsset::BuildAircraftSimulationModel()
 	{
 		AircraftSimulationModel->SkeletalMesh = ResolveSourceSkeletalMesh(GetAircraftCollections());
 		AircraftSimulationModel->PhysicsAsset = PhysicsAsset;
-		ResolveRotorSocketTransforms(*AircraftSimulationModel);
+		for (FAircraftSimulationLodModel& LodModel : AircraftSimulationModel->LodModels)
+		{
+			ResolveRotorSocketTransforms(LodModel, AircraftSimulationModel->SkeletalMesh);
+		}
 	}
 }
 

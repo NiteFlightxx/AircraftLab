@@ -375,32 +375,12 @@ namespace UE::AircraftLab::AircraftAsset
 				}
 			}
 
-			const int32 LODCount = Properties.GetValue<int32>(TEXT("SimulationLOD.Count"), 0);
-			if (LODCount <= 0 || LODCount > 32)
+			const FString LODName = Properties.GetStringValue(TEXT("SimulationLOD.Name"));
+			const int32 DriveMode = Properties.GetValue<int32>(TEXT("SimulationLOD.DriveMode"), -1);
+			const int32 CollisionMode = Properties.GetValue<int32>(TEXT("SimulationLOD.CollisionMode"), -1);
+			if (LODName.IsEmpty() || DriveMode < 0 || DriveMode > 3 || CollisionMode < 0 || CollisionMode > 2)
 			{
-				OutErrors.Add(LOCTEXT("InvalidSimulationLODCount", "Simulation LOD Profile must contain between 1 and 32 entries."));
-			}
-			float PreviousDistance = -1.0f;
-			for (int32 LODIndex = 0; LODIndex < FMath::Clamp(LODCount, 0, 32); ++LODIndex)
-			{
-				const FString Prefix = FString::Printf(TEXT("SimulationLOD.%d."), LODIndex);
-				const FString LODName = Properties.GetStringValue(*(Prefix + TEXT("Name")));
-				const int32 DriveMode = Properties.GetValue<int32>(*(Prefix + TEXT("DriveMode")), -1);
-				const int32 CollisionMode = Properties.GetValue<int32>(*(Prefix + TEXT("CollisionMode")), -1);
-				const float Distance = Properties.GetValue<float>(*(Prefix + TEXT("MaxDistanceCm")), -1.0f);
-				const float SlowInterval = Properties.GetValue<float>(*(Prefix + TEXT("SlowLogicIntervalSeconds")), -1.0f);
-				const float NetFrequency = Properties.GetValue<float>(*(Prefix + TEXT("SuggestedNetUpdateFrequency")), 0.0f);
-				if (LODName.IsEmpty() || DriveMode < 0 || DriveMode > 3 || CollisionMode < 0 || CollisionMode > 2
-					|| !FMath::IsFinite(Distance) || Distance < 0.0f || !FMath::IsFinite(SlowInterval)
-					|| SlowInterval < 0.0f || !FMath::IsFinite(NetFrequency) || NetFrequency < 1.0f)
-				{
-					OutErrors.Add(FText::Format(LOCTEXT("InvalidSimulationLOD", "Simulation LOD {0} contains invalid name, mode, distance, interval, or network frequency."), LODIndex));
-				}
-				if (LODIndex + 1 < LODCount && Distance <= PreviousDistance)
-				{
-					OutErrors.Add(FText::Format(LOCTEXT("UnorderedSimulationLOD", "Simulation LOD {0} maximum distance must be greater than the preceding LOD."), LODIndex));
-				}
-				PreviousDistance = Distance;
+				OutErrors.Add(LOCTEXT("InvalidSimulationLOD", "Simulation LOD requires a name, a valid drive mode, and a valid collision mode."));
 			}
 		}
 

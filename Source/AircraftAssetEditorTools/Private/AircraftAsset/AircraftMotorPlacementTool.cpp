@@ -78,7 +78,8 @@ void UAircraftMotorPlacementTool::Render(IToolsContextRenderAPI* RenderAPI)
 	}
 
 	const TSharedPtr<const FAircraftSimulationModel> Model = Asset->GetAircraftSimulationModel(0);
-	if (!Model.IsValid())
+	const FAircraftSimulationLodModel* const LodModel = Model.IsValid() ? Model->GetLodModel(0) : nullptr;
+	if (!LodModel)
 	{
 		return;
 	}
@@ -90,9 +91,9 @@ void UAircraftMotorPlacementTool::Render(IToolsContextRenderAPI* RenderAPI)
 	Visualizer.BeginFrame(RenderAPI);
 
 	const FTransform XformWorld = Component->GetComponentTransform();
-	for (int32 i = 0; i < Model->Rotors.Num(); ++i)
+	for (int32 i = 0; i < LodModel->Rotors.Num(); ++i)
 	{
-		const FVector LocalPos = Model->Rotors[i].PositionLocalCm;
+		const FVector LocalPos = LodModel->Rotors[i].PositionLocalCm;
 		const FVector WorldPos = XformWorld.TransformPosition(LocalPos);
 		const bool bSelected = (Properties && Properties->SelectedRotorIndex == i);
 		Visualizer.LineColor = bSelected ? FLinearColor::Red : FLinearColor::Yellow;
@@ -146,10 +147,11 @@ void UAircraftMotorPlacementTool::RefreshFromAsset()
 	}
 
 	const TSharedPtr<const FAircraftSimulationModel> Model = Asset->GetAircraftSimulationModel(0);
-	if (Model.IsValid() && Model->Rotors.Num() > 0)
+	const FAircraftSimulationLodModel* const LodModel = Model.IsValid() ? Model->GetLodModel(0) : nullptr;
+	if (LodModel && !LodModel->Rotors.IsEmpty())
 	{
 		Properties->SelectedRotorIndex = 0;
-		Properties->PositionLocalCm = Model->Rotors[0].PositionLocalCm;
+		Properties->PositionLocalCm = LodModel->Rotors[0].PositionLocalCm;
 		LastSelectedIndex = 0;
 		LastWrittenPositionCm = Properties->PositionLocalCm;
 	}

@@ -143,30 +143,35 @@ struct AIRCRAFTASSETENGINE_API FAircraftFlightControllerRuntimeConfig
 	}
 };
 
-/** Dataflow 编译后的单级模拟 LOD 策略。枚举以稳定的 uint8 保存，避免运行时模块依赖编辑器节点类型。 */
+/** 当前 LOD 使用的运动驱动。LOD 只负责选择驱动，不实现具体 Gameplay 策略。 */
+UENUM(BlueprintType)
+enum class EAircraftSimulationDriveMode : uint8
+{
+	None UMETA(DisplayName = "None"),
+	FlightController UMETA(DisplayName = "Flight Controller"),
+	PhysicsConstraint UMETA(DisplayName = "Physics Constraint"),
+	Kinematic UMETA(DisplayName = "Kinematic")
+};
+
+UENUM(BlueprintType)
+enum class EAircraftSimulationCollisionMode : uint8
+{
+	Disabled UMETA(DisplayName = "Disabled"),
+	QueryOnly UMETA(DisplayName = "Query Only"),
+	QueryAndPhysics UMETA(DisplayName = "Query And Physics")
+};
+
+/** Dataflow 编译后的单级模拟 LOD 策略。 */
 struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODRuntimeSettings
 {
 	FName Name = NAME_None;
-	uint8 DriveMode = 0;
-	float MaxDistanceCm = 6000.0f;
-	bool bRunSlowLogic = true;
-	float SlowLogicIntervalSeconds = 0.0f;
-	uint8 CollisionMode = 2;
-	float SuggestedNetUpdateFrequency = 30.0f;
-	bool bAllowDebugDraw = false;
-	bool bEnableNetworkDormancy = false;
+	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
+	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
 };
 
 /** Dataflow 编译后的模拟 LOD Profile。 */
 struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODProfileRuntimeConfig
 {
-	float EvaluationIntervalSeconds = 0.25f;
-	int32 MaxEvaluationsPerFrame = 8;
-	float DistanceHysteresisCm = 2000.0f;
-	float MinimumResidenceSeconds = 1.0f;
-	float CombatKeepAliveSeconds = 5.0f;
-	bool bAuthoritySimulationOnly = true;
-	bool bClientProxyUsesDefaultPhysicsReplication = true;
 	TArray<FAircraftSimulationLODRuntimeSettings> LODs;
 };
 
@@ -425,22 +430,8 @@ struct AIRCRAFTASSETENGINE_API FDroneRotorDefinition
  * 与 FChaosClothSimulationLodModel 同位（资产编译期产物，运行时只读）。
  * 由 FAircraftCollection 与 Property Facade 在资产构建时解析得到。
  */
-struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
+struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 {
-	FAircraftSimulationModel() = default;
-	explicit FAircraftSimulationModel(
-		const TArray<TSharedRef<const FManagedArrayCollection>>& InAircraftCollections,
-		FName InAircraftName = NAME_None);
-
-	/** 资产/Pawn 名（用于日志与调试） */
-	FName AircraftName = NAME_None;
-
-	/** 关联的骨骼网格。 */
-	USkeletalMesh* SkeletalMesh = nullptr;
-
-	/** 可选物理资产（用于 Chaos 刚体配置） */
-	UPhysicsAsset* PhysicsAsset = nullptr;
-
 	/** 机架类型（决定默认混控矩阵） */
 	EDroneFrameType FrameType = EDroneFrameType::QuadX;
 
@@ -467,7 +458,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 	FAircraftBatteryRuntimeConfig Battery;
 	FAircraftFlightControllerRuntimeConfig FlightController;
 	FAircraftGameFeelRuntimeConfig GameFeel;
-	FAircraftSimulationLODProfileRuntimeConfig SimulationLOD;
 
 	/** 旋翼定义（按机架顺序） */
 	TArray<FDroneRotorDefinition> Rotors;
@@ -475,9 +465,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 	/** 重置到默认空模型 */
 	void Reset()
 	{
-		AircraftName = NAME_None;
-		SkeletalMesh = nullptr;
-		PhysicsAsset = nullptr;
 		FrameType = EDroneFrameType::QuadX;
 		RootBone = NAME_None;
 		bOverrideSolverAsyncDeltaTime = false;
@@ -491,7 +478,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 		Battery = FAircraftBatteryRuntimeConfig();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
 		GameFeel = FAircraftGameFeelRuntimeConfig();
-		SimulationLOD = FAircraftSimulationLODProfileRuntimeConfig();
 		Rotors.Reset();
 	}
 
@@ -519,5 +505,38 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 			}
 		}
 		return Count;
+	}
+};
+
+/**
+ * Aircraft 运行时模型容器。
+ *
+ * 对齐 ChaosCloth 的 FChaosClothSimulationModel：共享资产引用只保存一份，每个
+ * Dataflow Terminal 的 Collection LOD 编译为一个独立的 LodModels 元素。
+ */
+struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
+{
+	FAircraftSimulationModel() = default;
+	explicit FAircraftSimulationModel(
+		const TArray<TSharedRef<const FManagedArrayCollection>>& InAircraftCollections,
+		FName InAircraftName = NAME_None);
+
+	FName AircraftName = NAME_None;
+	USkeletalMesh* SkeletalMesh = nullptr;
+	UPhysicsAsset* PhysicsAsset = nullptr;
+	FAircraftSimulationLODProfileRuntimeConfig SimulationLOD;
+	TArray<FAircraftSimulationLodModel> LodModels;
+
+	int32 GetNumLods() const { return LodModels.Num(); }
+	bool IsValidLodIndex(int32 LodIndex) const { return LodModels.IsValidIndex(LodIndex); }
+
+	const FAircraftSimulationLodModel* GetLodModel(int32 LodIndex) const
+	{
+		return LodModels.IsValidIndex(LodIndex) ? &LodModels[LodIndex] : nullptr;
+	}
+
+	FAircraftSimulationLodModel* GetLodModel(int32 LodIndex)
+	{
+		return LodModels.IsValidIndex(LodIndex) ? &LodModels[LodIndex] : nullptr;
 	}
 };

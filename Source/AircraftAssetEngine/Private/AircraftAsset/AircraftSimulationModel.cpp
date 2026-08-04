@@ -30,24 +30,13 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		return FVector(static_cast<double>(V.X), static_cast<double>(V.Y), static_cast<double>(V.Z));
 	}
 
-	/**
-	 * 把 FAircraftCollection 中的多个 Collection（仅取第一个有效 schema 的 Collection）解析进
-	 * FAircraftSimulationModel。后续如需多 LOD 版本，可在 ChaosCloth 风格上 LOD 一致地循环。
-	 */
-	static void ParseFromCollections(
-		const TArray<TSharedRef<const FManagedArrayCollection>>& InCollections,
-		FName InAircraftName,
-		FAircraftSimulationModel& OutModel)
+	/** 把一个 Aircraft Collection 编译成一个运行时 LOD 模型。 */
+	static void ParseLodModel(
+		const TSharedRef<const FManagedArrayCollection>& InCollection,
+		FAircraftSimulationLodModel& OutModel)
 	{
 		OutModel.Reset();
-		OutModel.AircraftName = InAircraftName;
-
-		if (InCollections.Num() == 0)
-		{
-			return;
-		}
-
-		const FConstAircraftCollection ConstCollection(InCollections[0]);
+		const FConstAircraftCollection ConstCollection(InCollection);
 
 		/* Solver / binding。Solver 组为空表示完全使用项目物理设置。 */
 		const TManagedArray<float>* const AsyncFixedTimeStep = ConstCollection.GetAsyncFixedTimeStepSize();
@@ -142,7 +131,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		OutModel.FlightController.AllocationDamping = ReadFirst<float>(
 			ConstCollection.GetFcAllocationDamping(), OutModel.FlightController.AllocationDamping);
 
-		const FCollectionAircraftPropertyConstFacade Properties(InCollections[0]);
+		const FCollectionAircraftPropertyConstFacade Properties(InCollection);
 		if (Properties.IsValid())
 		{
 			OutModel.FlightController.ForwardAxis = static_cast<uint8>(FMath::Clamp(
@@ -206,29 +195,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			OutModel.FlightController.KinematicPositionCorrectionRate = Properties.GetValue<float>(TEXT("FlightController.Kinematic.PositionCorrectionRate"), OutModel.FlightController.KinematicPositionCorrectionRate);
 			OutModel.FlightController.KinematicRotationInterpSpeed = Properties.GetValue<float>(TEXT("FlightController.Kinematic.RotationInterpSpeed"), OutModel.FlightController.KinematicRotationInterpSpeed);
 
-			OutModel.SimulationLOD.EvaluationIntervalSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.EvaluationIntervalSeconds"), OutModel.SimulationLOD.EvaluationIntervalSeconds);
-			OutModel.SimulationLOD.MaxEvaluationsPerFrame = Properties.GetValue<int32>(TEXT("SimulationLOD.MaxEvaluationsPerFrame"), OutModel.SimulationLOD.MaxEvaluationsPerFrame);
-			OutModel.SimulationLOD.DistanceHysteresisCm = Properties.GetValue<float>(TEXT("SimulationLOD.DistanceHysteresisCm"), OutModel.SimulationLOD.DistanceHysteresisCm);
-			OutModel.SimulationLOD.MinimumResidenceSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.MinimumResidenceSeconds"), OutModel.SimulationLOD.MinimumResidenceSeconds);
-			OutModel.SimulationLOD.CombatKeepAliveSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.CombatKeepAliveSeconds"), OutModel.SimulationLOD.CombatKeepAliveSeconds);
-			OutModel.SimulationLOD.bAuthoritySimulationOnly = Properties.GetValue<bool>(TEXT("SimulationLOD.AuthoritySimulationOnly"), OutModel.SimulationLOD.bAuthoritySimulationOnly);
-			OutModel.SimulationLOD.bClientProxyUsesDefaultPhysicsReplication = Properties.GetValue<bool>(TEXT("SimulationLOD.ClientProxyUsesPhysicsReplication"), OutModel.SimulationLOD.bClientProxyUsesDefaultPhysicsReplication);
-			const int32 LODCount = FMath::Clamp(Properties.GetValue<int32>(TEXT("SimulationLOD.Count"), 0), 0, 32);
-			OutModel.SimulationLOD.LODs.SetNum(LODCount);
-			for (int32 LODIndex = 0; LODIndex < LODCount; ++LODIndex)
-			{
-				FAircraftSimulationLODRuntimeSettings& LOD = OutModel.SimulationLOD.LODs[LODIndex];
-				const FString Prefix = FString::Printf(TEXT("SimulationLOD.%d."), LODIndex);
-				LOD.Name = *Properties.GetStringValue(*(Prefix + TEXT("Name")), LOD.Name.ToString());
-				LOD.DriveMode = static_cast<uint8>(FMath::Clamp(Properties.GetValue<int32>(*(Prefix + TEXT("DriveMode")), LOD.DriveMode), 0, 3));
-				LOD.MaxDistanceCm = Properties.GetValue<float>(*(Prefix + TEXT("MaxDistanceCm")), LOD.MaxDistanceCm);
-				LOD.bRunSlowLogic = Properties.GetValue<bool>(*(Prefix + TEXT("RunSlowLogic")), LOD.bRunSlowLogic);
-				LOD.SlowLogicIntervalSeconds = Properties.GetValue<float>(*(Prefix + TEXT("SlowLogicIntervalSeconds")), LOD.SlowLogicIntervalSeconds);
-				LOD.CollisionMode = static_cast<uint8>(FMath::Clamp(Properties.GetValue<int32>(*(Prefix + TEXT("CollisionMode")), LOD.CollisionMode), 0, 2));
-				LOD.SuggestedNetUpdateFrequency = Properties.GetValue<float>(*(Prefix + TEXT("SuggestedNetUpdateFrequency")), LOD.SuggestedNetUpdateFrequency);
-				LOD.bAllowDebugDraw = Properties.GetValue<bool>(*(Prefix + TEXT("AllowDebugDraw")), LOD.bAllowDebugDraw);
-				LOD.bEnableNetworkDormancy = Properties.GetValue<bool>(*(Prefix + TEXT("EnableNetworkDormancy")), LOD.bEnableNetworkDormancy);
-			}
 		}
 
 		/* Input/game-feel preprocessing */
@@ -336,11 +302,39 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			OutModel.Rotors.Add(Rotor);
 		}
 	}
+
+	static FAircraftSimulationLODRuntimeSettings ParseLodSettings(
+		const TSharedRef<const FManagedArrayCollection>& InCollection,
+		int32 LodIndex)
+	{
+		FAircraftSimulationLODRuntimeSettings Settings;
+		Settings.Name = *FString::Printf(TEXT("LOD%d"), LodIndex);
+		const FCollectionAircraftPropertyConstFacade Properties(InCollection);
+		if (!Properties.IsValid())
+		{
+			return Settings;
+		}
+
+		Settings.Name = *Properties.GetStringValue(TEXT("SimulationLOD.Name"), Settings.Name.ToString());
+		Settings.DriveMode = static_cast<EAircraftSimulationDriveMode>(FMath::Clamp(
+			Properties.GetValue<int32>(TEXT("SimulationLOD.DriveMode"), static_cast<int32>(Settings.DriveMode)), 0, 3));
+		Settings.CollisionMode = static_cast<EAircraftSimulationCollisionMode>(FMath::Clamp(
+			Properties.GetValue<int32>(TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Settings.CollisionMode)), 0, 2));
+		return Settings;
+	}
 }
 
 FAircraftSimulationModel::FAircraftSimulationModel(
 	const TArray<TSharedRef<const FManagedArrayCollection>>& InAircraftCollections,
 	FName InAircraftName)
 {
-	UE::AircraftLab::AircraftAsset::Private::ParseFromCollections(InAircraftCollections, InAircraftName, *this);
+	AircraftName = InAircraftName;
+	LodModels.SetNum(InAircraftCollections.Num());
+	SimulationLOD.LODs.SetNum(InAircraftCollections.Num());
+	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
+	{
+		UE::AircraftLab::AircraftAsset::Private::ParseLodModel(InAircraftCollections[LodIndex], LodModels[LodIndex]);
+		SimulationLOD.LODs[LodIndex] = UE::AircraftLab::AircraftAsset::Private::ParseLodSettings(
+			InAircraftCollections[LodIndex], LodIndex);
+	}
 }

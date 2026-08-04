@@ -1,7 +1,6 @@
 #include "Dataflow/AircraftAssetTerminalNode.h"
 
 #include "AircraftAsset/AircraftAsset.h"
-#include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 
@@ -15,27 +14,13 @@
 // Terminal 节点是 Dataflow 图末端，把当前 ManagedArrayCollection 提交给 UAircraftAsset::Build()，
 // 由资产编译产生 FAircraftSimulationModel。校验和用于跳过几何/结构未变的情况，避免重复 Build。
 
-namespace UE::AircraftLab::AircraftAsset::Private
-{
-	static void ResetDisconnectedInputs(FAircraftAssetTerminalNode& Node)
-	{
-		if (!Node.IsConnected(&Node.Collection))
-		{
-			Node.Collection = FManagedArrayCollection();
-		}
-
-		if (!Node.IsConnected(&Node.AircraftAsset))
-		{
-			Node.AircraftAsset = nullptr;
-		}
-	}
-}
-
 FAircraftAssetTerminalNode::FAircraftAssetTerminalNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
 	: FDataflowTerminalNode(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterInputConnection(&AircraftAsset);
+	for (int32 LodIndex = 0; LodIndex < NumInitialCollectionLods; ++LodIndex)
+	{
+		AddPins();
+	}
 }
 
 uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArrayCollection& InCollection)
@@ -214,42 +199,66 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	return Checksum;
 }
 
+uint32 FAircraftAssetTerminalNode::ComputeCollectionsChecksum(
+	const TArray<TSharedRef<const FManagedArrayCollection>>& InCollections)
+{
+	uint32 Checksum = 0;
+	for (const TSharedRef<const FManagedArrayCollection>& Collection : InCollections)
+	{
+		Checksum = HashCombineFast(Checksum, ComputeCollectionChecksum(Collection.Get()));
+	}
+	return Checksum;
+}
+
+TArray<TSharedRef<const FManagedArrayCollection>> FAircraftAssetTerminalNode::GetCollectionLodValues(
+	UE::Dataflow::FContext& Context) const
+{
+	TArray<TSharedRef<const FManagedArrayCollection>> Values;
+	Values.Reserve(CollectionLods.Num());
+	for (int32 LodIndex = 0; LodIndex < CollectionLods.Num(); ++LodIndex)
+	{
+		Values.Emplace(MakeShared<FManagedArrayCollection>(
+			GetValue<FManagedArrayCollection>(Context, GetConnectionReference(LodIndex))));
+	}
+	return Values;
+}
+
 void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Dataflow::FContext& Context) const
 {
 	UAircraftAsset* AircraftAssetObject = Cast<UAircraftAsset>(Asset.Get());
 	if (!AircraftAssetObject)
 	{
-		const TObjectPtr<UAircraftAssetBase> AssetInput = GetValue(Context, &AircraftAsset);
-		AircraftAssetObject = Cast<UAircraftAsset>(AssetInput.Get());
-	}
-
-	if (!AircraftAssetObject)
-	{
 		return;
 	}
 
-	FManagedArrayCollection AircraftCollection = GetValue(Context, &Collection);
-	const TSharedRef<const FManagedArrayCollection> SharedAircraftCollection = MakeShared<FManagedArrayCollection>(AircraftCollection);
-	const UE::AircraftLab::AircraftAsset::FConstAircraftCollection CollectionFacade(SharedAircraftCollection);
-	TArray<FText> ValidationErrors;
-	if (!CollectionFacade.Validate(ValidationErrors))
+	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = GetCollectionLodValues(Context);
+	if (Collections.IsEmpty())
 	{
-		for (const FText& ValidationError : ValidationErrors)
+		Context.Error(NSLOCTEXT("AircraftAssetTerminal", "MissingLOD0", "Aircraft Terminal requires at least Collection LOD 0."), this);
+		return;
+	}
+
+	for (int32 LodIndex = 0; LodIndex < Collections.Num(); ++LodIndex)
+	{
+		const UE::AircraftLab::AircraftAsset::FConstAircraftCollection CollectionFacade(Collections[LodIndex]);
+		TArray<FText> ValidationErrors;
+		if (!CollectionFacade.Validate(ValidationErrors))
 		{
-			Context.Error(ValidationError, this);
+			for (const FText& ValidationError : ValidationErrors)
+			{
+				Context.Error(FText::Format(
+					NSLOCTEXT("AircraftAssetTerminal", "InvalidLOD", "LOD {0}: {1}"), LodIndex, ValidationError), this);
+			}
+			return;
 		}
-		return;
 	}
 
-	const uint32 NewChecksum = ComputeCollectionChecksum(AircraftCollection);
+	const uint32 NewChecksum = ComputeCollectionsChecksum(Collections);
 	if (NewChecksum == CollectionChecksum && !bPropertyStructureChanged
 		&& AircraftAssetObject->HasValidAircraftSimulationModels())
 	{
 		return;
 	}
-
-	TArray<TSharedRef<const FManagedArrayCollection>> Collections;
-	Collections.Add(SharedAircraftCollection);
 
 	FText ErrorText;
 	FText VerboseText;
@@ -267,17 +276,27 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 
 TArray<UE::Dataflow::FPin> FAircraftAssetTerminalNode::AddPins()
 {
-	return FDataflowTerminalNode::AddPins();
+	const int32 Index = CollectionLods.AddDefaulted();
+	const FDataflowInput& Input = RegisterInputArrayConnection(GetConnectionReference(Index));
+	return { { UE::Dataflow::FPin::EDirection::INPUT, Input.GetType(), Input.GetName() } };
 }
 
 TArray<UE::Dataflow::FPin> FAircraftAssetTerminalNode::GetPinsToRemove() const
 {
-	return FDataflowTerminalNode::GetPinsToRemove();
+	const int32 Index = CollectionLods.Num() - 1;
+	if (const FDataflowInput* const Input = FindInput(GetConnectionReference(Index)))
+	{
+		return { { UE::Dataflow::FPin::EDirection::INPUT, Input->GetType(), Input->GetName() } };
+	}
+	return Super::GetPinsToRemove();
 }
 
 void FAircraftAssetTerminalNode::OnPinRemoved(const UE::Dataflow::FPin& Pin)
 {
-	FDataflowTerminalNode::OnPinRemoved(Pin);
+	const int32 Index = CollectionLods.Num() - 1;
+	check(CollectionLods.IsValidIndex(Index));
+	CollectionLods.SetNum(Index);
+	Super::OnPinRemoved(Pin);
 }
 
 void FAircraftAssetTerminalNode::OnInvalidate()
@@ -285,18 +304,55 @@ void FAircraftAssetTerminalNode::OnInvalidate()
 	CollectionChecksum = 0;
 	bPropertyStructureChanged = true;
 
-	UE::AircraftLab::AircraftAsset::Private::ResetDisconnectedInputs(*this);
 }
 
 void FAircraftAssetTerminalNode::PostSerialize(const FArchive& Ar)
 {
-	FDataflowTerminalNode::PostSerialize(Ar);
-
-	if (Ar.IsLoading() || Ar.IsTransacting())
+	if (Ar.IsLoading())
 	{
+		if (CollectionLods.IsEmpty())
+		{
+			CollectionLods.SetNum(1);
+		}
+		for (int32 LodIndex = 0; LodIndex < CollectionLods.Num(); ++LodIndex)
+		{
+			FindOrRegisterInputArrayConnection(GetConnectionReference(LodIndex));
+		}
+
+		if (Ar.IsTransacting())
+		{
+			const int32 RegisteredLodCount = GetNumInputs() - NumRequiredInputs;
+			if (RegisteredLodCount > CollectionLods.Num())
+			{
+				const int32 SerializedLodCount = CollectionLods.Num();
+				CollectionLods.SetNum(RegisteredLodCount);
+				for (int32 LodIndex = SerializedLodCount; LodIndex < RegisteredLodCount; ++LodIndex)
+				{
+					UnregisterInputConnection(GetConnectionReference(LodIndex));
+				}
+				CollectionLods.SetNum(SerializedLodCount);
+			}
+		}
+
 		CollectionChecksum = 0;
 		bPropertyStructureChanged = true;
 
-		UE::AircraftLab::AircraftAsset::Private::ResetDisconnectedInputs(*this);
 	}
+}
+
+UE::Dataflow::TConnectionReference<FManagedArrayCollection> FAircraftAssetTerminalNode::GetConnectionReference(
+	int32 Index) const
+{
+	return { &CollectionLods[Index], Index, &CollectionLods };
+}
+
+FName FAircraftAssetTerminalNode::GetCollectionLodInputName(int32 LodIndex) const
+{
+	if (const FDataflowInput* const Input = CollectionLods.IsValidIndex(LodIndex)
+		? FindInput(GetConnectionReference(LodIndex))
+		: nullptr)
+	{
+		return Input->GetName();
+	}
+	return NAME_None;
 }

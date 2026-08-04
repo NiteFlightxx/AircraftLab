@@ -28,11 +28,11 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Airscrew profile has a non-zero thrust axis"), !Airscrew.ThrustAxisLocal.IsNearlyZero());
 
 	const FAircraftSimulationLODProfileData SimulationLOD;
-	TestEqual(TEXT("Default simulation LOD profile contains four configurable entries"), SimulationLOD.LODs.Num(), 4);
-	TestEqual(TEXT("LOD0 uses the flight controller"), SimulationLOD.LODs[0].DriveMode, EAircraftProfileDriveMode::FlightController);
-	TestEqual(TEXT("LOD1 uses physics constraints"), SimulationLOD.LODs[1].DriveMode, EAircraftProfileDriveMode::PhysicsConstraint);
-	TestEqual(TEXT("LOD2 is kinematic"), SimulationLOD.LODs[2].DriveMode, EAircraftProfileDriveMode::Kinematic);
-	TestEqual(TEXT("LOD3 disables simulation"), SimulationLOD.LODs[3].DriveMode, EAircraftProfileDriveMode::None);
+	TestFalse(TEXT("A simulation LOD node has a name"), SimulationLOD.Name.IsNone());
+	TestEqual(TEXT("A standalone simulation LOD node defaults to flight-controller drive"),
+		SimulationLOD.DriveMode, EAircraftProfileDriveMode::FlightController);
+	TestEqual(TEXT("A standalone simulation LOD node defaults to full collision"),
+		SimulationLOD.CollisionMode, EAircraftProfileCollisionMode::QueryAndPhysics);
 	return true;
 }
 

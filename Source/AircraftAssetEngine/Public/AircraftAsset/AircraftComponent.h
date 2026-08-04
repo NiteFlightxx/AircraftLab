@@ -21,6 +21,11 @@
 class UAircraftAssetBase;
 class UThumbnailInfo;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnAircraftSimulationLODChanged,
+	int32, PreviousLOD,
+	int32, NewLOD);
+
 /**
  * 多旋翼组件
  *
@@ -113,6 +118,28 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Simulation")
 	void HardResetSimulation();
 
+	/* ------- Simulation LOD ------- */
+
+	/** 固定使用一个 LOD；返回 false 表示资产中不存在该级。 */
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Simulation LOD")
+	bool SetSimulationLOD(int32 LodIndex);
+
+	/** 恢复为与 Skeletal Mesh 预测 LOD 同步的自动模式。 */
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Simulation LOD")
+	void ClearSimulationLODOverride();
+
+	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Simulation LOD")
+	bool HasSimulationLODOverride() const { return ForcedSimulationLOD != INDEX_NONE; }
+
+	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Simulation LOD")
+	int32 GetCurrentSimulationLOD() const { return CurrentSimulationLOD; }
+
+	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Simulation LOD")
+	EAircraftSimulationDriveMode GetCurrentSimulationDriveMode() const;
+
+	UPROPERTY(BlueprintAssignable, Category = "AircraftComponent|Simulation LOD")
+	FOnAircraftSimulationLODChanged OnSimulationLODChanged;
+
 	/* ------- 调试绘制 ------- */
 
 	void SetCenterOfMassDebugDrawEnabled(bool bEnable) { bDrawCenterOfMassDebug = bEnable; }
@@ -132,7 +159,8 @@ public:
 
 	/* ------- 内部访问 ------- */
 
-	const FAircraftSimulationModel* GetPrimarySimulationModel() const;
+	const FAircraftSimulationModel* GetSimulationModel() const;
+	const FAircraftSimulationLodModel* GetCurrentLodModel() const;
 
 #if WITH_EDITORONLY_DATA
 	UThumbnailInfo* GetThumbnailInfo() { return ThumbnailInfo; }
@@ -199,6 +227,9 @@ private:
 
 	/** 把可选的 AircraftSolverConfig 同步到 Chaos BodyInstance；配置缺失时清除组件级覆盖标记。 */
 	void ApplySolverSettingsToBodyInstance();
+	void UpdateSimulationLOD();
+	void ApplySimulationLOD(int32 LodIndex);
+	void TickKinematicDrive(float DeltaTime);
 
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
 	TObjectPtr<UAircraftAssetBase> Asset;
@@ -218,6 +249,12 @@ private:
 	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Simulation")
 	uint8 bSuspendSimulation : 1;
 
+	UPROPERTY(VisibleInstanceOnly, Category = "AircraftComponent|Simulation LOD")
+	int32 CurrentSimulationLOD = 0;
+
+	UPROPERTY(Transient)
+	int32 ForcedSimulationLOD = INDEX_NONE;
+
 	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Debug")
 	bool bDrawCenterOfMassDebug = false;
 
@@ -236,6 +273,7 @@ private:
 	FDataflowSimulationAsset SimulationAsset;
 
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;
+	FDroneControlTargets ControlTargets;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(VisibleAnywhere, Instanced, AdvancedDisplay, Category = AircraftComponent)

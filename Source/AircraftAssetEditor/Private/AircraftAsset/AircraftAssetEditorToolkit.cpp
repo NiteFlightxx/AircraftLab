@@ -651,34 +651,32 @@ FText FAircraftAssetEditorToolkit::GetOutlinerSummaryText() const
 	{
 		return LOCTEXT("OutlinerNoCompiledModel", "No compiled simulation model. Evaluate the terminal node to build the asset.");
 	}
-
-	const FString AsyncPhysicsSummary = Model->bOverrideSolverAsyncDeltaTime
-		? FString::Printf(TEXT("Aircraft override (%.3f ms)"), Model->SolverAsyncDeltaTime * 1000.0f)
-		: TEXT("Project settings");
-	const FString SolverIterationsSummary = Model->bOverrideSolverIterationCounts
-		? FString::Printf(
-			TEXT("Aircraft override (Position %d / Velocity %d / Projection %d)"),
-			static_cast<int32>(Model->PositionSolverIterationCount),
-			static_cast<int32>(Model->VelocitySolverIterationCount),
-			static_cast<int32>(Model->ProjectionSolverIterationCount))
-		: TEXT("Project settings");
-	FString Summary = FString::Printf(
-		TEXT("Frame\n  Root body: %s\n  Mass: %.3f kg\n  Async physics: %s\n  Solver iterations: %s\n\nRotors (%d)"),
-		*Model->RootBone.ToString(),
-		Model->Mass.MassKg,
-		*AsyncPhysicsSummary,
-		*SolverIterationsSummary,
-		Model->Rotors.Num());
-	for (int32 RotorIndex = 0; RotorIndex < Model->Rotors.Num(); ++RotorIndex)
+	if (Model->GetNumLods() == 0)
 	{
-		const FDroneRotorDefinition& Rotor = Model->Rotors[RotorIndex];
+		return LOCTEXT("OutlinerNoCompiledLOD0", "The compiled simulation model has no LOD 0.");
+	}
+
+	FString Summary = FString::Printf(TEXT("Simulation LODs (%d)"), Model->GetNumLods());
+	for (int32 LodIndex = 0; LodIndex < Model->GetNumLods(); ++LodIndex)
+	{
+		const FAircraftSimulationLodModel& LodModel = Model->LodModels[LodIndex];
+		const FAircraftSimulationLODRuntimeSettings* const Settings = Model->SimulationLOD.LODs.IsEmpty()
+			? nullptr
+			: &Model->SimulationLOD.LODs[FMath::Min(LodIndex, Model->SimulationLOD.LODs.Num() - 1)];
+		const FString DriveMode = Settings
+			? UEnum::GetDisplayValueAsText(Settings->DriveMode).ToString()
+			: TEXT("Flight Controller");
+		const FString AsyncPhysicsSummary = LodModel.bOverrideSolverAsyncDeltaTime
+			? FString::Printf(TEXT("%.3f ms"), LodModel.SolverAsyncDeltaTime * 1000.0f)
+			: TEXT("Project settings");
 		Summary += FString::Printf(
-			TEXT("\n  [%d] %s\n       Socket: %s\n       Position: (%.1f, %.1f, %.1f) cm\n       Max thrust: %.2f N"),
-			RotorIndex,
-			*Rotor.RotorName.ToString(),
-			Rotor.bUseSocketTransform ? *Rotor.SocketName.ToString() : TEXT("Manual transform"),
-			Rotor.PositionLocalCm.X, Rotor.PositionLocalCm.Y, Rotor.PositionLocalCm.Z,
-			Rotor.GetEffectiveMaxThrust());
+			TEXT("\n\nLOD %d - %s\n  Root body: %s\n  Mass: %.3f kg\n  Async physics: %s\n  Rotors: %d"),
+			LodIndex,
+			*DriveMode,
+			*LodModel.RootBone.ToString(),
+			LodModel.Mass.MassKg,
+			*AsyncPhysicsSummary,
+			LodModel.Rotors.Num());
 	}
 
 	return FText::FromString(MoveTemp(Summary));

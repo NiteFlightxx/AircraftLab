@@ -151,7 +151,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 	 * 最终用 ControlAuthorityScale_i 进一步缩放上限，并 clamp 到 [0,1]。
 	 */
 	static void AllocateRotorCommands(
-		const FAircraftSimulationModel& Model,
+		const FAircraftSimulationLodModel& Model,
 		const FDroneWrenchCommand& Wrench,
 		float Damping,
 		TArray<float>& OutCommands)
@@ -368,10 +368,18 @@ void FAircraftSimulationProxy::PostConstructor()
 	{
 		SimulationModel = Asset->GetAircraftSimulationModel(0);
 	}
-
-	if (SimulationModel.IsValid())
+	else
 	{
-		const FAircraftFlightControllerRuntimeConfig& Config = SimulationModel->FlightController;
+		SimulationModel.Reset();
+	}
+	ActiveLodModel = SimulationModel.IsValid()
+		? SimulationModel->GetLodModel(AircraftComponent.GetCurrentSimulationLOD())
+		: nullptr;
+	ActiveDriveMode = AircraftComponent.GetCurrentSimulationDriveMode();
+
+	if (ActiveLodModel)
+	{
+		const FAircraftFlightControllerRuntimeConfig& Config = ActiveLodModel->FlightController;
 		auto MakeGains = [](float Kp, float Ki, float Kd, float IntegralLimit, float OutputLimit, float CutoffHz, float Kff = 0.0f)
 		{
 			FDronePidGains Gains(Kp, Ki, Kd, IntegralLimit, OutputLimit);
@@ -414,7 +422,7 @@ void FAircraftSimulationProxy::PostConstructor()
 	}
 
 	// 初始化每个旋翼的运行时状态（数量与 SimulationModel.Rotors 对齐）。
-	const int32 RotorCount = SimulationModel.IsValid() ? SimulationModel->Rotors.Num() : 0;
+	const int32 RotorCount = ActiveLodModel ? ActiveLodModel->Rotors.Num() : 0;
 	RotorStates.SetNum(RotorCount);
 	for (int32 i = 0; i < RotorCount; ++i)
 	{
@@ -431,14 +439,14 @@ void FAircraftSimulationProxy::PostConstructor()
 	VerticalVelocityPidState.Reset();
 	FilteredPilotInput.ResetAxes();
 	CameraShakeIntensity.store(0.0f, std::memory_order_relaxed);
-	RemainingBatteryCapacityMilliAmpHour = SimulationModel.IsValid()
-		? FMath::Max(SimulationModel->Battery.CapacityMilliAmpHour, 0.0f)
+	RemainingBatteryCapacityMilliAmpHour = ActiveLodModel
+		? FMath::Max(ActiveLodModel->Battery.CapacityMilliAmpHour, 0.0f)
 		: 0.0f;
 	{
 		FScopeLock Lock(&OutputCriticalSection);
 		LatestBattery.StateOfCharge = RemainingBatteryCapacityMilliAmpHour > 0.0f ? 1.0f : 0.0f;
 		LatestBattery.RemainingCapacityMilliAmpHour = RemainingBatteryCapacityMilliAmpHour;
-		LatestBattery.VoltageV = SimulationModel.IsValid() ? SimulationModel->Battery.NominalVoltageV : 0.0f;
+		LatestBattery.VoltageV = ActiveLodModel ? ActiveLodModel->Battery.NominalVoltageV : 0.0f;
 		LatestBattery.CurrentA = 0.0f;
 		LatestBattery.AvailableThrustScale = 1.0f;
 	}
@@ -511,14 +519,21 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 
 	SimulationTime.store(SimTime, std::memory_order_relaxed);
 
-	if (!SimulationModel.IsValid() || SimulationModel->Rotors.Num() == 0)
+	if (!ActiveLodModel
+		|| ActiveDriveMode == EAircraftSimulationDriveMode::None
+		|| ActiveDriveMode == EAircraftSimulationDriveMode::Kinematic)
 	{
 		return;
 	}
-	if (RotorStates.Num() != SimulationModel->Rotors.Num())
+	if (ActiveDriveMode == EAircraftSimulationDriveMode::FlightController
+		&& ActiveLodModel->Rotors.IsEmpty())
+	{
+		return;
+	}
+	if (RotorStates.Num() != ActiveLodModel->Rotors.Num())
 	{
 		// 旋翼数量在运行时变化；重新对齐。
-		RotorStates.SetNum(SimulationModel->Rotors.Num());
+		RotorStates.SetNum(ActiveLodModel->Rotors.Num());
 		for (int32 i = 0; i < RotorStates.Num(); ++i)
 		{
 			RotorStates[i].Reset();
@@ -545,7 +560,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 
 	// Flight Controller Profile 的 Input 分组是输入整形的唯一来源：死区、Expo、响应时间均在 PT 上消费，
 	// 这样输入采样频率不会改变飞控实际看到的曲线。
-	const FAircraftGameFeelRuntimeConfig& GameFeel = SimulationModel->GameFeel;
+	const FAircraftGameFeelRuntimeConfig& GameFeel = ActiveLodModel->GameFeel;
 	auto ShapeAxis = [&GameFeel](float Value, float Expo)
 	{
 		const float Clamped = FMath::Clamp(Value, -1.0f, 1.0f);
@@ -636,13 +651,99 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	const FQuat WorldQuat = WorldXform.GetRotation();
 	const FVector WorldPosCm = WorldXform.GetLocation();
 	const FVector AngularVelBodyRadPerSec = WorldQuat.UnrotateVector(AngularVelWorldRadPerSec);
-	const FAircraftFlightControllerRuntimeConfig& FlightConfig = SimulationModel->FlightController;
+	const FAircraftFlightControllerRuntimeConfig& FlightConfig = ActiveLodModel->FlightController;
 	const FQuat ControlWorldQuat = FlightConfig.GetControlWorldRotation(WorldQuat);
 	const FVector AngularVelControllerDegPerSec = FVector(
 		FMath::RadiansToDegrees(FlightConfig.BodyAngularToController(AngularVelBodyRadPerSec).X),
 		FMath::RadiansToDegrees(FlightConfig.BodyAngularToController(AngularVelBodyRadPerSec).Y),
 		FMath::RadiansToDegrees(FlightConfig.BodyAngularToController(AngularVelBodyRadPerSec).Z));
 	const FRotator AttitudeDeg = ControlWorldQuat.Rotator();
+
+	if (ActiveDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint)
+	{
+		FVector LinearCommand = FVector::ZeroVector;
+		if (Targets.Position.bEnabled)
+		{
+			LinearCommand += (Targets.Position.PositionCm - WorldPosCm)
+				* FlightConfig.ConstraintLinearPositionStrength;
+		}
+		if (Targets.Position.bEnabled || Targets.Velocity.bEnabled)
+		{
+			const FVector TargetVelocity = Targets.Velocity.bEnabled
+				? Targets.Velocity.VelocityCmPerSec
+				: FVector::ZeroVector;
+			LinearCommand += (TargetVelocity - LinearVelCmPerSec)
+				* FlightConfig.ConstraintLinearVelocityStrength;
+		}
+		if (FlightConfig.ConstraintLinearForceLimit > UE_SMALL_NUMBER)
+		{
+			LinearCommand = LinearCommand.GetClampedToMaxSize(FlightConfig.ConstraintLinearForceLimit);
+		}
+
+		FVector AngularCommand = FVector::ZeroVector;
+		if (Targets.Attitude.bEnabled || Targets.Position.bEnabled)
+		{
+			FRotator TargetControlRotator = Targets.Attitude.bEnabled
+				? Targets.Attitude.AttitudeDegrees
+				: AttitudeDeg;
+			if (!Targets.Attitude.bEnabled && Targets.Position.bEnabled)
+			{
+				TargetControlRotator.Yaw = Targets.Position.YawDegrees;
+			}
+
+			const FQuat ControlToBody(
+				FVector::UpVector,
+				FMath::DegreesToRadians(FlightConfig.GetForwardYawOffsetDegrees()));
+			const FQuat TargetBodyQuat = (TargetControlRotator.Quaternion() * ControlToBody.Inverse()).GetNormalized();
+			FQuat ErrorQuat = (TargetBodyQuat * WorldQuat.Inverse()).GetNormalized();
+			if (ErrorQuat.W < 0.0f)
+			{
+				ErrorQuat.X *= -1.0f;
+				ErrorQuat.Y *= -1.0f;
+				ErrorQuat.Z *= -1.0f;
+				ErrorQuat.W *= -1.0f;
+			}
+			FVector ErrorAxis = FVector::ZeroVector;
+			float ErrorAngle = 0.0f;
+			ErrorQuat.ToAxisAndAngle(ErrorAxis, ErrorAngle);
+			AngularCommand = ErrorAxis * ErrorAngle * FlightConfig.ConstraintAngularPositionStrength
+				- AngularVelWorldRadPerSec * FlightConfig.ConstraintAngularVelocityStrength;
+			if (FlightConfig.ConstraintAngularTorqueLimit > UE_SMALL_NUMBER)
+			{
+				AngularCommand = AngularCommand.GetClampedToMaxSize(FlightConfig.ConstraintAngularTorqueLimit);
+			}
+		}
+
+		if (const FPhysicsActorHandle ActorHandle = Body->GetPhysicsActorHandle())
+		{
+			const float UnitScale = FlightConfig.bConstraintAccelerationMode ? 1.0f : 100.0f;
+			FChaosEngineInterface::AddForce_AssumesLocked(
+				ActorHandle,
+				LinearCommand * UnitScale,
+				/*bAllowSubstepping=*/false,
+				/*bAccelChange=*/FlightConfig.bConstraintAccelerationMode,
+				/*bIsInternal=*/true);
+			FChaosEngineInterface::AddTorque_AssumesLocked(
+				ActorHandle,
+				AngularCommand * (FlightConfig.bConstraintAccelerationMode ? 1.0f : 10000.0f),
+				/*bAllowSubstepping=*/false,
+				/*bAccelChange=*/FlightConfig.bConstraintAccelerationMode,
+				/*bIsInternal=*/true);
+		}
+
+		{
+			FScopeLock Lock(&OutputCriticalSection);
+			LatestEstimated.State.TimeSeconds = SimTime;
+			LatestEstimated.State.PositionCm = WorldPosCm;
+			LatestEstimated.State.VelocityCmPerSec = LinearVelCmPerSec;
+			LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
+			LatestEstimated.State.AngularVelocityBodyDegreesPerSec = FVector(
+				FMath::RadiansToDegrees(AngularVelBodyRadPerSec.X),
+				FMath::RadiansToDegrees(AngularVelBodyRadPerSec.Y),
+				FMath::RadiansToDegrees(AngularVelBodyRadPerSec.Z));
+		}
+		return;
+	}
 
 	/* ----------------------------------------------------------------------
 	 * 4) 串级 PID
@@ -655,7 +756,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	float DesiredCollectiveThrust = 0.f;
 
 	float AvailableThrustN = 0.0f;
-	for (const FDroneRotorDefinition& Rotor : SimulationModel->Rotors)
+	for (const FDroneRotorDefinition& Rotor : ActiveLodModel->Rotors)
 	{
 		if (Rotor.IsEnabled())
 		{
@@ -823,14 +924,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	TArray<float, TInlineAllocator<32>> Commands;
 	{
 		TArray<float> Tmp;
-		AllocateRotorCommands(*SimulationModel, Wrench, AllocationDamping, Tmp);
+		AllocateRotorCommands(*ActiveLodModel, Wrench, AllocationDamping, Tmp);
 		Commands.Append(Tmp);
 	}
 
 	// Battery node runtime model. Current draw is derived from aggregate motor load and the configured
 	// maximum C-rate; voltage sag uses the configured internal resistance. The resulting voltage ratio
 	// limits available rotor thrust, so battery parameters are not authoring-only metadata.
-	const FAircraftBatteryRuntimeConfig& BatteryConfig = SimulationModel->Battery;
+	const FAircraftBatteryRuntimeConfig& BatteryConfig = ActiveLodModel->Battery;
 	float MotorLoad = 0.0f;
 	for (const float Command : Commands)
 	{
@@ -838,7 +939,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	}
 	MotorLoad = Commands.IsEmpty() ? 0.0f : MotorLoad / static_cast<float>(Commands.Num());
 	CameraShakeIntensity.store(
-		FMath::Clamp(MotorLoad * FMath::Max(SimulationModel->GameFeel.CameraShakeScale, 0.0f), 0.0f, 1.0f),
+		FMath::Clamp(MotorLoad * FMath::Max(ActiveLodModel->GameFeel.CameraShakeScale, 0.0f), 0.0f, 1.0f),
 		std::memory_order_relaxed);
 	const float CapacityAmpHour = FMath::Max(BatteryConfig.CapacityMilliAmpHour, 0.0f) * 0.001f;
 	const float CurrentA = bMotorsOn ? CapacityAmpHour * FMath::Max(BatteryConfig.MaxDischargeC, 0.0f) * MotorLoad : 0.0f;
@@ -863,13 +964,13 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		LatestBattery.CurrentA = CurrentA;
 		LatestBattery.AvailableThrustScale = AvailableThrustScale;
 	}
-	const float GroundEffectStartHeightCm = FMath::Max(SimulationModel->Aero.GroundEffectStartHeightCm, 0.0f);
+	const float GroundEffectStartHeightCm = FMath::Max(ActiveLodModel->Aero.GroundEffectStartHeightCm, 0.0f);
 	const float GroundDistance = GroundDistanceCm.load(std::memory_order_relaxed);
 	const float GroundEffectAlpha = GroundEffectStartHeightCm > UE_SMALL_NUMBER
 		? 1.0f - FMath::Clamp(GroundDistance / GroundEffectStartHeightCm, 0.0f, 1.0f)
 		: 0.0f;
 	const float GroundEffectScale = 1.0f
-		+ FMath::Max(SimulationModel->Aero.GroundEffectStrength, 0.0f) * FMath::Square(GroundEffectAlpha);
+		+ FMath::Max(ActiveLodModel->Aero.GroundEffectStrength, 0.0f) * FMath::Square(GroundEffectAlpha);
 	const float RotorThrustScale = AvailableThrustScale * GroundEffectScale;
 
 	/* ----------------------------------------------------------------------
@@ -883,9 +984,9 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	// 不能用 BodyInstance::AddForce/AddTorque（那些 helper 内部走 GameThreadAPI，触发断言）。
 	const FPhysicsActorHandle ActorHandle = Body->GetPhysicsActorHandle();
 
-	for (int32 i = 0; i < SimulationModel->Rotors.Num(); ++i)
+	for (int32 i = 0; i < ActiveLodModel->Rotors.Num(); ++i)
 	{
-		const FDroneRotorDefinition& Rotor = SimulationModel->Rotors[i];
+		const FDroneRotorDefinition& Rotor = ActiveLodModel->Rotors[i];
 		FAircraftRotorRuntimeState& State = RotorStates[i];
 
 		const float Cmd = bMotorsOn ? (i < Commands.Num() ? Commands[i] : 0.f) : 0.f;
@@ -918,21 +1019,21 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 
 	// 气动阻尼（线性 + 角阻尼），以体坐标系阻尼系数施加。
 	{
-		const FVector RelativeAirVelocityCmPerSec = LinearVelCmPerSec - SimulationModel->Aero.WindVelocityCmPerSec;
+		const FVector RelativeAirVelocityCmPerSec = LinearVelCmPerSec - ActiveLodModel->Aero.WindVelocityCmPerSec;
 		const FVector LinearVelBodyMps = WorldQuat.UnrotateVector(RelativeAirVelocityCmPerSec) * 0.01;
 		const FVector LinearDragForceBody = -FVector(
-			SimulationModel->Aero.LinearDragPerAxis.X * LinearVelBodyMps.X,
-			SimulationModel->Aero.LinearDragPerAxis.Y * LinearVelBodyMps.Y,
-			SimulationModel->Aero.LinearDragPerAxis.Z * LinearVelBodyMps.Z);
+			ActiveLodModel->Aero.LinearDragPerAxis.X * LinearVelBodyMps.X,
+			ActiveLodModel->Aero.LinearDragPerAxis.Y * LinearVelBodyMps.Y,
+			ActiveLodModel->Aero.LinearDragPerAxis.Z * LinearVelBodyMps.Z);
 		const FVector LinearDragForceWorld = WorldQuat.RotateVector(LinearDragForceBody);
 		FChaosEngineInterface::AddForce_AssumesLocked(
 			ActorHandle, LinearDragForceWorld * 100.f * ForceAccumulationScale,
 			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
 
 		const FVector AngularDragTorqueBody = -FVector(
-			SimulationModel->Aero.AngularDragPerAxis.X * AngularVelBodyRadPerSec.X,
-			SimulationModel->Aero.AngularDragPerAxis.Y * AngularVelBodyRadPerSec.Y,
-			SimulationModel->Aero.AngularDragPerAxis.Z * AngularVelBodyRadPerSec.Z);
+			ActiveLodModel->Aero.AngularDragPerAxis.X * AngularVelBodyRadPerSec.X,
+			ActiveLodModel->Aero.AngularDragPerAxis.Y * AngularVelBodyRadPerSec.Y,
+			ActiveLodModel->Aero.AngularDragPerAxis.Z * AngularVelBodyRadPerSec.Z);
 		const FVector AngularDragTorqueWorld = WorldQuat.RotateVector(AngularDragTorqueBody);
 		FChaosEngineInterface::AddTorque_AssumesLocked(
 			ActorHandle, AngularDragTorqueWorld * 10000.f * ForceAccumulationScale,

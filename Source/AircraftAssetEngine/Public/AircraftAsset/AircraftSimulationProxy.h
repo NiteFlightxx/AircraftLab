@@ -577,6 +577,8 @@ private:
 	const UAircraftComponent& AircraftComponent;
 
 	TSharedPtr<const FAircraftSimulationModel> SimulationModel;
+	const FAircraftSimulationLodModel* ActiveLodModel = nullptr;
+	EAircraftSimulationDriveMode ActiveDriveMode = EAircraftSimulationDriveMode::FlightController;
 	TUniquePtr<FAircraftSimulationSolver> Solver;
 
 	/* GT → PT 双缓冲 */
