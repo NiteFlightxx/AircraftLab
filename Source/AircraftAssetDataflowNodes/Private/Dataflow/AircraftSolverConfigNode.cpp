@@ -10,8 +10,11 @@ FAircraftSolverConfigNode::FAircraftSolverConfigNode(
 	: FAircraftConfigNodeBase(InParam, InGuid)
 {
 	RegisterAircraftConnections();
-	RegisterInputConnection(&MaxSolverSubsteps);
-
+	RegisterInputConnection(&AsyncFixedTimeStepSize);
+	RegisterInputConnection(&bOverrideIterationCounts);
+	RegisterInputConnection(&PositionSolverIterationCount);
+	RegisterInputConnection(&VelocitySolverIterationCount);
+	RegisterInputConnection(&ProjectionSolverIterationCount);
 }
 
 void FAircraftSolverConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper*/) const
@@ -34,6 +37,14 @@ void FAircraftSolverConfigNode::EvaluateAircraftCollection(
 		AircraftCollection->Resize(1, AircraftCollectionGroup::Solver);
 	}
 
-	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::MaxSolverSubsteps, AircraftCollectionGroup::Solver)[0] =
-		FMath::Max(1, GetValue(Context, &MaxSolverSubsteps));
+	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::AsyncFixedTimeStepSize, AircraftCollectionGroup::Solver)[0] =
+		FMath::Clamp(GetValue(Context, &AsyncFixedTimeStepSize), 0.001f, 0.066667f);
+	InFacade.FindOrAddAttribute<uint8>(AircraftCollectionAttribute::OverrideIterationCounts, AircraftCollectionGroup::Solver)[0] =
+		GetValue(Context, &bOverrideIterationCounts) ? uint8(1) : uint8(0);
+	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::PositionSolverIterationCount, AircraftCollectionGroup::Solver)[0] =
+		FMath::Clamp(GetValue(Context, &PositionSolverIterationCount), 0, 255);
+	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::VelocitySolverIterationCount, AircraftCollectionGroup::Solver)[0] =
+		FMath::Clamp(GetValue(Context, &VelocitySolverIterationCount), 0, 255);
+	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::ProjectionSolverIterationCount, AircraftCollectionGroup::Solver)[0] =
+		FMath::Clamp(GetValue(Context, &ProjectionSolverIterationCount), 0, 255);
 }

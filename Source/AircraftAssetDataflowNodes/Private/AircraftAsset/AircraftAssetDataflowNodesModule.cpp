@@ -20,7 +20,7 @@ void FAircraftAssetDataflowNodesModule::StartupModule()
 {
 	// 节点画布颜色：Aircraft 深绿，Terminal 深红（对齐 ChaosClothAsset 节点画布颜色风格）。
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY_NODE_COLORS_BY_CATEGORY(
-		"Aircraft", FLinearColor(0.08f, 0.38f, 0.24f), FLinearColor(0.0f, 0.0f, 0.0f, 0.45f));
+		"Aircraft", FLinearColor(0.f, 0.65f, 1.f), FLinearColor(0.0f, 0.0f, 0.0f, 0.45f));
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY_NODE_COLORS_BY_CATEGORY(
 		"Terminal", FLinearColor(0.65f, 0.16f, 0.12f), FLinearColor(0.0f, 0.0f, 0.0f, 0.45f));
 

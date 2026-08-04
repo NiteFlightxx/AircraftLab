@@ -26,8 +26,6 @@ FAircraftAirscrewProfileNode::FAircraftAirscrewProfileNode(const UE::Dataflow::F
 {
 	RegisterInputConnection(&Collection);
 	RegisterOutputConnection(&Collection, &Collection);
-
-	Profiles.AddDefaulted();
 }
 
 void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
@@ -44,47 +42,68 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 	FCollectionAircraftFacade Facade(AircraftCollection);
 	Facade.DefineSchema();
 
-	const int32 DesiredCount = Installations.Num();
-	for (const FName Group : { AircraftCollectionGroup::Motors, AircraftCollectionGroup::Propellers })
+	auto ReturnInputCollection = [&Context, &AircraftCollection, this]()
 	{
-		const int32 CurrentCount = AircraftCollection->NumElements(Group);
-		if (CurrentCount < DesiredCount)
+		SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	};
+
+	if (Profile.Name.IsNone())
+	{
+		Context.Error(FText::FromString(TEXT("Airscrew Profile must have a name.")), this);
+		ReturnInputCollection();
+		return;
+	}
+
+	if (Profile.RadiusCm <= 0.0f || Profile.ThrustAxisLocal.IsNearlyZero() || Profile.MaxThrustForce <= 0.0f
+		|| Profile.ThrustCoefficient <= 0.0f || Profile.ReactionTorqueCoefficient < 0.0f
+		|| Profile.Efficiency < 0.0f || Profile.Efficiency > 1.0f
+		|| Profile.ControlAuthorityScale < 0.0f || Profile.ControlAuthorityScale > 1.0f
+		|| Profile.CommandScale < 0.0f || Profile.Motor.MaxRpm <= Profile.Motor.IdleRpm
+		|| Profile.Motor.IdleRpm < 0.0f || Profile.Motor.SpinUpTimeSeconds <= 0.0f
+		|| Profile.Motor.SpinDownTimeSeconds <= 0.0f || Profile.Motor.CommandExponent <= 0.0f
+		|| Profile.Motor.MaxCommandSlewPerSecond < 0.0f)
+	{
+		Context.Error(FText::FromString(FString::Printf(
+			TEXT("Airscrew Profile '%s' contains invalid rotor, installation, or motor parameters."),
+			*Profile.Name.ToString())), this);
+		ReturnInputCollection();
+		return;
+	}
+
+	const int32 MotorCount = AircraftCollection->NumElements(AircraftCollectionGroup::Motors);
+	const int32 PropellerCount = AircraftCollection->NumElements(AircraftCollectionGroup::Propellers);
+	if (MotorCount != PropellerCount)
+	{
+		Context.Error(FText::FromString(TEXT("Motor and Propeller collection counts must match before appending an Airscrew Profile.")), this);
+		ReturnInputCollection();
+		return;
+	}
+
+	const FName MotorName(*FString::Printf(TEXT("%s_Motor"), *Profile.Name.ToString()));
+	for (const FName ExistingName : Facade.GetPropellerName())
+	{
+		if (ExistingName == Profile.Name)
 		{
-			Facade.AddElements(DesiredCount - CurrentCount, Group);
+			Context.Error(FText::FromString(FString::Printf(
+				TEXT("Airscrew Profile name '%s' is duplicated."), *Profile.Name.ToString())), this);
+			ReturnInputCollection();
+			return;
 		}
-		else if (CurrentCount > DesiredCount)
+	}
+	for (const FName ExistingMotorName : Facade.GetMotorName())
+	{
+		if (ExistingMotorName == MotorName)
 		{
-			AircraftCollection->Resize(DesiredCount, Group);
-			FCollectionAircraftFacade(AircraftCollection).DefineSchema();
+			Context.Error(FText::FromString(FString::Printf(
+				TEXT("Airscrew motor name '%s' is duplicated."), *MotorName.ToString())), this);
+			ReturnInputCollection();
+			return;
 		}
 	}
 
-	TMap<FName, const FAircraftAirscrewProfileData*> ProfileByName;
-	for (const FAircraftAirscrewProfileData& Profile : Profiles)
-	{
-		if (Profile.Name.IsNone())
-		{
-			Context.Error(FText::FromString(TEXT("Airscrew Profile must have a name.")), this);
-			continue;
-		}
-		if (ProfileByName.Contains(Profile.Name))
-		{
-			Context.Error(FText::FromString(FString::Printf(TEXT("Airscrew Profile name '%s' is duplicated."), *Profile.Name.ToString())), this);
-			continue;
-		}
-		if (Profile.ThrustAxisLocal.IsNearlyZero() || Profile.MaxThrustForce <= 0.0f
-			|| Profile.ThrustCoefficient <= 0.0f || Profile.ReactionTorqueCoefficient < 0.0f
-			|| Profile.Efficiency < 0.0f || Profile.Efficiency > 1.0f
-			|| Profile.ControlAuthorityScale < 0.0f || Profile.ControlAuthorityScale > 1.0f
-			|| Profile.CommandScale < 0.0f || Profile.Motor.MaxRpm <= Profile.Motor.IdleRpm
-			|| Profile.Motor.IdleRpm < 0.0f || Profile.Motor.SpinUpTimeSeconds <= 0.0f
-			|| Profile.Motor.SpinDownTimeSeconds <= 0.0f || Profile.Motor.CommandExponent <= 0.0f
-			|| Profile.Motor.MaxCommandSlewPerSecond < 0.0f)
-		{
-			Context.Error(FText::FromString(FString::Printf(TEXT("Airscrew Profile '%s' contains invalid rotor or motor parameters."), *Profile.Name.ToString())), this);
-		}
-		ProfileByName.Add(Profile.Name, &Profile);
-	}
+	Facade.AddElements(1, AircraftCollectionGroup::Motors);
+	Facade.AddElements(1, AircraftCollectionGroup::Propellers);
+	const int32 Index = PropellerCount;
 
 	FCollectionAircraftFacade WriteFacade(AircraftCollection);
 	TArrayView<FName> MotorNames = WriteFacade.GetMotorName();
@@ -113,45 +132,31 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
 	Properties.DefineSchema();
-	for (int32 Index = 0; Index < Installations.Num(); ++Index)
-	{
-		const FAircraftAirscrewInstallation& Installation = Installations[Index];
-		const FAircraftAirscrewProfileData* const* FoundProfile = ProfileByName.Find(Installation.ProfileName);
-		const FAircraftAirscrewProfileData* Profile = FoundProfile ? *FoundProfile : nullptr;
-		if (!Profile)
-		{
-			Context.Error(FText::FromString(FString::Printf(
-				TEXT("Airscrew installation '%s' references missing Profile '%s'."),
-				*Installation.Name.ToString(), *Installation.ProfileName.ToString())), this);
-		}
+	MotorNames[Index] = MotorName;
+	(*MotorEnabled)[Index] = Profile.bEnabled;
+	MotorMinRpm[Index] = 0.0f;
+	MotorIdleRpm[Index] = Profile.Motor.IdleRpm;
+	MotorMaxRpm[Index] = Profile.Motor.MaxRpm;
+	MotorSpinUp[Index] = Profile.Motor.SpinUpTimeSeconds;
+	MotorSpinDown[Index] = Profile.Motor.SpinDownTimeSeconds;
+	MotorExponent[Index] = Profile.Motor.CommandExponent;
+	MotorSlew[Index] = Profile.Motor.MaxCommandSlewPerSecond;
 
-		const FName MotorName(*FString::Printf(TEXT("%s_Motor"), *Installation.Name.ToString()));
-		MotorNames[Index] = MotorName;
-		(*MotorEnabled)[Index] = Installation.bEnabled && Profile != nullptr;
-		MotorMinRpm[Index] = 0.0f;
-		MotorIdleRpm[Index] = Profile ? Profile->Motor.IdleRpm : 0.0f;
-		MotorMaxRpm[Index] = Profile ? Profile->Motor.MaxRpm : 0.0f;
-		MotorSpinUp[Index] = Profile ? Profile->Motor.SpinUpTimeSeconds : 0.0f;
-		MotorSpinDown[Index] = Profile ? Profile->Motor.SpinDownTimeSeconds : 0.0f;
-		MotorExponent[Index] = Profile ? Profile->Motor.CommandExponent : 0.0f;
-		MotorSlew[Index] = Profile ? Profile->Motor.MaxCommandSlewPerSecond : 0.0f;
-
-		PropellerNames[Index] = Installation.Name;
-		PropellerMotorNames[Index] = MotorName;
-		Sockets[Index] = Installation.SocketName;
-		(*UseSockets)[Index] = Installation.bUseSocketTransform;
-		Positions[Index] = Installation.PositionLocalCm;
-		Rotations[Index] = Installation.RotationLocalEulerDeg;
-		ThrustAxes[Index] = Profile ? Profile->ThrustAxisLocal : FVector3f::ZeroVector;
-		SpinDirections[Index] = static_cast<uint8>(Installation.SpinDirection);
-		Radii[Index] = Installation.RadiusCm;
-		MaxThrust[Index] = Profile ? Profile->MaxThrustForce : 0.0f;
-		ThrustCoefficient[Index] = Profile ? Profile->ThrustCoefficient : 0.0f;
-		ReactionTorqueCoefficient[Index] = Profile ? Profile->ReactionTorqueCoefficient : 0.0f;
-		Efficiency[Index] = Profile ? Profile->Efficiency : 0.0f;
-		Authority[Index] = Profile ? Profile->ControlAuthorityScale : 0.0f;
-		SetFloatProperty(Properties, *FString::Printf(TEXT("Airscrew.%d.CommandScale"), Index), Profile ? Profile->CommandScale : 0.0f);
-	}
+	PropellerNames[Index] = Profile.Name;
+	PropellerMotorNames[Index] = MotorName;
+	Sockets[Index] = Profile.SocketName;
+	(*UseSockets)[Index] = Profile.bUseSocketTransform;
+	Positions[Index] = Profile.PositionLocalCm;
+	Rotations[Index] = Profile.RotationLocalEulerDeg;
+	ThrustAxes[Index] = Profile.ThrustAxisLocal;
+	SpinDirections[Index] = static_cast<uint8>(Profile.SpinDirection);
+	Radii[Index] = Profile.RadiusCm;
+	MaxThrust[Index] = Profile.MaxThrustForce;
+	ThrustCoefficient[Index] = Profile.ThrustCoefficient;
+	ReactionTorqueCoefficient[Index] = Profile.ReactionTorqueCoefficient;
+	Efficiency[Index] = Profile.Efficiency;
+	Authority[Index] = Profile.ControlAuthorityScale;
+	SetFloatProperty(Properties, *FString::Printf(TEXT("Airscrew.%d.CommandScale"), Index), Profile.CommandScale);
 
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

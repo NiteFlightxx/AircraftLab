@@ -49,9 +49,20 @@ namespace UE::AircraftLab::AircraftAsset::Private
 
 		const FConstAircraftCollection ConstCollection(InCollections[0]);
 
-		/* Solver / binding */
-		OutModel.MaxSolverSubsteps = FMath::Clamp(
-			ReadFirst<int32>(ConstCollection.GetMaxSolverSubsteps(), 1), 1, 16);
+		/* Solver / binding。Solver 组为空表示完全使用项目物理设置。 */
+		const TManagedArray<float>* const AsyncFixedTimeStep = ConstCollection.GetAsyncFixedTimeStepSize();
+		OutModel.bOverrideSolverAsyncDeltaTime = AsyncFixedTimeStep && AsyncFixedTimeStep->Num() > 0;
+		OutModel.SolverAsyncDeltaTime = OutModel.bOverrideSolverAsyncDeltaTime
+			? FMath::Clamp((*AsyncFixedTimeStep)[0], 0.001f, 0.066667f)
+			: 0.0f;
+		OutModel.bOverrideSolverIterationCounts = OutModel.bOverrideSolverAsyncDeltaTime
+			&& ReadFirst<uint8>(ConstCollection.GetOverrideIterationCounts(), uint8(0)) != 0;
+		OutModel.PositionSolverIterationCount = static_cast<uint8>(FMath::Clamp(
+			ReadFirst<int32>(ConstCollection.GetPositionSolverIterationCount(), 8), 0, 255));
+		OutModel.VelocitySolverIterationCount = static_cast<uint8>(FMath::Clamp(
+			ReadFirst<int32>(ConstCollection.GetVelocitySolverIterationCount(), 2), 0, 255));
+		OutModel.ProjectionSolverIterationCount = static_cast<uint8>(FMath::Clamp(
+			ReadFirst<int32>(ConstCollection.GetProjectionSolverIterationCount(), 1), 0, 255));
 		OutModel.RootBone = ReadFirst<FName>(ConstCollection.GetFrameRootBone(), NAME_None);
 
 		/* Frame */

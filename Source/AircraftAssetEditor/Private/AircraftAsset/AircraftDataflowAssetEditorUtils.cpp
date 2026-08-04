@@ -255,7 +255,11 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				NodeIndex++,
 				[](FAircraftSolverConfigNode& Node)
 				{
-					Node.MaxSolverSubsteps = 4;
+					Node.AsyncFixedTimeStepSize = 1.0f / 60.0f;
+					Node.bOverrideIterationCounts = false;
+					Node.PositionSolverIterationCount = 8;
+					Node.VelocitySolverIterationCount = 2;
+					Node.ProjectionSolverIterationCount = 1;
 				});
 
 			/* ---------- 3. Frame 节点（机架 + 质量惯性 + 气动） ---------- */
@@ -277,39 +281,34 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.GroundEffectStrength = 0.15f;
 				});
 
-			/* ---------- 4. Airscrew Profile（型号只配置一次，安装实例引用型号） ---------- */
-			TArray<FQuadXEntry> QuadXEntriesCopy(QuadXEntries, UE_ARRAY_COUNT(QuadXEntries));
-			const FCreatedTemplateNode AirscrewNode = AddConfiguredTemplateNode<FAircraftAirscrewProfileNode>(
-				DataflowAsset,
-				TEXT("AircraftAirscrewProfile"),
-				NodeIndex++,
-				[QuadXEntriesCopy](FAircraftAirscrewProfileNode& Node)
-				{
-					Node.Profiles.SetNum(1);
-					Node.Profiles[0].Name = TEXT("DefaultAirscrew");
-					Node.Profiles[0].ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
-					Node.Profiles[0].MaxThrustForce = 9.f;
-					Node.Profiles[0].ThrustCoefficient = 1.f;
-					Node.Profiles[0].ReactionTorqueCoefficient = 0.03f;
-					Node.Profiles[0].Efficiency = 1.f;
-					Node.Profiles[0].ControlAuthorityScale = 1.f;
-					Node.Profiles[0].CommandScale = 1.f;
-					Node.Installations.Reset();
-					Node.Installations.Reserve(QuadXEntriesCopy.Num());
-					for (const FQuadXEntry& Entry : QuadXEntriesCopy)
+			/* ---------- 4-7. 四个单旋翼 Airscrew Profile 节点 ---------- */
+			TArray<FCreatedTemplateNode> AirscrewNodes;
+			AirscrewNodes.Reserve(UE_ARRAY_COUNT(QuadXEntries));
+			for (const FQuadXEntry& Entry : QuadXEntries)
+			{
+				const FQuadXEntry EntryCopy = Entry;
+				AirscrewNodes.Add(AddConfiguredTemplateNode<FAircraftAirscrewProfileNode>(
+					DataflowAsset,
+					FName(*FString::Printf(TEXT("AircraftAirscrewProfile_%s"), *Entry.RotorName.ToString())),
+					NodeIndex++,
+					[EntryCopy](FAircraftAirscrewProfileNode& Node)
 					{
-						FAircraftAirscrewInstallation Installation;
-						Installation.Name = Entry.RotorName;
-						Installation.ProfileName = TEXT("DefaultAirscrew");
-						Installation.bEnabled = true;
-						Installation.SpinDirection = Entry.SpinDirection;
-						Installation.bUseSocketTransform = false;
-						Installation.PositionLocalCm = Entry.Position;
-						Node.Installations.Add(Installation);
-					}
-				});
+						Node.Profile.Name = EntryCopy.RotorName;
+						Node.Profile.bEnabled = true;
+						Node.Profile.SpinDirection = EntryCopy.SpinDirection;
+						Node.Profile.bUseSocketTransform = false;
+						Node.Profile.PositionLocalCm = EntryCopy.Position;
+						Node.Profile.ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
+						Node.Profile.MaxThrustForce = 9.f;
+						Node.Profile.ThrustCoefficient = 1.f;
+						Node.Profile.ReactionTorqueCoefficient = 0.03f;
+						Node.Profile.Efficiency = 1.f;
+						Node.Profile.ControlAuthorityScale = 1.f;
+						Node.Profile.CommandScale = 1.f;
+					}));
+			}
 
-			/* ---------- 5. Battery 节点 ---------- */
+			/* ---------- 8. Battery 节点 ---------- */
 			const FCreatedTemplateNode BatteryNode = AddConfiguredTemplateNode<FAircraftBatteryConfigNode>(
 				DataflowAsset,
 				TEXT("AircraftBatteryConfig"),
@@ -323,7 +322,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.InternalResistanceOhm = 0.012f;
 				});
 
-			/* ---------- 6. Flight Controller Profile ---------- */
+			/* ---------- 9. Flight Controller Profile ---------- */
 			const FCreatedTemplateNode FlightControllerNode = AddConfiguredTemplateNode<FAircraftFlightControllerProfileNode>(
 				DataflowAsset,
 				TEXT("AircraftFlightControllerProfile"),
@@ -333,7 +332,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					(void)Node;
 				});
 
-			/* ---------- 7. Simulation LOD Profile ---------- */
+			/* ---------- 10. Simulation LOD Profile ---------- */
 			const FCreatedTemplateNode SimulationLODNode = AddConfiguredTemplateNode<FAircraftSimulationLODProfileNode>(
 				DataflowAsset,
 				TEXT("AircraftSimulationLODProfile"),
@@ -343,7 +342,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					(void)Node;
 				});
 
-			/* ---------- 8. Terminal 节点 ---------- */
+			/* ---------- 11. Terminal 节点 ---------- */
 			const FCreatedTemplateNode TerminalNode = AddConfiguredTemplateNode<FAircraftAssetTerminalNode>(
 				DataflowAsset,
 				TEXT("AircraftAssetTerminal"),
@@ -353,13 +352,16 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.AircraftAsset = nullptr;
 				});
 
-			/* ---------- 串联 8 个节点（Collection passthrough 链） ---------- */
+			/* ---------- 串联 11 个节点（Collection passthrough 链） ---------- */
 			TArray<UDataflowEdNode*> NodeChain;
-			NodeChain.Reserve(8);
+			NodeChain.Reserve(11);
 			NodeChain.Add(SourceNode.EdNode);
 			NodeChain.Add(SolverNode.EdNode);
 			NodeChain.Add(FrameNode.EdNode);
-			NodeChain.Add(AirscrewNode.EdNode);
+			for (const FCreatedTemplateNode& AirscrewNode : AirscrewNodes)
+			{
+				NodeChain.Add(AirscrewNode.EdNode);
+			}
 			NodeChain.Add(BatteryNode.EdNode);
 			NodeChain.Add(FlightControllerNode.EdNode);
 			NodeChain.Add(SimulationLODNode.EdNode);

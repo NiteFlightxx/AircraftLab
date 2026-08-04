@@ -447,8 +447,15 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 	/** 物理底盘根骨骼。NAME_None 时使用组件主 BodyInstance。 */
 	FName RootBone = NAME_None;
 
-	/** 单帧允许的内部控制子步数。 */
-	int32 MaxSolverSubsteps = 1;
+	/** AircraftSolverConfig 存在时覆盖 Chaos 异步固定时间步；不存在时完全采用项目物理设置。 */
+	bool bOverrideSolverAsyncDeltaTime = false;
+	float SolverAsyncDeltaTime = 0.0f;
+
+	/** 可选的当前刚体求解迭代覆盖；关闭时使用项目级迭代设置。 */
+	bool bOverrideSolverIterationCounts = false;
+	uint8 PositionSolverIterationCount = 8;
+	uint8 VelocitySolverIterationCount = 2;
+	uint8 ProjectionSolverIterationCount = 1;
 
 	/** 质量与惯性 */
 	FDroneMassProperties Mass;
@@ -473,7 +480,12 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 		PhysicsAsset = nullptr;
 		FrameType = EDroneFrameType::QuadX;
 		RootBone = NAME_None;
-		MaxSolverSubsteps = 1;
+		bOverrideSolverAsyncDeltaTime = false;
+		SolverAsyncDeltaTime = 0.0f;
+		bOverrideSolverIterationCounts = false;
+		PositionSolverIterationCount = 8;
+		VelocitySolverIterationCount = 2;
+		ProjectionSolverIterationCount = 1;
 		Mass = FDroneMassProperties();
 		Aero = FDroneAerodynamicsConfig();
 		Battery = FAircraftBatteryRuntimeConfig();

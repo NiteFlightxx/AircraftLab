@@ -8,7 +8,7 @@
 //   Group              | 元素数量          | 内容
 //   -------------------+-------------------+--------------------------------------------------
 //   Import             | 1                 | 骨骼网格 / 物理资产软引用
-//   Solver             | 1                 | 求解器最大子步数
+//   Solver             | 0 或 1            | 可选的 Chaos 异步固定时间步与刚体迭代覆盖
 //   Frame              | 1                 | 机架类型 + 质量惯性 + 气动 + 风场 + 地面效应
 //   Motors             | N（电机数）       | 电机一阶滞后参数 + 怠速/最大转速
 //   Propellers         | N（与电机对齐）   | 旋翼位置/方向/旋向 + 推力/反扭矩系数
@@ -59,8 +59,12 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FSoftObjectPath>* GetSkeletalMeshSoftObjectPathName() const { return SkeletalMeshSoftObjectPathName; }
 		const TManagedArray<FSoftObjectPath>* GetPhysicsAssetSoftObjectPathName() const { return PhysicsAssetSoftObjectPathName; }
 
-		/* ------------------------- Solver group (1 element) ------------------------- */
-		const TManagedArray<int32>* GetMaxSolverSubsteps() const { return MaxSolverSubsteps; }
+		/* ------------------------- Solver group (0 or 1 element) ------------------------- */
+		const TManagedArray<float>* GetAsyncFixedTimeStepSize() const { return AsyncFixedTimeStepSize; }
+		const TManagedArray<uint8>* GetOverrideIterationCounts() const { return OverrideIterationCounts; }
+		const TManagedArray<int32>* GetPositionSolverIterationCount() const { return PositionSolverIterationCount; }
+		const TManagedArray<int32>* GetVelocitySolverIterationCount() const { return VelocitySolverIterationCount; }
+		const TManagedArray<int32>* GetProjectionSolverIterationCount() const { return ProjectionSolverIterationCount; }
 
 		/* ------------------------- Frame group (1 element) ------------------------- */
 		const TManagedArray<FName>* GetFrameRootBone() const { return FrameRootBone; }
@@ -160,7 +164,11 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FSoftObjectPath>* PhysicsAssetSoftObjectPathName = nullptr;
 
 		/* Solver */
-		const TManagedArray<int32>* MaxSolverSubsteps = nullptr;
+		const TManagedArray<float>* AsyncFixedTimeStepSize = nullptr;
+		const TManagedArray<uint8>* OverrideIterationCounts = nullptr;
+		const TManagedArray<int32>* PositionSolverIterationCount = nullptr;
+		const TManagedArray<int32>* VelocitySolverIterationCount = nullptr;
+		const TManagedArray<int32>* ProjectionSolverIterationCount = nullptr;
 
 		/* Frame */
 		const TManagedArray<FName>* FrameRootBone = nullptr;
@@ -265,9 +273,9 @@ namespace UE::AircraftLab::AircraftAsset
 		}
 
 		/**
-		 * 一次性写入全部多旋翼 schema：建立 Group + Attribute，并对单元素组（Import / Solver / Frame /
-		 * Battery / FlightController / GameFeel）AddElements(1)，对多元素组（Motors / Propellers）保持 0
-		 * 等待节点写入。
+		 * 一次性写入全部多旋翼 schema：建立 Group + Attribute。Solver 保持 0 元素，只有
+		 * AircraftSolverConfig 节点才写入唯一元素；其他单元素组直接 AddElements(1)，
+		 * 多元素组（Motors / Propellers）保持 0 等待节点写入。
 		 */
 		void DefineSchema();
 
@@ -284,9 +292,25 @@ namespace UE::AircraftLab::AircraftAsset
 			return const_cast<TManagedArray<FSoftObjectPath>*>(FConstAircraftCollection::GetPhysicsAssetSoftObjectPathName());
 		}
 
-		TManagedArray<int32>* GetMaxSolverSubsteps()
+		TManagedArray<float>* GetAsyncFixedTimeStepSize()
 		{
-			return const_cast<TManagedArray<int32>*>(FConstAircraftCollection::GetMaxSolverSubsteps());
+			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetAsyncFixedTimeStepSize());
+		}
+		TManagedArray<uint8>* GetOverrideIterationCounts()
+		{
+			return const_cast<TManagedArray<uint8>*>(FConstAircraftCollection::GetOverrideIterationCounts());
+		}
+		TManagedArray<int32>* GetPositionSolverIterationCount()
+		{
+			return const_cast<TManagedArray<int32>*>(FConstAircraftCollection::GetPositionSolverIterationCount());
+		}
+		TManagedArray<int32>* GetVelocitySolverIterationCount()
+		{
+			return const_cast<TManagedArray<int32>*>(FConstAircraftCollection::GetVelocitySolverIterationCount());
+		}
+		TManagedArray<int32>* GetProjectionSolverIterationCount()
+		{
+			return const_cast<TManagedArray<int32>*>(FConstAircraftCollection::GetProjectionSolverIterationCount());
 		}
 
 #define UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(Type, Name) \

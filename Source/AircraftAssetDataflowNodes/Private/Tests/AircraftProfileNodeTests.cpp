@@ -21,6 +21,9 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 		&& FlightController.Limits.HoverCollectiveCommand <= FlightController.Limits.MaxCollectiveCommand);
 
 	const FAircraftAirscrewProfileData Airscrew;
+	TestFalse(TEXT("A single airscrew profile has an identity"), Airscrew.Name.IsNone());
+	TestTrue(TEXT("A single airscrew profile is enabled by default"), Airscrew.bEnabled);
+	TestTrue(TEXT("A single airscrew profile has a positive radius"), Airscrew.RadiusCm > 0.0f);
 	TestTrue(TEXT("Airscrew profile has positive maximum RPM"), Airscrew.Motor.MaxRpm > Airscrew.Motor.IdleRpm);
 	TestTrue(TEXT("Airscrew profile has a non-zero thrust axis"), !Airscrew.ThrustAxisLocal.IsNearlyZero());
 

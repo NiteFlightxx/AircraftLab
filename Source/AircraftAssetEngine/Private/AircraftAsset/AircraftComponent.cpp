@@ -11,6 +11,8 @@
 #include "Engine/World.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "Chaos/Framework/PhysicsSolverBase.h"
+#include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 #include "Engine/HitResult.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
 
@@ -49,6 +51,7 @@ void UAircraftComponent::SetAsset(UAircraftAssetBase* InAsset)
 
 	Asset = InAsset;
 	SyncSkeletalMeshComponentFromAsset();
+	ApplySolverSettingsToBodyInstance();
 
 	if (AircraftSimulationProxy.IsValid())
 	{
@@ -68,6 +71,7 @@ void UAircraftComponent::RefreshAssetState()
 	// 把 FrameConfig 中的 MassKg / CenterOfMass / InertiaDiagonal 重新写入 BodyInstance —
 	// 与 ChaosCloth 在 RefreshAssetState 中重新同步质量/惯性属性的语义一致。
 	ApplyMassPropertiesToBodyInstance();
+	ApplySolverSettingsToBodyInstance();
 
 	if (AircraftSimulationProxy.IsValid())
 	{
@@ -142,6 +146,52 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 
 	SetLinearDamping(LinearDampingScalar);
 	SetAngularDamping(AngularDampingScalar);
+}
+
+void UAircraftComponent::ApplySolverSettingsToBodyInstance()
+{
+	FBodyInstance* const Body = ResolveChassisBodyInstance();
+	if (!Body)
+	{
+		return;
+	}
+
+	const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
+	if (!Model || !Model->bOverrideSolverAsyncDeltaTime)
+	{
+		// 不调用 SetSolverAsyncDeltaTime：没有 AircraftSolverConfig 时不能触碰项目/Chaos 的步长。
+		Body->bOverrideSolverAsyncDeltaTime = false;
+		Body->SetOverrideIterationCounts(false);
+		return;
+	}
+
+	// UE 5.9 的 FBodyInstance::SetSolverAsyncDeltaTime 未导出给插件模块，因此先写入同一组
+	// BodyInstance 字段，再按引擎实现对共享 Chaos Solver 取最小时间步。
+	Body->bOverrideSolverAsyncDeltaTime = true;
+	Body->SolverAsyncDeltaTime = Model->SolverAsyncDeltaTime;
+
+	if (FPhysicsActorHandle PhysicsActor = Body->GetPhysicsActor())
+	{
+		if (Chaos::FPhysicsSolverBase* const Solver = PhysicsActor->GetSolverBase();
+			Solver && Solver->IsUsingAsyncResults())
+		{
+			Solver->EnableAsyncMode(FMath::Min(Solver->GetAsyncDeltaTime(), Model->SolverAsyncDeltaTime));
+		}
+	}
+
+	if (Model->bOverrideSolverIterationCounts)
+	{
+		// 先写入三个计数，再统一开启覆盖。关闭状态下 setter 会保存字段但向 Chaos 写入 -1；
+		// 最后的 SetOverrideIterationCounts(true) 会一次性提交三个有效值。
+		Body->SetPositionSolverIterationCount(Model->PositionSolverIterationCount);
+		Body->SetVelocitySolverIterationCount(Model->VelocitySolverIterationCount);
+		Body->SetProjectionSolverIterationCount(Model->ProjectionSolverIterationCount);
+		Body->SetOverrideIterationCounts(true);
+	}
+	else
+	{
+		Body->SetOverrideIterationCounts(false);
+	}
 }
 
 /* ============================ Pilot / mode ============================ */
@@ -307,6 +357,7 @@ void UAircraftComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyC
 	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UAircraftComponent, Asset))
 	{
 		SyncSkeletalMeshComponentFromAsset();
+		ApplySolverSettingsToBodyInstance();
 		if (AircraftSimulationProxy.IsValid())
 		{
 			AircraftSimulationProxy->PostConstructor();
@@ -343,6 +394,7 @@ void UAircraftComponent::OnCreatePhysicsState()
 	// 物理状态刚创建——立刻把 FrameConfig 中的质量/质心/惯性写入 BodyInstance。
 	// 这是 ChaosCloth 风格在 GT 端"创建物理时同步资产参数到 Body"的位置。
 	ApplyMassPropertiesToBodyInstance();
+	ApplySolverSettingsToBodyInstance();
 
 	if (AircraftSimulationProxy.IsValid())
 	{
@@ -401,15 +453,9 @@ void UAircraftComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTim
 
 	if (AircraftSimulationProxy.IsValid())
 	{
-		const FAircraftSimulationModel* const Model = GetPrimarySimulationModel();
-		const int32 NumControlSubsteps = Model ? FMath::Clamp(Model->MaxSolverSubsteps, 1, 16) : 1;
-		const float ControlDeltaTime = DeltaTime / static_cast<float>(NumControlSubsteps);
-		const float ForceAccumulationScale = 1.0f / static_cast<float>(NumControlSubsteps);
-		for (int32 SubstepIndex = 0; SubstepIndex < NumControlSubsteps; ++SubstepIndex)
-		{
-			const float ControlSimTime = SimTime - DeltaTime + ControlDeltaTime * static_cast<float>(SubstepIndex + 1);
-			AircraftSimulationProxy->TickPhysicsThread(ControlDeltaTime, ControlSimTime, ForceAccumulationScale);
-		}
+		// Chaos 已按项目设置或 AircraftSolverConfig 的真实异步固定步长调用本函数，
+		// 飞控直接消费该步长，不能再在插件内伪造子步。
+		AircraftSimulationProxy->TickPhysicsThread(DeltaTime, SimTime, 1.0f);
 	}
 }
 

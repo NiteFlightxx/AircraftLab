@@ -26,7 +26,7 @@ TSoftClassPtr<UObject> UAssetDefinition_AircraftAsset::GetAssetClass() const
 
 FLinearColor UAssetDefinition_AircraftAsset::GetAssetColor() const
 {
-	return FLinearColor(0.09f, 0.39f, 0.24f);
+	return FLinearColor(0.f, 0.65f, 1.f);
 }
 
 TConstArrayView<FAssetCategoryPath> UAssetDefinition_AircraftAsset::GetAssetCategories() const

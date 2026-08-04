@@ -652,9 +652,23 @@ FText FAircraftAssetEditorToolkit::GetOutlinerSummaryText() const
 		return LOCTEXT("OutlinerNoCompiledModel", "No compiled simulation model. Evaluate the terminal node to build the asset.");
 	}
 
+	const FString AsyncPhysicsSummary = Model->bOverrideSolverAsyncDeltaTime
+		? FString::Printf(TEXT("Aircraft override (%.3f ms)"), Model->SolverAsyncDeltaTime * 1000.0f)
+		: TEXT("Project settings");
+	const FString SolverIterationsSummary = Model->bOverrideSolverIterationCounts
+		? FString::Printf(
+			TEXT("Aircraft override (Position %d / Velocity %d / Projection %d)"),
+			static_cast<int32>(Model->PositionSolverIterationCount),
+			static_cast<int32>(Model->VelocitySolverIterationCount),
+			static_cast<int32>(Model->ProjectionSolverIterationCount))
+		: TEXT("Project settings");
 	FString Summary = FString::Printf(
-		TEXT("Frame\n  Root body: %s\n  Mass: %.3f kg\n  Solver substeps: %d\n\nRotors (%d)"),
-		*Model->RootBone.ToString(), Model->Mass.MassKg, Model->MaxSolverSubsteps, Model->Rotors.Num());
+		TEXT("Frame\n  Root body: %s\n  Mass: %.3f kg\n  Async physics: %s\n  Solver iterations: %s\n\nRotors (%d)"),
+		*Model->RootBone.ToString(),
+		Model->Mass.MassKg,
+		*AsyncPhysicsSummary,
+		*SolverIterationsSummary,
+		Model->Rotors.Num());
 	for (int32 RotorIndex = 0; RotorIndex < Model->Rotors.Num(); ++RotorIndex)
 	{
 		const FDroneRotorDefinition& Rotor = Model->Rotors[RotorIndex];

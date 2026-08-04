@@ -197,6 +197,9 @@ private:
 	 */
 	void ApplyMassPropertiesToBodyInstance();
 
+	/** 把可选的 AircraftSolverConfig 同步到 Chaos BodyInstance；配置缺失时清除组件级覆盖标记。 */
+	void ApplySolverSettingsToBodyInstance();
+
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
 	TObjectPtr<UAircraftAssetBase> Asset;
 

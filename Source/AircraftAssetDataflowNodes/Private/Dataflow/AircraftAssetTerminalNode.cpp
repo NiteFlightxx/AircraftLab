@@ -101,7 +101,11 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 		AircraftCollectionAttribute::PhysicsAssetSoftObjectPathName, AircraftCollectionGroup::Import));
 
 	/* Solver */
-	AccumulateArray(Facade.GetMaxSolverSubsteps());
+	AccumulateArray(Facade.GetAsyncFixedTimeStepSize());
+	AccumulateArray(Facade.GetOverrideIterationCounts());
+	AccumulateArray(Facade.GetPositionSolverIterationCount());
+	AccumulateArray(Facade.GetVelocitySolverIterationCount());
+	AccumulateArray(Facade.GetProjectionSolverIterationCount());
 
 	/* Frame：根骨骼 + 机架类型 + 质量惯性 + 气动是结构性的 */
 	AccumulateArray(Facade.GetFrameRootBone());

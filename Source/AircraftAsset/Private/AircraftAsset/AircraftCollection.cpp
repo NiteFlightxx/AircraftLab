@@ -27,7 +27,11 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PhysicsAssetSoftObjectPathName(TEXT("PhysicsAssetSoftObjectPathName"));
 
 		/* Solver attributes */
-		const FName MaxSolverSubsteps(TEXT("MaxSolverSubsteps"));
+		const FName AsyncFixedTimeStepSize(TEXT("AsyncFixedTimeStepSize"));
+		const FName OverrideIterationCounts(TEXT("OverrideIterationCounts"));
+		const FName PositionSolverIterationCount(TEXT("PositionSolverIterationCount"));
+		const FName VelocitySolverIterationCount(TEXT("VelocitySolverIterationCount"));
+		const FName ProjectionSolverIterationCount(TEXT("ProjectionSolverIterationCount"));
 
 		/* Frame attributes */
 		const FName FrameRootBone(TEXT("RootBone"));
@@ -147,10 +151,30 @@ namespace UE::AircraftLab::AircraftAsset
 			OutErrors.Add(LOCTEXT("InvalidMass", "Frame mass must be finite and greater than zero."));
 		}
 
-		const int32 SolverSubsteps = MaxSolverSubsteps && MaxSolverSubsteps->Num() > 0 ? (*MaxSolverSubsteps)[0] : 0;
-		if (SolverSubsteps < 1 || SolverSubsteps > 16)
+		const int32 SolverConfigCount = AsyncFixedTimeStepSize ? AsyncFixedTimeStepSize->Num() : 0;
+		if (SolverConfigCount > 1)
 		{
-			OutErrors.Add(LOCTEXT("InvalidSolverSubsteps", "Solver substeps must be between 1 and 16."));
+			OutErrors.Add(LOCTEXT("TooManySolverConfigs", "Aircraft Solver Config must contain at most one entry."));
+		}
+		else if (SolverConfigCount == 1
+			&& (!FMath::IsFinite((*AsyncFixedTimeStepSize)[0]) || (*AsyncFixedTimeStepSize)[0] <= 0.0f))
+		{
+			OutErrors.Add(LOCTEXT("InvalidAsyncFixedTimeStepSize", "Async fixed time step must be finite and greater than zero."));
+		}
+		if (SolverConfigCount == 1)
+		{
+			auto ValidateIterationCount = [&OutErrors](const TManagedArray<int32>* Values, const TCHAR* Label)
+			{
+				if (!Values || Values->Num() != 1 || (*Values)[0] < 0 || (*Values)[0] > 255)
+				{
+					OutErrors.Add(FText::Format(
+						LOCTEXT("InvalidSolverIterationCount", "{0} solver iteration count must be between 0 and 255."),
+						FText::FromString(Label)));
+				}
+			};
+			ValidateIterationCount(PositionSolverIterationCount, TEXT("Position"));
+			ValidateIterationCount(VelocitySolverIterationCount, TEXT("Velocity"));
+			ValidateIterationCount(ProjectionSolverIterationCount, TEXT("Projection"));
 		}
 
 		TSet<FName> MotorNames;
@@ -397,7 +421,11 @@ namespace UE::AircraftLab::AircraftAsset
 		PhysicsAssetSoftObjectPathName = Collection.FindAttributeTyped<FSoftObjectPath>(Private::PhysicsAssetSoftObjectPathName, Private::ImportGroup);
 
 		/* Solver */
-		MaxSolverSubsteps = Collection.FindAttributeTyped<int32>(Private::MaxSolverSubsteps, Private::SolverGroup);
+		AsyncFixedTimeStepSize = Collection.FindAttributeTyped<float>(Private::AsyncFixedTimeStepSize, Private::SolverGroup);
+		OverrideIterationCounts = Collection.FindAttributeTyped<uint8>(Private::OverrideIterationCounts, Private::SolverGroup);
+		PositionSolverIterationCount = Collection.FindAttributeTyped<int32>(Private::PositionSolverIterationCount, Private::SolverGroup);
+		VelocitySolverIterationCount = Collection.FindAttributeTyped<int32>(Private::VelocitySolverIterationCount, Private::SolverGroup);
+		ProjectionSolverIterationCount = Collection.FindAttributeTyped<int32>(Private::ProjectionSolverIterationCount, Private::SolverGroup);
 
 		/* Frame */
 		FrameRootBone = Collection.FindAttributeTyped<FName>(Private::FrameRootBone, Private::FrameGroup);
@@ -524,8 +552,11 @@ namespace UE::AircraftLab::AircraftAsset
 
 		/* Solver */
 		AddOrFindGroup(Private::SolverGroup);
-		AddAttribute(Private::SolverGroup, Private::MaxSolverSubsteps, int32(0));
-		EnsureSingleElement(Private::SolverGroup);
+		AddAttribute(Private::SolverGroup, Private::AsyncFixedTimeStepSize, float(0));
+		AddAttribute(Private::SolverGroup, Private::OverrideIterationCounts, uint8(0));
+		AddAttribute(Private::SolverGroup, Private::PositionSolverIterationCount, int32(0));
+		AddAttribute(Private::SolverGroup, Private::VelocitySolverIterationCount, int32(0));
+		AddAttribute(Private::SolverGroup, Private::ProjectionSolverIterationCount, int32(0));
 
 		/* Frame */
 		AddOrFindGroup(Private::FrameGroup);

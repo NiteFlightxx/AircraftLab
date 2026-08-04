@@ -40,7 +40,11 @@ namespace UE::AircraftLab::AircraftAsset
 		extern AIRCRAFTASSET_API const FName PhysicsAssetSoftObjectPathName;
 
 		/* Solver */
-		extern AIRCRAFTASSET_API const FName MaxSolverSubsteps;
+		extern AIRCRAFTASSET_API const FName AsyncFixedTimeStepSize;
+		extern AIRCRAFTASSET_API const FName OverrideIterationCounts;
+		extern AIRCRAFTASSET_API const FName PositionSolverIterationCount;
+		extern AIRCRAFTASSET_API const FName VelocitySolverIterationCount;
+		extern AIRCRAFTASSET_API const FName ProjectionSolverIterationCount;
 
 		/* Frame */
 		extern AIRCRAFTASSET_API const FName FrameRootBone;
@@ -169,9 +173,25 @@ namespace UE::AircraftLab::AircraftAsset
 		}
 
 		/* ------------------------- Solver ------------------------- */
-		TConstArrayView<int32> GetMaxSolverSubsteps() const
+		TConstArrayView<float> GetAsyncFixedTimeStepSize() const
 		{
-			return FConstAircraftCollection::GetElements(AircraftCollection->GetMaxSolverSubsteps());
+			return FConstAircraftCollection::GetElements(AircraftCollection->GetAsyncFixedTimeStepSize());
+		}
+		TConstArrayView<uint8> GetOverrideIterationCounts() const
+		{
+			return FConstAircraftCollection::GetElements(AircraftCollection->GetOverrideIterationCounts());
+		}
+		TConstArrayView<int32> GetPositionSolverIterationCount() const
+		{
+			return FConstAircraftCollection::GetElements(AircraftCollection->GetPositionSolverIterationCount());
+		}
+		TConstArrayView<int32> GetVelocitySolverIterationCount() const
+		{
+			return FConstAircraftCollection::GetElements(AircraftCollection->GetVelocitySolverIterationCount());
+		}
+		TConstArrayView<int32> GetProjectionSolverIterationCount() const
+		{
+			return FConstAircraftCollection::GetElements(AircraftCollection->GetProjectionSolverIterationCount());
 		}
 
 		/* ------------------------- Frame ------------------------- */
@@ -316,9 +336,25 @@ namespace UE::AircraftLab::AircraftAsset
 		void SetPhysicsAssetSoftObjectPathName(const FSoftObjectPath& PathName);
 
 		/* Solver */
-		TArrayView<int32> GetMaxSolverSubsteps()
+		TArrayView<float> GetAsyncFixedTimeStepSize()
 		{
-			return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetMaxSolverSubsteps());
+			return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetAsyncFixedTimeStepSize());
+		}
+		TArrayView<uint8> GetOverrideIterationCounts()
+		{
+			return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetOverrideIterationCounts());
+		}
+		TArrayView<int32> GetPositionSolverIterationCount()
+		{
+			return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPositionSolverIterationCount());
+		}
+		TArrayView<int32> GetVelocitySolverIterationCount()
+		{
+			return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetVelocitySolverIterationCount());
+		}
+		TArrayView<int32> GetProjectionSolverIterationCount()
+		{
+			return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetProjectionSolverIterationCount());
 		}
 
 		/* Frame */
