@@ -1,8 +1,13 @@
-// 对齐 ChaosClothAssetEditorTools/.../ChaosClothWeightMapPaintTool 之类 InteractiveTool 风格：
+// 对齐 ChaosClothAssetEditorTools 的 InteractiveTool 风格：
 // 一个 Tool = ToolBuilder + Tool + ToolProperties，ToolManager 在 Activate 时实例化。
 //
 // MotorPlacementTool：可视化拖拽机架上的旋翼位置（机体坐标系下的 X/Y 偏移）。
 // 支持把当前调整后的位置写回到资产 Collection 的 Propellers.PositionLocalCm。
+//
+// 编辑器迁移说明：工具在引擎 UDataflowEditorMode 中激活；资产经
+// UE::AircraftLab::AircraftEditorTools::ResolveAircraftAsset（UDataflowBaseContent::
+// GetDataflowOwner）解析，Builder 必须实现 IDataflowEditorToolBuilder
+// （引擎 UDataflowEditorMode 对激活中工具的 Builder 有 checkf 强约束）。
 
 #pragma once
 
@@ -10,11 +15,11 @@
 #include "InteractiveTool.h"
 #include "InteractiveToolBuilder.h"
 #include "UObject/Object.h"
+#include "DataflowEditorTools/DataflowEditorToolBuilder.h"
 
 #include "AircraftMotorPlacementTool.generated.h"
 
 class UAircraftAssetBase;
-class UAircraftEditorContextObject;
 class UAircraftComponent;
 
 /**
@@ -47,21 +52,24 @@ public:
  * MotorPlacementToolBuilder：响应 EditorMode 的 ToolManager 请求构造 Tool。
  */
 UCLASS()
-class AIRCRAFTASSETEDITORTOOLS_API UAircraftMotorPlacementToolBuilder : public UInteractiveToolBuilder
+class AIRCRAFTASSETEDITORTOOLS_API UAircraftMotorPlacementToolBuilder : public UInteractiveToolBuilder, public IDataflowEditorToolBuilder
 {
 	GENERATED_BODY()
 
 public:
 	virtual bool CanBuildTool(const FToolBuilderState& SceneState) const override;
 	virtual UInteractiveTool* BuildTool(const FToolBuilderState& SceneState) const override;
+
+	//~ IDataflowEditorToolBuilder：不强制切换 Construction 视口模式（返回空列表）。
+	virtual void GetSupportedConstructionViewModes(const UDataflowContextObject& ContextObject, TArray<const UE::Dataflow::IDataflowConstructionViewMode*>& Modes) const override;
 };
 
 /**
  * MotorPlacementTool：旋翼位置可视化拖拽工具。
  *
  * 工作流：
- *   1) Setup 时从 Context 读取当前 UAircraftComponent / Asset；
- *   2) Tick 时绘制每个旋翼位置的世界坐标球体（Click 选中）；
+ *   1) Setup 时从 BuildTool 注入的目标资产读取当前配置；
+ *   2) Tick 时绘制每个旋翼位置（有预览组件则变换到其世界系，否则画在资产本地系 = 原点）；
  *   3) Property 面板修改 PositionLocalCm 时实时回写到 Asset 的 Collection；
  *   4) Shutdown 时根据 Cancel/Accept 决定是否保留改动。
  */
@@ -71,12 +79,14 @@ class AIRCRAFTASSETEDITORTOOLS_API UAircraftMotorPlacementTool : public UInterac
 	GENERATED_BODY()
 
 public:
-	void SetTargetContext(UAircraftEditorContextObject* InContext) { ContextObject = InContext; }
+	void SetTargetAsset(UAircraftAssetBase* InAsset) { TargetAsset = InAsset; }
 
 	virtual void Setup() override;
 	virtual void Shutdown(EToolShutdownType ShutdownType) override;
 	virtual void Render(IToolsContextRenderAPI* RenderAPI) override;
 	virtual void OnTick(float DeltaTime) override;
+
+	UAircraftAssetBase* GetTargetAsset() const { return TargetAsset.Get(); }
 
 private:
 	void RefreshFromAsset();
@@ -86,8 +96,7 @@ private:
 	UPROPERTY()
 	TObjectPtr<UAircraftMotorPlacementToolProperties> Properties;
 
-	UPROPERTY()
-	TObjectPtr<UAircraftEditorContextObject> ContextObject;
+	TWeakObjectPtr<UAircraftAssetBase> TargetAsset;
 
 	/** 上一次面板写入的值（用于 OnTick 检测变更触发回写）。 */
 	int32 LastSelectedIndex = INDEX_NONE;

@@ -12,10 +12,11 @@
 #include "InteractiveTool.h"
 #include "InteractiveToolBuilder.h"
 #include "UObject/Object.h"
+#include "DataflowEditorTools/DataflowEditorToolBuilder.h"
 
 #include "AircraftThrustVectorOrientationTool.generated.h"
 
-class UAircraftEditorContextObject;
+class UAircraftAssetBase;
 
 UCLASS()
 class AIRCRAFTASSETEDITORTOOLS_API UAircraftThrustVectorOrientationToolProperties : public UInteractiveToolPropertySet
@@ -41,13 +42,16 @@ public:
 };
 
 UCLASS()
-class AIRCRAFTASSETEDITORTOOLS_API UAircraftThrustVectorOrientationToolBuilder : public UInteractiveToolBuilder
+class AIRCRAFTASSETEDITORTOOLS_API UAircraftThrustVectorOrientationToolBuilder : public UInteractiveToolBuilder, public IDataflowEditorToolBuilder
 {
 	GENERATED_BODY()
 
 public:
 	virtual bool CanBuildTool(const FToolBuilderState& SceneState) const override;
 	virtual UInteractiveTool* BuildTool(const FToolBuilderState& SceneState) const override;
+
+	//~ IDataflowEditorToolBuilder：不强制切换 Construction 视口模式（返回空列表）。
+	virtual void GetSupportedConstructionViewModes(const UDataflowContextObject& ContextObject, TArray<const UE::Dataflow::IDataflowConstructionViewMode*>& Modes) const override;
 };
 
 UCLASS()
@@ -56,12 +60,14 @@ class AIRCRAFTASSETEDITORTOOLS_API UAircraftThrustVectorOrientationTool : public
 	GENERATED_BODY()
 
 public:
-	void SetTargetContext(UAircraftEditorContextObject* InContext) { ContextObject = InContext; }
+	void SetTargetAsset(UAircraftAssetBase* InAsset) { TargetAsset = InAsset; }
 
 	virtual void Setup() override;
 	virtual void Shutdown(EToolShutdownType ShutdownType) override;
 	virtual void Render(IToolsContextRenderAPI* RenderAPI) override;
 	virtual void OnTick(float DeltaTime) override;
+
+	UAircraftAssetBase* GetTargetAsset() const { return TargetAsset.Get(); }
 
 private:
 	void ApplyOffsetToAsset(int32 RotorIndex, float PitchDeg, float YawDeg) const;
@@ -82,8 +88,7 @@ private:
 	UPROPERTY()
 	TObjectPtr<UAircraftThrustVectorOrientationToolProperties> Properties;
 
-	UPROPERTY()
-	TObjectPtr<UAircraftEditorContextObject> ContextObject;
+	TWeakObjectPtr<UAircraftAssetBase> TargetAsset;
 
 	float LastWrittenPitch = 0.f;
 	float LastWrittenYaw = 0.f;

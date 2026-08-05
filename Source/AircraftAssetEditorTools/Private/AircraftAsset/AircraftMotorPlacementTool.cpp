@@ -1,10 +1,11 @@
 #include "AircraftAsset/AircraftMotorPlacementTool.h"
 
+#include "AircraftEditorToolContext.h"
+
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/AircraftComponent.h"
-#include "AircraftAsset/AircraftEditorContextObject.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "ContextObjectStore.h"
 #include "InteractiveToolManager.h"
@@ -18,22 +19,21 @@
 
 bool UAircraftMotorPlacementToolBuilder::CanBuildTool(const FToolBuilderState& SceneState) const
 {
-	const UAircraftEditorContextObject* const Ctx = SceneState.ToolManager
-		? SceneState.ToolManager->GetContextObjectStore()->FindContext<UAircraftEditorContextObject>()
-		: nullptr;
-	return Ctx && Ctx->GetAircraftAsset();
+	return UE::AircraftLab::AircraftEditorTools::ResolveAircraftAsset(SceneState.ToolManager) != nullptr;
 }
 
 UInteractiveTool* UAircraftMotorPlacementToolBuilder::BuildTool(const FToolBuilderState& SceneState) const
 {
 	UAircraftMotorPlacementTool* const Tool = NewObject<UAircraftMotorPlacementTool>(SceneState.ToolManager);
-	if (UAircraftEditorContextObject* const Ctx = SceneState.ToolManager
-		? SceneState.ToolManager->GetContextObjectStore()->FindContext<UAircraftEditorContextObject>()
-		: nullptr)
-	{
-		Tool->SetTargetContext(Ctx);
-	}
+	Tool->SetTargetAsset(UE::AircraftLab::AircraftEditorTools::ResolveAircraftAsset(SceneState.ToolManager));
 	return Tool;
+}
+
+void UAircraftMotorPlacementToolBuilder::GetSupportedConstructionViewModes(
+	const UDataflowContextObject& /*ContextObject*/,
+	TArray<const UE::Dataflow::IDataflowConstructionViewMode*>& /*Modes*/) const
+{
+	// 不强制切换 Construction 视口模式：旋翼渲染在任何含 Rotor 渲染回调的视图下均可见。
 }
 
 void UAircraftMotorPlacementTool::Setup()
@@ -51,10 +51,7 @@ void UAircraftMotorPlacementTool::Shutdown(EToolShutdownType ShutdownType)
 	if (ShutdownType == EToolShutdownType::Cancel)
 	{
 		// 触发资产重新读取 schema → SimulationModel，丢弃本次未写入 schema 的内存改动。
-		if (UAircraftComponent* const Component = ContextObject ? ContextObject->GetAircraftComponent() : nullptr)
-		{
-			Component->RefreshAssetState();
-		}
+		UE::AircraftLab::AircraftEditorTools::RefreshDependentComponents(GetTargetAsset());
 	}
 
 	Super::Shutdown(ShutdownType);
@@ -65,14 +62,13 @@ void UAircraftMotorPlacementTool::Render(IToolsContextRenderAPI* RenderAPI)
 #if ENABLE_DRAW_DEBUG
 	Super::Render(RenderAPI);
 
-	if (!ContextObject || !RenderAPI)
+	if (!RenderAPI)
 	{
 		return;
 	}
 
-	const UAircraftComponent* const Component = ContextObject->GetAircraftComponent();
-	const UAircraftAssetBase* const Asset = ContextObject->GetAircraftAsset();
-	if (!Component || !Asset)
+	const UAircraftAssetBase* const Asset = GetTargetAsset();
+	if (!Asset)
 	{
 		return;
 	}
@@ -84,13 +80,19 @@ void UAircraftMotorPlacementTool::Render(IToolsContextRenderAPI* RenderAPI)
 		return;
 	}
 
+	// 有预览组件则画在该组件世界系；否则画在资产本地系（= 世界原点）。
+	const TArray<UAircraftComponent*> Components =
+		UE::AircraftLab::AircraftEditorTools::FindAircraftComponents(Asset);
+	const FTransform XformWorld = Components.Num() > 0
+		? Components[0]->GetComponentTransform()
+		: FTransform::Identity;
+
 	FToolDataVisualizer Visualizer;
 	Visualizer.LineColor = FLinearColor::Yellow;
 	Visualizer.LineThickness = 1.0f;
 	Visualizer.PointSize = 6.0f;
 	Visualizer.BeginFrame(RenderAPI);
 
-	const FTransform XformWorld = Component->GetComponentTransform();
 	for (int32 i = 0; i < LodModel->Rotors.Num(); ++i)
 	{
 		const FVector LocalPos = LodModel->Rotors[i].PositionLocalCm;
@@ -135,12 +137,12 @@ void UAircraftMotorPlacementTool::OnTick(float DeltaTime)
 
 void UAircraftMotorPlacementTool::RefreshFromAsset()
 {
-	if (!Properties || !ContextObject)
+	if (!Properties)
 	{
 		return;
 	}
 
-	const UAircraftAssetBase* const Asset = ContextObject->GetAircraftAsset();
+	const UAircraftAssetBase* const Asset = GetTargetAsset();
 	if (!Asset)
 	{
 		return;
@@ -162,12 +164,12 @@ void UAircraftMotorPlacementTool::WritePositionToAsset(int32 RotorIndex, const F
 {
 	using namespace UE::AircraftLab::AircraftAsset;
 
-	if (!ContextObject || RotorIndex < 0)
+	if (RotorIndex < 0)
 	{
 		return;
 	}
 
-	UAircraftAsset* const Asset = Cast<UAircraftAsset>(ContextObject->GetAircraftAsset());
+	UAircraftAsset* const Asset = Cast<UAircraftAsset>(GetTargetAsset());
 	if (!Asset)
 	{
 		return;
@@ -195,10 +197,7 @@ void UAircraftMotorPlacementTool::WritePositionToAsset(int32 RotorIndex, const F
 		FText Verbose;
 		Asset->Build(Asset->GetAircraftCollections(), nullptr, &Verbose);
 
-		if (UAircraftComponent* const Component = ContextObject->GetAircraftComponent())
-		{
-			Component->RefreshAssetState();
-		}
+		UE::AircraftLab::AircraftEditorTools::RefreshDependentComponents(Asset);
 	}
 }
 
@@ -206,11 +205,7 @@ void UAircraftMotorPlacementTool::WriteUniformScaleToAsset(float Scale) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
 
-	if (!ContextObject)
-	{
-		return;
-	}
-	UAircraftAsset* const Asset = Cast<UAircraftAsset>(ContextObject->GetAircraftAsset());
+	UAircraftAsset* const Asset = Cast<UAircraftAsset>(GetTargetAsset());
 	if (!Asset)
 	{
 		return;
@@ -240,10 +235,7 @@ void UAircraftMotorPlacementTool::WriteUniformScaleToAsset(float Scale) const
 	FText Verbose;
 	Asset->Build(Asset->GetAircraftCollections(), nullptr, &Verbose);
 
-	if (UAircraftComponent* const Component = ContextObject->GetAircraftComponent())
-	{
-		Component->RefreshAssetState();
-	}
+	UE::AircraftLab::AircraftEditorTools::RefreshDependentComponents(Asset);
 }
 
 #undef LOCTEXT_NAMESPACE

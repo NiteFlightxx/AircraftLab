@@ -1,10 +1,10 @@
 #include "AircraftAsset/AircraftPidTuningTool.h"
 
+#include "AircraftEditorToolContext.h"
+
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftCollection.h"
-#include "AircraftAsset/AircraftComponent.h"
-#include "AircraftAsset/AircraftEditorContextObject.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "ContextObjectStore.h"
 #include "InteractiveToolManager.h"
@@ -17,22 +17,21 @@
 
 bool UAircraftPidTuningToolBuilder::CanBuildTool(const FToolBuilderState& SceneState) const
 {
-	const UAircraftEditorContextObject* const Ctx = SceneState.ToolManager
-		? SceneState.ToolManager->GetContextObjectStore()->FindContext<UAircraftEditorContextObject>()
-		: nullptr;
-	return Ctx && Ctx->GetAircraftAsset();
+	return UE::AircraftLab::AircraftEditorTools::ResolveAircraftAsset(SceneState.ToolManager) != nullptr;
 }
 
 UInteractiveTool* UAircraftPidTuningToolBuilder::BuildTool(const FToolBuilderState& SceneState) const
 {
 	UAircraftPidTuningTool* const Tool = NewObject<UAircraftPidTuningTool>(SceneState.ToolManager);
-	if (UAircraftEditorContextObject* const Ctx = SceneState.ToolManager
-		? SceneState.ToolManager->GetContextObjectStore()->FindContext<UAircraftEditorContextObject>()
-		: nullptr)
-	{
-		Tool->SetTargetContext(Ctx);
-	}
+	Tool->SetTargetAsset(UE::AircraftLab::AircraftEditorTools::ResolveAircraftAsset(SceneState.ToolManager));
 	return Tool;
+}
+
+void UAircraftPidTuningToolBuilder::GetSupportedConstructionViewModes(
+	const UDataflowContextObject& /*ContextObject*/,
+	TArray<const UE::Dataflow::IDataflowConstructionViewMode*>& /*Modes*/) const
+{
+	// 不强制切换 Construction 视口模式。
 }
 
 void UAircraftPidTuningTool::Setup()
@@ -54,10 +53,7 @@ void UAircraftPidTuningTool::Shutdown(EToolShutdownType ShutdownType)
 	else
 	{
 		// 取消时让组件重新读资产，回到 Apply 前的 PID。
-		if (UAircraftComponent* const Component = ContextObject ? ContextObject->GetAircraftComponent() : nullptr)
-		{
-			Component->RefreshAssetState();
-		}
+		UE::AircraftLab::AircraftEditorTools::RefreshDependentComponents(GetTargetAsset());
 	}
 
 	Super::Shutdown(ShutdownType);
@@ -73,12 +69,12 @@ void UAircraftPidTuningTool::RefreshFromAsset()
 {
 	using namespace UE::AircraftLab::AircraftAsset;
 
-	if (!Properties || !ContextObject)
+	if (!Properties)
 	{
 		return;
 	}
 
-	const UAircraftAssetBase* const Asset = ContextObject->GetAircraftAsset();
+	const UAircraftAssetBase* const Asset = GetTargetAsset();
 	if (!Asset)
 	{
 		return;
@@ -141,11 +137,11 @@ void UAircraftPidTuningTool::ApplyToAsset() const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
 
-	if (!Properties || !ContextObject)
+	if (!Properties)
 	{
 		return;
 	}
-	UAircraftAsset* const Asset = Cast<UAircraftAsset>(ContextObject->GetAircraftAsset());
+	UAircraftAsset* const Asset = Cast<UAircraftAsset>(GetTargetAsset());
 	if (!Asset)
 	{
 		return;
@@ -211,10 +207,7 @@ void UAircraftPidTuningTool::ApplyToAsset() const
 	FText Verbose;
 	Asset->Build(Asset->GetAircraftCollections(), nullptr, &Verbose);
 
-	if (UAircraftComponent* const Component = ContextObject->GetAircraftComponent())
-	{
-		Component->RefreshAssetState();
-	}
+	UE::AircraftLab::AircraftEditorTools::RefreshDependentComponents(Asset);
 }
 
 #undef LOCTEXT_NAMESPACE

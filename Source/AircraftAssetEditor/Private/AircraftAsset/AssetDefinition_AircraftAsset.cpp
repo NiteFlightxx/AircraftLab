@@ -50,9 +50,10 @@ EAssetCommandResult UAssetDefinition_AircraftAsset::OpenAssets(const FAssetOpenA
 	ensure(AircraftAssets.Num() == 0 || AircraftAssets.Num() == 1);
 	if (AircraftAssets.Num() > 0)
 	{
-		// 编辑器选项（Aircraft.EnableDataflowEditor CVar，经 UAircraftEditorOptions 双向绑定）分流。
-		// 直接读 CVar 以避免 AircraftAssetEditor → AircraftEditor 的模块依赖
-		// （对齐 ChaosCloth 的 bClothAssetsOpenInDataflowEditor 语义）。
+		// 编辑器选项（Aircraft.EnableDataflowEditor CVar，经 UAircraftEditorOptions 双向绑定）分流，
+		// 默认打开引擎统一的 FDataflowEditorToolkit（对齐 ChaosCloth 5.9：该面板从 5.8 起就是
+		// 布料资产的正式编辑器，旧的自制 Panel Editor 路线已废弃）。
+		// 直接读 CVar 以避免 AircraftAssetEditor → AircraftEditor 的模块依赖。
 		bool bOpenInDataflowEditor = true;
 		if (const IConsoleVariable* const CVar =
 			IConsoleManager::Get().FindConsoleVariable(TEXT("Aircraft.EnableDataflowEditor")))

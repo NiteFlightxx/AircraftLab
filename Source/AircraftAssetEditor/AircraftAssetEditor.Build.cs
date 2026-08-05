@@ -18,7 +18,6 @@ public class AircraftAssetEditor : ModuleRules
                 "Chaos",
                 "Core",
                 "CoreUObject",
-                "AdvancedPreviewScene",
                 "AssetDefinition",
                 "AssetRegistry",
                 "AssetTools",
@@ -26,22 +25,17 @@ public class AircraftAssetEditor : ModuleRules
                 "DataflowEditor",
                 "DataflowEngine",
                 "EditorFramework",
-                "EditorWidgets",
                 "GeometryCollectionEngine",
-                "KismetWidgets",
-                "EditorInteractiveToolsFramework",
                 "Engine",
                 "GraphEditor",
                 "InputCore",
-                "InteractiveToolsFramework",
-                "PropertyEditor",
                 "Slate",
                 "SlateCore",
                 "ToolMenus",
                 "UnrealEd",
                 "Projects",
-                
-                
+
+
                 "Aircraft",
                 "AircraftAsset",
                 "AircraftAssetDataflowNodes",

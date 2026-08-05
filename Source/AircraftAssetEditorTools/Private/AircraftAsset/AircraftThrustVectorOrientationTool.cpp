@@ -1,10 +1,11 @@
 #include "AircraftAsset/AircraftThrustVectorOrientationTool.h"
 
+#include "AircraftEditorToolContext.h"
+
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/AircraftComponent.h"
-#include "AircraftAsset/AircraftEditorContextObject.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "ContextObjectStore.h"
@@ -19,22 +20,21 @@
 
 bool UAircraftThrustVectorOrientationToolBuilder::CanBuildTool(const FToolBuilderState& SceneState) const
 {
-	const UAircraftEditorContextObject* const Ctx = SceneState.ToolManager
-		? SceneState.ToolManager->GetContextObjectStore()->FindContext<UAircraftEditorContextObject>()
-		: nullptr;
-	return Ctx && Ctx->GetAircraftAsset();
+	return UE::AircraftLab::AircraftEditorTools::ResolveAircraftAsset(SceneState.ToolManager) != nullptr;
 }
 
 UInteractiveTool* UAircraftThrustVectorOrientationToolBuilder::BuildTool(const FToolBuilderState& SceneState) const
 {
 	UAircraftThrustVectorOrientationTool* const Tool = NewObject<UAircraftThrustVectorOrientationTool>(SceneState.ToolManager);
-	if (UAircraftEditorContextObject* const Ctx = SceneState.ToolManager
-		? SceneState.ToolManager->GetContextObjectStore()->FindContext<UAircraftEditorContextObject>()
-		: nullptr)
-	{
-		Tool->SetTargetContext(Ctx);
-	}
+	Tool->SetTargetAsset(UE::AircraftLab::AircraftEditorTools::ResolveAircraftAsset(SceneState.ToolManager));
 	return Tool;
+}
+
+void UAircraftThrustVectorOrientationToolBuilder::GetSupportedConstructionViewModes(
+	const UDataflowContextObject& /*ContextObject*/,
+	TArray<const UE::Dataflow::IDataflowConstructionViewMode*>& /*Modes*/) const
+{
+	// 不强制切换 Construction 视口模式。
 }
 
 void UAircraftThrustVectorOrientationTool::Setup()
@@ -50,10 +50,7 @@ void UAircraftThrustVectorOrientationTool::Shutdown(EToolShutdownType ShutdownTy
 	if (ShutdownType != EToolShutdownType::Accept)
 	{
 		// 取消时让组件重新读资产，回到 Apply 前的轴方向。
-		if (UAircraftComponent* const Component = ContextObject ? ContextObject->GetAircraftComponent() : nullptr)
-		{
-			Component->RefreshAssetState();
-		}
+		UE::AircraftLab::AircraftEditorTools::RefreshDependentComponents(GetTargetAsset());
 	}
 	Super::Shutdown(ShutdownType);
 }
@@ -63,14 +60,13 @@ void UAircraftThrustVectorOrientationTool::Render(IToolsContextRenderAPI* Render
 #if ENABLE_DRAW_DEBUG
 	Super::Render(RenderAPI);
 
-	if (!ContextObject || !RenderAPI || !Properties)
+	if (!RenderAPI || !Properties)
 	{
 		return;
 	}
 
-	const UAircraftComponent* const Component = ContextObject->GetAircraftComponent();
-	const UAircraftAssetBase* const Asset = ContextObject->GetAircraftAsset();
-	if (!Component || !Asset)
+	const UAircraftAssetBase* const Asset = GetTargetAsset();
+	if (!Asset)
 	{
 		return;
 	}
@@ -82,11 +78,17 @@ void UAircraftThrustVectorOrientationTool::Render(IToolsContextRenderAPI* Render
 		return;
 	}
 
+	// 有预览组件则画在该组件世界系；否则画在资产本地系（= 世界原点）。
+	const TArray<UAircraftComponent*> Components =
+		UE::AircraftLab::AircraftEditorTools::FindAircraftComponents(Asset);
+
 	FToolDataVisualizer Visualizer;
 	Visualizer.LineThickness = 2.0f;
 	Visualizer.BeginFrame(RenderAPI);
 
-	const FTransform XformWorld = Component->GetComponentTransform();
+	const FTransform XformWorld = Components.Num() > 0
+		? Components[0]->GetComponentTransform()
+		: FTransform::Identity;
 	for (int32 i = 0; i < LodModel->Rotors.Num(); ++i)
 	{
 		const FDroneRotorDefinition& Rotor = LodModel->Rotors[i];
@@ -139,11 +141,7 @@ void UAircraftThrustVectorOrientationTool::ApplyOffsetToAsset(int32 RotorIndex, 
 {
 	using namespace UE::AircraftLab::AircraftAsset;
 
-	if (!ContextObject)
-	{
-		return;
-	}
-	UAircraftAsset* const Asset = Cast<UAircraftAsset>(ContextObject->GetAircraftAsset());
+	UAircraftAsset* const Asset = Cast<UAircraftAsset>(GetTargetAsset());
 	if (!Asset)
 	{
 		return;
@@ -182,10 +180,7 @@ void UAircraftThrustVectorOrientationTool::ApplyOffsetToAsset(int32 RotorIndex, 
 	FText Verbose;
 	Asset->Build(Asset->GetAircraftCollections(), nullptr, &Verbose);
 
-	if (UAircraftComponent* const Component = ContextObject->GetAircraftComponent())
-	{
-		Component->RefreshAssetState();
-	}
+	UE::AircraftLab::AircraftEditorTools::RefreshDependentComponents(Asset);
 }
 
 #undef LOCTEXT_NAMESPACE

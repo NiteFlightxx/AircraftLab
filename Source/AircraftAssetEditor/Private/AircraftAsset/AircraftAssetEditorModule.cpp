@@ -3,13 +3,15 @@
 #include "ThumbnailRendering/ThumbnailManager.h"
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/AircraftAssetBase.h"
-#include "AircraftAsset/AircraftAssetEditorCommands.h"
-#include "AircraftAsset/AircraftAssetEditorStyle.h"
+#include "AircraftAsset/AircraftDataflowConstructionVisualization.h"
+#include "AircraftAsset/AircraftDataflowSimulationVisualization.h"
 #include "AircraftAsset/AircraftAssetThumbnailRenderer.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftDataflowAssetEditorUtils.h"
 #include "AircraftAsset/AircraftDataflowTemplateProvider.h"
 #include "Dataflow/AssetDefinition_DataflowAsset.h"
+#include "Dataflow/DataflowConstructionVisualization.h"
+#include "Dataflow/DataflowSimulationVisualization.h"
 #include "Features/IModularFeatures.h"
 
 IMPLEMENT_MODULE(FAircraftAssetEditorModule, AircraftAssetEditor)
@@ -68,13 +70,6 @@ void FAircraftAssetEditorModule::StartupModule()
 {
 	FBaseCharacterFXEditorModule::StartupModule();
 
-	// 主动触发自家 SlateStyle 注册（与 ChaosCloth 模块入口模式一致）。这必须在
-	// FAircraftAssetEditorCommands::Register() 之前调用，因为命令构造函数会通过
-	// FAircraftAssetEditorStyle::GetStyleName() 拿 StyleSet 名字。
-	FAircraftAssetEditorStyle::Get();
-
-	FAircraftAssetEditorCommands::Register();
-
 	AircraftAssetComponentBroker = MakeShared<UE::AircraftDataflowEditor::FAircraftAssetComponentBroker>();
 	FComponentAssetBrokerage::RegisterBroker(
 		AircraftAssetComponentBroker,
@@ -90,6 +85,15 @@ void FAircraftAssetEditorModule::StartupModule()
 		UE::AircraftLab::AircraftAsset::IAircraftDataflowTemplateProvider::GetFeatureName(),
 		TemplateProvider.Get());
 
+	// 引擎 Dataflow 编辑器的可视化注册（对齐 ChaosClothAssetEditorModule 三件套中的两件）：
+	//   - Construction 视口：旋翼几何由 AircraftAssetDataflowNodes 的 RenderingFactory 回调负责，
+	//     此挂载点保留扩展位置；
+	//   - Simulation 视口：调试绘制开关菜单 + 视口左上角状态文本。
+	UE::Dataflow::FDataflowConstructionVisualizationRegistry::GetInstance()
+		.RegisterVisualization(MakeUnique<FAircraftDataflowConstructionVisualization>());
+	UE::Dataflow::FDataflowSimulationVisualizationRegistry::GetInstance()
+		.RegisterVisualization(MakeUnique<FAircraftDataflowSimulationVisualization>());
+
 	// Dataflow 资产菜单（"在 Dataflow 编辑器中打开"等，对齐 ChaosClothAssetEditorModule）
 	DataflowAssetMenusHandle = UE::DataflowAssetDefinitionHelpers::RegisterDataflowAssetMenus(
 		UAircraftAsset::StaticClass());
@@ -97,7 +101,10 @@ void FAircraftAssetEditorModule::StartupModule()
 
 void FAircraftAssetEditorModule::ShutdownModule()
 {
-	FAircraftAssetEditorCommands::Unregister();
+	UE::Dataflow::FDataflowSimulationVisualizationRegistry::GetInstance()
+		.DeregisterVisualization(FAircraftDataflowSimulationVisualization::Name);
+	UE::Dataflow::FDataflowConstructionVisualizationRegistry::GetInstance()
+		.DeregisterVisualization(FAircraftDataflowConstructionVisualization::Name);
 
 	if (TemplateProvider.IsValid())
 	{

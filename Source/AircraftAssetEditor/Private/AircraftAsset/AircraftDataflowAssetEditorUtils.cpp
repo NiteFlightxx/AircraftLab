@@ -28,8 +28,8 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "UObject/UObjectGlobals.h"
 #include "AircraftAsset/AircraftAssetBase.h"
-#include "AircraftAsset/AircraftAssetThumbnailRenderer.h"
-#include "AircraftAsset/AircraftDataflowEditor.h"
+#include "AircraftAsset/AircraftDataflowPreviewActor.h"
+#include "Dataflow/DataflowEditor.h"
 #include "Dataflow/DataflowEditorToolkit.h"
 #include "Dataflow/DataflowSimulationScene.h"
 
@@ -289,7 +289,9 @@ namespace UE::AircraftDataflowAssetEditor::Private
 						Node.Profile.bUseSocketTransform = false;
 						Node.Profile.PositionLocalCm = EntryCopy.Position;
 						Node.Profile.ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
-						Node.Profile.MaxThrustForce = 9.f;
+							// 单旋翼最大推力需满足 Σ(MaxThrust×系数×效率) > MassKg×g：
+							// 100 kg 四旋翼单电机需 >245 N；取 350 N → 总推力 1400 N，悬停油门约 70%。
+							Node.Profile.MaxThrustForce = 350.f;
 						Node.Profile.ThrustCoefficient = 1.f;
 						Node.Profile.ReactionTorqueCoefficient = 0.03f;
 						Node.Profile.Efficiency = 1.f;
@@ -514,6 +516,9 @@ namespace UE::AircraftDataflowAssetEditor::Private
 		return CreateAircraftDataflowAsset(AircraftAsset);
 	}
 
+	// 对齐 ChaosClothAssetEditor 的 UAssetDefinition_ClothAsset::LaunchClothDataflowAssetEditor：
+	// 直接使用引擎 UDataflowEditor（自带 Members / Scene Outliner / SpreadSheets / OutputLog /
+	// Simulation+Construction 双视口 / Timeline / 工具分类面板），不再走自制的 Panel Editor。
 	bool OpenAircraftAssetEditor(UAircraftAssetBase* AircraftAsset)
 	{
 		if (!AircraftAsset)
@@ -528,32 +533,34 @@ namespace UE::AircraftDataflowAssetEditor::Private
 
 		if (UAssetEditorSubsystem* const AssetEditorSubsystem = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr)
 		{
-			
-			if (UAircraftDataflowEditor* const AssetEditor = NewObject<UAircraftDataflowEditor>(AssetEditorSubsystem, NAME_None, RF_Transient))
+			if (UDataflowEditor* const AssetEditor = NewObject<UDataflowEditor>(AssetEditorSubsystem, NAME_None, RF_Transient))
 			{
-			
-			
-			if (UDataflowSimulationSettings* const SimulationSettings = NewObject<UDataflowSimulationSettings>())
-			{
-				SimulationSettings->bIsSimulationPlayingByDefault = true;
-				SimulationSettings->bIsAsyncCachingSupported = false;
-				SimulationSettings->bIsAsyncCachingEnabledByDefault = false;
-				AssetEditor->AddEditorSettings(SimulationSettings);
-			}
+				if (UDataflowSimulationSettings* const SimulationSettings = NewObject<UDataflowSimulationSettings>())
+				{
+					SimulationSettings->bIsSimulationPlayingByDefault = true;
+					SimulationSettings->bIsAsyncCachingSupported = false;
+					SimulationSettings->bIsAsyncCachingEnabledByDefault = false;
+					AssetEditor->AddEditorSettings(SimulationSettings);
+				}
 
 				if (UDataflowEvaluationSettings* const EvaluationSettings = NewObject<UDataflowEvaluationSettings>())
 				{
 					EvaluationSettings->bAllowEvaluationInPIE = true;
 					AssetEditor->AddEditorSettings(EvaluationSettings);
 				}
-				
-				const TSubclassOf<AActor> ActorClass = AAircraftPreviewActor::StaticClass();
-				AssetEditor->Initialize({ AircraftAsset },ActorClass);
+
+				// 工具分类：左侧出现 "General"（引擎内置）与 "Aircraft"（AircraftAssetEditorTools
+				// 模块注册的节点→工具映射）两个类别页签，对齐布料的 {"General","Cloth"}。
+				AssetEditor->RegisterToolCategories({ "General", "Aircraft" });
+
+				// Simulation 视口预览类（布料传 BP_ClothPreview；我们用等价的 C++ 类）。
+				const TSubclassOf<AActor> ActorClass = AAircraftDataflowPreviewActor::StaticClass();
+				AssetEditor->Initialize({ AircraftAsset }, ActorClass);
 				return true;
 			}
 		}
 
 		return false;
 	}
-	
+
 }

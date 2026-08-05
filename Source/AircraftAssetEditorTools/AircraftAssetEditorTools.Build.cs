@@ -14,6 +14,8 @@ public class AircraftAssetEditorTools : ModuleRules
                 "Engine",
                 "Chaos",
                 "InteractiveToolsFramework",
+                "DataflowEditor",
+                "DataflowEngine",
                 "AircraftAsset",
                 "AircraftAssetEngine"
             }
@@ -23,7 +25,6 @@ public class AircraftAssetEditorTools : ModuleRules
             new string[]
             {
                 "AircraftAssetDataflowNodes",
-                "DataflowEditor",
                 "EditorInteractiveToolsFramework",
                 "InputCore",
                 "Slate",

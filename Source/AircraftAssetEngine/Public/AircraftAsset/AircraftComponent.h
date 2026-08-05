@@ -371,6 +371,22 @@ private:
 	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Debug")
 	bool bDrawVelocityDebug = false;
 
+	/**
+	 * Dataflow 仿真注册入口（对齐 ChaosClothComponent::SimulationAsset）。
+	 *
+	 * 驱动通路说明（与布料的两条通路等价）：
+	 *   * 本字段 DataflowAsset == nullptr（默认）→ 组件不注册进 UDataflowSimulationManager，
+	 *     仿真完全由组件自身的世界 Tick + AsyncPhysicsTickComponent 物理子步驱动
+	 *     （等价布料 SimulationAsset 为空时的 StartNewParallelSimulation 自治通路）。
+	 *     Dataflow 编辑器 Simulation 视口中的预览组件即走此通路 —— 场景每帧 Tick 世界，
+	 *     物理子步调用 AsyncPhysicsTickComponent 推进飞控串级 PID 与电机动力学。
+	 *   * 若将来引入独立的 Simulation Dataflow Graph（仿真图资产拆分），把该 UDataflow
+	 *     资产赋给 DataflowAsset 并填写 SimulationGroups，UActorComponent::GlobalCreatePhysicsDelegate
+	 *     即自动把组件注册进 UDataflowSimulationManager，由管理器每帧回调
+	 *     PreProcessSimulation → WriteToSimulation → EvaluateSimulationGraph
+	 *     → ReadFromSimulation → PostProcessSimulation。
+	 */
+	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Dataflow Simulation")
 	FDataflowSimulationAsset SimulationAsset;
 
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;
