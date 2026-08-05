@@ -15,6 +15,7 @@ public class AircraftAssetEditor : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
+                "Chaos",
                 "Core",
                 "CoreUObject",
                 "AdvancedPreviewScene",
@@ -25,6 +26,9 @@ public class AircraftAssetEditor : ModuleRules
                 "DataflowEditor",
                 "DataflowEngine",
                 "EditorFramework",
+                "EditorWidgets",
+                "GeometryCollectionEngine",
+                "KismetWidgets",
                 "EditorInteractiveToolsFramework",
                 "Engine",
                 "GraphEditor",

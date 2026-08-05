@@ -7,10 +7,13 @@
 
 class FAircraftAssetEditorPreviewScene;
 class FAircraftAssetEditorViewportClient;
+class FAircraftEditorSimulationVisualization;
 class IStructureDetailsView;
 class SDataflowGraphEditor;
 class SDockTab;
 class SAircraftAssetEditorViewport;
+class SAircraftCollectionOutliner;
+class SAircraftSceneOutliner;
 class UBaseCharacterFXEditorMode;
 class UDataflow;
 class UDataflowEdNode;
@@ -20,6 +23,7 @@ class UEdGraphNode;
 
 struct FDataflowNode;
 struct FDataflowOutput;
+struct FManagedArrayCollection;
 
 namespace UE::Dataflow
 {
@@ -59,6 +63,14 @@ public:
 	virtual TStatId GetStatId() const override;
 	virtual bool IsTickable() const override { return true; }
 
+	// 保存流 / 第三方菜单扩展 / 关闭生命周期（对齐 FChaosClothAssetEditorToolkit）
+	virtual void InitToolMenuContext(FToolMenuContext& MenuContext) override;
+	virtual void OnAssetsSaved(const TArray<UObject*>& SavedObjects) override;
+	virtual void OnAssetsSavedAs(const TArray<UObject*>& SavedObjects) override;
+	virtual bool ShouldReopenEditorForSavedAsset(const UObject* SavedAsset) const override;
+	virtual bool OnRequestClose(EAssetEditorCloseReason InCloseReason) override;
+	virtual void OnClose() override;
+
 protected:
 	virtual FEditorModeID GetEditorModeId() const override;
 	virtual void InitializeEdMode(UBaseCharacterFXEditorMode* EdMode) override;
@@ -76,6 +88,8 @@ private:
 	TSharedRef<SDockTab> SpawnTab_GraphCanvas(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnTab_NodeDetails(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnTab_PreviewSceneDetails(const FSpawnTabArgs& Args);
+	TSharedRef<SDockTab> SpawnTab_SceneOutliner(const FSpawnTabArgs& Args);
+	TSharedRef<SDockTab> SpawnTab_ToolsPanel(const FSpawnTabArgs& Args);
 	FText GetOutlinerSummaryText() const;
 
 	void InitDetailsViewPanel();
@@ -85,6 +99,7 @@ private:
 
 	void EvaluateNode(const FDataflowNode* Node, const FDataflowOutput* Output);
 	TSharedRef<SDataflowGraphEditor> CreateGraphEditorWidget();
+	void ReinitializeGraphEditorWidget();
 	TSharedPtr<IStructureDetailsView> CreateNodeDetailsEditorWidget(UObject* ObjectToEdit);
 
 	void OnPropertyValueChanged(const FPropertyChangedEvent& PropertyChangedEvent);
@@ -97,6 +112,12 @@ private:
 	UAircraftAssetBase* GetAsset() const;
 	UDataflow* GetDataflow();
 
+	/** 取选中节点输出的 Aircraft Collection（Dataflow Members 面板数据）。 */
+	TSharedPtr<FManagedArrayCollection> GetAircraftCollectionIfPossible(const TSharedPtr<FDataflowNode> InDataflowNode, const TSharedPtr<UE::Dataflow::FEngineContext> Context) const;
+	TSharedPtr<FDataflowNode> GetSelectedDataflowNode();
+	TSharedPtr<const FDataflowNode> GetSelectedDataflowNode() const;
+	void HandlePackageReloaded(const EPackageReloadPhase InPackageReloadPhase, FPackageReloadedEvent* InPackageReloadedEvent);
+
 	static TSet<TObjectPtr<UDataflowEdNode>> FilterDataflowEdNodesFromSet(const TSet<UObject*>& Set);
 	static TObjectPtr<UDataflowEdNode> GetOnlyFromSet(const TSet<TObjectPtr<UDataflowEdNode>>& Set);
 
@@ -105,6 +126,8 @@ private:
 	static const FName GraphCanvasTabId;
 	static const FName NodeDetailsTabId;
 	static const FName PreviewSceneDetailsTabId;
+	static const FName SceneOutlinerTabId;
+	static const FName ToolsPanelTabId;
 
 	TSharedPtr<FAircraftAssetEditorPreviewScene> PreviewScene;
 	TSharedPtr<FAircraftAssetEditorViewportClient> PreviewViewportClient;
@@ -114,9 +137,19 @@ private:
 	TSharedPtr<UE::Dataflow::FDataflowNodeDetailExtensionHandler> NodeDetailsExtensionHandler;
 	TSharedPtr<SDockTab> OutlinerDockTab;
 	TSharedPtr<SDockTab> GraphEditorTab;
+	TSharedPtr<SDockTab> NodeDetailsTab;
 	TSharedPtr<SDockTab> PreviewSceneDockTab;
 	TSharedPtr<SDockTab> SimulationVisualizationDockTab;
+	TSharedPtr<SDockTab> SceneOutlinerDockTab;
 	TSharedPtr<SWidget> AdvancedPreviewSettingsWidget;
+	TSharedPtr<SAircraftCollectionOutliner> CollectionOutliner;
+	TSharedPtr<SAircraftSceneOutliner> SceneOutliner;
+	TSharedPtr<FAircraftEditorSimulationVisualization> SimulationVisualization;
+
+	FGuid SelectedDataflowNodeGuid;
+	TSharedPtr<FDataflowNode> SelectedDataflowNode;
+	FDelegateHandle OnNodeInvalidatedDelegateHandle;
+	FDelegateHandle OnPackageReloadedDelegateHandle;
 
 	TSharedPtr<UE::Dataflow::FEngineContext> DataflowContext;
 	UE::Dataflow::FTimestamp LastDataflowNodeTimestamp = UE::Dataflow::FTimestamp::Invalid;

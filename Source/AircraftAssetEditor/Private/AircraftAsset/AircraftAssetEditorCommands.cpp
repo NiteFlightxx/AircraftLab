@@ -5,6 +5,8 @@
 #define LOCTEXT_NAMESPACE "AircraftAssetEditorCommands"
 
 const FString FAircraftAssetEditorCommands::ToggleSimulationSuspendedIdentifier = TEXT("ToggleSimulationSuspended");
+const FString FAircraftAssetEditorCommands::LODAutoIdentifier = TEXT("LODAuto");
+const FString FAircraftAssetEditorCommands::LOD0Identifier = TEXT("LOD0");
 const FString FAircraftAssetEditorCommands::SoftResetSimulationIdentifier = TEXT("SoftResetSimulation");
 const FString FAircraftAssetEditorCommands::HardResetSimulationIdentifier = TEXT("HardResetSimulation");
 const FString FAircraftAssetEditorCommands::TogglePreviewWireframeIdentifier = TEXT("TogglePreviewWireframe");
@@ -32,6 +34,8 @@ void FAircraftAssetEditorCommands::RegisterCommands()
 	UI_COMMAND(SoftResetSimulation, "Soft Reset Simulation", "Soft reset the Aircraft simulation state.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(HardResetSimulation, "Hard Reset Simulation", "Hard reset the Aircraft preview simulation.", EUserInterfaceActionType::Button, FInputChord(EModifierKey::Control | EModifierKey::Alt, EKeys::V));
 	UI_COMMAND(ToggleSimulationSuspended, "Toggle Simulation", "Pause or resume the Aircraft preview simulation.", EUserInterfaceActionType::ToggleButton, FInputChord());
+	UI_COMMAND(LODAuto, "LOD Auto", "Automatically select the preview simulation LOD.", EUserInterfaceActionType::RadioButton, FInputChord());
+	UI_COMMAND(LOD0, "LOD 0", "Preview simulation LOD 0.", EUserInterfaceActionType::RadioButton, FInputChord());
 	UI_COMMAND(MotorPlacement, "Motor Placement", "Edit rotor application points in the preview viewport.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(PidTuning, "PID Tuning", "Tune flight-controller gains while previewing the aircraft.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(ThrustVectorOrientation, "Thrust Orientation", "Edit rotor thrust-vector orientation in the preview viewport.", EUserInterfaceActionType::Button, FInputChord());

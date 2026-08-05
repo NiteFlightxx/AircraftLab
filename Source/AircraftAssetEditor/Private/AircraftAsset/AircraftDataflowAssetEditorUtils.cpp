@@ -9,7 +9,6 @@
 
 #include "Dataflow/AircraftAssetTerminalNode.h"
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
-#include "Dataflow/AircraftSolverConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
 #include "Dataflow/AircraftAirscrewProfileNode.h"
 #include "Dataflow/AircraftFlightControlLimitsConfigNode.h"
@@ -25,8 +24,9 @@
 #include "Editor.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Curves/RichCurve.h"
-#include "Misc/PackageName.h"
-#include "Misc/Paths.h"
+#include "Engine/SkeletalMesh.h"
+#include "PhysicsEngine/PhysicsAsset.h"
+#include "UObject/UObjectGlobals.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftAssetThumbnailRenderer.h"
 #include "AircraftAsset/AircraftDataflowEditor.h"
@@ -54,13 +54,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			UDataflowEdNode* EdNode = nullptr;
 			TSharedPtr<FDataflowNode> Node;
 		};
-
-		FString GetDesiredDataflowPackageName(const UAircraftAssetBase* AircraftAsset)
-		{
-			const FString AssetPath = FPackageName::GetLongPackagePath(AircraftAsset->GetOutermost()->GetName());
-			const FString DataflowName = FString(TEXT("DF_")) + AircraftAsset->GetName();
-			return FPaths::Combine(AssetPath, DataflowName);
-		}
 
 		FVector2D GetTemplateNodeLocation(const int32 NodeIndex)
 		{
@@ -218,14 +211,18 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				return;
 			}
 
-			// 默认 QuadX 旋翼布局（用 30cm 臂长作为模板默认）。模板显式列出全部旋翼；
-			// Terminal 不会为缺失数据悄悄生成后备布局，因此图本身始终是唯一事实来源。
+			// 默认 QuadX 旋翼布局（30cm 臂长）。模板显式列出全部旋翼；
+			// Terminal 不会为缺失数据悄悄生成后备布局，图本身始终是唯一事实来源。
 			//
 			// QuadX 编号约定（俯视图）：
 			//     2(CW)   1(CCW)
 			//           x
 			//     3(CCW)  4(CW)
 			constexpr float DefaultArmLengthCm = 30.0f;
+
+			// 模板默认网格/物理资产（插件随包内容；缺失时保持空引用由用户在节点中指定）。
+			const FString DefaultSkeletalMeshPath = TEXT("/AircraftLab/Meshs/SK_Drone.SK_Drone");
+			const FString DefaultPhysicsAssetPath = TEXT("/AircraftLab/Meshs/SK_Drone_Physics2.SK_Drone_Physics2");
 
 			struct FQuadXEntry
 			{
@@ -248,27 +245,13 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				DataflowAsset,
 				TEXT("AircraftSkeletalMeshSource"),
 				NodeIndex++,
-				[](FAircraftSkeletalMeshSourceNode& Node)
+				[&DefaultSkeletalMeshPath, &DefaultPhysicsAssetPath](FAircraftSkeletalMeshSourceNode& Node)
 				{
-					Node.SkeletalMesh = nullptr;
-					Node.PhysicsAsset = nullptr;
+					Node.SkeletalMesh = LoadObject<USkeletalMesh>(nullptr, *DefaultSkeletalMeshPath);
+					Node.PhysicsAsset = LoadObject<UPhysicsAsset>(nullptr, *DefaultPhysicsAssetPath);
 				});
 
-			/* ---------- 2. Solver 节点 ---------- */
-			const FCreatedTemplateNode SolverNode = AddConfiguredTemplateNode<FAircraftSolverConfigNode>(
-				DataflowAsset,
-				TEXT("AircraftSolverConfig"),
-				NodeIndex++,
-				[](FAircraftSolverConfigNode& Node)
-				{
-					Node.AsyncFixedTimeStepSize = 1.0f / 60.0f;
-					Node.bOverrideIterationCounts = false;
-					Node.PositionSolverIterationCount = 8;
-					Node.VelocitySolverIterationCount = 2;
-					Node.ProjectionSolverIterationCount = 1;
-				});
-
-			/* ---------- 3. Frame 节点（机架 + 质量惯性 + 气动） ---------- */
+			/* ---------- 2. Frame 节点（机架 + 质量惯性 + 气动） ---------- */
 			const FCreatedTemplateNode FrameNode = AddConfiguredTemplateNode<FAircraftFrameConfigNode>(
 				DataflowAsset,
 				TEXT("AircraftFrameConfig"),
@@ -278,7 +261,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.RootBone = RootBoneName;
 					Node.FrameType = EAircraftFrameTypeNode::QuadX;
 					Node.ForwardAxis = EAircraftForwardAxisNode::PositiveY;
-					Node.MassKg = 1.2f;
+					Node.MassKg = 100.0f;
 					Node.CenterOfMassOffsetCm = FVector3f::ZeroVector;
 					Node.InertiaDiagonalKgCmSq = FVector3f(5000.f, 5000.f, 9000.f);
 					Node.LinearDragPerAxis = FVector3f(0.12f, 0.12f, 0.18f);
@@ -288,7 +271,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.GroundEffectStrength = 0.15f;
 				});
 
-			/* ---------- 4-7. 四个单旋翼 Airscrew Profile 节点 ---------- */
+			/* ---------- 3-6. 四个单旋翼 Airscrew Profile 节点 ---------- */
 			TArray<FCreatedTemplateNode> AirscrewNodes;
 			AirscrewNodes.Reserve(UE_ARRAY_COUNT(QuadXEntries));
 			for (const FQuadXEntry& Entry : QuadXEntries)
@@ -315,35 +298,35 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					}));
 			}
 
-			/* ---------- 8-15. 单职责飞控配置节点 ---------- */
-			TArray<FCreatedTemplateNode> ControllerConfigNodes;
-			ControllerConfigNodes.Reserve(8);
-			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftFlightControlLimitsConfigNode>(
+			/* ---------- 7-12. LOD0 链的飞控配置节点（默认参数） ---------- */
+			const FCreatedTemplateNode LimitsNode = AddConfiguredTemplateNode<FAircraftFlightControlLimitsConfigNode>(
 				DataflowAsset, TEXT("AircraftFlightControlLimitsConfig"), NodeIndex++,
-				[](FAircraftFlightControlLimitsConfigNode& Node) { (void)Node; }));
-			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftPositionControllerConfigNode>(
+				[](FAircraftFlightControlLimitsConfigNode& Node) { (void)Node; });
+			const FCreatedTemplateNode PositionNode = AddConfiguredTemplateNode<FAircraftPositionControllerConfigNode>(
 				DataflowAsset, TEXT("AircraftPositionControllerConfig"), NodeIndex++,
-				[](FAircraftPositionControllerConfigNode& Node) { (void)Node; }));
-			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftAttitudeControllerConfigNode>(
+				[](FAircraftPositionControllerConfigNode& Node) { (void)Node; });
+			const FCreatedTemplateNode AttitudeNode = AddConfiguredTemplateNode<FAircraftAttitudeControllerConfigNode>(
 				DataflowAsset, TEXT("AircraftAttitudeControllerConfig"), NodeIndex++,
-				[](FAircraftAttitudeControllerConfigNode& Node) { (void)Node; }));
-			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftAltitudeControllerConfigNode>(
+				[](FAircraftAttitudeControllerConfigNode& Node) { (void)Node; });
+			const FCreatedTemplateNode AltitudeNode = AddConfiguredTemplateNode<FAircraftAltitudeControllerConfigNode>(
 				DataflowAsset, TEXT("AircraftAltitudeControllerConfig"), NodeIndex++,
-				[](FAircraftAltitudeControllerConfigNode& Node) { (void)Node; }));
-			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftControlAllocatorConfigNode>(
+				[](FAircraftAltitudeControllerConfigNode& Node) { (void)Node; });
+			const FCreatedTemplateNode AllocatorNode = AddConfiguredTemplateNode<FAircraftControlAllocatorConfigNode>(
 				DataflowAsset, TEXT("AircraftControlAllocatorConfig"), NodeIndex++,
-				[](FAircraftControlAllocatorConfigNode& Node) { (void)Node; }));
-			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftControllerInputConfigNode>(
+				[](FAircraftControlAllocatorConfigNode& Node) { (void)Node; });
+			const FCreatedTemplateNode InputNode = AddConfiguredTemplateNode<FAircraftControllerInputConfigNode>(
 				DataflowAsset, TEXT("AircraftControllerInputConfig"), NodeIndex++,
-				[](FAircraftControllerInputConfigNode& Node) { (void)Node; }));
-			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftConstraintSimulationConfigNode>(
-				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), NodeIndex++,
-				[](FAircraftConstraintSimulationConfigNode& Node) { (void)Node; }));
-			ControllerConfigNodes.Add(AddConfiguredTemplateNode<FAircraftKinematicSimulationConfigNode>(
-				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), NodeIndex++,
-				[](FAircraftKinematicSimulationConfigNode& Node) { (void)Node; }));
+				[](FAircraftControllerInputConfigNode& Node) { (void)Node; });
 
-			/* ---------- 16-19. 每个 Collection LOD 一个独立 Profile 节点 ---------- */
+			/* ---------- 13-14. LOD1/LOD2 链的替代驱动配置节点 ---------- */
+			const FCreatedTemplateNode ConstraintNode = AddConfiguredTemplateNode<FAircraftConstraintSimulationConfigNode>(
+				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), NodeIndex++,
+				[](FAircraftConstraintSimulationConfigNode& Node) { (void)Node; });
+			const FCreatedTemplateNode KinematicNode = AddConfiguredTemplateNode<FAircraftKinematicSimulationConfigNode>(
+				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), NodeIndex++,
+				[](FAircraftKinematicSimulationConfigNode& Node) { (void)Node; });
+
+			/* ---------- 15-18. 每个 Collection LOD 一个独立 Profile 节点 ---------- */
 			struct FDefaultLodEntry
 			{
 				FName Name;
@@ -374,7 +357,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					}));
 			}
 
-			/* ---------- 20. Terminal 节点 ---------- */
+			/* ---------- 19. Terminal 节点 ---------- */
 			const FCreatedTemplateNode TerminalNode = AddConfiguredTemplateNode<FAircraftAssetTerminalNode>(
 				DataflowAsset,
 				TEXT("AircraftAssetTerminal"),
@@ -384,30 +367,82 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					(void)Node;
 				});
 
-			/* ---------- 串联配置节点，并把结果送入四个独立的 Terminal LOD 输入 ---------- */
-			TArray<UDataflowEdNode*> NodeChain;
-			NodeChain.Reserve(15);
-			NodeChain.Add(SourceNode.EdNode);
-			NodeChain.Add(SolverNode.EdNode);
-			NodeChain.Add(FrameNode.EdNode);
+			/* ---------- 画布布局（显式坐标） ---------- */
+			auto SetNodePosition = [](const FCreatedTemplateNode& CreatedNode, double X, double Y)
+			{
+				if (CreatedNode.EdNode)
+				{
+					CreatedNode.EdNode->NodePosX = FMath::RoundToInt(X);
+					CreatedNode.EdNode->NodePosY = FMath::RoundToInt(Y);
+				}
+			};
+			SetNodePosition(SourceNode, 512.0, 0.0);
+			SetNodePosition(FrameNode, 880.0, 0.0);
+			for (int32 RotorIndex = 0; RotorIndex < AirscrewNodes.Num(); ++RotorIndex)
+			{
+				SetNodePosition(AirscrewNodes[RotorIndex], 1328.0, 112.0 * RotorIndex);
+			}
+			SetNodePosition(LimitsNode, 1824.0, 0.0);
+			SetNodePosition(PositionNode, 2096.0, 0.0);
+			SetNodePosition(AttitudeNode, 2368.0, 0.0);
+			SetNodePosition(AltitudeNode, 2640.0, 0.0);
+			SetNodePosition(AllocatorNode, 2944.0, 0.0);
+			SetNodePosition(InputNode, 3264.0, 0.0);
+			SetNodePosition(ConstraintNode, 3644.0, 144.0);
+			SetNodePosition(KinematicNode, 3644.0, 256.0);
+			const double LodNodePosY[] = { 0.0, 144.0, 256.0, 384.0 };
+			for (int32 LodIndex = 0; LodIndex < SimulationLODNodes.Num(); ++LodIndex)
+			{
+				SetNodePosition(SimulationLODNodes[LodIndex], 4028.0, LodNodePosY[LodIndex]);
+			}
+			SetNodePosition(TerminalNode, 4592.0, 0.0);
+
+			/* ---------- 连线 ----------
+			 * 主干：Source → Frame → R1..R4 → Limits → Position → Attitude → Altitude → Allocator → Input
+			 * LOD0（飞控驱动）：Input → LOD0
+			 * LOD1（约束驱动）：R4 → Constraint → LOD1
+			 * LOD2（运动学驱动）：R4 → Kinematic → LOD2
+			 * LOD3（无驱动）：R4 → LOD3
+			 * 四个 LOD 分别进入 Terminal 的 CollectionLods[0..3]。
+			 */
+			TArray<UDataflowEdNode*> MainChain;
+			MainChain.Reserve(12);
+			MainChain.Add(SourceNode.EdNode);
+			MainChain.Add(FrameNode.EdNode);
 			for (const FCreatedTemplateNode& AirscrewNode : AirscrewNodes)
 			{
-				NodeChain.Add(AirscrewNode.EdNode);
+				MainChain.Add(AirscrewNode.EdNode);
 			}
-			for (const FCreatedTemplateNode& ControllerConfigNode : ControllerConfigNodes)
-			{
-				NodeChain.Add(ControllerConfigNode.EdNode);
-			}
+			MainChain.Add(LimitsNode.EdNode);
+			MainChain.Add(PositionNode.EdNode);
+			MainChain.Add(AttitudeNode.EdNode);
+			MainChain.Add(AltitudeNode.EdNode);
+			MainChain.Add(AllocatorNode.EdNode);
+			MainChain.Add(InputNode.EdNode);
 
-			for (int32 ChainIndex = 0; ChainIndex + 1 < NodeChain.Num(); ++ChainIndex)
+			for (int32 ChainIndex = 0; ChainIndex + 1 < MainChain.Num(); ++ChainIndex)
 			{
 				ConnectTemplateNodes(
 					DataflowAsset,
-					NodeChain[ChainIndex],
-					TEXT("Collection"),
-					NodeChain[ChainIndex + 1],
-					TEXT("Collection"));
+					MainChain[ChainIndex], TEXT("Collection"),
+					MainChain[ChainIndex + 1], TEXT("Collection"));
 			}
+
+			UDataflowEdNode* const LastRotorEdNode = AirscrewNodes.Last().EdNode;
+
+			// 各 LOD 链的上游出口
+			UDataflowEdNode* const LodChainUpstreams[] =
+			{
+				InputNode.EdNode,       // LOD0：完整飞控链
+				ConstraintNode.EdNode,  // LOD1：约束驱动配置
+				KinematicNode.EdNode,   // LOD2：运动学驱动配置
+				LastRotorEdNode,        // LOD3：仅机架+旋翼核心
+			};
+
+			ConnectTemplateNodes(DataflowAsset, LastRotorEdNode, TEXT("Collection"),
+				ConstraintNode.EdNode, TEXT("Collection"));
+			ConnectTemplateNodes(DataflowAsset, LastRotorEdNode, TEXT("Collection"),
+				KinematicNode.EdNode, TEXT("Collection"));
 
 			if (const FAircraftAssetTerminalNode* const TerminalDataflowNode =
 				TerminalNode.Node.IsValid() ? TerminalNode.Node->AsType<FAircraftAssetTerminalNode>() : nullptr)
@@ -416,14 +451,11 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				{
 					ConnectTemplateNodes(
 						DataflowAsset,
-						ControllerConfigNodes.Last().EdNode,
-						TEXT("Collection"),
-						SimulationLODNodes[LodIndex].EdNode,
-						TEXT("Collection"));
+						LodChainUpstreams[LodIndex], TEXT("Collection"),
+						SimulationLODNodes[LodIndex].EdNode, TEXT("Collection"));
 					ConnectTemplateNodes(
 						DataflowAsset,
-						SimulationLODNodes[LodIndex].EdNode,
-						TEXT("Collection"),
+						SimulationLODNodes[LodIndex].EdNode, TEXT("Collection"),
 						TerminalNode.EdNode,
 						TerminalDataflowNode->GetCollectionLodInputName(LodIndex));
 				}
@@ -439,19 +471,17 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			return nullptr;
 		}
 
-		FString DataflowPackageName = GetDesiredDataflowPackageName(AircraftAsset);
-		if (FindPackage(nullptr, *DataflowPackageName))
-		{
-			MakeUniqueObjectName(nullptr, UPackage::StaticClass(), FName(*DataflowPackageName)).ToString(DataflowPackageName);
-		}
-
-		const FString DataflowAssetName = FPackageName::GetLongPackageAssetName(DataflowPackageName);
-		UPackage* const DataflowPackage = CreatePackage(*DataflowPackageName);
+		// 内嵌 Dataflow（对齐 ChaosClothAsset 的 EmbeddedDataflow 范式）：
+		//   Outer = 资产本体，仅 RF_Transactional（无 RF_Public/RF_Standalone）→
+		//   IsAsset() == false，UDataflow 内联序列化进 Aircraft 资产包，
+		//   不注册进资产注册表，不在 Content Browser 生成独立 DF_* 资产。
+		const FName EmbeddedName = MakeUniqueObjectName(
+			AircraftAsset, UDataflow::StaticClass(), TEXT("EmbeddedDataflow"));
 		UDataflow* const DataflowAsset = NewObject<UDataflow>(
-			DataflowPackage,
+			AircraftAsset,
 			UDataflow::StaticClass(),
-			FName(*DataflowAssetName),
-			RF_Public | RF_Standalone | RF_Transactional);
+			EmbeddedName,
+			RF_Transactional);
 
 		if (!DataflowAsset)
 		{
@@ -463,9 +493,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 
 		AircraftAsset->SetDataflow(DataflowAsset);
 		CreateAircraftTemplateGraph(DataflowAsset);
-	
-		DataflowAsset->MarkPackageDirty();
-		FAssetRegistryModule::AssetCreated(DataflowAsset);
+
 		AircraftAsset->MarkPackageDirty();
 
 		return DataflowAsset;

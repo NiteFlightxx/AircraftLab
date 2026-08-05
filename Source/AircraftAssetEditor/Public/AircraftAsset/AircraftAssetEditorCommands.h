@@ -22,6 +22,14 @@ public:
 	const static FString ToggleSimulationSuspendedIdentifier;
 	TSharedPtr<FUICommandInfo> ToggleSimulationSuspended;
 
+	// LOD 显示选择（对齐 FChaosClothAssetEditorCommands::LODAuto/LOD0）；
+	// LOD0 以外的级别通过 FillLODCommands 动态添加。
+	const static FString LODAutoIdentifier;
+	TSharedPtr<FUICommandInfo> LODAuto;
+
+	const static FString LOD0Identifier;
+	TSharedPtr<FUICommandInfo> LOD0;
+
 	const static FString MotorPlacementIdentifier;
 	TSharedPtr<FUICommandInfo> MotorPlacement;
 

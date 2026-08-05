@@ -19,6 +19,8 @@ namespace UE::AircraftLab::AircraftAsset
 	class IAircraftDataflowTemplateProvider : public IModularFeature
 	{
 	public:
+		virtual ~IAircraftDataflowTemplateProvider() = default;
+
 		static FName GetFeatureName()
 		{
 			static const FName FeatureName = TEXT("AircraftDataflowTemplateProvider");

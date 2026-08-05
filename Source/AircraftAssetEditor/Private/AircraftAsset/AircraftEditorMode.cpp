@@ -4,6 +4,7 @@
 #include "AircraftAsset/AircraftAssetEditorCommands.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftEditorContextObject.h"
+#include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftEditorModeToolkit.h"
 #include "AircraftAsset/AircraftMotorPlacementTool.h"
 #include "AircraftAsset/AircraftPidTuningTool.h"
@@ -102,6 +103,62 @@ bool UAircraftAssetEditorMode::IsSimulationEnabled() const
 		return PreviewScene->GetAircraftComponent()->IsSimulationEnabled();
 	}
 	return false;
+}
+
+void UAircraftAssetEditorMode::SetLODModel(int32 LODIndex)
+{
+	if (PreviewScene)
+	{
+		if (UAircraftComponent* const AircraftComponent = PreviewScene->GetAircraftComponent())
+		{
+			if (LODIndex == INDEX_NONE)
+			{
+				AircraftComponent->ClearSimulationLODOverride();
+			}
+			else
+			{
+				AircraftComponent->SetSimulationLOD(LODIndex);
+			}
+		}
+	}
+}
+
+int32 UAircraftAssetEditorMode::GetLODModel() const
+{
+	if (PreviewScene)
+	{
+		if (const UAircraftComponent* const AircraftComponent = PreviewScene->GetAircraftComponent())
+		{
+			return AircraftComponent->HasSimulationLODOverride()
+				? AircraftComponent->GetCurrentSimulationLOD()
+				: INDEX_NONE;
+		}
+	}
+	return INDEX_NONE;
+}
+
+int32 UAircraftAssetEditorMode::GetNumLODs() const
+{
+	if (PreviewScene)
+	{
+		if (const UAircraftComponent* const AircraftComponent = PreviewScene->GetAircraftComponent())
+		{
+			if (const FAircraftSimulationModel* const Model = AircraftComponent->GetSimulationModel())
+			{
+				return Model->GetNumLods();
+			}
+		}
+	}
+	return 0;
+}
+
+bool UAircraftAssetEditorMode::IsLODModelSelected(int32 LODIndex) const
+{
+	if (LODIndex == INDEX_NONE)
+	{
+		return GetLODModel() == INDEX_NONE;
+	}
+	return GetLODModel() == LODIndex;
 }
 
 void UAircraftAssetEditorMode::ModeTick(float DeltaTime)

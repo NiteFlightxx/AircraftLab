@@ -25,6 +25,12 @@ public:
 	void SetEnableSimulation(bool bEnable);
 	bool IsSimulationEnabled() const;
 
+	// 预览 LOD 选择（对齐 UChaosClothAssetEditorMode::SetLODModel/GetLODModel 等）
+	void SetLODModel(int32 LODIndex);
+	int32 GetLODModel() const;
+	int32 GetNumLODs() const;
+	bool IsLODModelSelected(int32 LODIndex) const;
+
 	virtual FBox SceneBoundingBox() const override;
 	virtual void ModeTick(float DeltaTime) override;
 

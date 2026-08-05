@@ -19,15 +19,26 @@
 #include "Widgets/Text/STextBlock.h"
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/SAircraftAssetEditorViewport.h"
+#include "AircraftAsset/SAircraftAssetEditorAdvancedPreviewDetailsTab.h"
+#include "AircraftAsset/SAircraftCollectionOutliner.h"
+#include "AircraftAsset/SAircraftSceneOutliner.h"
+#include "AircraftAsset/SAircraftToolsPanel.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftAssetEditorPreviewScene.h"
 #include "AircraftAsset/AircraftAssetEditorCommands.h"
 #include "AircraftAsset/AircraftAssetEditorViewportClient.h"
 #include "AircraftAsset/AircraftComponent.h"
+#include "AircraftAsset/AircraftEditorSimulationVisualization.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftDataflowEditor.h"
 #include "AircraftAsset/AircraftEditorMode.h"
 #include "AircraftAsset/AircraftEditorModeUILayer.h"
+#include "AircraftAsset/CollectionAircraftConstFacade.h"
+#include "Dataflow/DataflowContent.h"
+#include "FileHelpers.h"
+#include "Toolkits/AssetEditorToolkitMenuContext.h"
+#include "UObject/PackageReload.h"
+#include "Widgets/Layout/SSpacer.h"
 
 #define LOCTEXT_NAMESPACE "AircraftAssetEditorToolkit"
 
@@ -79,6 +90,8 @@ const FName FAircraftAssetEditorToolkit::SimulationVisualizationTabId(TEXT("Airc
 const FName FAircraftAssetEditorToolkit::GraphCanvasTabId(TEXT("AircraftAssetEditor_GraphCanvas"));
 const FName FAircraftAssetEditorToolkit::NodeDetailsTabId(TEXT("AircraftAssetEditor_NodeDetails"));
 const FName FAircraftAssetEditorToolkit::PreviewSceneDetailsTabId(TEXT("AircraftAssetEditor_PreviewSceneDetails"));
+const FName FAircraftAssetEditorToolkit::SceneOutlinerTabId(TEXT("AircraftAssetEditor_SceneOutliner"));
+const FName FAircraftAssetEditorToolkit::ToolsPanelTabId(TEXT("AircraftAssetEditor_ToolsPanel"));
 
 FAircraftAssetEditorToolkit::FAircraftAssetEditorToolkit(UAssetEditor* InOwningAssetEditor)
 	: FBaseCharacterFXEditorToolkit(InOwningAssetEditor, FName("AircraftAssetEditor"))
@@ -99,8 +112,9 @@ FAircraftAssetEditorToolkit::FAircraftAssetEditorToolkit(UAssetEditor* InOwningA
 					(
 						FTabManager::NewStack()
 						->SetSizeCoefficient(0.12f)
+						->AddTab(ToolsPanelTabId, ETabState::OpenedTab)
 						->SetExtensionId(UBaseCharacterFXEditorUISubsystem::EditorSidePanelAreaName)
-						->SetHideTabWell(true)
+						->SetHideTabWell(false)
 					)
 					->Split
 					(
@@ -132,6 +146,7 @@ FAircraftAssetEditorToolkit::FAircraftAssetEditorToolkit(UAssetEditor* InOwningA
 					->SetSizeCoefficient(0.65f)
 					->AddTab(DetailsTabID, ETabState::OpenedTab)
 					->AddTab(PreviewSceneDetailsTabId, ETabState::OpenedTab)
+					->AddTab(SceneOutlinerTabId, ETabState::OpenedTab)
 					->AddTab(SimulationVisualizationTabId, ETabState::OpenedTab)
 					->SetExtensionId("AircraftDetailsArea")
 					->SetHideTabWell(true)
@@ -173,6 +188,13 @@ FAircraftAssetEditorToolkit::~FAircraftAssetEditorToolkit()
 	{
 		DetailsView->OnFinishedChangingProperties().RemoveAll(this);
 	}
+
+	if (SelectedDataflowNode && OnNodeInvalidatedDelegateHandle.IsValid())
+	{
+		SelectedDataflowNode->GetOnNodeInvalidatedDelegate().Remove(OnNodeInvalidatedDelegateHandle);
+	}
+
+	FCoreUObjectDelegates::OnPackageReloaded.Remove(OnPackageReloadedDelegateHandle);
 }
 
 TSharedPtr<UE::Dataflow::FEngineContext> FAircraftAssetEditorToolkit::GetDataflowContext() const
@@ -246,6 +268,14 @@ void FAircraftAssetEditorToolkit::RegisterTabSpawners(const TSharedRef<FTabManag
 		.SetDisplayName(LOCTEXT("SimulationVisualizationTab", "Simulation Visualization"))
 		.SetGroup(EditorMenuCategory.ToSharedRef());
 
+	InTabManager->RegisterTabSpawner(SceneOutlinerTabId, FOnSpawnTab::CreateSP(this, &FAircraftAssetEditorToolkit::SpawnTab_SceneOutliner))
+		.SetDisplayName(LOCTEXT("SceneOutlinerTab", "Scene Outliner"))
+		.SetGroup(EditorMenuCategory.ToSharedRef());
+
+	InTabManager->RegisterTabSpawner(ToolsPanelTabId, FOnSpawnTab::CreateSP(this, &FAircraftAssetEditorToolkit::SpawnTab_ToolsPanel))
+		.SetDisplayName(LOCTEXT("ToolsPanelTab", "Aircraft Tools"))
+		.SetGroup(EditorMenuCategory.ToSharedRef());
+
 	// 父类（FBaseCharacterFXEditorToolkit / FBaseAssetToolkit）已经为 ViewportTabID 注册了一个
 	// "Viewport" 的 spawner。我们对齐 ChaosCloth 风格把 DisplayName 改为 "Simulation Viewport"，
 	// 通过 unregister + 重新注册覆盖原来的实现。
@@ -264,6 +294,8 @@ void FAircraftAssetEditorToolkit::UnregisterTabSpawners(const TSharedRef<FTabMan
 	InTabManager->UnregisterTabSpawner(GraphCanvasTabId);
 	InTabManager->UnregisterTabSpawner(NodeDetailsTabId);
 	InTabManager->UnregisterTabSpawner(PreviewSceneDetailsTabId);
+	InTabManager->UnregisterTabSpawner(SceneOutlinerTabId);
+	InTabManager->UnregisterTabSpawner(ToolsPanelTabId);
 }
 
 void FAircraftAssetEditorToolkit::GetSaveableObjects(TArray<UObject*>& OutObjects) const
@@ -276,7 +308,11 @@ void FAircraftAssetEditorToolkit::GetSaveableObjects(TArray<UObject*>& OutObject
 
 		if (UDataflow* const DataflowAsset = AircraftAsset->GetDataflow())
 		{
-			OutObjects.AddUnique(DataflowAsset);
+			// 内嵌 Dataflow 随资产包一起保存；仅外部独立资产才需要单独保存
+			if (DataflowAsset->IsAsset())
+			{
+				OutObjects.AddUnique(DataflowAsset);
+			}
 		}
 	}
 }
@@ -353,7 +389,8 @@ AssetEditorViewportFactoryFunction FAircraftAssetEditorToolkit::GetViewportDeleg
 	return [this](FAssetEditorViewportConstructionArgs InArgs)
 	{
 		return SAssignNew(PreviewViewportWidget, SAircraftAssetEditorViewport, InArgs)
-			.EditorViewportClient(ViewportClient);
+			.EditorViewportClient(ViewportClient)
+			.ToolkitCommandList(GetToolkitCommands().ToSharedPtr());
 	};
 }
 
@@ -382,6 +419,12 @@ void FAircraftAssetEditorToolkit::PostInitAssetEditor()
 	ViewportClient->SetViewportType(ELevelViewportType::LVT_Perspective);
 	ViewportClient->SetViewMode(EViewModeIndex::VMI_Lit);
 
+	// 仿真可视化配置（视口左上角状态文本 + Show 菜单扩展共用）
+	if (!SimulationVisualization)
+	{
+		SimulationVisualization = MakeShared<FAircraftEditorSimulationVisualization>();
+	}
+
 	if (UAircraftAssetBase* const AircraftAsset = GetAsset())
 	{
 		PreviewScene->SetAircraftAsset(AircraftAsset);
@@ -390,6 +433,14 @@ void FAircraftAssetEditorToolkit::PostInitAssetEditor()
 	InitDetailsViewPanel();
 
 	PreviewViewportClient = StaticCastSharedPtr<FAircraftAssetEditorViewportClient>(ViewportClient);
+	if (PreviewViewportClient.IsValid())
+	{
+		PreviewViewportClient->SetSimulationVisualization(SimulationVisualization);
+	}
+
+	// 处理 Dataflow 包重载事件（对齐 FChaosClothAssetEditorToolkit）
+	OnPackageReloadedDelegateHandle = FCoreUObjectDelegates::OnPackageReloaded.AddSP(this, &FAircraftAssetEditorToolkit::HandlePackageReloaded);
+
 	if (PreviewViewportClient.IsValid())
 	{
 		const FBox PreviewBounds = PreviewViewportClient->PreviewBoundingBox();
@@ -616,8 +667,10 @@ TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_Outliner(const FSpawn
 {
 	check(Args.GetTabId() == OutlinerTabId);
 
+	// Dataflow Members 面板：选中节点的输出 Collection 数据查看器（对齐 SClothCollectionOutliner），
+	// 附加顶部已编译模型摘要。
 	SAssignNew(OutlinerDockTab, SDockTab)
-		.Label(LOCTEXT("OutlinerTabTitle", "Outliner"))
+		.Label(LOCTEXT("OutlinerTabTitle", "Dataflow Members"))
 		[
 			SNew(SVerticalBox)
 			+ SVerticalBox::Slot()
@@ -629,14 +682,26 @@ TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_Outliner(const FSpawn
 				.Font(FAppStyle::GetFontStyle(TEXT("DetailsView.CategoryFontStyle")))
 			]
 			+ SVerticalBox::Slot()
-			.FillHeight(1.0f)
-			.Padding(8.0f, 0.0f, 8.0f, 8.0f)
+			.AutoHeight()
+			.Padding(8.0f, 0.0f, 8.0f, 4.0f)
 			[
 				SNew(STextBlock)
 				.Text(this, &FAircraftAssetEditorToolkit::GetOutlinerSummaryText)
 				.AutoWrapText(true)
 			]
+			+ SVerticalBox::Slot()
+			.FillHeight(1.0f)
+			.Padding(8.0f, 0.0f, 8.0f, 8.0f)
+			[
+				SAssignNew(CollectionOutliner, SAircraftCollectionOutliner)
+			]
 		];
+
+	// 当前已选中节点（面板可能在选中之后才被创建）
+	if (TSharedPtr<FDataflowNode> SelectedNode = GetSelectedDataflowNode())
+	{
+		CollectionOutliner->SetAircraftCollection(GetAircraftCollectionIfPossible(SelectedNode, DataflowContext));
+	}
 
 	return OutlinerDockTab.ToSharedRef();
 }
@@ -689,78 +754,12 @@ TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_SimulationVisualizati
 	SAssignNew(SimulationVisualizationDockTab, SDockTab)
 		.Label(LOCTEXT("SimulationVisualizationTitle", "Simulation Visualization"));
 
-	auto GetPreviewAircraftComponent = [this]() -> UAircraftComponent*
-	{
-		return PreviewScene.IsValid() ? PreviewScene->GetAircraftComponent() : nullptr;
-	};
-
-	auto AddVisualizationToggle =
-		[this, &GetPreviewAircraftComponent](FMenuBuilder& MenuBuilder, const FText& DisplayName, const FText& ToolTip,
-			TFunction<bool(const UAircraftComponent*)> IsEnabled,
-			TFunction<void(UAircraftComponent*, bool)> SetEnabled)
-	{
-		MenuBuilder.AddMenuEntry(
-			DisplayName,
-			ToolTip,
-			FSlateIcon(),
-			FUIAction(
-				FExecuteAction::CreateLambda([this, GetPreviewAircraftComponent, IsEnabled, SetEnabled]()
-				{
-					if (UAircraftComponent* const AircraftComponent = GetPreviewAircraftComponent())
-					{
-						SetEnabled(AircraftComponent, !IsEnabled(AircraftComponent));
-						InvalidateViews();
-					}
-				}),
-				FCanExecuteAction::CreateLambda([GetPreviewAircraftComponent]()
-				{
-					return GetPreviewAircraftComponent() != nullptr;
-				}),
-				FIsActionChecked::CreateLambda([GetPreviewAircraftComponent, IsEnabled]()
-				{
-					if (const UAircraftComponent* const AircraftComponent = GetPreviewAircraftComponent())
-					{
-						return IsEnabled(AircraftComponent);
-					}
-					return false;
-				})),
-			NAME_None,
-			EUserInterfaceActionType::ToggleButton);
-	};
-
+	// 菜单内容由 FAircraftEditorSimulationVisualization 统一维护（对齐 ClothEditorSimulationVisualization）
 	FMenuBuilder MenuBuilder(false, nullptr);
-	MenuBuilder.BeginSection(TEXT("AircraftSimulationVisualization"), LOCTEXT("AircraftSimulationVisualizationSection", "Aircraft Debug Draw"));
-	AddVisualizationToggle(
-		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationCenterOfMass", "Center Of Mass"),
-		LOCTEXT("AircraftSimulationVisualizationCenterOfMassTooltip", "Draw the chassis center of mass in the preview viewport."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsCenterOfMassDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetCenterOfMassDebugDrawEnabled(bEnable); });
-	AddVisualizationToggle(
-		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationRotors", "Rotors"),
-		LOCTEXT("AircraftSimulationVisualizationRotorsTooltip", "Draw rotor disc positions, radius, and spin direction arrows."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsRotorDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetRotorDebugDrawEnabled(bEnable); });
-	AddVisualizationToggle(
-		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationThrustVectors", "Thrust Vectors"),
-		LOCTEXT("AircraftSimulationVisualizationThrustVectorsTooltip", "Draw per-rotor thrust vectors at each rotor location."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsThrustVectorDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetThrustVectorDebugDrawEnabled(bEnable); });
-	AddVisualizationToggle(
-		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationTorque", "Body Torque"),
-		LOCTEXT("AircraftSimulationVisualizationTorqueTooltip", "Draw the resulting body torque from control allocation."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsTorqueDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetTorqueDebugDrawEnabled(bEnable); });
-	AddVisualizationToggle(
-		MenuBuilder,
-		LOCTEXT("AircraftSimulationVisualizationVelocity", "Velocity"),
-		LOCTEXT("AircraftSimulationVisualizationVelocityTooltip", "Draw the chassis linear velocity vector at center of mass."),
-		[](const UAircraftComponent* AircraftComponent) { return AircraftComponent->IsVelocityDebugDrawEnabled(); },
-		[](UAircraftComponent* AircraftComponent, bool bEnable) { AircraftComponent->SetVelocityDebugDrawEnabled(bEnable); });
-	MenuBuilder.EndSection();
+	if (SimulationVisualization.IsValid() && PreviewViewportClient.IsValid())
+	{
+		SimulationVisualization->ExtendViewportShowMenu(MenuBuilder, PreviewViewportClient.ToSharedRef());
+	}
 
 	SimulationVisualizationDockTab->SetContent(MenuBuilder.MakeWidget());
 
@@ -786,7 +785,7 @@ TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_NodeDetails(const FSp
 {
 	check(Args.GetTabId() == NodeDetailsTabId);
 
-	TSharedRef<SDockTab> NodeDetailsTab = SNew(SDockTab)
+	SAssignNew(NodeDetailsTab, SDockTab)
 		.Label(LOCTEXT("NodeDetailsTabTitle", "Node Details"));
 
 	if (NodeDetailsEditor.IsValid())
@@ -794,7 +793,41 @@ TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_NodeDetails(const FSp
 		NodeDetailsTab->SetContent(NodeDetailsEditor->GetWidget().ToSharedRef());
 	}
 
-	return NodeDetailsTab;
+	return NodeDetailsTab.ToSharedRef();
+}
+
+TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_SceneOutliner(const FSpawnTabArgs& Args)
+{
+	check(Args.GetTabId() == SceneOutlinerTabId);
+
+	SAssignNew(SceneOutlinerDockTab, SDockTab)
+		.Label(LOCTEXT("SceneOutlinerTabTitle", "Scene Outliner"));
+
+	SceneOutliner = SNew(SAircraftSceneOutliner, PreviewScene.ToWeakPtr());
+	SceneOutliner->OnFocusRequested().BindLambda([this]()
+	{
+		if (PreviewViewportWidget.IsValid())
+		{
+			PreviewViewportWidget->OnFocusViewportToSelection();
+		}
+	});
+
+	SceneOutlinerDockTab->SetContent(SceneOutliner.ToSharedRef());
+
+	return SceneOutlinerDockTab.ToSharedRef();
+}
+
+TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_ToolsPanel(const FSpawnTabArgs& Args)
+{
+	check(Args.GetTabId() == ToolsPanelTabId);
+
+	TSharedRef<SDockTab> ToolsPanelDockTab = SNew(SDockTab)
+		.Label(LOCTEXT("ToolsPanelTabTitle", "Aircraft Tools"))
+		[
+			SNew(SAircraftToolsPanel)
+		];
+
+	return ToolsPanelDockTab;
 }
 
 TSharedRef<SDockTab> FAircraftAssetEditorToolkit::SpawnTab_PreviewSceneDetails(const FSpawnTabArgs& Args)
@@ -826,8 +859,8 @@ void FAircraftAssetEditorToolkit::InitDetailsViewPanel()
 	}
 
 	AdvancedPreviewSettingsWidget =
-		SNew(SAdvancedPreviewDetailsTab, PreviewScene.ToSharedRef())
-		.AdditionalSettings(nullptr)
+		SNew(SAircraftAssetEditorAdvancedPreviewDetailsTab, PreviewScene.ToSharedRef())
+		.AdditionalSettings(PreviewScene->GetPreviewSceneDescription())
 		.DetailCustomizations(TArray<FAdvancedPreviewSceneModule::FDetailCustomizationInfo>())
 		.PropertyTypeCustomizations(TArray<FAdvancedPreviewSceneModule::FPropertyTypeCustomizationInfo>())
 		.Delegates(TArray<FAdvancedPreviewSceneModule::FDetailDelegates>());
@@ -854,7 +887,37 @@ TSharedRef<SWidget> FAircraftAssetEditorToolkit::GenerateEvaluationOptionsMenu()
 
 void FAircraftAssetEditorToolkit::OnFinishedChangingAssetProperties(const FPropertyChangedEvent& PropertyChangedEvent)
 {
-	(void)PropertyChangedEvent;
+	// 资产 Dataflow 引用变化：重建图编辑器（对齐 ClothEditorToolkit::OnFinishedChangingAssetProperties）
+	const FProperty* const ChangedProperty = PropertyChangedEvent.Property;
+	if (ChangedProperty && ChangedProperty->GetFName() == TEXT("DataflowAsset"))
+	{
+		UDataflow* const Dataflow = GetDataflow();
+		if (Dataflow)
+		{
+			Dataflow->Schema = UDataflowSchema::StaticClass();
+			ReinitializeGraphEditorWidget();
+		}
+		else
+		{
+			// 无法在没有 UDataflow 的情况下构造 SDataflowGraphEditor：用占位 widget 清空区域
+			GraphEditor.Reset();
+			if (GraphEditorTab.IsValid())
+			{
+				GraphEditorTab->SetContent(SNew(SSpacer));
+			}
+			if (NodeDetailsTab.IsValid())
+			{
+				NodeDetailsTab->SetContent(SNew(SSpacer));
+			}
+		}
+
+		if (UAircraftAssetEditorMode* const AircraftMode =
+			Cast<UAircraftAssetEditorMode>(EditorModeManager->GetActiveScriptableMode(UAircraftAssetEditorMode::EM_AircraftAssetEditorModeId)))
+		{
+			AircraftMode->SetPreviewScene(PreviewScene.Get());
+		}
+	}
+
 	OnAircraftAssetChanged();
 }
 
@@ -864,6 +927,11 @@ void FAircraftAssetEditorToolkit::OnAircraftAssetChanged()
 	{
 		ensure(AircraftAsset->HasAnyFlags(RF_Transactional));
 		SetEditingObject(AircraftAsset);
+
+		if (SceneOutliner.IsValid())
+		{
+			SceneOutliner->Refresh();
+		}
 
 		const UAircraftComponent* const PreviewAircraftComponent = PreviewScene->GetAircraftComponent();
 		const bool bHadAircraftAsset = PreviewAircraftComponent && PreviewAircraftComponent->GetAsset() != nullptr;
@@ -1044,6 +1112,58 @@ void FAircraftAssetEditorToolkit::OnNodeSelectionChanged(const TSet<UObject*>& N
 			EditorContent->SetSelectedNode(GetOnlyFromSet(FilterDataflowEdNodesFromSet(NewSelection)));
 		}
 	}
+
+	// Dataflow Members 面板：跟踪选中节点并抓取其输出 Collection
+	TSharedPtr<FDataflowNode> NewSelectedDataflowNode;
+	if (UDataflowEdNode* const SelectedEdNode = GetOnlyFromSet(FilterDataflowEdNodesFromSet(NewSelection)))
+	{
+		if (UDataflow* const Dataflow = GetDataflow())
+		{
+			if (TSharedPtr<UE::Dataflow::FGraph> Graph = Dataflow->GetDataflow())
+			{
+				NewSelectedDataflowNode = Graph->FindBaseNode(SelectedEdNode->GetDataflowNodeGuid());
+			}
+		}
+	}
+
+	if (SelectedDataflowNode && OnNodeInvalidatedDelegateHandle.IsValid())
+	{
+		SelectedDataflowNode->GetOnNodeInvalidatedDelegate().Remove(OnNodeInvalidatedDelegateHandle);
+		OnNodeInvalidatedDelegateHandle.Reset();
+	}
+	SelectedDataflowNode = NewSelectedDataflowNode;
+
+	if (SelectedDataflowNode)
+	{
+		SelectedDataflowNodeGuid = SelectedDataflowNode->GetGuid();
+		// 节点失效后重新求值并重取 Collection
+		OnNodeInvalidatedDelegateHandle = SelectedDataflowNode->GetOnNodeInvalidatedDelegate().AddLambda(
+			[this](FDataflowNode* InvalidatedNode)
+			{
+				const TSharedPtr<FDataflowNode> CurrentSelected = GetSelectedDataflowNode();
+				if (CurrentSelected.Get() == InvalidatedNode && CollectionOutliner.IsValid())
+				{
+					CollectionOutliner->SetAircraftCollection(GetAircraftCollectionIfPossible(CurrentSelected, DataflowContext));
+				}
+				TickCommands.AddLambda([this]()
+				{
+					if (NodeDetailsEditor && NodeDetailsEditor->GetDetailsView())
+					{
+						NodeDetailsEditor->GetDetailsView()->InvalidateCachedState();
+					}
+				});
+			});
+	}
+	else
+	{
+		SelectedDataflowNodeGuid.Invalidate();
+	}
+
+	if (CollectionOutliner.IsValid())
+	{
+		CollectionOutliner->SetAircraftCollection(
+			GetAircraftCollectionIfPossible(SelectedDataflowNode, DataflowContext));
+	}
 }
 
 void FAircraftAssetEditorToolkit::OnNodeDeleted(const TSet<UObject*>& DeletedNodes)
@@ -1102,6 +1222,270 @@ TSet<TObjectPtr<UDataflowEdNode>> FAircraftAssetEditorToolkit::FilterDataflowEdN
 TObjectPtr<UDataflowEdNode> FAircraftAssetEditorToolkit::GetOnlyFromSet(const TSet<TObjectPtr<UDataflowEdNode>>& Set)
 {
 	return Set.Num() == 1 ? *Set.CreateConstIterator() : nullptr;
+}
+
+/* ---------------------------------------------------------------------------
+ * Dataflow Members 面板 / 选中节点
+ * ------------------------------------------------------------------------- */
+
+TSharedPtr<FDataflowNode> FAircraftAssetEditorToolkit::GetSelectedDataflowNode()
+{
+	if (SelectedDataflowNodeGuid.IsValid())
+	{
+		if (UDataflow* const Dataflow = GetDataflow())
+		{
+			if (TSharedPtr<UE::Dataflow::FGraph> Graph = Dataflow->GetDataflow())
+			{
+				return Graph->FindBaseNode(SelectedDataflowNodeGuid);
+			}
+		}
+	}
+	return TSharedPtr<FDataflowNode>(nullptr);
+}
+
+TSharedPtr<const FDataflowNode> FAircraftAssetEditorToolkit::GetSelectedDataflowNode() const
+{
+	if (SelectedDataflowNodeGuid.IsValid())
+	{
+		if (const UDataflow* const Dataflow = GetDataflow())
+		{
+			if (TSharedPtr<const UE::Dataflow::FGraph> Graph = Dataflow->GetDataflow())
+			{
+				return Graph->FindBaseNode(SelectedDataflowNodeGuid);
+			}
+		}
+	}
+	return TSharedPtr<const FDataflowNode>(nullptr);
+}
+
+TSharedPtr<FManagedArrayCollection> FAircraftAssetEditorToolkit::GetAircraftCollectionIfPossible(
+	const TSharedPtr<FDataflowNode> InDataflowNode, const TSharedPtr<UE::Dataflow::FEngineContext> Context) const
+{
+	if (InDataflowNode && Context)
+	{
+		for (const FDataflowOutput* const Output : InDataflowNode->GetOutputs())
+		{
+			if (Output->GetType() == FName("FManagedArrayCollection"))
+			{
+				const FManagedArrayCollection DefaultValue;
+				TSharedRef<FManagedArrayCollection> Collection =
+					MakeShared<FManagedArrayCollection>(Output->GetValue<FManagedArrayCollection>(*Context, DefaultValue));
+
+				// 只接受 Aircraft Collection（Schema 完整）
+				const UE::AircraftLab::AircraftAsset::FConstAircraftCollection AircraftFacade(Collection);
+				if (AircraftFacade.IsValid())
+				{
+					return Collection;
+				}
+				break;
+			}
+		}
+	}
+
+	return TSharedPtr<FManagedArrayCollection>();
+}
+
+/* ---------------------------------------------------------------------------
+ * 图编辑器韧性：Dataflow 热重载 / 包重载
+ * ------------------------------------------------------------------------- */
+
+void FAircraftAssetEditorToolkit::ReinitializeGraphEditorWidget()
+{
+	UDataflow* const Dataflow = GetDataflow();
+	ensure(Dataflow);
+
+	const SDataflowGraphEditor::FGraphEvaluationCallback EvaluateGraph =
+		[this](const FDataflowNode* Node, const FDataflowOutput* Output)
+		{
+			EvaluateNode(Node, Output);
+		};
+
+	SGraphEditor::FGraphEditorEvents GraphEditorEvents;
+	GraphEditorEvents.OnVerifyTextCommit = FOnNodeVerifyTextCommit::CreateSP(this, &FAircraftAssetEditorToolkit::OnNodeVerifyTitleCommit);
+	GraphEditorEvents.OnTextCommitted = FOnNodeTextCommitted::CreateSP(this, &FAircraftAssetEditorToolkit::OnNodeTitleCommitted);
+
+	if (!GraphEditor)
+	{
+		UAircraftAssetBase* const AircraftAsset = GetAsset();
+		if (AircraftAsset)
+		{
+			NodeDetailsEditor = CreateNodeDetailsEditorWidget(AircraftAsset);
+			if (NodeDetailsTab.IsValid())
+			{
+				NodeDetailsTab->SetContent(NodeDetailsEditor->GetWidget().ToSharedRef());
+			}
+		}
+
+		GraphEditor = CreateGraphEditorWidget();
+		if (GraphEditorTab.IsValid() && GraphEditor)
+		{
+			GraphEditorTab->SetContent(GraphEditor.ToSharedRef());
+		}
+	}
+		else
+		{
+			UAircraftAssetBase* const AircraftAsset = GetAsset();
+			const TSharedRef<SAircraftAssetDataflowGraphEditor> AircraftGraphEditor =
+				StaticCastSharedRef<SAircraftAssetDataflowGraphEditor>(GraphEditor.ToSharedRef());
+
+			SAircraftAssetDataflowGraphEditor::FArguments Args;
+			Args._GraphToEdit = Dataflow;
+			Args._GraphEvents = GraphEditorEvents;
+			Args._DetailsView = NodeDetailsEditor;
+			Args._EvaluateGraph = EvaluateGraph;
+			Args._AircraftAssetEditorToolkit = this;
+
+			AircraftGraphEditor->Construct(Args, AircraftAsset);
+
+			GraphEditor->OnSelectionChangedMulticast.RemoveAll(this);
+			GraphEditor->OnNodeDeletedMulticast.RemoveAll(this);
+			GraphEditor->OnSelectionChangedMulticast.AddSP(this, &FAircraftAssetEditorToolkit::OnNodeSelectionChanged);
+			GraphEditor->OnNodeDeletedMulticast.AddSP(this, &FAircraftAssetEditorToolkit::OnNodeDeleted);
+		}
+	}
+
+void FAircraftAssetEditorToolkit::HandlePackageReloaded(const EPackageReloadPhase InPackageReloadPhase, FPackageReloadedEvent* InPackageReloadedEvent)
+{
+	// UAssetEditorSubsystem::HandlePackageReloaded 负责重启相应资产编辑器；
+	// 但 Aircraft 资产编辑器内嵌的 Dataflow 不会被系统跟踪，这里自己处理：
+	// 不重启整个编辑器，只重建图编辑器 Widget。
+
+	if (InPackageReloadPhase == EPackageReloadPhase::PrePackageFixup)
+	{
+		checkf(InPackageReloadedEvent, TEXT("Expected a FPackageReloadedEvent object on PrePackageFixup phase"));
+
+		for (const TPair<UObject*, UObject*>& RepointPair : InPackageReloadedEvent->GetRepointedObjects())
+		{
+			if (RepointPair.Key == GetDataflow())
+			{
+				// 清除所有持有即将重载 Dataflow 对象的引用（含节点）
+				SelectedDataflowNode.Reset();
+				SelectedDataflowNodeGuid.Invalidate();
+				OnNodeInvalidatedDelegateHandle.Reset();
+				GraphEditor.Reset();
+				if (GraphEditorTab.IsValid())
+				{
+					GraphEditorTab->SetContent(SNew(SSpacer));
+				}
+			}
+		}
+	}
+	else if (InPackageReloadPhase == EPackageReloadPhase::PostPackageFixup)
+	{
+		for (const TPair<UObject*, UObject*>& RepointPair : InPackageReloadedEvent->GetRepointedObjects())
+		{
+			if (RepointPair.Key == GetDataflow())
+			{
+				ReinitializeGraphEditorWidget();
+			}
+		}
+	}
+}
+
+/* ---------------------------------------------------------------------------
+ * 保存流 / 菜单上下文 / 关闭生命周期
+ * ------------------------------------------------------------------------- */
+
+void FAircraftAssetEditorToolkit::InitToolMenuContext(FToolMenuContext& MenuContext)
+{
+	FAssetEditorToolkit::InitToolMenuContext(MenuContext);
+
+	UAssetEditorToolkitMenuContext* const AircraftEditorContext = NewObject<UAssetEditorToolkitMenuContext>();
+	AircraftEditorContext->Toolkit = SharedThis(this);
+	MenuContext.AddObject(AircraftEditorContext);
+}
+
+void FAircraftAssetEditorToolkit::OnAssetsSaved(const TArray<UObject*>& SavedObjects)
+{
+	// 外部 Dataflow 的引用对象也一并提示保存（迁移期兼容；内嵌时 References 为空）
+	TArray<UPackage*> PackagesToSave;
+
+	if (UAircraftAssetBase* const AircraftAsset = GetAsset())
+	{
+		if (UDataflow* const Dataflow = AircraftAsset->GetDataflow())
+		{
+			if (TSharedPtr<UE::Dataflow::FGraph> Graph = Dataflow->GetDataflow())
+			{
+				TArray<UObject*> References;
+				FReferenceFinder ReferenceFinder(References, nullptr, false, true, false, true);
+				Dataflow->Dataflow->AddReferencedObjects(ReferenceFinder);
+
+				for (UObject* const Reference : References)
+				{
+					if (Reference && Reference->IsAsset())
+					{
+						PackagesToSave.AddUnique(Reference->GetOutermost());
+					}
+				}
+			}
+		}
+	}
+
+	if (PackagesToSave.Num() > 0)
+	{
+		constexpr bool bCheckDirtyOnReferenceAssetSave = true;
+		constexpr bool bPromptToSave = true;
+		FEditorFileUtils::PromptForCheckoutAndSave(PackagesToSave, bCheckDirtyOnReferenceAssetSave, bPromptToSave);
+	}
+}
+
+void FAircraftAssetEditorToolkit::OnAssetsSavedAs(const TArray<UObject*>& SavedObjects)
+{
+	// "Save As" 场景：让 Aircraft 资产指向新保存的 Dataflow 对象
+	UDataflow* NewDataflowAsset = nullptr;
+	UAircraftAssetBase* NewAircraftAsset = nullptr;
+	for (UObject* const SavedObj : SavedObjects)
+	{
+		if (SavedObj && SavedObj->IsA<UDataflow>())
+		{
+			NewDataflowAsset = Cast<UDataflow>(SavedObj);
+		}
+		else if (SavedObj && SavedObj->IsA<UAircraftAssetBase>())
+		{
+			NewAircraftAsset = Cast<UAircraftAssetBase>(SavedObj);
+		}
+	}
+
+	if (NewAircraftAsset && NewDataflowAsset)
+	{
+		NewAircraftAsset->SetDataflow(NewDataflowAsset);
+
+		// 属性指针已变化，再保存一次
+		const TArray<UPackage*> PackagesToSave{ NewAircraftAsset->GetOutermost() };
+		constexpr bool bCheckDirty = true;
+		constexpr bool bPromptToSave = false;
+		FEditorFileUtils::PromptForCheckoutAndSave(PackagesToSave, bCheckDirty, bPromptToSave);
+	}
+}
+
+bool FAircraftAssetEditorToolkit::ShouldReopenEditorForSavedAsset(const UObject* SavedAsset) const
+{
+	return SavedAsset && SavedAsset->IsA<UAircraftAssetBase>();
+}
+
+bool FAircraftAssetEditorToolkit::OnRequestClose(EAssetEditorCloseReason InCloseReason)
+{
+	// 关闭时释放选中节点的失效监听 + 包重载监听
+	if (SelectedDataflowNode && OnNodeInvalidatedDelegateHandle.IsValid())
+	{
+		SelectedDataflowNode->GetOnNodeInvalidatedDelegate().Remove(OnNodeInvalidatedDelegateHandle);
+		OnNodeInvalidatedDelegateHandle.Reset();
+	}
+	SelectedDataflowNode.Reset();
+	SelectedDataflowNodeGuid.Invalidate();
+
+	FCoreUObjectDelegates::OnPackageReloaded.Remove(OnPackageReloadedDelegateHandle);
+	OnPackageReloadedDelegateHandle.Reset();
+
+	return FAssetEditorToolkit::OnRequestClose(InCloseReason);
+}
+
+void FAircraftAssetEditorToolkit::OnClose()
+{
+	// 给活动模式一次关闭的机会（在 ToolkitHost 仍存活时），否则重开编辑器会重复建页签。
+	GetEditorModeManager().ActivateDefaultMode();
+
+	FBaseCharacterFXEditorToolkit::OnClose();
 }
 
 #undef LOCTEXT_NAMESPACE
