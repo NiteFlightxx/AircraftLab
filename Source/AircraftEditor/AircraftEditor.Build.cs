@@ -18,6 +18,7 @@ public class AircraftEditor : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
+                "DeveloperSettings",
                 "Slate",
                 "SlateCore",
                 "UnrealEd",

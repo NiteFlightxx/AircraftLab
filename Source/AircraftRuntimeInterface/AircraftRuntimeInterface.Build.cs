@@ -10,7 +10,8 @@ public class AircraftRuntimeInterface : ModuleRules
             new string[]
             {
                 "Core",
-                "CoreUObject"
+                "CoreUObject",
+                "Engine"
             }
         );
     }

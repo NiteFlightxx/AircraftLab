@@ -59,5 +59,15 @@ void FAircraftSimulationLODProfileNode::Evaluate(UE::Dataflow::FContext& Context
 	SetLODProperty(Properties, TEXT("SimulationLOD.DriveMode"), static_cast<int32>(Profile.DriveMode));
 	SetLODProperty(Properties, TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Profile.CollisionMode));
 
+	if (Profile.bUseExtendedSettings)
+	{
+		SetLODProperty(Properties, TEXT("SimulationLOD.MaxDistanceCm"), Profile.MaxDistanceCm);
+		SetLODProperty(Properties, TEXT("SimulationLOD.RunSlowLogic"), Profile.bRunSlowLogic);
+		SetLODProperty(Properties, TEXT("SimulationLOD.SlowLogicIntervalSeconds"), Profile.SlowLogicIntervalSeconds);
+		SetLODProperty(Properties, TEXT("SimulationLOD.SuggestedNetUpdateFrequency"), Profile.SuggestedNetUpdateFrequency);
+		SetLODProperty(Properties, TEXT("SimulationLOD.AllowDebugDraw"), Profile.bAllowDebugDraw);
+		SetLODProperty(Properties, TEXT("SimulationLOD.EnableNetworkDormancy"), Profile.bEnableNetworkDormancy);
+	}
+
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

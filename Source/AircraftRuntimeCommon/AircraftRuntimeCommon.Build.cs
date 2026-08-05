@@ -11,7 +11,16 @@ public class AircraftRuntimeCommon : ModuleRules
             {
                 "Core",
                 "CoreUObject",
-                "AircraftRuntimeInterface"
+                "Engine",
+                "AircraftRuntimeInterface",
+                "AircraftAssetEngine"
+            }
+        );
+
+        PrivateDependencyModuleNames.AddRange(
+            new string[]
+            {
+                "EnhancedInput"
             }
         );
     }

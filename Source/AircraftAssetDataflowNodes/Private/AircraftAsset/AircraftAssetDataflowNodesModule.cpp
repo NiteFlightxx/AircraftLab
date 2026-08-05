@@ -16,19 +16,30 @@
 #include "Dataflow/AircraftControllerInputConfigNode.h"
 #include "Dataflow/AircraftConstraintSimulationConfigNode.h"
 #include "Dataflow/AircraftKinematicSimulationConfigNode.h"
+#include "Dataflow/AircraftRotorFailurePolicyConfigNode.h"
+#include "Dataflow/AircraftAutopilotConfigNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 
 #include "AircraftAsset/AircraftAsset.h"
+#include "AircraftAsset/ColorScheme.h"
 
 IMPLEMENT_MODULE(FAircraftAssetDataflowNodesModule, AircraftAssetDataflowNodes)
 
+/* 视口渲染回调（AircraftRotorRenderCallbacks.cpp） */
+namespace UE::AircraftLab::DataflowNodes
+{
+	void RegisterAircraftRenderingCallbacks();
+	void DeregisterAircraftRenderingCallbacks();
+}
+
 void FAircraftAssetDataflowNodesModule::StartupModule()
 {
-	// 节点画布颜色：Aircraft 深绿，Terminal 深红（对齐 ChaosClothAsset 节点画布颜色风格）。
+	// 节点画布颜色统一取自 FColorScheme（对齐 ChaosClothAssetTools/ColorScheme.h 的单点定义）。
+	using FAircraftColorScheme = UE::AircraftLab::AircraftAsset::FColorScheme;
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY_NODE_COLORS_BY_CATEGORY(
-		"Aircraft", FLinearColor(0.f, 0.65f, 1.f), FLinearColor(0.0f, 0.0f, 0.0f, 0.45f));
+		"Aircraft", FAircraftColorScheme::NodeHeader, FAircraftColorScheme::NodeBody);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY_NODE_COLORS_BY_CATEGORY(
-		"Terminal", FLinearColor(0.65f, 0.16f, 0.12f), FLinearColor(0.0f, 0.0f, 0.0f, 0.45f));
+		"Terminal", FAircraftColorScheme::TerminalNodeHeader, FAircraftColorScheme::TerminalNodeBody);
 
 	/* Source 节点 */
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftSkeletalMeshSourceNode);
@@ -45,6 +56,8 @@ void FAircraftAssetDataflowNodesModule::StartupModule()
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftControllerInputConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftConstraintSimulationConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftKinematicSimulationConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftRotorFailurePolicyConfigNode);
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftAutopilotConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftSimulationLODProfileNode);
 
 	/* Terminal 节点 */
@@ -52,9 +65,13 @@ void FAircraftAssetDataflowNodesModule::StartupModule()
 
 	UE::Dataflow::RegisterNodeFilter(FDataflowTerminalNode::StaticType());
 	UE_DATAFLOW_REGISTER_CATEGORY_FORASSET_TYPE("Aircraft", UAircraftAsset);
+
+	// 视口视图模式 + 旋翼渲染回调（对齐 ChaosCloth 的 RegisterRenderingCallbacks）
+	UE::AircraftLab::DataflowNodes::RegisterAircraftRenderingCallbacks();
 }
 
 void FAircraftAssetDataflowNodesModule::ShutdownModule()
 {
+	UE::AircraftLab::DataflowNodes::DeregisterAircraftRenderingCallbacks();
 	IModuleInterface::ShutdownModule();
 }

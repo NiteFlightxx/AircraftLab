@@ -10,55 +10,12 @@
 
 #include "AircraftAsset/AircraftAssetBase.h"
 
+// EDroneArmState / EDroneFlightMode / EAircraftAttitudeMode 已下沉到求解器模块
+// （Aircraft/Public/Aircraft/FlightControlStateTypes.h，对齐 UChaosClothConfig 归属 ChaosCloth 的做法），
+// 名称不变，此处 include 复用。
+#include "Aircraft/FlightControlStateTypes.h"
+
 #include "AircraftAsset.generated.h"
-
-/**
- * 解锁状态
- *
- * 与 PX4/Betaflight 等真实飞控的 ARM 状态机对齐：Disarmed → Arming → Armed；
- * Failsafe / EmergencyStop 是从任意状态可被触发的安全分支。
- */
-UENUM(BlueprintType)
-enum class EDroneArmState : uint8
-{
-	/** 上锁待机：电机不转动，不响应任何油门/姿态指令。 */
-	Disarmed UMETA(DisplayName = "Disarmed"),
-
-	/** 解锁过渡：完成自检后进入 Armed，否则退回 Disarmed。 */
-	Arming UMETA(DisplayName = "Arming"),
-
-	/** 已解锁：飞行器可以起飞。 */
-	Armed UMETA(DisplayName = "Armed"),
-
-	/** 故障保护：自动切换为返航/降落。 */
-	Failsafe UMETA(DisplayName = "Failsafe"),
-
-	/** 紧急停止：立即切断电机动力。 */
-	EmergencyStop UMETA(DisplayName = "Emergency Stop")
-};
-
-/**
- * 飞行模式
- *
- * 与串级 PID 的逐级"放权"一致：
- *   Manual/Acro 直接驱动角速率；
- *   Angle 走 角度→角速率 两环；
- *   AltitudeHold/PositionHold/VelocityHold 走 位置→速度→姿态→角速率 四环；
- *   Mission/ReturnToHome/AutoLand 由上层航线规划注入位置/姿态目标后走全四环。
- */
-UENUM(BlueprintType)
-enum class EDroneFlightMode : uint8
-{
-	Manual UMETA(DisplayName = "Manual"),
-	Acro UMETA(DisplayName = "Acro"),
-	Angle UMETA(DisplayName = "Angle"),
-	AltitudeHold UMETA(DisplayName = "Altitude Hold"),
-	PositionHold UMETA(DisplayName = "Position Hold"),
-	VelocityHold UMETA(DisplayName = "Velocity Hold"),
-	Mission UMETA(DisplayName = "Mission"),
-	ReturnToHome UMETA(DisplayName = "Return To Home"),
-	AutoLand UMETA(DisplayName = "Auto Land")
-};
 
 class USkeleton;
 class UPhysicsAsset;

@@ -22,6 +22,8 @@ public class AircraftAssetEditorTools : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
+                "AircraftAssetDataflowNodes",
+                "DataflowEditor",
                 "EditorInteractiveToolsFramework",
                 "InputCore",
                 "Slate",

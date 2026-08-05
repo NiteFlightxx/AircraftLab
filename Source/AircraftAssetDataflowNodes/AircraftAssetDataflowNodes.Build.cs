@@ -27,7 +27,8 @@ public class AircraftAssetDataflowNodes : ModuleRules
                 "SlateCore",
                 "UnrealEd",
                 "Chaos",
-                "AircraftAssetEngine"
+                "AircraftAssetEngine",
+                "AircraftAssetTools"
             }
         );
     }

@@ -8,154 +8,37 @@
 
 #include "CoreMinimal.h"
 
+// EAircraftSimulationDriveMode / EAircraftSimulationCollisionMode 已上移到契约层
+// （AircraftRuntimeInterface/AircraftSimulationLODTypes.h），此处 include 复用，避免重复定义。
+#include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
+
+// FAircraftFlightControllerRuntimeConfig 已下沉到求解器模块
+// （Aircraft/Public/Aircraft/FlightControllerRuntimeConfig.h，对齐 UChaosClothConfig 归属 ChaosCloth 的做法），
+// 名称与字段不变，此处 include 复用。
+#include "Aircraft/FlightControllerRuntimeConfig.h"
+
+// Autopilot 运行时配置契约（AircraftAutopilotConfigNode 写入的 Autopilot.* 键编译产物）。
+#include "AircraftRuntimeInterface/AircraftAutopilotConfig.h"
+
 #include "AircraftSimulationModel.generated.h"
 
 class UPhysicsAsset;
 class USkeletalMesh;
 struct FManagedArrayCollection;
 
-/**
- * Dataflow 编译后的飞控参数快照。
- *
- * 这里故意只保存纯值，不持有 UObject。GameThread 构建完成后，PhysicsThread 可直接读取，
- * 与 Chaos Cloth 的 SimulationModel/Config 分层一致。
- */
-struct AIRCRAFTASSETENGINE_API FAircraftFlightControllerRuntimeConfig
-{
-	/** 来自 AircraftFrameConfig：0=+X, 1=+Y, 2=-X, 3=-Y。 */
-	uint8 ForwardAxis = 1;
-
-	FVector3f PositionKp = FVector3f(0.40f, 0.40f, 0.0f);
-	FVector3f PositionKi = FVector3f::ZeroVector;
-	FVector3f PositionKd = FVector3f(0.30f, 0.30f, 0.0f);
-	FVector3f VelocityKp = FVector3f(1.50f, 1.50f, 0.0f);
-	FVector3f VelocityKi = FVector3f(0.01f, 0.01f, 0.0f);
-	FVector3f VelocityKd = FVector3f(0.60f, 0.60f, 0.0f);
-	FVector3f AttitudeGains = FVector3f(4.5f, 4.5f, 3.0f);
-	FVector3f RateKp = FVector3f(0.0080f, 0.0080f, 0.0012f);
-	FVector3f RateKi = FVector3f(0.0010f, 0.0010f, 0.00015f);
-	FVector3f RateKd = FVector3f(0.00040f, 0.00040f, 0.00008f);
-
-	float AltitudeKp = 1.20f;
-	float AltitudeKi = 0.0f;
-	float AltitudeKd = 0.20f;
-	float VerticalVelocityKp = 0.0015f;
-	float VerticalVelocityKi = 0.00020f;
-	float VerticalVelocityKd = 0.00050f;
-
-	float MaxTiltAngleDegrees = 25.0f;
-	float MaxYawRateDegreesPerSec = 90.0f;
-	float MaxRollRateDegreesPerSec = 180.0f;
-	float MaxPitchRateDegreesPerSec = 180.0f;
-	float MaxClimbRateCmPerSec = 300.0f;
-	float MaxDescentRateCmPerSec = 200.0f;
-	float MaxHorizontalSpeedCmPerSec = 800.0f;
-	float MaxHorizontalAccelerationCmPerSecSq = 600.0f;
-	float MaxVerticalAccelerationCmPerSecSq = 500.0f;
-	float MinCollectiveCommand = 0.0f;
-	float HoverCollectiveCommand = 0.5f;
-	float MaxCollectiveCommand = 1.0f;
-	float DerivativeCutoffHz = 15.0f;
-	float AllocationDamping = 0.05f;
-
-	/** Profile 中按职责拆分、由不同驱动后端消费的扩展配置。 */
-	float VelocityDerivativeCutoffHz = 12.0f;
-	FVector3f RateDerivativeCutoffHz = FVector3f(18.0f, 18.0f, 15.0f);
-	float VerticalVelocityDerivativeCutoffHz = 10.0f;
-	float LinearDampingFeedForwardScale = 1.0f;
-	float DampingAccelerationReserveFraction = 0.2f;
-	float AngularDampingFeedForwardScale = 1.0f;
-	float VerticalDampingFeedForwardScale = 1.0f;
-	bool bEnableAttitudeReferenceModel = true;
-	float ReferenceModelNaturalFrequency = 6.0f;
-	float ReferenceModelRateFeedForwardLimitDegPerSec = 100.0f;
-	bool bEnableTiltCompensation = true;
-	float MinimumCosTilt = 0.1f;
-	float HorizontalHoldStickDeadband = 0.08f;
-	float VerticalHoldStickDeadband = 0.08f;
-	float YawHoldStickDeadband = 0.05f;
-	float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
-	float ConstraintLinearPositionStrength = 100.0f;
-	float ConstraintLinearVelocityStrength = 20.0f;
-	float ConstraintLinearForceLimit = 0.0f;
-	float ConstraintAngularPositionStrength = 100.0f;
-	float ConstraintAngularVelocityStrength = 20.0f;
-	float ConstraintAngularTorqueLimit = 0.0f;
-	bool bConstraintAccelerationMode = true;
-	bool bKinematicSweepMovement = true;
-	float KinematicPositionCorrectionRate = 8.0f;
-	float KinematicRotationInterpSpeed = 8.0f;
-
-	float GetForwardYawOffsetDegrees() const
-	{
-		switch (ForwardAxis)
-		{
-		case 0: return 0.0f;
-		case 1: return 90.0f;
-		case 2: return 180.0f;
-		case 3: return -90.0f;
-		default: return 90.0f;
-		}
-	}
-
-	FVector GetForwardAxisBody() const
-	{
-		return FQuat(FVector::UpVector, FMath::DegreesToRadians(GetForwardYawOffsetDegrees()))
-			.RotateVector(FVector::ForwardVector);
-	}
-
-	FVector GetRightAxisBody() const
-	{
-		return FVector::CrossProduct(FVector::UpVector, GetForwardAxisBody()).GetSafeNormal();
-	}
-
-	FQuat GetControlWorldRotation(const FQuat& BodyWorldRotation) const
-	{
-		const FQuat ControlToBody(FVector::UpVector, FMath::DegreesToRadians(GetForwardYawOffsetDegrees()));
-		return (BodyWorldRotation * ControlToBody).GetNormalized();
-	}
-
-	FVector BodyAngularToController(const FVector& PhysicalBodyVector) const
-	{
-		const FVector ControlVector(
-			FVector::DotProduct(PhysicalBodyVector, GetForwardAxisBody()),
-			FVector::DotProduct(PhysicalBodyVector, GetRightAxisBody()),
-			PhysicalBodyVector.Z);
-		return FVector(-ControlVector.X, -ControlVector.Y, ControlVector.Z);
-	}
-
-	FVector ControllerTorqueToBody(const FVector& ControllerTorque) const
-	{
-		return GetForwardAxisBody() * -ControllerTorque.X
-			+ GetRightAxisBody() * -ControllerTorque.Y
-			+ FVector::UpVector * ControllerTorque.Z;
-	}
-};
-
-/** 当前 LOD 使用的运动驱动。LOD 只负责选择驱动，不实现具体 Gameplay 策略。 */
-UENUM(BlueprintType)
-enum class EAircraftSimulationDriveMode : uint8
-{
-	None UMETA(DisplayName = "None"),
-	FlightController UMETA(DisplayName = "Flight Controller"),
-	PhysicsConstraint UMETA(DisplayName = "Physics Constraint"),
-	Kinematic UMETA(DisplayName = "Kinematic")
-};
-
-UENUM(BlueprintType)
-enum class EAircraftSimulationCollisionMode : uint8
-{
-	Disabled UMETA(DisplayName = "Disabled"),
-	QueryOnly UMETA(DisplayName = "Query Only"),
-	QueryAndPhysics UMETA(DisplayName = "Query And Physics")
-};
-
-/** Dataflow 编译后的单级模拟 LOD 策略。 */
+/** Dataflow 编译后的单级模拟 LOD 策略（字段对齐 NxGame FAircraftSimulationLODSettings）。 */
 struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODRuntimeSettings
 {
 	FName Name = NAME_None;
 	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
+	/** 距最近玩家的名义上限距离；最后一个 LOD 是无限距离兜底。 */
+	float MaxDistanceCm = 6000.0f;
+	bool bRunSlowLogic = true;
+	float SlowLogicIntervalSeconds = 0.0f;
+	float SuggestedNetUpdateFrequency = 30.0f;
+	bool bAllowDebugDraw = false;
+	bool bEnableNetworkDormancy = false;
 };
 
 /** Dataflow 编译后的模拟 LOD Profile。 */
@@ -447,6 +330,9 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	FAircraftFlightControllerRuntimeConfig FlightController;
 	FAircraftGameFeelRuntimeConfig GameFeel;
 
+	/** Autopilot 运行时只读快照（AutopilotConfigNode 编译产物）。 */
+	FAircraftAutopilotRuntimeConfig Autopilot;
+
 	/** 旋翼定义（按机架顺序） */
 	TArray<FDroneRotorDefinition> Rotors;
 
@@ -465,6 +351,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 		Aero = FDroneAerodynamicsConfig();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
 		GameFeel = FAircraftGameFeelRuntimeConfig();
+		Autopilot = FAircraftAutopilotRuntimeConfig();
 		Rotors.Reset();
 	}
 

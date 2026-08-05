@@ -181,6 +181,43 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			OutModel.FlightController.KinematicPositionCorrectionRate = Properties.GetValue<float>(TEXT("FlightController.Kinematic.PositionCorrectionRate"), OutModel.FlightController.KinematicPositionCorrectionRate);
 			OutModel.FlightController.KinematicRotationInterpSpeed = Properties.GetValue<float>(TEXT("FlightController.Kinematic.RotationInterpSpeed"), OutModel.FlightController.KinematicRotationInterpSpeed);
 
+			/* Rotor failure policy（AircraftRotorFailurePolicyConfigNode 写入） */
+			FAircraftFailurePolicyConfig& FailurePolicy = OutModel.FlightController.FailurePolicy;
+			FailurePolicy.bEnabled = Properties.GetValue<bool>(TEXT("FlightController.Failure.Enabled"), FailurePolicy.bEnabled);
+			FailurePolicy.bEvaluateOnlyWhenArmed = Properties.GetValue<bool>(TEXT("FlightController.Failure.EvaluateOnlyWhenArmed"), FailurePolicy.bEvaluateOnlyWhenArmed);
+			FailurePolicy.MinimumHealthyRotorCount = Properties.GetValue<int32>(TEXT("FlightController.Failure.MinimumHealthyRotorCount"), FailurePolicy.MinimumHealthyRotorCount);
+			FailurePolicy.MinimumCollectiveAuthority = Properties.GetValue<float>(TEXT("FlightController.Failure.MinimumCollectiveAuthority"), FailurePolicy.MinimumCollectiveAuthority);
+			FailurePolicy.MinimumRollAuthority = Properties.GetValue<float>(TEXT("FlightController.Failure.MinimumRollAuthority"), FailurePolicy.MinimumRollAuthority);
+			FailurePolicy.MinimumPitchAuthority = Properties.GetValue<float>(TEXT("FlightController.Failure.MinimumPitchAuthority"), FailurePolicy.MinimumPitchAuthority);
+			FailurePolicy.MinimumYawAuthority = Properties.GetValue<float>(TEXT("FlightController.Failure.MinimumYawAuthority"), FailurePolicy.MinimumYawAuthority);
+			FailurePolicy.ConfirmationTimeSeconds = Properties.GetValue<float>(TEXT("FlightController.Failure.ConfirmationTimeSeconds"), FailurePolicy.ConfirmationTimeSeconds);
+			FailurePolicy.RecoveryConfirmationTimeSeconds = Properties.GetValue<float>(TEXT("FlightController.Failure.RecoveryConfirmationTimeSeconds"), FailurePolicy.RecoveryConfirmationTimeSeconds);
+			FailurePolicy.bLatchTriggeredAction = Properties.GetValue<bool>(TEXT("FlightController.Failure.LatchTriggeredAction"), FailurePolicy.bLatchTriggeredAction);
+			FailurePolicy.Action = static_cast<EAircraftFailurePolicyAction>(FMath::Clamp(
+				Properties.GetValue<int32>(TEXT("FlightController.Failure.Action"), static_cast<int32>(FailurePolicy.Action)), 0, 3));
+			FailurePolicy.DegradedFlightMode = static_cast<uint8>(FMath::Clamp(
+				Properties.GetValue<int32>(TEXT("FlightController.Failure.DegradedFlightMode"), static_cast<int32>(FailurePolicy.DegradedFlightMode)), 0, 8));
+
+			/* Autopilot（AircraftAutopilotConfigNode 写入） */
+			FAircraftAutopilotRuntimeConfig& Autopilot = OutModel.Autopilot;
+			Autopilot.bEnableCoordinatedTurns = Properties.GetValue<bool>(TEXT("Autopilot.EnableCoordinatedTurns"), Autopilot.bEnableCoordinatedTurns);
+			Autopilot.CoordinatedTurnSpeedThresholdCmPerSec = Properties.GetValue<float>(TEXT("Autopilot.Turn.CoordinatedTurnSpeedThresholdCmPerSec"), Autopilot.CoordinatedTurnSpeedThresholdCmPerSec);
+			Autopilot.MaxBankAngleDegrees = Properties.GetValue<float>(TEXT("Autopilot.Turn.MaxBankAngleDegrees"), Autopilot.MaxBankAngleDegrees);
+			Autopilot.MaxLateralAccelCmPerSecSq = Properties.GetValue<float>(TEXT("Autopilot.Turn.MaxLateralAccelCmPerSecSq"), Autopilot.MaxLateralAccelCmPerSecSq);
+			Autopilot.GuidanceStrategy = static_cast<uint8>(FMath::Clamp(
+				Properties.GetValue<int32>(TEXT("Autopilot.Path.GuidanceStrategy"), static_cast<int32>(Autopilot.GuidanceStrategy)), 0, 2));
+			Autopilot.PurePursuitLookAheadGain = Properties.GetValue<float>(TEXT("Autopilot.Path.PurePursuitLookAheadGain"), Autopilot.PurePursuitLookAheadGain);
+			Autopilot.PurePursuitMinLookAheadCm = Properties.GetValue<float>(TEXT("Autopilot.Path.PurePursuitMinLookAheadCm"), Autopilot.PurePursuitMinLookAheadCm);
+			Autopilot.PurePursuitMaxLookAheadCm = Properties.GetValue<float>(TEXT("Autopilot.Path.PurePursuitMaxLookAheadCm"), Autopilot.PurePursuitMaxLookAheadCm);
+			Autopilot.VectorFieldCrossTrackGain = Properties.GetValue<float>(TEXT("Autopilot.Path.VectorFieldCrossTrackGain"), Autopilot.VectorFieldCrossTrackGain);
+			Autopilot.VectorFieldMaxCrossTrackCorrectionCm = Properties.GetValue<float>(TEXT("Autopilot.Path.VectorFieldMaxCrossTrackCorrectionCm"), Autopilot.VectorFieldMaxCrossTrackCorrectionCm);
+			Autopilot.bEnableHoverThrustEstimator = Properties.GetValue<bool>(TEXT("Autopilot.HoverThrust.EnableEstimator"), Autopilot.bEnableHoverThrustEstimator);
+			Autopilot.HoverThrustInitialStateVariance = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.InitialStateVariance"), Autopilot.HoverThrustInitialStateVariance);
+			Autopilot.HoverThrustProcessNoiseVariance = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.ProcessNoiseVariance"), Autopilot.HoverThrustProcessNoiseVariance);
+			Autopilot.HoverThrustAccelNoiseVariance = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.AccelNoiseVariance"), Autopilot.HoverThrustAccelNoiseVariance);
+			Autopilot.HoverThrustGateSize = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.GateSize"), Autopilot.HoverThrustGateSize);
+			Autopilot.MinHoverThrust = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.MinHoverThrust"), Autopilot.MinHoverThrust);
+			Autopilot.MaxHoverThrust = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.MaxHoverThrust"), Autopilot.MaxHoverThrust);
 		}
 
 		/* Input/game-feel preprocessing */
@@ -306,6 +343,12 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			Properties.GetValue<int32>(TEXT("SimulationLOD.DriveMode"), static_cast<int32>(Settings.DriveMode)), 0, 3));
 		Settings.CollisionMode = static_cast<EAircraftSimulationCollisionMode>(FMath::Clamp(
 			Properties.GetValue<int32>(TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Settings.CollisionMode)), 0, 2));
+		Settings.MaxDistanceCm = Properties.GetValue<float>(TEXT("SimulationLOD.MaxDistanceCm"), Settings.MaxDistanceCm);
+		Settings.bRunSlowLogic = Properties.GetValue<bool>(TEXT("SimulationLOD.RunSlowLogic"), Settings.bRunSlowLogic);
+		Settings.SlowLogicIntervalSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.SlowLogicIntervalSeconds"), Settings.SlowLogicIntervalSeconds);
+		Settings.SuggestedNetUpdateFrequency = Properties.GetValue<float>(TEXT("SimulationLOD.SuggestedNetUpdateFrequency"), Settings.SuggestedNetUpdateFrequency);
+		Settings.bAllowDebugDraw = Properties.GetValue<bool>(TEXT("SimulationLOD.AllowDebugDraw"), Settings.bAllowDebugDraw);
+		Settings.bEnableNetworkDormancy = Properties.GetValue<bool>(TEXT("SimulationLOD.EnableNetworkDormancy"), Settings.bEnableNetworkDormancy);
 		return Settings;
 	}
 }

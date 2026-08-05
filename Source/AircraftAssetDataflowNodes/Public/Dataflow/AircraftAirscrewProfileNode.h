@@ -58,6 +58,8 @@ struct FAircraftAirscrewProfileNode : public FDataflowNode
 {
 	GENERATED_BODY()
 	DATAFLOW_NODE_DEFINE_INTERNAL(FAircraftAirscrewProfileNode, "AircraftAirscrewProfile", "Aircraft|Profiles", "Single Airscrew Profile")
+	// 视口预览：RotorRender 回调画旋翼圆盘 + 推力轴箭头（对齐 ChaosCloth 的 SurfaceRender 模式）
+	DATAFLOW_NODE_RENDER_TYPE("RotorRender", FName("FManagedArrayCollection"), "Collection")
 
 public:
 	FAircraftAirscrewProfileNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());

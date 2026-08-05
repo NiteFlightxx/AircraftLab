@@ -2,9 +2,13 @@
 //
 // 职责：飞控运行时数据结构 + 仿真代理类（线程间数据中转 / 飞控算法执行体）。
 // FAircraftSimulationProxy 与 ChaosCloth 的 FClothSimulationProxy 一一对应：
-//   * GameThread API 写入 PendingPilotInput；
+//   * GameThread API 写入双缓冲输入（摇杆 / 四级设定值 / Autopilot 注入 / 旋翼健康操作）；
 //   * PhysicsThread API 在 AsyncPhysicsTickComponent 路径下消费输入，运行串级 PID/分配/电机；
-//   * 通过 BodyInstance::AddForceAtLocation / AddTorqueInRadians 把结果作用到 Chaos 刚体。
+//   * 通过 FChaosEngineInterface::Add*_AssumesLocked 把结果作用到 Chaos 刚体。
+//
+// 控制律核心（PID/求解器/分配器/旋翼模型/失效管理）位于 Aircraft 求解器模块
+// （对齐 ChaosCloth 插件拥有求解器的分层），本代理只做编排与线程边界管理。
+// 内部状态全部使用 Aircraft 模块的纯 C++ 类型（PT 零 UObject）。
 
 #pragma once
 
@@ -15,6 +19,12 @@
 #include "HAL/CriticalSection.h"
 #include "Templates/SharedPointer.h"
 #include "Templates/UniquePtr.h"
+
+#include "Aircraft/FlightControlSolver.h"
+#include "Aircraft/ControlAllocator.h"
+#include "Aircraft/RotorModel.h"
+#include "Aircraft/RotorFailureManager.h"
+#include "AircraftRuntimeInterface/AutopilotProvider.h"
 
 #include "AircraftAsset/AircraftSimulationModel.h"
 
@@ -139,9 +149,6 @@ struct AIRCRAFTASSETENGINE_API FDroneRateSetpoint
  * 力旋量指令（control allocation 的输入）
  *
  * 上层飞控把 setpoint 解析成期望 wrench：F_z（机体 +Z 总推力）、τ=(τ_x,τ_y,τ_z)。
- * Wrench → 单旋翼归一化指令 通过阻尼伪逆求解：
- *     u = (BᵀB + λI)⁻¹ · Bᵀ · τ_des
- * （B 为 4×N 混控矩阵；λ 为阻尼系数，避免奇异/不可达情况下输出爆炸）。
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTASSETENGINE_API FDroneWrenchCommand
@@ -181,269 +188,8 @@ struct AIRCRAFTASSETENGINE_API FDroneControlTargets
 };
 
 /* ===========================================================================
- *  PID（含前馈、anti-windup、derivative-on-measurement、derivative LPF）
+ *  估计状态（PT → GT 输出，蓝图可见）
  * =========================================================================== */
-
-/**
- * 单通道 PID 增益
- *
- * 离散位置式 PID：
- *     u(k) = Kp·e(k) + Ki·I(k) + Kd·D(k) + Kff·r(k)
- *     I(k) = clamp(I(k-1) + e(k)·Δt, ±IntegralLimit)
- *     D(k) = LPF(de/dt, fc=DerivativeCutoffHz)
- * 输出经 OutputLimit 截断；若开启 bFreezeIntegralWhenSaturated 则在饱和时回退本帧积分增量
- * （back-calculation 抗饱和的最简形式）。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDronePidGains
-{
-	GENERATED_BODY()
-
-	FDronePidGains() = default;
-
-	FDronePidGains(float InKp, float InKi, float InKd, float InIntegralLimit, float InOutputLimit)
-		: Kp(InKp), Ki(InKi), Kd(InKd), IntegralLimit(InIntegralLimit), OutputLimit(InOutputLimit) {}
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
-	float Kp = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
-	float Ki = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
-	float Kd = 0.0f;
-
-	/** 前馈系数（直接乘以 setpoint） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
-	float Kff = 0.0f;
-
-	/** 积分限幅；0 表示无限幅 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0"))
-	float IntegralLimit = 0.0f;
-
-	/** 输出限幅；0 表示无限幅 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0"))
-	float OutputLimit = 0.0f;
-
-	/** 微分项一阶低通截止频率（Hz）；0 表示不滤波 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID", meta = (ClampMin = "0.0"))
-	float DerivativeCutoffHz = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID")
-	bool bFreezeIntegralWhenSaturated = true;
-};
-
-/**
- * PID 运行时状态（积分、上一帧误差/测量、滤波器状态）
- *
- * 暴露 UpdateFromError / UpdateFromMeasurement 两种步进入口：前者按误差求微分（适合速率环），
- * 后者按测量值取负微分（derivative-on-measurement，避免目标阶跃造成微分突跳）。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDronePidState
-{
-	GENERATED_BODY()
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	float Integral = 0.0f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	float PreviousError = 0.0f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	float PreviousMeasurement = 0.0f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	float FilteredDerivative = 0.0f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	bool bHasPreviousError = false;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID")
-	bool bHasPreviousMeasurement = false;
-
-	void Reset()
-	{
-		Integral = 0.0f;
-		PreviousError = 0.0f;
-		PreviousMeasurement = 0.0f;
-		FilteredDerivative = 0.0f;
-		bHasPreviousError = false;
-		bHasPreviousMeasurement = false;
-	}
-
-	/** 标准位置式 PID：以误差作为微分源（适合 setpoint 几乎不变化的内环） */
-	float UpdateFromError(float Error, float DeltaSeconds, const FDronePidGains& Gains, float FeedForwardInput = 0.0f);
-
-	/** derivative-on-measurement 形式：用 -d(y)/dt 替代 d(e)/dt，避免阶跃突跳 */
-	float UpdateFromMeasurement(float Setpoint, float Measurement, float DeltaSeconds, const FDronePidGains& Gains, float FeedForwardInput = 0.0f);
-
-private:
-	/**
-	 * 一阶低通滤波（IIR）：
-	 *     RC = 1 / (2π·fc)
-	 *     α  = Δt / (RC + Δt)
-	 *     y_k = y_{k-1} + α · (x_k - y_{k-1})
-	 */
-	float ApplyDerivativeFilter(float RawDerivative, float DeltaSeconds, const FDronePidGains& Gains);
-};
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneEulerPidGains
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID") FDronePidGains Roll;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID") FDronePidGains Pitch;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID") FDronePidGains Yaw;
-};
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneEulerPidState
-{
-	GENERATED_BODY()
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID") FDronePidState Roll;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID") FDronePidState Pitch;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID") FDronePidState Yaw;
-
-	void Reset() { Roll.Reset(); Pitch.Reset(); Yaw.Reset(); }
-};
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneCartesianPidGains
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID") FDronePidGains X;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID") FDronePidGains Y;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|PID") FDronePidGains Z;
-};
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneCartesianPidState
-{
-	GENERATED_BODY()
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID") FDronePidState X;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID") FDronePidState Y;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drone|PID") FDronePidState Z;
-
-	void Reset() { X.Reset(); Y.Reset(); Z.Reset(); }
-};
-
-/* ===========================================================================
- *  控制器配置 + 限幅 + Home/估计状态
- * =========================================================================== */
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneControlLimits
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxTiltAngleDegrees = 35.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxYawRateDegreesPerSec = 180.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxRollRateDegreesPerSec = 360.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxPitchRateDegreesPerSec = 360.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxClimbRateCmPerSec = 400.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxDescentRateCmPerSec = 250.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxHorizontalSpeedCmPerSec = 1200.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxHorizontalAccelerationCmPerSecSq = 1200.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0"))
-	float MaxVerticalAccelerationCmPerSecSq = 1000.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float MinCollectiveCommand = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float HoverCollectiveCommand = 0.5f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float MaxCollectiveCommand = 1.0f;
-};
-
-/**
- * 姿态控制器配置（角度环 + 角速率环）
- *
- * 串级第三层与第四层：角度外环输出期望角速率，角速率内环输出期望机体力矩 τ。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneAttitudeControllerConfig
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneEulerPidGains AngleGains;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneEulerPidGains RateGains;
-};
-
-/**
- * 位置控制器配置（位置外环 + 速度内环）
- *
- * 串级第一层与第二层：位置外环输出期望速度，速度内环输出期望倾斜角度作为姿态控制器的输入。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDronePositionControllerConfig
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneCartesianPidGains PositionGains;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneCartesianPidGains VelocityGains;
-};
-
-/**
- * 高度控制器配置（高度外环 + 垂直速度内环）
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneAltitudeControllerConfig
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDronePidGains AltitudeGains = { 2.0f, 0.0f, 0.0f, 0.0f, 500.0f };
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDronePidGains VerticalVelocityGains = { 3.0f, 0.5f, 0.1f, 400.0f, 1000.0f };
-};
-
-/**
- * Home 起飞点（自动返航的目标）
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneHomeState
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	bool bValid = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	FVector PositionCm = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	float YawDegrees = 0.0f;
-};
 
 /**
  * 运动学状态（位置/速度/姿态/角速度）
@@ -497,11 +243,10 @@ class FAircraftSimulationSolver;
  * 多旋翼仿真代理
  *
  * 与 FClothSimulationProxy 同位：
- *   - GameThread → PhysicsThread 通过 PendingPilotInput 双缓冲；
- *   - PhysicsThread 内单线程执行串级 PID + 控制分配 + 电机一阶滞后动力学；
- *   - 通过 BodyInstance::AddForceAtLocation / AddTorqueInRadians 把结果作用到 Chaos。
- *
- * 运行时实现串级控制、控制分配、电机和气动模型。
+ *   - GameThread → PhysicsThread 通过双缓冲（锁 + 原子）交换输入；
+ *   - PhysicsThread 内单线程执行：估计状态刷新 → 串级 PID（含参考模型与阻尼前馈）
+ *     → 阻尼伪逆控制分配（含失效感知与饱和回传）→ 电机一阶滞后 → Chaos 力/扭矩注入；
+ *   - 旋翼失效策略在 PT 评估，触发动作经原子回传 GT 由组件执行。
  */
 class AIRCRAFTASSETENGINE_API FAircraftSimulationProxy : public FDataflowPhysicsSolverProxy
 {
@@ -525,17 +270,42 @@ public:
 	void SetArmRequest_GameThread(bool bArm);
 	void SetEmergencyStop_GameThread(bool bStop);
 	void SetGroundDistance_GameThread(float DistanceCm);
+	void SetGravity_GameThread(float GravityCmPerSecSq);
+
+	/** Autopilot 注入（GT 由组件从 IAutopilotProvider 拉取后写入）。 */
+	void SetAutopilotInjection_GameThread(const FAutopilotInjection& InInjection);
+	void SetUseAutopilotSetpoint_GameThread(bool bEnabled);
+
+	/** GT 读取的 BodyInstance 阻尼值（Chaos 求解器层），供阻尼前馈使用。 */
+	void SetBodyDamping_GameThread(float LinearDampingPerSecond, float AngularDampingPerSecond);
+
+	/** 旋翼健康操作（GT 入口；经输入锁排队，PT 在下一子步消费并重建分配缓存）。 */
+	void FailRotor_GameThread(FName RotorName);
+	void RecoverRotor_GameThread(FName RotorName);
+	void SetRotorEffectiveness_GameThread(FName RotorName, float Effectiveness);
+	void RecoverAllRotors_GameThread();
 
 	void GetEstimatedState_GameThread(FDroneEstimatedState& OutState) const;
+	/** 替代驱动后端（约束/运动学，GT 执行）写回估计状态，覆盖 PT 输出槽。 */
+	void SetEstimatedStateOverride_GameThread(const FDroneEstimatedState& InState);
 	float GetCameraShakeIntensity_GameThread() const;
 	EDroneArmState GetArmState_GameThread() const;
 	EDroneFlightMode GetFlightMode_GameThread() const;
+	float GetCollectiveThrustCommand_GameThread() const;
+
+	void GetControlAuthorityInfo_GameThread(FAircraftControlAuthorityInfo& OutInfo) const;
+	void GetFailurePolicyStatus_GameThread(FAircraftFailurePolicyStatus& OutStatus) const;
+	/** GT 消费失效策略触发的动作；无待处理动作时返回 false。 */
+	bool ConsumeFailurePolicyAction_GameThread(EAircraftFailurePolicyAction& OutAction);
+	/** GT 显式解除失效策略锁存。 */
+	void ResetFailurePolicyLatch_GameThread();
 	//~ End GameThread API
 
 	//~ Begin PhysicsThread API
 	/**
 	 * 物理线程子步入口。AsyncPhysicsTickComponent 路径下 DeltaTime 是物理子步长（恒定高频），
-	 * 适合直接作为 PID 的离散步长。
+	 * 适合直接作为 PID 的离散步长。仅在 FlightController 驱动模式下执行控制循环；
+	 * PhysicsConstraint / Kinematic 后端由组件在 GT 驱动（对齐 NxGame 的分工）。
 	 */
 	void TickPhysicsThread(float DeltaTime, float SimTime, float ForceAccumulationScale = 1.0f);
 	//~ End PhysicsThread API
@@ -552,6 +322,11 @@ protected:
 	}
 
 private:
+	/** 模型/几何变化后：展开旋翼分配描述并复位全部 PT 控制状态。 */
+	void RebuildRotorDescriptors_PhysicsThread();
+	/** 由飞行模式推导能力缓存与姿态模式。 */
+	void UpdateModeCapabilities(EDroneFlightMode Mode);
+
 	const UAircraftComponent& AircraftComponent;
 
 	TSharedPtr<const FAircraftSimulationModel> SimulationModel;
@@ -563,39 +338,61 @@ private:
 	mutable FCriticalSection InputCriticalSection;
 	FDronePilotInput PendingPilotInput;
 	FDroneControlTargets PendingTargets;
+	FAutopilotInjection PendingAutopilotInjection;
 	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EDroneFlightMode::Angle) };
 	std::atomic<bool> bPendingArmRequest{ false };
 	std::atomic<bool> bPendingEmergencyStop{ false };
+	std::atomic<bool> bUseAutopilotSetpoint{ false };
+
+	/** 待处理的旋翼健康操作（GT 写、PT 取）。 */
+	struct FPendingRotorHealthOp
+	{
+		FName RotorName = NAME_None;
+		/** 0=Fail 1=Recover 2=SetEffectiveness */
+		uint8 Op = 0;
+		float Effectiveness = 1.0f;
+	};
+	TArray<FPendingRotorHealthOp> PendingRotorHealthOps;
+	std::atomic<bool> bPendingRecoverAllRotors{ false };
 
 	/* PT → GT 输出缓冲 */
 	mutable FCriticalSection OutputCriticalSection;
 	FDroneEstimatedState LatestEstimated;
+	FAircraftControlAuthorityInfo LatestAuthorityInfo;
+	FAircraftFailurePolicyStatus LatestPolicyStatus;
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EDroneArmState::Disarmed) };
 	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EDroneFlightMode::Angle) };
+	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
+	std::atomic<uint8> PendingFailureAction{ static_cast<uint8>(EAircraftFailurePolicyAction::WarningOnly) };
+	std::atomic<bool> bFailureActionPending{ false };
+	std::atomic<bool> bPendingPolicyLatchReset{ false };
 
 	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
 	std::atomic<float> SimulationTime{ 0.f };
 	std::atomic<float> GroundDistanceCm{ TNumericLimits<float>::Max() };
+	std::atomic<float> GravityMagnitudeCmPerSecSq{ 980.0f };
+	std::atomic<float> BodyLinearDampingPerSecond{ 0.0f };
+	std::atomic<float> BodyAngularDampingPerSecond{ 0.0f };
 	std::atomic<float> CameraShakeIntensity{ 0.0f };
 
-	/* PT 内部 PID 状态（只在 PT 上访问，不需要锁） */
-	FDroneCartesianPidState PositionPidState;
-	FDroneCartesianPidState VelocityPidState;
-	FDroneEulerPidState AnglePidState;
-	FDroneEulerPidState RatePidState;
-	FDronePidState AltitudePidState;
-	FDronePidState VerticalVelocityPidState;
+	/* ---- PT 内部状态（只在 PT 上访问，不需要锁）---- */
 
-	/* Dataflow Build() 编译出的飞控参数；PostConstructor 在 GT 初始化，PT 只读。 */
-	FDronePositionControllerConfig PositionConfig;
-	FDroneAttitudeControllerConfig AttitudeConfig;
-	FDroneAltitudeControllerConfig AltitudeConfig;
-	FDroneControlLimits ControlLimits;
-	float AllocationDamping = 0.05f;
-	float DerivativeCutoffHz = 15.f;
+	/** 级联控制解算器（PID 状态 + 参考模型状态）。 */
+	FAircraftFlightControlSolver ControlSolver;
+	/** 控制分配器（缓存/诊断/饱和回传）。 */
+	FAircraftControlAllocator ControlAllocator;
+	/** 旋翼失效管理器（健康表/权限评估/失效策略）。 */
+	FAircraftRotorFailureManager RotorFailureManager;
+	/** 飞控运行状态（估计/输出/保持目标/模式）。 */
+	FAircraftFlightControlRuntimeState Runtime;
+	/** 物理缓存（刚体真值快照）。 */
+	FAircraftPhysicsCache PhysicsCache;
+	/** 模式能力缓存。 */
+	FAircraftModeCapabilities ModeCapabilities;
+	/** 经整形的摇杆输入（PT 滤波状态）。 */
 	FDronePilotInput FilteredPilotInput;
 
 	/* 单旋翼运行时状态（与 SimulationModel.Rotors 一一对应，索引一致） */
-	TArray<struct FAircraftRotorRuntimeState> RotorStates;
+	TArray<FAircraftRotorRuntimeState> RotorStates;
 };

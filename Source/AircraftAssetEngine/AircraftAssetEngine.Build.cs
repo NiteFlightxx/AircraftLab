@@ -17,15 +17,15 @@ public class AircraftAssetEngine : ModuleRules
                 "DataflowSimulation",
                 "Engine",
                 "AircraftAsset",
-                "AircraftRuntimeInterface"
+                "AircraftRuntimeInterface",
+                "Aircraft"
             }
         );
 
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
-                "PhysicsCore",
-                "Aircraft"
+                "PhysicsCore"
             }
         );
     }

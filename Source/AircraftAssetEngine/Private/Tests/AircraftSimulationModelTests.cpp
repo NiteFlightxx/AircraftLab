@@ -110,4 +110,73 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftFailurePolicyAndAutopilotConfigTest,
+	"AircraftLab.Dataflow.Runtime.FailurePolicyAndAutopilotConfig",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UE::AircraftLab::AircraftAsset;
+
+	const TSharedRef<FManagedArrayCollection> Collection = MakeShared<FManagedArrayCollection>();
+	FAircraftCollection AircraftCollection(Collection);
+	AircraftCollection.DefineSchema();
+
+	// 无属性键时：失效策略默认关闭，Autopilot 为权威默认值。
+	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = { Collection };
+	const FAircraftSimulationModel DefaultModel(Collections, TEXT("Defaults"));
+	const FAircraftSimulationLodModel* const DefaultLOD = DefaultModel.GetLodModel(0);
+	TestNotNull(TEXT("A collection compiles one LOD model"), DefaultLOD);
+	TestFalse(TEXT("Failure policy is disabled by default"), DefaultLOD->FlightController.FailurePolicy.bEnabled);
+	TestTrue(TEXT("Coordinated turns default on"), DefaultLOD->Autopilot.bEnableCoordinatedTurns);
+	TestTrue(TEXT("Hover thrust estimator defaults on"), DefaultLOD->Autopilot.bEnableHoverThrustEstimator);
+
+	FCollectionAircraftPropertyMutableFacade Properties(Collection);
+	Properties.DefineSchema();
+	auto SetInt = [&Properties](const TCHAR* Key, int32 Value)
+	{
+		const int32 Index = Properties.AddProperty(Key, EAircraftCollectionPropertyFlags::Enabled);
+		Properties.SetValue(Index, Value);
+	};
+	auto SetFloat = [&Properties](const TCHAR* Key, float Value)
+	{
+		const int32 Index = Properties.AddProperty(Key, EAircraftCollectionPropertyFlags::Enabled);
+		Properties.SetValue(Index, Value);
+	};
+
+	SetInt(TEXT("FlightController.Failure.Enabled"), 1);
+	SetInt(TEXT("FlightController.Failure.MinimumHealthyRotorCount"), 3);
+	SetFloat(TEXT("FlightController.Failure.MinimumRollAuthority"), 0.4f);
+	SetFloat(TEXT("FlightController.Failure.ConfirmationTimeSeconds"), 0.25f);
+	SetInt(TEXT("FlightController.Failure.Action"), 2); // Failsafe
+	SetInt(TEXT("FlightController.Failure.DegradedFlightMode"), 2); // Angle
+
+	SetInt(TEXT("Autopilot.EnableCoordinatedTurns"), 0);
+	SetFloat(TEXT("Autopilot.Turn.MaxBankAngleDegrees"), 42.0f);
+	SetInt(TEXT("Autopilot.Path.GuidanceStrategy"), 1); // VectorField
+	SetFloat(TEXT("Autopilot.Path.VectorFieldCrossTrackGain"), 0.02f);
+	SetFloat(TEXT("Autopilot.HoverThrust.MinHoverThrust"), 0.15f);
+
+	const FAircraftSimulationModel ConfiguredModel(Collections, TEXT("Configured"));
+	const FAircraftSimulationLodModel* const LOD = ConfiguredModel.GetLodModel(0);
+	TestNotNull(TEXT("Configured model compiles"), LOD);
+
+	const FAircraftFailurePolicyConfig& Policy = LOD->FlightController.FailurePolicy;
+	TestTrue(TEXT("Failure policy enabled reaches the runtime model"), Policy.bEnabled);
+	TestEqual(TEXT("Minimum healthy rotor count reaches the runtime model"), Policy.MinimumHealthyRotorCount, 3);
+	TestEqual(TEXT("Minimum roll authority reaches the runtime model"), Policy.MinimumRollAuthority, 0.4f);
+	TestEqual(TEXT("Confirmation time reaches the runtime model"), Policy.ConfirmationTimeSeconds, 0.25f);
+	TestEqual(TEXT("Failsafe action reaches the runtime model"), Policy.Action, EAircraftFailurePolicyAction::Failsafe);
+	TestEqual(TEXT("Degraded flight mode reaches the runtime model"), Policy.DegradedFlightMode, uint8(2));
+
+	TestFalse(TEXT("Coordinated-turn disable reaches the runtime model"), LOD->Autopilot.bEnableCoordinatedTurns);
+	TestEqual(TEXT("Bank angle reaches the runtime model"), LOD->Autopilot.MaxBankAngleDegrees, 42.0f);
+	TestEqual(TEXT("Vector-field strategy reaches the runtime model"), LOD->Autopilot.GuidanceStrategy, uint8(1));
+	TestEqual(TEXT("Vector-field gain reaches the runtime model"), LOD->Autopilot.VectorFieldCrossTrackGain, 0.02f);
+	TestEqual(TEXT("Min hover thrust reaches the runtime model"), LOD->Autopilot.MinHoverThrust, 0.15f);
+	return true;
+}
+
 #endif

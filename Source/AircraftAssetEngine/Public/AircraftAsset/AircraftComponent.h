@@ -15,11 +15,14 @@
 
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/AircraftSimulationProxy.h"
+#include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
+#include "AircraftRuntimeInterface/AircraftSimulationLODConsumer.h"
 
 #include "AircraftComponent.generated.h"
 
 class UAircraftAssetBase;
 class UThumbnailInfo;
+class UPhysicsConstraintComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnAircraftSimulationLODChanged,
@@ -38,6 +41,8 @@ UCLASS(ClassGroup = (Aircraft), meta = (BlueprintSpawnableComponent))
 class AIRCRAFTASSETENGINE_API UAircraftComponent
 	: public USkeletalMeshComponent
 	, public IDataflowPhysicsSolverInterface
+	, public IAircraftFlightControllerInterface
+	, public IAircraftSimulationLODConsumer
 {
 	GENERATED_BODY()
 
@@ -137,6 +142,61 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "AircraftComponent|Simulation LOD")
 	FOnAircraftSimulationLODChanged OnSimulationLODChanged;
 
+	/* ------- Autopilot 注入（对齐 NxGame 的 IAutopilotProvider 拉取模式） ------- */
+
+	/** 启用后，TG_PrePhysics 每帧从 AutopilotProvider 拉取 FAutopilotInjection 注入飞控。 */
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Autopilot")
+	void SetUseAutopilotSetpoint(bool bEnabled);
+
+	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Autopilot")
+	bool IsUsingAutopilotSetpoint() const { return bUseAutopilotSetpoint; }
+
+	/** 显式指定 Autopilot 提供者；为 nullptr 时延迟自动发现 Owner 上的 IAutopilotProvider。 */
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Autopilot")
+	void SetAutopilotProvider(UObject* Provider);
+
+	/* ------- 旋翼健康 / 失效策略（NxGame 等价 API） ------- */
+
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
+	bool FailRotor(FName RotorName);
+
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
+	bool RecoverRotor(FName RotorName);
+
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
+	bool SetRotorEffectiveness(FName RotorName, float Effectiveness);
+
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
+	void RecoverAllRotors();
+
+	UFUNCTION(BlueprintPure, Category = "AircraftComponent|RotorHealth")
+	FAircraftControlAuthorityInfo GetControlAuthorityInfo() const;
+
+	UFUNCTION(BlueprintPure, Category = "AircraftComponent|RotorHealth")
+	FAircraftFailurePolicyStatus GetFailurePolicyStatus() const;
+
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
+	void ResetFailurePolicyLatch();
+
+	/* ------- 运动目标发布（约束/运动学后端消费） ------- */
+
+	/** 直接发布一个运动目标（优先级最高），约束/运动学驱动后端立即消费。 */
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
+	void SetAircraftMotionTarget(const FAircraftMotionTarget& InTarget);
+
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
+	void ClearAircraftMotionTarget();
+
+	/** 精确临时驱动请求（对齐 NxGame 的 DriveOverride）。 */
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
+	void SetSimulationDriveOverride(const FAircraftSimulationDriveOverride& InOverride);
+
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
+	void ClearSimulationDriveOverride();
+
+	/** 切换模拟驱动后端（由 LOD 预算/覆盖驱动）；约束模式按需创建物理约束组件。 */
+	void SetSimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics);
+
 	/* ------- 调试绘制 ------- */
 
 	void SetCenterOfMassDebugDrawEnabled(bool bEnable) { bDrawCenterOfMassDebug = bEnable; }
@@ -198,10 +258,55 @@ protected:
 	virtual void PostProcessSimulation(const float DeltaTime) override;
 	//~ End IDataflowPhysicsSolverInterface Interface
 
+	//~ Begin IAircraftFlightControllerInterface Interface（Autopilot 窄契约）
+	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const override;
+	virtual void SetAircraftAutopilotProvider(UObject* Provider) override;
+	virtual uint8 ActivateAircraftAutopilotControl() override;
+	virtual void DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode) override;
+	virtual void GetAircraftAutopilotMotionLimits(
+		float RequestedCruiseSpeedCmPerSec,
+		float& OutMaxSpeedCmPerSec,
+		float& OutMaxAccelerationCmPerSecSq) const override;
+	virtual void GetAircraftAutopilotPhysicalState(
+		float& OutGravityCmPerSecSq,
+		float& OutHoverCollectiveCommand,
+		float& OutVerticalAccelerationMpsSq,
+		float& OutCollectiveThrustCommand) const override;
+	virtual FQuat GetAircraftControlToBodyRotation() const override;
+	virtual bool GetAircraftAutopilotRuntimeConfig(FAircraftAutopilotRuntimeConfig& OutConfig) const override;
+	virtual void SetAircraftPilotInputAxes(float Throttle, float Roll, float Pitch, float Yaw) override;
+	virtual void RequestAircraftArm(bool bArm) override;
+	virtual void RequestAircraftFlightMode(uint8 NewFlightMode) override;
+	//~ End IAircraftFlightControllerInterface Interface
+
+	//~ Begin IAircraftSimulationLODConsumer Interface
+	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
+	virtual bool GetAircraftMotionTarget_Implementation(FAircraftMotionTarget& OutTarget) const override;
+	virtual FAircraftSimulationDriveOverride GetAircraftSimulationDriveOverride_Implementation() const override;
+	//~ End IAircraftSimulationLODConsumer Interface
+
 private:
 	void DrawSimulationDebug() const;
 	void SyncSkeletalMeshComponentFromAsset();
 	FBodyInstance* ResolveChassisBodyInstance() const;
+
+	/* ------- 替代驱动后端（NxGame 对齐，GT 执行） ------- */
+
+	/** 创建 6-DOF 物理约束后端（约束参数取自当前 LOD 的 FlightController 配置）。 */
+	bool CreateSimulationConstraint();
+	void DestroySimulationConstraint();
+	void UpdateConstraintSimulation(float DeltaSeconds);
+	void UpdateKinematicSimulation(float DeltaSeconds);
+	/** 替代驱动下由组件合成估计状态并回写代理输出槽。 */
+	void UpdateAlternativeDriveEstimatedState(float DeltaSeconds);
+
+	/** 汇总运动目标：显式覆盖 > Owner 上 LOD 消费者发布 > ControlTargets 合成。 */
+	bool BuildMotionTarget(FAircraftMotionTarget& OutTarget) const;
+	void RefreshMotionTargetSources();
+
+	/** GT 消费代理回传的失效策略动作。 */
+	void ApplyFailurePolicyActions();
+	void RefreshAutopilotProvider();
 
 	/**
 	 * 把 SimulationModel.Mass / SimulationModel.Aero（FrameConfig 中的质量/质心/惯性/阻尼参数）
@@ -226,7 +331,6 @@ private:
 	void ApplySolverSettingsToBodyInstance();
 	void UpdateSimulationLOD();
 	void ApplySimulationLOD(int32 LodIndex);
-	void TickKinematicDrive(float DeltaTime);
 
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
 	TObjectPtr<UAircraftAssetBase> Asset;
@@ -271,6 +375,43 @@ private:
 
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;
 	FDroneControlTargets ControlTargets;
+
+	/* ------- Autopilot / 替代驱动后端状态 ------- */
+
+	/** 是否从 IAutopilotProvider 拉取注入（灰度开关）。 */
+	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Autopilot")
+	bool bUseAutopilotSetpoint = false;
+
+	/** Autopilot 提供者（实现 IAutopilotProvider 的对象，通常为 UAutopilotComponent）。 */
+	UPROPERTY(Transient)
+	TObjectPtr<UObject> AutopilotProviderObject;
+
+	/** 当前模拟驱动后端（由 LOD/覆盖驱动，未必等于资产 LOD 表中的静态值）。 */
+	EAircraftSimulationDriveMode SimulationDriveMode = EAircraftSimulationDriveMode::FlightController;
+	bool bSimulationPhysicsEnabled = true;
+
+	/** 物理约束后端（PhysicsConstraint 驱动模式按需创建）。 */
+	UPROPERTY(Transient)
+	TObjectPtr<UPhysicsConstraintComponent> SimulationConstraint;
+	/** 约束创建时的组件世界变换（约束空间原点）。 */
+	FTransform SimulationConstraintReference = FTransform::Identity;
+
+	/** 运动目标显式覆盖（最高优先级）。 */
+	FAircraftMotionTarget MotionTargetOverride;
+	/** 精确临时驱动覆盖。 */
+	FAircraftSimulationDriveOverride DriveOverride;
+	/** Owner 上实现 IAircraftSimulationLODConsumer 的其他组件（运动目标来源缓存）。 */
+	TArray<TWeakObjectPtr<UActorComponent>> MotionTargetSources;
+
+	/** 驱动切换时保存/恢复的物理速度（Kinematic↔物理 切换连续性）。 */
+	FVector SavedSimulationLinearVelocityCmPerSec = FVector::ZeroVector;
+	FVector SavedSimulationAngularVelocityRadPerSec = FVector::ZeroVector;
+	/** 替代驱动下的估计速度跟踪。 */
+	FVector PreviousAlternativeVelocityCmPerSec = FVector::ZeroVector;
+
+	/** 最近一次写入 BodyInstance 的阻尼（供 Autopilot 运动限幅查询回读）。 */
+	float AppliedLinearDampingPerSecond = 0.0f;
+	float AppliedAngularDampingPerSecond = 0.0f;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(VisibleAnywhere, Instanced, AdvancedDisplay, Category = AircraftComponent)
