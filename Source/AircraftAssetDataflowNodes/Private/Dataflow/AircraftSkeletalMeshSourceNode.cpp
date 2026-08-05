@@ -11,8 +11,6 @@
 FAircraftSkeletalMeshSourceNode::FAircraftSkeletalMeshSourceNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
 	: FDataflowNode(InParam, InGuid)
 {
-	RegisterInputConnection(&SkeletalMesh);
-	RegisterInputConnection(&PhysicsAsset);
 	RegisterOutputConnection(&Collection);
 }
 
@@ -30,14 +28,14 @@ void FAircraftSkeletalMeshSourceNode::Evaluate(UE::Dataflow::FContext& Context, 
 	FCollectionAircraftFacade CollectionAircraftFacade(AircraftCollection);
 	CollectionAircraftFacade.DefineSchema();
 
-	if (const TObjectPtr<USkeletalMesh> InSkeletalMesh = GetValue(Context, &SkeletalMesh))
+	if (SkeletalMesh)
 	{
-		CollectionAircraftFacade.SetSkeletalMeshSoftObjectPathName(FSoftObjectPath(InSkeletalMesh.Get()));
+		CollectionAircraftFacade.SetSkeletalMeshSoftObjectPathName(FSoftObjectPath(SkeletalMesh.Get()));
 	}
 
-	if (const TObjectPtr<UPhysicsAsset> InPhysicsAsset = GetValue(Context, &PhysicsAsset))
+	if (PhysicsAsset)
 	{
-		CollectionAircraftFacade.SetPhysicsAssetSoftObjectPathName(FSoftObjectPath(InPhysicsAsset.Get()));
+		CollectionAircraftFacade.SetPhysicsAssetSoftObjectPathName(FSoftObjectPath(PhysicsAsset.Get()));
 	}
 
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);

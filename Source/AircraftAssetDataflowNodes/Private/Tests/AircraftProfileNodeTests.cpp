@@ -1,7 +1,13 @@
 #include "Dataflow/AircraftAirscrewProfileNode.h"
-#include "Dataflow/AircraftFlightControllerConfigNodes.h"
+#include "Dataflow/AircraftFlightControlLimitsConfigNode.h"
+#include "Dataflow/AircraftPositionControllerConfigNode.h"
+#include "Dataflow/AircraftAttitudeControllerConfigNode.h"
+#include "Dataflow/AircraftAltitudeControllerConfigNode.h"
+#include "Dataflow/AircraftControlAllocatorConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
+#include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
+#include "Dataflow/AircraftSolverConfigNode.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -17,6 +23,11 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 
 	const FAircraftFrameConfigNode Frame(UE::Dataflow::FNodeParameters{});
 	TestEqual(TEXT("Aircraft frame defaults to +Y forward"), Frame.ForwardAxis, EAircraftForwardAxisNode::PositiveY);
+	TestEqual(TEXT("Frame config exposes only its Collection input"), Frame.GetNumInputs(), 1);
+	const FAircraftSolverConfigNode Solver(UE::Dataflow::FNodeParameters{});
+	TestEqual(TEXT("Solver config exposes only its Collection input"), Solver.GetNumInputs(), 1);
+	const FAircraftSkeletalMeshSourceNode Source(UE::Dataflow::FNodeParameters{});
+	TestEqual(TEXT("Skeletal-mesh source has no configurable input pins"), Source.GetNumInputs(), 0);
 
 	const FAircraftFlightControlLimitsConfig Limits;
 	TestTrue(TEXT("Collective limits are ordered"),

@@ -1,0 +1,57 @@
+#include "Dataflow/AircraftFlightControlLimitsConfigNode.h"
+
+#include "AircraftAsset/AircraftCollection.h"
+#include "AircraftAsset/CollectionAircraftConstFacade.h"
+#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
+
+#include "FlightControllerConfigNodeUtils.h"
+
+#include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftFlightControlLimitsConfigNode)
+
+FAircraftFlightControlLimitsConfigNode::FAircraftFlightControlLimitsConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
+	: FDataflowNode(InParam, InGuid)
+{
+	RegisterInputConnection(&Collection);
+	RegisterOutputConnection(&Collection, &Collection);
+}
+
+void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+{
+	using namespace UE::AircraftLab::AircraftAsset;
+	using namespace UE::AircraftLab::AircraftAsset::Private;
+	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
+	{
+		return;
+	}
+
+	if (Config.MinCollectiveCommand > Config.HoverCollectiveCommand
+		|| Config.HoverCollectiveCommand > Config.MaxCollectiveCommand)
+	{
+		Context.Error(FText::FromString(TEXT("Flight-control collective limits must satisfy Min <= Hover <= Max.")), this);
+	}
+
+	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
+		GetValue<FManagedArrayCollection>(Context, &Collection));
+	FCollectionAircraftFacade Facade(AircraftCollection);
+	Facade.DefineSchema();
+
+#define UE_AIRCRAFT_WRITE_LIMIT(GetterName, Value) if (TArrayView<float> Values = Facade.Get##GetterName(); !Values.IsEmpty()) { Values[0] = Value; }
+	UE_AIRCRAFT_WRITE_LIMIT(FcMaxTiltAngleDegrees, Config.MaxTiltAngleDegrees)
+	UE_AIRCRAFT_WRITE_LIMIT(FcMaxYawRateDegreesPerSec, Config.MaxYawRateDegreesPerSec)
+	UE_AIRCRAFT_WRITE_LIMIT(FcMaxClimbRateCmPerSec, Config.MaxClimbRateCmPerSec)
+	UE_AIRCRAFT_WRITE_LIMIT(FcMaxDescentRateCmPerSec, Config.MaxDescentRateCmPerSec)
+	UE_AIRCRAFT_WRITE_LIMIT(FcMaxHorizontalSpeedCmPerSec, Config.MaxHorizontalSpeedCmPerSec)
+#undef UE_AIRCRAFT_WRITE_LIMIT
+
+	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
+	Properties.DefineSchema();
+	SetConfigProperty(Properties, TEXT("FlightController.MaxRollRateDegreesPerSec"), Config.MaxRollRateDegreesPerSec);
+	SetConfigProperty(Properties, TEXT("FlightController.MaxPitchRateDegreesPerSec"), Config.MaxPitchRateDegreesPerSec);
+	SetConfigProperty(Properties, TEXT("FlightController.MaxHorizontalAccelerationCmPerSecSq"), Config.MaxHorizontalAccelerationCmPerSecSq);
+	SetConfigProperty(Properties, TEXT("FlightController.MaxVerticalAccelerationCmPerSecSq"), Config.MaxVerticalAccelerationCmPerSecSq);
+	SetConfigProperty(Properties, TEXT("FlightController.MinCollectiveCommand"), Config.MinCollectiveCommand);
+	SetConfigProperty(Properties, TEXT("FlightController.HoverCollectiveCommand"), Config.HoverCollectiveCommand);
+	SetConfigProperty(Properties, TEXT("FlightController.MaxCollectiveCommand"), Config.MaxCollectiveCommand);
+
+	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+}

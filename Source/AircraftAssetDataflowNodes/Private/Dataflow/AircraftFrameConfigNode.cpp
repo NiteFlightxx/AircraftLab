@@ -11,16 +11,6 @@ FAircraftFrameConfigNode::FAircraftFrameConfigNode(const UE::Dataflow::FNodePara
 {
 	RegisterInputConnection(&Collection);
 	RegisterOutputConnection(&Collection, &Collection);
-
-	RegisterInputConnection(&RootBone);
-	RegisterInputConnection(&MassKg);
-	RegisterInputConnection(&CenterOfMassOffsetCm);
-	RegisterInputConnection(&InertiaDiagonalKgCmSq);
-	RegisterInputConnection(&LinearDragPerAxis);
-	RegisterInputConnection(&AngularDragPerAxis);
-	RegisterInputConnection(&WindVelocityCmPerSec);
-	RegisterInputConnection(&GroundEffectStartHeightCm);
-	RegisterInputConnection(&GroundEffectStrength);
 }
 
 void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
@@ -41,7 +31,7 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	// Frame 是单元素组，DefineSchema 已 AddElements(1)，直接写入第 0 行。
 	if (TArrayView<FName> RootBoneArr = Facade.GetFrameRootBone(); RootBoneArr.Num() > 0)
 	{
-		RootBoneArr[0] = GetValue(Context, &RootBone);
+		RootBoneArr[0] = RootBone;
 	}
 	if (TArrayView<uint8> FrameTypeArr = Facade.GetFrameType(); FrameTypeArr.Num() > 0)
 	{
@@ -49,35 +39,35 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	}
 	if (TArrayView<float> MassArr = Facade.GetFrameMassKg(); MassArr.Num() > 0)
 	{
-		MassArr[0] = GetValue(Context, &MassKg);
+		MassArr[0] = MassKg;
 	}
 	if (TArrayView<FVector3f> ComArr = Facade.GetFrameCenterOfMassOffsetCm(); ComArr.Num() > 0)
 	{
-		ComArr[0] = GetValue(Context, &CenterOfMassOffsetCm);
+		ComArr[0] = CenterOfMassOffsetCm;
 	}
 	if (TArrayView<FVector3f> InertiaArr = Facade.GetFrameInertiaDiagonalKgCmSq(); InertiaArr.Num() > 0)
 	{
-		InertiaArr[0] = GetValue(Context, &InertiaDiagonalKgCmSq);
+		InertiaArr[0] = InertiaDiagonalKgCmSq;
 	}
 	if (TArrayView<FVector3f> LinDragArr = Facade.GetFrameLinearDragPerAxis(); LinDragArr.Num() > 0)
 	{
-		LinDragArr[0] = GetValue(Context, &LinearDragPerAxis);
+		LinDragArr[0] = LinearDragPerAxis;
 	}
 	if (TArrayView<FVector3f> AngDragArr = Facade.GetFrameAngularDragPerAxis(); AngDragArr.Num() > 0)
 	{
-		AngDragArr[0] = GetValue(Context, &AngularDragPerAxis);
+		AngDragArr[0] = AngularDragPerAxis;
 	}
 	if (TArrayView<FVector3f> WindArr = Facade.GetFrameWindVelocityCmPerSec(); WindArr.Num() > 0)
 	{
-		WindArr[0] = GetValue(Context, &WindVelocityCmPerSec);
+		WindArr[0] = WindVelocityCmPerSec;
 	}
 	if (TArrayView<float> GeStartArr = Facade.GetFrameGroundEffectStartHeightCm(); GeStartArr.Num() > 0)
 	{
-		GeStartArr[0] = GetValue(Context, &GroundEffectStartHeightCm);
+		GeStartArr[0] = GroundEffectStartHeightCm;
 	}
 	if (TArrayView<float> GeStrengthArr = Facade.GetFrameGroundEffectStrength(); GeStrengthArr.Num() > 0)
 	{
-		GeStrengthArr[0] = GetValue(Context, &GroundEffectStrength);
+		GeStrengthArr[0] = GroundEffectStrength;
 	}
 
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);

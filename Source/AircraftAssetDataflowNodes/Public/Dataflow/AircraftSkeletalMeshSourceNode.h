@@ -19,10 +19,10 @@ struct  FAircraftSkeletalMeshSourceNode : public FDataflowNode
 public:
 	FAircraftSkeletalMeshSourceNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Source", meta = (DataflowInput))
+	UPROPERTY(EditAnywhere, Category = "Source")
 	TObjectPtr< USkeletalMesh> SkeletalMesh = nullptr;
 
-	UPROPERTY(EditAnywhere, Category = "Source", meta = (DataflowInput))
+	UPROPERTY(EditAnywhere, Category = "Source")
 	TObjectPtr<UPhysicsAsset> PhysicsAsset = nullptr;
 
 
