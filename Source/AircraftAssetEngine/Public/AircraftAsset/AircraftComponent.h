@@ -197,23 +197,6 @@ public:
 	/** 切换模拟驱动后端（由 LOD 预算/覆盖驱动）；约束模式按需创建物理约束组件。 */
 	void SetSimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics);
 
-	/* ------- 调试绘制 ------- */
-
-	void SetCenterOfMassDebugDrawEnabled(bool bEnable) { bDrawCenterOfMassDebug = bEnable; }
-	bool IsCenterOfMassDebugDrawEnabled() const { return bDrawCenterOfMassDebug; }
-
-	void SetRotorDebugDrawEnabled(bool bEnable) { bDrawRotorDebug = bEnable; }
-	bool IsRotorDebugDrawEnabled() const { return bDrawRotorDebug; }
-
-	void SetThrustVectorDebugDrawEnabled(bool bEnable) { bDrawThrustVectorDebug = bEnable; }
-	bool IsThrustVectorDebugDrawEnabled() const { return bDrawThrustVectorDebug; }
-
-	void SetTorqueDebugDrawEnabled(bool bEnable) { bDrawTorqueDebug = bEnable; }
-	bool IsTorqueDebugDrawEnabled() const { return bDrawTorqueDebug; }
-
-	void SetVelocityDebugDrawEnabled(bool bEnable) { bDrawVelocityDebug = bEnable; }
-	bool IsVelocityDebugDrawEnabled() const { return bDrawVelocityDebug; }
-
 	/* ------- 内部访问 ------- */
 
 	const FAircraftSimulationModel* GetSimulationModel() const;
@@ -286,7 +269,6 @@ protected:
 	//~ End IAircraftSimulationLODConsumer Interface
 
 private:
-	void DrawSimulationDebug() const;
 	void SyncSkeletalMeshComponentFromAsset();
 	FBodyInstance* ResolveChassisBodyInstance() const;
 
@@ -355,21 +337,6 @@ private:
 
 	UPROPERTY(Transient)
 	int32 ForcedSimulationLOD = INDEX_NONE;
-
-	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Debug")
-	bool bDrawCenterOfMassDebug = false;
-
-	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Debug")
-	bool bDrawRotorDebug = true;
-
-	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Debug")
-	bool bDrawThrustVectorDebug = false;
-
-	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Debug")
-	bool bDrawTorqueDebug = false;
-
-	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Debug")
-	bool bDrawVelocityDebug = false;
 
 	/**
 	 * Dataflow 仿真注册入口（对齐 ChaosClothComponent::SimulationAsset）。

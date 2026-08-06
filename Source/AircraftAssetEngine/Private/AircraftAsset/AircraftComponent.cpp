@@ -5,7 +5,6 @@
 #include "AircraftAsset/AircraftComponent.h"
 
 #include "Components/SkeletalMeshComponent.h"
-#include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
@@ -1219,7 +1218,6 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		AircraftSimulationProxy->SetGroundDistance_GameThread(GroundDistanceCm);
 	}
 
-	DrawSimulationDebug();
 }
 
 void UAircraftComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTime)
@@ -1310,92 +1308,6 @@ void UAircraftComponent::PreProcessSimulation(const float /*DeltaTime*/) {}
 void UAircraftComponent::PostProcessSimulation(const float /*DeltaTime*/) {}
 
 /* ============================ Helpers ============================ */
-
-void UAircraftComponent::DrawSimulationDebug() const
-{
-#if ENABLE_DRAW_DEBUG
-	const UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	const FAircraftSimulationLodModel* Model = GetCurrentLodModel();
-	if (!Model)
-	{
-		return;
-	}
-
-	const FTransform XformWorld = GetComponentTransform();
-
-	// 质心：用世界坐标 + Mass.CenterOfMassOffsetCm 偏移；十字 + 球体表示
-	if (bDrawCenterOfMassDebug)
-	{
-		const FVector ComLocal = Model->Mass.CenterOfMassOffsetCm;
-		const FVector ComWorld = XformWorld.TransformPosition(ComLocal);
-		DrawDebugSphere(World, ComWorld, 4.f, 12, FColor::Yellow, /*bPersistent=*/false, /*Lifetime=*/-1.f, 0, 0.5f);
-		DrawDebugCoordinateSystem(World, ComWorld, FRotator::ZeroRotator, 8.f, false, -1.f, 0, 0.5f);
-	}
-
-	FDroneEstimatedState Estimated;
-	GetEstimatedState(Estimated);
-
-	// 速度向量：从机身位置出发的红色箭头
-	if (bDrawVelocityDebug)
-	{
-		const FVector Origin = XformWorld.GetLocation();
-		const FVector VelEnd = Origin + Estimated.State.VelocityCmPerSec * 0.5f; // 0.5x 缩放避免太长
-		DrawDebugDirectionalArrow(World, Origin, VelEnd, 8.f, FColor::Red, false, -1.f, 0, 1.f);
-	}
-
-	// 旋翼 / 推力向量 / 反扭矩
-	if (bDrawRotorDebug || bDrawThrustVectorDebug || bDrawTorqueDebug)
-	{
-		for (const FDroneRotorDefinition& Rotor : Model->Rotors)
-		{
-			if (!Rotor.IsEnabled())
-			{
-				continue;
-			}
-			const FVector LocalPos = Rotor.PositionLocalCm;
-			const FVector WorldPos = XformWorld.TransformPosition(LocalPos);
-			const FVector WorldAxis = XformWorld.GetRotation().RotateVector(Rotor.GetNormalizedThrustAxisLocal());
-
-			if (bDrawRotorDebug)
-			{
-				const FColor RotorColor = (Rotor.SpinDirection == EDroneRotorSpinDirection::Clockwise) ? FColor::Cyan : FColor::Magenta;
-				DrawDebugCircle(
-					World, WorldPos, FMath::Max(Rotor.RadiusCm, 1.f),
-					16, RotorColor, false, -1.f, 0, 0.5f,
-					FVector::CrossProduct(WorldAxis, FVector::ForwardVector).GetSafeNormal(),
-					FVector::CrossProduct(WorldAxis, FVector::RightVector).GetSafeNormal(),
-					/*bDrawAxis=*/false);
-				// 旋向箭头：在旋翼中心绕 WorldAxis 画一段切线
-				const FVector Tangent = FVector::CrossProduct(WorldAxis, FVector::ForwardVector).GetSafeNormal()
-					* (Rotor.GetSpinDirectionSign() * Rotor.RadiusCm);
-				DrawDebugDirectionalArrow(World, WorldPos, WorldPos + Tangent, 4.f, RotorColor, false, -1.f, 0, 0.5f);
-			}
-
-			if (bDrawThrustVectorDebug)
-			{
-				// 推力强度按 MaxThrust 的 0.5 比例缩放成可视化长度（cm）。
-				const float Scale = Rotor.MaxThrustForce * 5.f;
-				DrawDebugDirectionalArrow(World, WorldPos, WorldPos + WorldAxis * Scale, 6.f, FColor::Green, false, -1.f, 0, 1.f);
-			}
-		}
-	}
-
-	// 力矩可视化：在质心绘制 (τx, τy, τz) 三轴箭头（机体系）
-	if (bDrawTorqueDebug)
-	{
-		const FVector ComWorld = XformWorld.TransformPosition(Model->Mass.CenterOfMassOffsetCm);
-		const FQuat WorldQuat = XformWorld.GetRotation();
-		DrawDebugDirectionalArrow(World, ComWorld, ComWorld + WorldQuat.RotateVector(FVector(20.f, 0.f, 0.f)), 4.f, FColor::Red, false, -1.f, 0, 1.f);
-		DrawDebugDirectionalArrow(World, ComWorld, ComWorld + WorldQuat.RotateVector(FVector(0.f, 20.f, 0.f)), 4.f, FColor::Green, false, -1.f, 0, 1.f);
-		DrawDebugDirectionalArrow(World, ComWorld, ComWorld + WorldQuat.RotateVector(FVector(0.f, 0.f, 20.f)), 4.f, FColor::Blue, false, -1.f, 0, 1.f);
-	}
-#endif // ENABLE_DRAW_DEBUG
-}
 
 void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 {
