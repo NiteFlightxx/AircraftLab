@@ -401,10 +401,12 @@ namespace UE::AircraftDataflowAssetEditor::Private
 
 			/* ---------- 连线 ----------
 			 * 主干：Source → Frame → R1..R4 → Limits → Position → Attitude → Altitude → Allocator → Input
-			 * LOD0（飞控驱动）：Input → LOD0
-			 * LOD1（约束驱动）：R4 → Constraint → LOD1
-			 * LOD2（运动学驱动）：R4 → Kinematic → LOD2
-			 * LOD3（无驱动）：R4 → LOD3
+			 * 每级 LOD 只挂它自己的 DriveMode 实际消费的数据（Terminal/Build 均不做静态 schema
+			 * 校验，缺失组运行时走默认值）——按需求分叉的最精简拓扑：
+			 * LOD0（飞控驱动）：Input → LOD0           —— 完整链（电机+旋翼+FC+GameFeel）
+			 * LOD1（约束驱动）：Frame → Constraint → LOD1 —— 只需机架（质量惯性）+ 约束参数
+			 * LOD2（运动学驱动）：Frame → Kinematic → LOD2 —— 只需机架 + 运动学插值参数
+			 * LOD3（无驱动）：Frame → LOD3            —— 只需机架
 			 * 四个 LOD 分别进入 Terminal 的 CollectionLods[0..3]。
 			 */
 			TArray<UDataflowEdNode*> MainChain;
@@ -430,20 +432,20 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					MainChain[ChainIndex + 1], TEXT("Collection"));
 			}
 
-			UDataflowEdNode* const LastRotorEdNode = AirscrewNodes.Last().EdNode;
+			UDataflowEdNode* const FrameEdNode = FrameNode.EdNode;
 
-			// 各 LOD 链的上游出口
+			// 各 LOD 链的上游出口：按需求挂载——每级 LOD 只挂其 DriveMode 消费到的上游数据。
 			UDataflowEdNode* const LodChainUpstreams[] =
 			{
 				InputNode.EdNode,       // LOD0：完整飞控链
-				ConstraintNode.EdNode,  // LOD1：约束驱动配置
-				KinematicNode.EdNode,   // LOD2：运动学驱动配置
-				LastRotorEdNode,        // LOD3：仅机架+旋翼核心
+				ConstraintNode.EdNode,  // LOD1：机架 + 约束驱动配置
+				KinematicNode.EdNode,   // LOD2：机架 + 运动学驱动配置
+				FrameEdNode,            // LOD3：仅机架
 			};
 
-			ConnectTemplateNodes(DataflowAsset, LastRotorEdNode, TEXT("Collection"),
+			ConnectTemplateNodes(DataflowAsset, FrameEdNode, TEXT("Collection"),
 				ConstraintNode.EdNode, TEXT("Collection"));
-			ConnectTemplateNodes(DataflowAsset, LastRotorEdNode, TEXT("Collection"),
+			ConnectTemplateNodes(DataflowAsset, FrameEdNode, TEXT("Collection"),
 				KinematicNode.EdNode, TEXT("Collection"));
 
 			if (const FAircraftAssetTerminalNode* const TerminalDataflowNode =

@@ -35,8 +35,6 @@ namespace UE::AircraftLab::AircraftAsset
 		explicit FConstAircraftCollection(const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection);
 
 		bool IsValid() const;
-		/** 验证可构建、可飞行所需的结构关系；不修改 Collection。 */
-		bool Validate(TArray<FText>& OutErrors) const;
 		int32 GetNumElements(const FName& GroupName) const;
 
 		template<typename T>

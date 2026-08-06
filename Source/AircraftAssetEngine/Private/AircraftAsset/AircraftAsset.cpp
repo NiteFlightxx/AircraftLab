@@ -223,64 +223,14 @@ void UAircraftAsset::Build(
 		}
 	};
 
+	// 不做静态 schema 校验（与 Terminal 节点一致）：
+	// 每级 LOD 需要哪些组由它的 DriveMode 在运行时自行消费，缺失组走默认值
+	// （FAircraftSimulationModel 构建对缺组本就容错）。图的正确性由作者人为控制
+	// —— Frame→Constraint→LOD1 这类"按需求挂载"的精简支路是合法拓扑。
 	bool bHasValidationErrors = InAircraftCollections.IsEmpty();
 	if (InAircraftCollections.IsEmpty())
 	{
 		AppendValidationError(0, LOCTEXT("MissingAircraftCollection", "At least one aircraft collection is required."));
-	}
-	TSet<FString> LodNames;
-	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
-	{
-		const FConstAircraftCollection Collection(InAircraftCollections[LodIndex]);
-		TArray<FText> ValidationErrors;
-		if (!Collection.Validate(ValidationErrors))
-		{
-			bHasValidationErrors = true;
-			for (const FText& ValidationError : ValidationErrors)
-			{
-				AppendValidationError(LodIndex, ValidationError);
-			}
-		}
-
-		const FCollectionAircraftPropertyConstFacade Properties(InAircraftCollections[LodIndex]);
-		const FString LodName = Properties.IsValid()
-			? Properties.GetStringValue(TEXT("SimulationLOD.Name"))
-			: FString();
-		if (!LodName.IsEmpty() && LodNames.Contains(LodName))
-		{
-			bHasValidationErrors = true;
-			AppendValidationError(LodIndex, FText::Format(
-				LOCTEXT("DuplicateSimulationLODName", "Simulation LOD name '{0}' is duplicated."),
-				FText::FromString(LodName)));
-		}
-		LodNames.Add(LodName);
-
-		const USkeletalMesh* const SourceMesh = Cast<USkeletalMesh>(GetFirstPath(Collection.GetSkeletalMeshSoftObjectPathName()).TryLoad());
-		if (SourceMesh)
-		{
-			const TManagedArray<FName>* const RootBones = Collection.GetFrameRootBone();
-			const FName RootBone = RootBones && RootBones->Num() > 0 ? (*RootBones)[0] : NAME_None;
-			if (!RootBone.IsNone() && SourceMesh->GetRefSkeleton().FindBoneIndex(RootBone) == INDEX_NONE)
-			{
-				bHasValidationErrors = true;
-				AppendValidationError(LodIndex, FText::Format(
-					LOCTEXT("MissingRootBone", "Root body bone '{0}' does not exist in the Skeletal Mesh."), FText::FromName(RootBone)));
-			}
-
-			const TManagedArray<FName>* const SocketNames = Collection.GetPropellerSocketName();
-			const TManagedArray<bool>* const UseSocketTransforms = Collection.GetPropellerUseSocketTransform();
-			for (int32 RotorIndex = 0; SocketNames && RotorIndex < SocketNames->Num(); ++RotorIndex)
-			{
-				if (UseSocketTransforms && RotorIndex < UseSocketTransforms->Num() && (*UseSocketTransforms)[RotorIndex]
-					&& !SourceMesh->FindSocket((*SocketNames)[RotorIndex]))
-				{
-					bHasValidationErrors = true;
-					AppendValidationError(LodIndex, FText::Format(
-						LOCTEXT("MissingRotorSocket", "Rotor socket '{0}' does not exist in the Skeletal Mesh."),
-						FText::FromName((*SocketNames)[RotorIndex])));
-				}
-			}
-		}
 	}
 
 	if (bHasValidationErrors)

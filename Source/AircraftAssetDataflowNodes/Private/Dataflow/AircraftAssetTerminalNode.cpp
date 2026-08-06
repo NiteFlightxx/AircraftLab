@@ -230,20 +230,9 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 		return;
 	}
 
-	for (int32 LodIndex = 0; LodIndex < Collections.Num(); ++LodIndex)
-	{
-		const UE::AircraftLab::AircraftAsset::FConstAircraftCollection CollectionFacade(Collections[LodIndex]);
-		TArray<FText> ValidationErrors;
-		if (!CollectionFacade.Validate(ValidationErrors))
-		{
-			for (const FText& ValidationError : ValidationErrors)
-			{
-				Context.Error(FText::Format(
-					NSLOCTEXT("AircraftAssetTerminal", "InvalidLOD", "LOD {0}: {1}"), LodIndex, ValidationError), this);
-			}
-			return;
-		}
-	}
+	// 不做静态 schema 校验：每级 LOD 需要哪些组由该 LOD 的 DriveMode 在运行时自行消费，
+	// 缺失组走默认值（Build/模型层本就容错）；图的正确性由作者人为控制。
+	// 这样 Frame→Constraint→LOD1 这类"按需求挂载"的精简支路拓扑不会被一刀切拒绝。
 
 	const uint32 NewChecksum = ComputeCollectionsChecksum(Collections);
 	if (NewChecksum == CollectionChecksum && !bPropertyStructureChanged
