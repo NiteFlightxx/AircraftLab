@@ -339,21 +339,21 @@ private:
 	int32 ForcedSimulationLOD = INDEX_NONE;
 
 	/**
-	 * Dataflow 仿真注册入口（对齐 ChaosClothComponent::SimulationAsset）。
+	 * 仿真求解用的 Dataflow 图配置（对齐 ChaosClothComponent::SimulationAsset）。
 	 *
-	 * 驱动通路说明（与布料的两条通路等价）：
-	 *   * 本字段 DataflowAsset == nullptr（默认）→ 组件不注册进 UDataflowSimulationManager，
-	 *     仿真完全由组件自身的世界 Tick + AsyncPhysicsTickComponent 物理子步驱动
-	 *     （等价布料 SimulationAsset 为空时的 StartNewParallelSimulation 自治通路）。
-	 *     Dataflow 编辑器 Simulation 视口中的预览组件即走此通路 —— 场景每帧 Tick 世界，
-	 *     物理子步调用 AsyncPhysicsTickComponent 推进飞控串级 PID 与电机动力学。
-	 *   * 若将来引入独立的 Simulation Dataflow Graph（仿真图资产拆分），把该 UDataflow
-	 *     资产赋给 DataflowAsset 并填写 SimulationGroups，UActorComponent::GlobalCreatePhysicsDelegate
-	 *     即自动把组件注册进 UDataflowSimulationManager，由管理器每帧回调
-	 *     PreProcessSimulation → WriteToSimulation → EvaluateSimulationGraph
-	 *     → ReadFromSimulation → PostProcessSimulation。
+	 * 默认填充（OnRegister 惰性进行）：DataflowAsset 为空时自动填入插件共享的程序化
+	 * Simulation 图（UE::AircraftLab::AircraftAsset::GetOrCreateAircraftSimulationGraph，
+	 * 纯代码、无二进制资产依赖，与布料 DF_ClothSolver.uasset 同构的三节点调度链）。
+	 * 填充后 OnCreatePhysicsState 显式 RegisterSimulationInterface 注册进管理器，
+	 * 获得每帧 GT 输入桥接；预览组件/PIE/放置 Pawn 均自动生效，零手动步骤。
+	 *
+	 * 逐实例覆盖：在此指定自定义 Simulation 图资产即可（默认填充只在为空时发生）。
+	 * SimulationGroups 需与图内 GetPhysicsSolvers 节点的过滤组一致（默认 "Aircraft"）。
+	 *
+	 * 推进节奏：控制+力注入始终在 AsyncPhysicsTickComponent（Chaos 物理子步）执行，
+	 * 与碰撞解算同一 pass；图的 AdvancePhysicsSolvers 不承担控制计算。
 	 */
-	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Dataflow Simulation")
+	UPROPERTY(EditAnywhere, Category = AircraftComponent, meta = (EditConditionHides), AdvancedDisplay)
 	FDataflowSimulationAsset SimulationAsset;
 
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;

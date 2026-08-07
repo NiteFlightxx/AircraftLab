@@ -19,8 +19,11 @@
 #include "ThumbnailRendering/ThumbnailManager.h"
 
 #include "Aircraft/FlightControlSolver.h"
+#include "AircraftAsset/AircraftSimulationGraph.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftRuntimeInterface/AutopilotProvider.h"
+#include "Dataflow/DataflowSimulationManager.h"
+#include "Dataflow/DataflowSimulationManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftComponent)
 
@@ -1118,6 +1121,17 @@ void UAircraftComponent::OnRegister()
 	// SkeletalMesh 才能正确初始化 BoneSpaceTransforms。
 	SyncSkeletalMeshComponentFromAsset();
 	Super::OnRegister();
+
+	// 默认 Simulation 图惰性填充（纯代码，无二进制资产依赖；对齐布料 DF_ClothSolver +
+	// BP_ClothPreview 类默认值的等价物）。仅当用户未逐实例指定自定义图时发生 ——
+	// 填充后 OnCreatePhysicsState 的 RegisterSimulationInterface 即生效，
+	// 预览组件/PIE/放置 Pawn 全部自动注册进管理器。
+	if (!SimulationAsset.DataflowAsset)
+	{
+		SimulationAsset.DataflowAsset = UE::AircraftLab::AircraftAsset::GetOrCreateAircraftSimulationGraph();
+		SimulationAsset.SimulationGroups = { UE::AircraftLab::AircraftAsset::AircraftSimulationGroupName };
+	}
+
 	CurrentSimulationLOD = INDEX_NONE;
 	RefreshMotionTargetSources();
 	UpdateSimulationLOD();
@@ -1132,8 +1146,8 @@ void UAircraftComponent::OnCreatePhysicsState()
 {
 	Super::OnCreatePhysicsState();
 
-	// 物理状态刚创建——立刻把 FrameConfig 中的质量/质心/惯性写入 BodyInstance。
-	// 这是 ChaosCloth 风格在 GT 端"创建物理时同步资产参数到 Body"的位置。
+	UE::Dataflow::RegisterSimulationInterface(this);
+
 	ApplyMassPropertiesToBodyInstance();
 	ApplySolverSettingsToBodyInstance();
 
@@ -1145,6 +1159,9 @@ void UAircraftComponent::OnCreatePhysicsState()
 
 void UAircraftComponent::OnDestroyPhysicsState()
 {
+	// 对称反注册（对齐引擎 GlobalDestroyPhysicsDelegate 的调用点）。
+	UE::Dataflow::UnregisterSimulationInterface(this);
+
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->SetAircraftBodyInstance(nullptr);
@@ -1225,10 +1242,10 @@ void UAircraftComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTim
 	Super::AsyncPhysicsTickComponent(DeltaTime, SimTime);
 
 	// Stop/Pause 路径：完全对齐 ChaosClothComponent::OnTickComponent 的语义。
-	//   * IsSimulationSuspended() 为 true 时（包含 bSuspendSimulation 或 bEnableSimulation==false 任一）
-	//     直接跳过物理子步控制环路；电机不再加力，飞机会平滑下落（这是 Pause 的预期行为）。
-	//   * IsSimulationEnabled() 为 false 时（Stop 状态）也走这条路径短路。
-	if (IsSimulationSuspended() || !IsSimulationEnabled())
+	// IsSimulationSuspended() = bSuspendSimulation || !IsSimulationEnabled()，
+	// 已覆盖"临时挂起"与"总开关关闭/代理未建"两种状态 —— 跳过物理子步控制环路，
+	// 电机不再加力，飞机会平滑下落（这是 Pause 的预期行为）。
+	if (IsSimulationSuspended())
 	{
 		return;
 	}
@@ -1289,9 +1306,8 @@ void UAircraftComponent::ResetSimulationProxy()
 
 void UAircraftComponent::WriteToSimulation(const float /*DeltaTime*/, const bool /*bAsyncTask*/)
 {
-	// 最小实现：把 GT 侧最新控制目标推入代理双缓冲。
-	// 注：主数据通路是 AsyncPhysicsTickComponent（摇杆/注入在 TG_PrePhysics 已推送），
-	// 本路径仅保证 DataflowSimulation 驱动的调度流下目标不丢帧。
+	// 管理器 enabled 时每帧调用：把 GT 侧最新控制目标推入代理双缓冲
+	// （主输入通路仍是 TG_PrePhysics 推送，本路径仅保证管理器调度流下目标不丢帧）。
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->SetTargets_GameThread(ControlTargets);

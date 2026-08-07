@@ -316,6 +316,17 @@ public:
 	const UAircraftComponent& GetAircraftComponent() const { return AircraftComponent; }
 
 protected:
+	/**
+	 * FDataflowPhysicsSolverProxy::AdvanceSolverDatas —— 刻意保持空实现。
+	 *
+	 * Simulation 图每帧经 AdvancePhysicsSolvers 节点回调本函数，但无人机与布料的分工不同：
+	 * 布料把整求解器（含碰撞约束）放在代理内、一帧一次自洽推进；
+	 * 无人机机体是世界 Chaos 刚体，由世界物理场景积分并处理场景碰撞 ——
+	 * 控制力必须与积分/碰撞同一 pass 注入，因此推进保留在 AsyncPhysicsTickComponent
+	 * （物理子步、恒定 Δt）调用 TickPhysicsThread。
+	 * Simulation 图在此仅作"注册/调度壳"：让组件注册进 UDataflowSimulationManager，
+	 * 获得编辑器 Simulation 场景的 Play/Pause 门控与每帧 GT 桥接。
+	 */
 	virtual void AdvanceSolverDatas(const float DeltaTime) override
 	{
 		(void)DeltaTime;
@@ -360,8 +371,8 @@ private:
 	FDroneEstimatedState LatestEstimated;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftFailurePolicyStatus LatestPolicyStatus;
-	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EDroneArmState::Disarmed) };
-	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EDroneFlightMode::Angle) };
+	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EDroneArmState::Armed) };
+	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EDroneFlightMode::PositionHold) };
 	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
 	std::atomic<uint8> PendingFailureAction{ static_cast<uint8>(EAircraftFailurePolicyAction::WarningOnly) };
 	std::atomic<bool> bFailureActionPending{ false };

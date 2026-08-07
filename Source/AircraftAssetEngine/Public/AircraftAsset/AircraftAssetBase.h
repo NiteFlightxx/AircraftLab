@@ -1,5 +1,4 @@
-// 对齐 ChaosClothAssetEngine/Public/ChaosClothAsset/ClothAssetBase.h
-//
+
 // 职责：UAircraftAssetBase 是 USkinnedAsset 的抽象派生，承载与 Dataflow 的对接，
 // 不直接持有具体的多旋翼运行时数据。具体资产（UAircraftAsset）由 UAircraftComponent 引用。
 
