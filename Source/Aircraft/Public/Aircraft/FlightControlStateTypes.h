@@ -132,7 +132,6 @@ struct FAircraftHoldTargets
 struct FAircraftModeCapabilities
 {
 	bool CanHoldAltitude = false;
-	bool CanHoldPosition = false;
 	bool CanHoldYaw = false;
 	bool CanUseVelocityControl = false;
 	bool CanUsePositionControl = false;
@@ -141,7 +140,6 @@ struct FAircraftModeCapabilities
 	void Reset()
 	{
 		CanHoldAltitude = false;
-		CanHoldPosition = false;
 		CanHoldYaw = false;
 		CanUseVelocityControl = false;
 		CanUsePositionControl = false;

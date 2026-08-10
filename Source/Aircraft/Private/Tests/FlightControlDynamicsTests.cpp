@@ -360,4 +360,31 @@ bool FAircraftManualReleaseBrakesBeforeHoldingTest::RunTest(const FString& Param
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAuthoritativePidLimitsTest,
+	"AircraftLab.Control.Pid.AuthoritativeLimits",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAuthoritativePidLimitsTest::RunTest(const FString& Parameters)
+{
+	const FAircraftFlightControllerRuntimeConfig Config;
+	const FAircraftPidGains Position = Config.GetPositionPidGains(0);
+	const FAircraftPidGains Velocity = Config.GetVelocityPidGains(0);
+	const FAircraftPidGains RollRate = Config.GetRatePidGains(0);
+	const FAircraftPidGains YawRate = Config.GetRatePidGains(2);
+	const FAircraftPidGains Altitude = Config.GetAltitudePidGains();
+	const FAircraftPidGains VerticalVelocity = Config.GetVerticalVelocityPidGains();
+
+	TestEqual(TEXT("Position output uses the authoritative speed limit"), Position.OutputLimit, 800.0f);
+	TestEqual(TEXT("Velocity integral uses the authoritative limit"), Velocity.IntegralLimit, 3000.0f);
+	TestEqual(TEXT("Velocity output uses the authoritative acceleration limit"), Velocity.OutputLimit, 600.0f);
+	TestEqual(TEXT("Roll rate integral uses the authoritative limit"), RollRate.IntegralLimit, 120.0f);
+	TestEqual(TEXT("Roll rate output uses the authoritative limit"), RollRate.OutputLimit, 0.35f);
+	TestEqual(TEXT("Yaw rate output uses the authoritative limit"), YawRate.OutputLimit, 0.20f);
+	TestEqual(TEXT("Altitude output uses the authoritative climb-rate limit"), Altitude.OutputLimit, 300.0f);
+	TestEqual(TEXT("Vertical velocity integral uses the authoritative limit"), VerticalVelocity.IntegralLimit, 2500.0f);
+	TestEqual(TEXT("Vertical velocity output uses the authoritative collective limit"), VerticalVelocity.OutputLimit, 0.30f);
+	return true;
+}
+
 #endif

@@ -75,21 +75,23 @@ void UAircraftInputComponent::BindInput(UInputComponent* PlayerInputComponent)
 	{
 		EnhancedInput->BindAction(IA_Move, ETriggerEvent::Triggered, this, &UAircraftInputComponent::InputMove);
 		EnhancedInput->BindAction(IA_Move, ETriggerEvent::Completed, this, &UAircraftInputComponent::ResetMove);
+		EnhancedInput->BindAction(IA_Move, ETriggerEvent::Canceled, this, &UAircraftInputComponent::ResetMove);
 	}
 	if (IA_Throttle)
 	{
 		EnhancedInput->BindAction(IA_Throttle, ETriggerEvent::Triggered, this, &UAircraftInputComponent::InputThrottle);
 		EnhancedInput->BindAction(IA_Throttle, ETriggerEvent::Completed, this, &UAircraftInputComponent::ResetThrottle);
+		EnhancedInput->BindAction(IA_Throttle, ETriggerEvent::Canceled, this, &UAircraftInputComponent::ResetThrottle);
 	}
 	if (IA_Turn)
 	{
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Triggered, this, &UAircraftInputComponent::InputTurn);
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Completed, this, &UAircraftInputComponent::ResetTurn);
+		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Canceled, this, &UAircraftInputComponent::ResetTurn);
 	}
 	if (IA_Arm)
 	{
 		EnhancedInput->BindAction(IA_Arm, ETriggerEvent::Started, this, &UAircraftInputComponent::InputArm);
-		EnhancedInput->BindAction(IA_Arm, ETriggerEvent::Completed, this, &UAircraftInputComponent::InputDisarm);
 	}
 	if (IA_EmergencyStop)
 	{
@@ -158,16 +160,6 @@ void UAircraftInputComponent::InputArm(const FInputActionValue& Value)
 		Cast<IAircraftFlightControllerInterface>(FlightControllerComponent.Get()))
 	{
 		FC->RequestAircraftArm(true);
-	}
-}
-
-void UAircraftInputComponent::InputDisarm(const FInputActionValue& Value)
-{
-	ResolveFlightController();
-	if (IAircraftFlightControllerInterface* const FC =
-		Cast<IAircraftFlightControllerInterface>(FlightControllerComponent.Get()))
-	{
-		FC->RequestAircraftArm(false);
 	}
 }
 

@@ -47,6 +47,8 @@ void FAircraftAttitudeControllerConfigNode::Evaluate(UE::Dataflow::FContext& Con
 
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
 	Properties.DefineSchema();
+	SetConfigProperty(Properties, TEXT("FlightController.Attitude.RateIntegralLimit"), Config.RateIntegralLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Attitude.RateOutputLimit"), Config.RateOutputLimit);
 	SetConfigProperty(Properties, TEXT("FlightController.Attitude.RateDerivativeCutoffHz"), Config.RateDerivativeCutoffHz);
 	SetConfigProperty(Properties, TEXT("FlightController.Attitude.AngularDampingFeedForwardScale"), Config.AngularDampingFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("FlightController.Attitude.EnableReferenceModel"), Config.bEnableAttitudeReferenceModel);

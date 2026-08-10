@@ -83,7 +83,7 @@ void FAircraftSimulationProxy::PostConstructor()
 	PendingDriveMode = AircraftComponent.GetCurrentSimulationDriveMode();
 	bPendingConfiguration = true;
 	PendingRotorHealthOps.Reset();
-	bArmRequest = false;
+	bArmRequest = true;
 	bEmergencyStop = false;
 	bRecoverAllRotors = false;
 }
@@ -121,7 +121,7 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	bFailureActionPending.store(false, std::memory_order_relaxed);
 	bPendingControllerReset.store(false, std::memory_order_relaxed);
 
-	CurrentArmState.store(static_cast<uint8>(EAircraftArmState::Disarmed), std::memory_order_relaxed);
+	CurrentArmState.store(static_cast<uint8>(EAircraftArmState::Armed), std::memory_order_relaxed);
 }
 
 void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
@@ -264,7 +264,11 @@ void FAircraftSimulationProxy::SetSimulationState_GameThread(bool bEnabled, bool
 
 void FAircraftSimulationProxy::SetFlightMode_GameThread(EAircraftFlightMode InMode)
 {
-	PendingFlightMode.store(static_cast<uint8>(InMode), std::memory_order_relaxed);
+	const uint8 NewMode = static_cast<uint8>(InMode);
+	if (PendingFlightMode.exchange(NewMode, std::memory_order_relaxed) != NewMode)
+	{
+		bPendingControllerReset.store(true, std::memory_order_release);
+	}
 }
 
 void FAircraftSimulationProxy::SetArmRequest_GameThread(bool bArm)
@@ -398,11 +402,15 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 
 	if (bPendingControllerReset.exchange(false, std::memory_order_acq_rel))
 	{
-		ControlSolver.PidStates.Position.Reset();
-		ControlSolver.PidStates.Velocity.Reset();
-		ControlSolver.PidStates.Altitude.Reset();
-		ControlSolver.PidStates.VerticalVelocity.Reset();
-		ControlSolver.bVerticalVelocitySetpointInitialized = false;
+		ControlSolver.Reset();
+		Runtime.HoldTargets.ResetHoldFlags();
+		Runtime.bHasPreviousLinearVelocity = false;
+		Runtime.bHasPreviousAngularVelocity = false;
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			ControlAllocator.bSaturatedPositive[Axis] = false;
+			ControlAllocator.bSaturatedNegative[Axis] = false;
+		}
 	}
 
 	// 仅 FlightController 驱动模式在 PT 跑控制循环；
@@ -577,16 +585,18 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	FVector AngularVelWorldRadPerSec = FVector::ZeroVector;
 
 	const FPhysicsActorHandle ActorHandle = Body->GetPhysicsActorHandle();
-	if (ActorHandle)
+	if (!ActorHandle)
 	{
-		Chaos::FRigidBodyHandle_Internal* const Handle = ActorHandle->GetPhysicsThreadAPI();
-		if (Handle)
-		{
-			WorldXform = FTransform(Handle->R(), Handle->X());
-			LinearVelCmPerSec = Handle->V();
-			AngularVelWorldRadPerSec = Handle->W();
-		}
+		return;
 	}
+	Chaos::FRigidBodyHandle_Internal* const Handle = ActorHandle->GetPhysicsThreadAPI();
+	if (!Handle)
+	{
+		return;
+	}
+	WorldXform = FTransform(Handle->R(), Handle->X());
+	LinearVelCmPerSec = Handle->V();
+	AngularVelWorldRadPerSec = Handle->W();
 
 	const FQuat WorldQuat = WorldXform.GetRotation();
 	const FVector WorldPosCm = WorldXform.GetLocation();
@@ -602,13 +612,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	PhysicsCache.LinearVelocityCmPerSec = LinearVelCmPerSec;
 	PhysicsCache.AngularVelocityBodyDegPerSec = AngularVelControllerDegPerSec;
 	PhysicsCache.GravityMagnitudeCmPerSecSq = GravityMagnitudeCmPerSecSq.load(std::memory_order_relaxed);
-	PhysicsCache.MassKg = ActiveLodModel->Mass.MassKg;
-	PhysicsCache.InertiaDiagonalKgM2 = ActiveLodModel->Mass.InertiaDiagonalKgCmSq * 1.e-4f;
+	PhysicsCache.MassKg = static_cast<float>(Handle->M());
+	PhysicsCache.InertiaDiagonalKgM2 = Config.BodyAxisMagnitudesToControl(
+		FVector(Handle->I()) * 1.e-4f);
 	PhysicsCache.LinearDampingPerSecond = ActiveLodModel->Aero.LinearDragPerAxis
 		/ FMath::Max(PhysicsCache.MassKg, UE_SMALL_NUMBER);
 	PhysicsCache.AngularDampingPerSecond = ActiveLodModel->Aero.AngularDragPerAxis
 		/ PhysicsCache.InertiaDiagonalKgM2.ComponentMax(FVector(UE_SMALL_NUMBER));
-	PhysicsCache.CenterOfMassOffsetBodyCm = ActiveLodModel->Mass.CenterOfMassOffsetCm;
+	PhysicsCache.CenterOfMassOffsetBodyCm = FVector(Handle->CenterOfMass());
 
 	// 刷新估计状态（控制循环读取 Runtime.EstimatedState）
 	{
@@ -687,11 +698,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		ManualCommand.DesiredVelocityCmPerSec = HeadingRotation.RotateVector(ControlFrameVelocity);
 
 		// 垂直：居中油门杆 → 爬升/下降率
-		if (FMath::Abs(Pilot.Throttle) >= Config.VerticalHoldStickDeadband)
+		if (FMath::Abs(Pilot.Throttle) > Config.VerticalHoldStickDeadband)
 		{
-			ManualCommand.DesiredVelocityCmPerSec.Z = Pilot.Throttle >= 0.0f
-				? Pilot.Throttle * Config.MaxClimbRateCmPerSec
-				: Pilot.Throttle * Config.MaxDescentRateCmPerSec;
+			const float Magnitude = (FMath::Abs(Pilot.Throttle) - Config.VerticalHoldStickDeadband)
+				/ FMath::Max(1.0f - Config.VerticalHoldStickDeadband, UE_SMALL_NUMBER);
+			const float SignedInput = Magnitude * FMath::Sign(Pilot.Throttle);
+			ManualCommand.DesiredVelocityCmPerSec.Z = SignedInput >= 0.0f
+				? SignedInput * Config.MaxClimbRateCmPerSec
+				: SignedInput * Config.MaxDescentRateCmPerSec;
 		}
 
 		// 偏航角速率
@@ -702,14 +716,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 
 		// 姿态直通（Angle 模式摇杆直接映射倾角目标）
 		ManualCommand.DesiredAttitudeDegrees = FRotator(
-			Pilot.Pitch * Config.MaxTiltAngleDegrees,
+			-Pilot.Pitch * Config.MaxTiltAngleDegrees,
 			CurrentHeadingDegrees,
 			Pilot.Roll * Config.MaxTiltAngleDegrees);
 
 		// 角速率直通（Acro/Manual）
 		ManualCommand.DesiredBodyRatesDegPerSec = FVector(
 			Pilot.Roll * Config.MaxRollRateDegreesPerSec,
-			Pilot.Pitch * Config.MaxPitchRateDegreesPerSec,
+			-Pilot.Pitch * Config.MaxPitchRateDegreesPerSec,
 			Pilot.Yaw * Config.MaxYawRateDegreesPerSec);
 
 		// BP 直接设定值覆盖（SetControlTargets 的 Attitude/Rate 通道）

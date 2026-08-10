@@ -15,9 +15,13 @@ struct FAircraftAltitudeControllerConfig
 	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeKp = 1.20f;
 	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeKi = 0.0f;
 	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeKd = 0.20f;
+	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeIntegralLimit = 0.0f;
+	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeOutputLimit = 300.0f;
 	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityKp = 0.0015f;
 	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityKi = 0.00020f;
 	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityKd = 0.00050f;
+	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityIntegralLimit = 2500.0f;
+	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityOutputLimit = 0.30f;
 	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityDerivativeCutoffHz = 10.0f;
 	UPROPERTY(EditAnywhere, Category = "Damping Feed Forward", meta = (ClampMin = "0.0")) float VerticalDampingFeedForwardScale = 1.0f;
 };

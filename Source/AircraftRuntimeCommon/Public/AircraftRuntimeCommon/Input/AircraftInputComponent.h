@@ -79,7 +79,6 @@ private:
 	void ResetThrottle(const FInputActionValue& Value);
 	void ResetTurn(const FInputActionValue& Value);
 	void InputArm(const FInputActionValue& Value);
-	void InputDisarm(const FInputActionValue& Value);
 	void InputEmergencyStop(const FInputActionValue& Value);
 
 	void PushPilotInput() const;

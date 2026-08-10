@@ -33,12 +33,27 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Collective limits are ordered"),
 		Limits.MinCollectiveCommand <= Limits.HoverCollectiveCommand
 		&& Limits.HoverCollectiveCommand <= Limits.MaxCollectiveCommand);
+	const FAircraftPositionControllerConfig Position;
 	TestTrue(TEXT("Position controller has positive velocity derivative cutoff"),
-		FAircraftPositionControllerConfig().VelocityDerivativeCutoffHz > 0.0f);
+		Position.VelocityDerivativeCutoffHz > 0.0f);
+	TestEqual(TEXT("Position controller preserves authoritative velocity integral limit"),
+		Position.VelocityIntegralLimit.X, 3000.0f);
+	TestEqual(TEXT("Position controller preserves authoritative acceleration output limit"),
+		Position.VelocityOutputLimit.X, 600.0f);
+	const FAircraftAttitudeControllerConfig Attitude;
 	TestTrue(TEXT("Attitude controller has a positive reference-model frequency"),
-		FAircraftAttitudeControllerConfig().ReferenceModelNaturalFrequency > 0.0f);
+		Attitude.ReferenceModelNaturalFrequency > 0.0f);
+	TestEqual(TEXT("Attitude controller preserves authoritative roll-rate output limit"),
+		Attitude.RateOutputLimit.X, 0.35f);
+	TestEqual(TEXT("Attitude controller preserves authoritative yaw-rate output limit"),
+		Attitude.RateOutputLimit.Z, 0.20f);
+	const FAircraftAltitudeControllerConfig Altitude;
 	TestTrue(TEXT("Altitude controller has a positive vertical-velocity derivative cutoff"),
-		FAircraftAltitudeControllerConfig().VerticalVelocityDerivativeCutoffHz > 0.0f);
+		Altitude.VerticalVelocityDerivativeCutoffHz > 0.0f);
+	TestEqual(TEXT("Altitude controller preserves authoritative vertical integral limit"),
+		Altitude.VerticalVelocityIntegralLimit, 2500.0f);
+	TestEqual(TEXT("Altitude controller preserves authoritative collective output limit"),
+		Altitude.VerticalVelocityOutputLimit, 0.30f);
 	TestTrue(TEXT("Control allocator has non-negative damping"),
 		FAircraftControlAllocatorConfig().DampedPseudoInverseLambda >= 0.0f);
 

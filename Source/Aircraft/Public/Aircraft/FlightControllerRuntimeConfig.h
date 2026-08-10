@@ -25,20 +25,30 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	FVector3f PositionKp = FVector3f(0.40f, 0.40f, 0.0f);
 	FVector3f PositionKi = FVector3f::ZeroVector;
 	FVector3f PositionKd = FVector3f(0.30f, 0.30f, 0.0f);
+	FVector3f PositionIntegralLimit = FVector3f::ZeroVector;
+	FVector3f PositionOutputLimit = FVector3f(800.0f, 800.0f, 0.0f);
 	FVector3f VelocityKp = FVector3f(1.50f, 1.50f, 0.0f);
 	FVector3f VelocityKi = FVector3f(0.01f, 0.01f, 0.0f);
 	FVector3f VelocityKd = FVector3f(0.60f, 0.60f, 0.0f);
+	FVector3f VelocityIntegralLimit = FVector3f(3000.0f, 3000.0f, 0.0f);
+	FVector3f VelocityOutputLimit = FVector3f(600.0f, 600.0f, 0.0f);
 	FVector3f AttitudeGains = FVector3f(4.5f, 4.5f, 3.0f);
 	FVector3f RateKp = FVector3f(0.0080f, 0.0080f, 0.0012f);
 	FVector3f RateKi = FVector3f(0.0010f, 0.0010f, 0.00015f);
 	FVector3f RateKd = FVector3f(0.00040f, 0.00040f, 0.00008f);
+	FVector3f RateIntegralLimit = FVector3f(120.0f, 120.0f, 120.0f);
+	FVector3f RateOutputLimit = FVector3f(0.35f, 0.35f, 0.20f);
 
 	float AltitudeKp = 1.20f;
 	float AltitudeKi = 0.0f;
 	float AltitudeKd = 0.20f;
+	float AltitudeIntegralLimit = 0.0f;
+	float AltitudeOutputLimit = 300.0f;
 	float VerticalVelocityKp = 0.0015f;
 	float VerticalVelocityKi = 0.00020f;
 	float VerticalVelocityKd = 0.00050f;
+	float VerticalVelocityIntegralLimit = 2500.0f;
+	float VerticalVelocityOutputLimit = 0.30f;
 
 	float MaxTiltAngleDegrees = 25.0f;
 	float MaxYawRateDegreesPerSec = 90.0f;
@@ -92,20 +102,23 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 
 	FAircraftPidGains GetPositionPidGains(int32 Axis) const
 	{
-		FAircraftPidGains G(PositionKp[Axis], PositionKi[Axis], PositionKd[Axis], 0.0f, 0.0f);
+		FAircraftPidGains G(PositionKp[Axis], PositionKi[Axis], PositionKd[Axis],
+			PositionIntegralLimit[Axis], PositionOutputLimit[Axis]);
 		return G;
 	}
 
 	FAircraftPidGains GetVelocityPidGains(int32 Axis) const
 	{
-		FAircraftPidGains G(VelocityKp[Axis], VelocityKi[Axis], VelocityKd[Axis], 0.0f, 0.0f);
+		FAircraftPidGains G(VelocityKp[Axis], VelocityKi[Axis], VelocityKd[Axis],
+			VelocityIntegralLimit[Axis], VelocityOutputLimit[Axis]);
 		G.DerivativeCutoffHz = VelocityDerivativeCutoffHz;
 		return G;
 	}
 
 	FAircraftPidGains GetRatePidGains(int32 Axis) const
 	{
-		FAircraftPidGains G(RateKp[Axis], RateKi[Axis], RateKd[Axis], 0.0f, 0.0f);
+		FAircraftPidGains G(RateKp[Axis], RateKi[Axis], RateKd[Axis],
+			RateIntegralLimit[Axis], RateOutputLimit[Axis]);
 		G.Kff = 0.0f; // 角速率环为纯反馈；前馈由独立阻尼模型经外部 Kff=1 通道注入
 		G.DerivativeCutoffHz = RateDerivativeCutoffHz[Axis];
 		return G;
@@ -113,12 +126,14 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 
 	FAircraftPidGains GetAltitudePidGains() const
 	{
-		return FAircraftPidGains(AltitudeKp, AltitudeKi, AltitudeKd, 0.0f, 0.0f);
+		return FAircraftPidGains(AltitudeKp, AltitudeKi, AltitudeKd,
+			AltitudeIntegralLimit, AltitudeOutputLimit);
 	}
 
 	FAircraftPidGains GetVerticalVelocityPidGains() const
 	{
-		FAircraftPidGains G(VerticalVelocityKp, VerticalVelocityKi, VerticalVelocityKd, 0.0f, 0.0f);
+		FAircraftPidGains G(VerticalVelocityKp, VerticalVelocityKi, VerticalVelocityKd,
+			VerticalVelocityIntegralLimit, VerticalVelocityOutputLimit);
 		G.Kff = 0.0f;
 		G.DerivativeCutoffHz = VerticalVelocityDerivativeCutoffHz;
 		return G;
@@ -174,6 +189,16 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 		return GetForwardAxisBody() * ControlVector.X
 			+ GetRightAxisBody() * ControlVector.Y
 			+ FVector::UpVector * ControlVector.Z;
+	}
+
+	FVector BodyAxisMagnitudesToControl(const FVector& BodyAxisMagnitudes) const
+	{
+		const FVector ForwardAbs = GetForwardAxisBody().GetAbs();
+		const FVector RightAbs = GetRightAxisBody().GetAbs();
+		return FVector(
+			FVector::DotProduct(BodyAxisMagnitudes, ForwardAbs),
+			FVector::DotProduct(BodyAxisMagnitudes, RightAbs),
+			BodyAxisMagnitudes.Z);
 	}
 
 	/** 物理机体系角向量 -> 飞控 Roll/Pitch/Yaw 符号约定。 */

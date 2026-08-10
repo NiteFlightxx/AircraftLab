@@ -140,12 +140,24 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.MaxCollectiveCommand"), OutModel.FlightController.MaxCollectiveCommand);
 			OutModel.FlightController.VelocityDerivativeCutoffHz = Properties.GetValue<float>(
 				TEXT("FlightController.Position.VelocityDerivativeCutoffHz"), OutModel.FlightController.VelocityDerivativeCutoffHz);
+			OutModel.FlightController.PositionIntegralLimit = Properties.GetValue<FVector3f>(
+				TEXT("FlightController.Position.PositionIntegralLimit"), OutModel.FlightController.PositionIntegralLimit);
+			OutModel.FlightController.PositionOutputLimit = Properties.GetValue<FVector3f>(
+				TEXT("FlightController.Position.PositionOutputLimit"), OutModel.FlightController.PositionOutputLimit);
+			OutModel.FlightController.VelocityIntegralLimit = Properties.GetValue<FVector3f>(
+				TEXT("FlightController.Position.VelocityIntegralLimit"), OutModel.FlightController.VelocityIntegralLimit);
+			OutModel.FlightController.VelocityOutputLimit = Properties.GetValue<FVector3f>(
+				TEXT("FlightController.Position.VelocityOutputLimit"), OutModel.FlightController.VelocityOutputLimit);
 			OutModel.FlightController.LinearDampingFeedForwardScale = Properties.GetValue<float>(
 				TEXT("FlightController.Position.LinearDampingFeedForwardScale"), OutModel.FlightController.LinearDampingFeedForwardScale);
 			OutModel.FlightController.DampingAccelerationReserveFraction = Properties.GetValue<float>(
 				TEXT("FlightController.Position.DampingAccelerationReserveFraction"), OutModel.FlightController.DampingAccelerationReserveFraction);
 			OutModel.FlightController.RateDerivativeCutoffHz = Properties.GetValue<FVector3f>(
 				TEXT("FlightController.Attitude.RateDerivativeCutoffHz"), OutModel.FlightController.RateDerivativeCutoffHz);
+			OutModel.FlightController.RateIntegralLimit = Properties.GetValue<FVector3f>(
+				TEXT("FlightController.Attitude.RateIntegralLimit"), OutModel.FlightController.RateIntegralLimit);
+			OutModel.FlightController.RateOutputLimit = Properties.GetValue<FVector3f>(
+				TEXT("FlightController.Attitude.RateOutputLimit"), OutModel.FlightController.RateOutputLimit);
 			OutModel.FlightController.AngularDampingFeedForwardScale = Properties.GetValue<float>(
 				TEXT("FlightController.Attitude.AngularDampingFeedForwardScale"), OutModel.FlightController.AngularDampingFeedForwardScale);
 			OutModel.FlightController.bEnableAttitudeReferenceModel = Properties.GetValue<bool>(
@@ -156,6 +168,14 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.Attitude.ReferenceModelRateFeedForwardLimit"), OutModel.FlightController.ReferenceModelRateFeedForwardLimitDegPerSec);
 			OutModel.FlightController.VerticalVelocityDerivativeCutoffHz = Properties.GetValue<float>(
 				TEXT("FlightController.Altitude.VerticalVelocityDerivativeCutoffHz"), OutModel.FlightController.VerticalVelocityDerivativeCutoffHz);
+			OutModel.FlightController.AltitudeIntegralLimit = Properties.GetValue<float>(
+				TEXT("FlightController.Altitude.AltitudeIntegralLimit"), OutModel.FlightController.AltitudeIntegralLimit);
+			OutModel.FlightController.AltitudeOutputLimit = Properties.GetValue<float>(
+				TEXT("FlightController.Altitude.AltitudeOutputLimit"), OutModel.FlightController.AltitudeOutputLimit);
+			OutModel.FlightController.VerticalVelocityIntegralLimit = Properties.GetValue<float>(
+				TEXT("FlightController.Altitude.VerticalVelocityIntegralLimit"), OutModel.FlightController.VerticalVelocityIntegralLimit);
+			OutModel.FlightController.VerticalVelocityOutputLimit = Properties.GetValue<float>(
+				TEXT("FlightController.Altitude.VerticalVelocityOutputLimit"), OutModel.FlightController.VerticalVelocityOutputLimit);
 			OutModel.FlightController.VerticalDampingFeedForwardScale = Properties.GetValue<float>(
 				TEXT("FlightController.Altitude.VerticalDampingFeedForwardScale"), OutModel.FlightController.VerticalDampingFeedForwardScale);
 			OutModel.FlightController.bEnableTiltCompensation = Properties.GetValue<bool>(

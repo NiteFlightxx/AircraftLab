@@ -16,6 +16,8 @@ struct FAircraftAttitudeControllerConfig
 	UPROPERTY(EditAnywhere, Category = "Rate", meta = (ClampMin = "0.0")) FVector3f RateKp = FVector3f(0.0080f, 0.0080f, 0.0012f);
 	UPROPERTY(EditAnywhere, Category = "Rate", meta = (ClampMin = "0.0")) FVector3f RateKi = FVector3f(0.0010f, 0.0010f, 0.00015f);
 	UPROPERTY(EditAnywhere, Category = "Rate", meta = (ClampMin = "0.0")) FVector3f RateKd = FVector3f(0.00040f, 0.00040f, 0.00008f);
+	UPROPERTY(EditAnywhere, Category = "Rate", meta = (ClampMin = "0.0")) FVector3f RateIntegralLimit = FVector3f(120.0f, 120.0f, 120.0f);
+	UPROPERTY(EditAnywhere, Category = "Rate", meta = (ClampMin = "0.0")) FVector3f RateOutputLimit = FVector3f(0.35f, 0.35f, 0.20f);
 	UPROPERTY(EditAnywhere, Category = "Rate", meta = (ClampMin = "0.0")) FVector3f RateDerivativeCutoffHz = FVector3f(18.0f, 18.0f, 15.0f);
 	UPROPERTY(EditAnywhere, Category = "Damping Feed Forward", meta = (ClampMin = "0.0")) float AngularDampingFeedForwardScale = 1.0f;
 	UPROPERTY(EditAnywhere, Category = "Reference Model") bool bEnableAttitudeReferenceModel = true;

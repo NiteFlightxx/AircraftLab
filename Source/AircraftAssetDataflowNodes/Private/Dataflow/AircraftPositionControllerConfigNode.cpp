@@ -46,6 +46,10 @@ void FAircraftPositionControllerConfigNode::Evaluate(UE::Dataflow::FContext& Con
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
 	Properties.DefineSchema();
 	SetConfigProperty(Properties, TEXT("FlightController.Position.VelocityDerivativeCutoffHz"), Config.VelocityDerivativeCutoffHz);
+	SetConfigProperty(Properties, TEXT("FlightController.Position.PositionIntegralLimit"), Config.PositionIntegralLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Position.PositionOutputLimit"), Config.PositionOutputLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Position.VelocityIntegralLimit"), Config.VelocityIntegralLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Position.VelocityOutputLimit"), Config.VelocityOutputLimit);
 	SetConfigProperty(Properties, TEXT("FlightController.Position.LinearDampingFeedForwardScale"), Config.LinearDampingFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("FlightController.Position.DampingAccelerationReserveFraction"), Config.DampingAccelerationReserveFraction);
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);

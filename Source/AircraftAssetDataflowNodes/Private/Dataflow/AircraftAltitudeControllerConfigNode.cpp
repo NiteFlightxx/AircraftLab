@@ -43,6 +43,10 @@ void FAircraftAltitudeControllerConfigNode::Evaluate(UE::Dataflow::FContext& Con
 
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
 	Properties.DefineSchema();
+	SetConfigProperty(Properties, TEXT("FlightController.Altitude.AltitudeIntegralLimit"), Config.AltitudeIntegralLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Altitude.AltitudeOutputLimit"), Config.AltitudeOutputLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Altitude.VerticalVelocityIntegralLimit"), Config.VerticalVelocityIntegralLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Altitude.VerticalVelocityOutputLimit"), Config.VerticalVelocityOutputLimit);
 	SetConfigProperty(Properties, TEXT("FlightController.Altitude.VerticalVelocityDerivativeCutoffHz"), Config.VerticalVelocityDerivativeCutoffHz);
 	SetConfigProperty(Properties, TEXT("FlightController.Altitude.VerticalDampingFeedForwardScale"), Config.VerticalDampingFeedForwardScale);
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);

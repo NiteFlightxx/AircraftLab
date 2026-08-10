@@ -146,7 +146,7 @@ private:
 	int32 PendingLodIndex = INDEX_NONE;
 	EAircraftSimulationDriveMode PendingDriveMode = EAircraftSimulationDriveMode::None;
 	bool bPendingConfiguration = false;
-	bool bArmRequest = false;
+	bool bArmRequest = true;
 	bool bEmergencyStop = false;
 	bool bRecoverAllRotors = false;
 	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EAircraftFlightMode::Angle) };
@@ -170,7 +170,7 @@ private:
 	FDroneEstimatedState LatestEstimated;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftFailurePolicyStatus LatestPolicyStatus;
-	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Disarmed) };
+	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Armed) };
 	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EAircraftFlightMode::Angle) };
 	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
 	std::atomic<uint8> PendingFailureAction{ static_cast<uint8>(EAircraftFailurePolicyAction::WarningOnly) };
