@@ -62,7 +62,7 @@ public:
 	//~ Begin GameThread API
 	void SetPilotInput_GameThread(const FDronePilotInput& InPilotInput);
 	void SetTargets_GameThread(const FDroneControlTargets& InTargets);
-	void SetFlightMode_GameThread(EDroneFlightMode InMode);
+	void SetFlightMode_GameThread(EAircraftFlightMode InMode);
 	void SetArmRequest_GameThread(bool bArm);
 	void SetEmergencyStop_GameThread(bool bStop);
 	void SetGroundDistance_GameThread(float DistanceCm);
@@ -83,8 +83,8 @@ public:
 	/** 替代驱动后端（约束/运动学，GT 执行）写回估计状态，覆盖 PT 输出槽。 */
 	void SetEstimatedStateOverride_GameThread(const FDroneEstimatedState& InState);
 	float GetCameraShakeIntensity_GameThread() const;
-	EDroneArmState GetArmState_GameThread() const;
-	EDroneFlightMode GetFlightMode_GameThread() const;
+	EAircraftArmState GetArmState_GameThread() const;
+	EAircraftFlightMode GetFlightMode_GameThread() const;
 	float GetCollectiveThrustCommand_GameThread() const;
 
 	void GetControlAuthorityInfo_GameThread(FAircraftControlAuthorityInfo& OutInfo) const;
@@ -128,7 +128,7 @@ private:
 	void RebuildRotorDescriptors_PhysicsThread();
 	void ApplyPendingConfiguration_PhysicsThread();
 	/** 由飞行模式推导能力缓存与姿态模式。 */
-	void UpdateModeCapabilities(EDroneFlightMode Mode);
+	void UpdateModeCapabilities(EAircraftFlightMode Mode);
 
 	const UAircraftComponent& AircraftComponent;
 
@@ -149,7 +149,7 @@ private:
 	bool bArmRequest = false;
 	bool bEmergencyStop = false;
 	bool bRecoverAllRotors = false;
-	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EDroneFlightMode::Angle) };
+	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EAircraftFlightMode::Angle) };
 	std::atomic<bool> bUseAutopilotSetpoint{ false };
 	std::atomic<bool> bPendingControllerReset{ false };
 	std::atomic<bool> bSimulationEnabled{ true };
@@ -170,8 +170,8 @@ private:
 	FDroneEstimatedState LatestEstimated;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftFailurePolicyStatus LatestPolicyStatus;
-	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EDroneArmState::Disarmed) };
-	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EDroneFlightMode::Angle) };
+	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Disarmed) };
+	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EAircraftFlightMode::Angle) };
 	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
 	std::atomic<uint8> PendingFailureAction{ static_cast<uint8>(EAircraftFailurePolicyAction::WarningOnly) };
 	std::atomic<bool> bFailureActionPending{ false };

@@ -19,6 +19,7 @@
 #include "ThumbnailRendering/ThumbnailManager.h"
 
 #include "Aircraft/FlightControlSolver.h"
+#include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftSimulationGraph.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftSimulationProxy.h"
@@ -208,7 +209,7 @@ void UAircraftComponent::SetControlTargets(const FDroneControlTargets& InTargets
 	}
 }
 
-void UAircraftComponent::SetFlightMode(EDroneFlightMode InMode)
+void UAircraftComponent::SetFlightMode(EAircraftFlightMode InMode)
 {
 	if (AircraftSimulationProxy.IsValid())
 	{
@@ -216,11 +217,11 @@ void UAircraftComponent::SetFlightMode(EDroneFlightMode InMode)
 	}
 }
 
-EDroneFlightMode UAircraftComponent::GetFlightMode() const
+EAircraftFlightMode UAircraftComponent::GetFlightMode() const
 {
 	return AircraftSimulationProxy.IsValid()
 		? AircraftSimulationProxy->GetFlightMode_GameThread()
-		: EDroneFlightMode::Angle;
+		: EAircraftFlightMode::Angle;
 }
 
 void UAircraftComponent::Arm()
@@ -247,11 +248,11 @@ void UAircraftComponent::EmergencyStop()
 	}
 }
 
-EDroneArmState UAircraftComponent::GetArmState() const
+EAircraftArmState UAircraftComponent::GetArmState() const
 {
 	return AircraftSimulationProxy.IsValid()
 		? AircraftSimulationProxy->GetArmState_GameThread()
-		: EDroneArmState::Disarmed;
+		: EAircraftArmState::Disarmed;
 }
 
 void UAircraftComponent::GetEstimatedState(FDroneEstimatedState& OutState) const
@@ -792,7 +793,7 @@ void UAircraftComponent::SetAircraftAutopilotProvider(UObject* Provider)
 uint8 UAircraftComponent::ActivateAircraftAutopilotControl()
 {
 	const uint8 PreviousMode = static_cast<uint8>(GetFlightMode());
-	SetFlightMode(EDroneFlightMode::Mission);
+	SetFlightMode(EAircraftFlightMode::Mission);
 	SetUseAutopilotSetpoint(true);
 	return PreviousMode;
 }
@@ -800,9 +801,9 @@ uint8 UAircraftComponent::ActivateAircraftAutopilotControl()
 void UAircraftComponent::DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode)
 {
 	SetUseAutopilotSetpoint(false);
-	if (GetFlightMode() == EDroneFlightMode::Mission)
+	if (GetFlightMode() == EAircraftFlightMode::Mission)
 	{
-		SetFlightMode(static_cast<EDroneFlightMode>(PreviousFlightMode));
+		SetFlightMode(static_cast<EAircraftFlightMode>(PreviousFlightMode));
 	}
 }
 
@@ -897,7 +898,7 @@ void UAircraftComponent::RequestAircraftArm(bool bArm)
 
 void UAircraftComponent::RequestAircraftFlightMode(uint8 NewFlightMode)
 {
-	SetFlightMode(static_cast<EDroneFlightMode>(FMath::Clamp(NewFlightMode, uint8(0), uint8(8))));
+	SetFlightMode(static_cast<EAircraftFlightMode>(FMath::Clamp(NewFlightMode, uint8(0), uint8(8))));
 }
 
 /* ==================== Autopilot 注入 ==================== */
@@ -1022,11 +1023,11 @@ void UAircraftComponent::ApplyFailurePolicyActions()
 		case EAircraftFailurePolicyAction::SwitchFlightMode:
 			if (Model)
 			{
-				SetFlightMode(static_cast<EDroneFlightMode>(Model->FlightController.FailurePolicy.DegradedFlightMode));
+				SetFlightMode(static_cast<EAircraftFlightMode>(Model->FlightController.FailurePolicy.DegradedFlightMode));
 			}
 			break;
 		case EAircraftFailurePolicyAction::Failsafe:
-			SetFlightMode(EDroneFlightMode::ReturnToHome);
+			SetFlightMode(EAircraftFlightMode::ReturnToHome);
 			break;
 		case EAircraftFailurePolicyAction::EmergencyStop:
 			EmergencyStop();
@@ -1269,7 +1270,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		float GroundDistanceCm = TNumericLimits<float>::Max();
 		if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
 			SimulationDriveMode == EAircraftSimulationDriveMode::FlightController
-			&& GetArmState() != EDroneArmState::Disarmed
+			&& GetArmState() != EAircraftArmState::Disarmed
 			&& Model && Model->Aero.GroundEffectStartHeightCm > UE_SMALL_NUMBER)
 		{
 			const FVector TraceStart = GetComponentTransform().TransformPosition(Model->Mass.CenterOfMassOffsetCm);

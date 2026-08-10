@@ -121,7 +121,7 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	bFailureActionPending.store(false, std::memory_order_relaxed);
 	bPendingControllerReset.store(false, std::memory_order_relaxed);
 
-	CurrentArmState.store(static_cast<uint8>(EDroneArmState::Disarmed), std::memory_order_relaxed);
+	CurrentArmState.store(static_cast<uint8>(EAircraftArmState::Disarmed), std::memory_order_relaxed);
 }
 
 void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
@@ -178,45 +178,45 @@ void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
 	RotorFailureManager.ResetAuthority();
 }
 
-void FAircraftSimulationProxy::UpdateModeCapabilities(EDroneFlightMode Mode)
+void FAircraftSimulationProxy::UpdateModeCapabilities(EAircraftFlightMode Mode)
 {
 	ModeCapabilities.Reset();
 	Runtime.ActiveFlightMode = Mode;
 
 	switch (Mode)
 	{
-	case EDroneFlightMode::Manual:
+	case EAircraftFlightMode::Manual:
 		Runtime.AttitudeMode = EAircraftAttitudeMode::Manual;
 		break;
-	case EDroneFlightMode::Acro:
+	case EAircraftFlightMode::Acro:
 		Runtime.AttitudeMode = EAircraftAttitudeMode::Acro;
 		break;
-	case EDroneFlightMode::Angle:
+	case EAircraftFlightMode::Angle:
 		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 		ModeCapabilities.CanHoldYaw = true;
 		break;
-	case EDroneFlightMode::AltitudeHold:
+	case EAircraftFlightMode::AltitudeHold:
 		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 		ModeCapabilities.CanHoldYaw = true;
 		ModeCapabilities.CanHoldAltitude = true;
 		break;
-	case EDroneFlightMode::VelocityHold:
+	case EAircraftFlightMode::VelocityHold:
 		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 		ModeCapabilities.CanHoldYaw = true;
 		ModeCapabilities.CanHoldAltitude = true;
 		ModeCapabilities.CanUseVelocityControl = true;
 		break;
-	case EDroneFlightMode::PositionHold:
-	case EDroneFlightMode::Mission:
-	case EDroneFlightMode::ReturnToHome:
-	case EDroneFlightMode::AutoLand:
+	case EAircraftFlightMode::PositionHold:
+	case EAircraftFlightMode::Mission:
+	case EAircraftFlightMode::ReturnToHome:
+	case EAircraftFlightMode::AutoLand:
 	default:
 		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 		ModeCapabilities.CanHoldYaw = true;
 		ModeCapabilities.CanHoldAltitude = true;
 		ModeCapabilities.CanUseVelocityControl = true;
 		ModeCapabilities.CanUsePositionControl = true;
-		ModeCapabilities.CanUseReturnHome = (Mode == EDroneFlightMode::ReturnToHome);
+		ModeCapabilities.CanUseReturnHome = (Mode == EAircraftFlightMode::ReturnToHome);
 		break;
 	}
 
@@ -262,7 +262,7 @@ void FAircraftSimulationProxy::SetSimulationState_GameThread(bool bEnabled, bool
 	bSimulationSuspended.store(bSuspended, std::memory_order_relaxed);
 }
 
-void FAircraftSimulationProxy::SetFlightMode_GameThread(EDroneFlightMode InMode)
+void FAircraftSimulationProxy::SetFlightMode_GameThread(EAircraftFlightMode InMode)
 {
 	PendingFlightMode.store(static_cast<uint8>(InMode), std::memory_order_relaxed);
 }
@@ -340,14 +340,14 @@ float FAircraftSimulationProxy::GetCameraShakeIntensity_GameThread() const
 	return CameraShakeIntensity.load(std::memory_order_relaxed);
 }
 
-EDroneArmState FAircraftSimulationProxy::GetArmState_GameThread() const
+EAircraftArmState FAircraftSimulationProxy::GetArmState_GameThread() const
 {
-	return static_cast<EDroneArmState>(CurrentArmState.load(std::memory_order_relaxed));
+	return static_cast<EAircraftArmState>(CurrentArmState.load(std::memory_order_relaxed));
 }
 
-EDroneFlightMode FAircraftSimulationProxy::GetFlightMode_GameThread() const
+EAircraftFlightMode FAircraftSimulationProxy::GetFlightMode_GameThread() const
 {
-	return static_cast<EDroneFlightMode>(CurrentFlightMode.load(std::memory_order_relaxed));
+	return static_cast<EAircraftFlightMode>(CurrentFlightMode.load(std::memory_order_relaxed));
 }
 
 float FAircraftSimulationProxy::GetCollectiveThrustCommand_GameThread() const
@@ -485,29 +485,29 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	FilteredPilotInput.Throttle = FMath::Lerp(FilteredPilotInput.Throttle, ShapedPilot.Throttle, InputAlpha);
 	Pilot = FilteredPilotInput;
 
-	const EDroneFlightMode Mode = static_cast<EDroneFlightMode>(PendingFlightMode.load(std::memory_order_relaxed));
+	const EAircraftFlightMode Mode = static_cast<EAircraftFlightMode>(PendingFlightMode.load(std::memory_order_relaxed));
 
 	/* ----------------------------------------------------------------------
 	 * 2) ARM 状态机 + 一次性维护操作
 	 * ---------------------------------------------------------------------- */
-	EDroneArmState ArmState = static_cast<EDroneArmState>(CurrentArmState.load(std::memory_order_relaxed));
+	EAircraftArmState ArmState = static_cast<EAircraftArmState>(CurrentArmState.load(std::memory_order_relaxed));
 	if (bEmergencyRequested)
 	{
-		ArmState = EDroneArmState::EmergencyStop;
+		ArmState = EAircraftArmState::EmergencyStop;
 	}
-	else if (bArmRequested && ArmState == EDroneArmState::Disarmed)
+	else if (bArmRequested && ArmState == EAircraftArmState::Disarmed)
 	{
-		ArmState = EDroneArmState::Armed;
+		ArmState = EAircraftArmState::Armed;
 	}
-	else if (!bArmRequested && ArmState == EDroneArmState::Armed)
+	else if (!bArmRequested && ArmState == EAircraftArmState::Armed)
 	{
-		ArmState = EDroneArmState::Disarmed;
+		ArmState = EAircraftArmState::Disarmed;
 	}
 	CurrentArmState.store(static_cast<uint8>(ArmState), std::memory_order_relaxed);
 	CurrentFlightMode.store(static_cast<uint8>(Mode), std::memory_order_relaxed);
 	UpdateModeCapabilities(Mode);
 
-	const bool bMotorsOn = (ArmState == EDroneArmState::Armed);
+	const bool bMotorsOn = (ArmState == EAircraftArmState::Armed);
 
 	if (bPendingPolicyLatchReset.exchange(false, std::memory_order_relaxed))
 	{

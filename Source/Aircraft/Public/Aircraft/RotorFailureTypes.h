@@ -161,7 +161,7 @@ struct AIRCRAFT_API FAircraftFailurePolicyConfig
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy", meta = (DisplayName = "故障动作"))
 	EAircraftFailurePolicyAction Action = EAircraftFailurePolicyAction::WarningOnly;
 
-	/** Action=SwitchFlightMode 时切换到的模式（存 EDroneFlightMode 的整型值，避免头文件环依赖）。 */
+	/** Action=SwitchFlightMode 时切换到的模式（存 EAircraftFlightMode 的整型值，避免头文件环依赖）。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FailurePolicy",
 		meta = (EditCondition = "Action == EAircraftFailurePolicyAction::SwitchFlightMode", EditConditionHides, DisplayName = "降级飞行模式"))
 	uint8 DegradedFlightMode = 2;

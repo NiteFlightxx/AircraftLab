@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Private/AircraftPawn.cpp（对齐重写）。
 
 #include "AircraftRuntimeCommon/AircraftPawn.h"
 

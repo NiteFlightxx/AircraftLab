@@ -10,7 +10,7 @@
 
 #include "AircraftAsset/AircraftAssetBase.h"
 
-// EDroneArmState / EDroneFlightMode / EAircraftAttitudeMode 已下沉到求解器模块
+// EAircraftArmState / EAircraftFlightMode / EAircraftAttitudeMode 已下沉到求解器模块
 // （Aircraft/Public/Aircraft/FlightControlStateTypes.h，对齐 UChaosClothConfig 归属 ChaosCloth 的做法），
 // 名称不变，此处 include 复用。
 #include "Aircraft/FlightControlStateTypes.h"

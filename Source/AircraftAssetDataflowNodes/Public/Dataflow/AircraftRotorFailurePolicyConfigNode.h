@@ -17,7 +17,7 @@ enum class EAircraftFailurePolicyActionNode : uint8
 	EmergencyStop UMETA(DisplayName = "紧急停止")
 };
 
-/** 降级飞行模式（节点侧枚举，值序与 EDroneFlightMode 一致）。 */
+/** 降级飞行模式（节点侧枚举，值序与 EAircraftFlightMode 一致）。 */
 UENUM()
 enum class EAircraftDegradedFlightModeNode : uint8
 {

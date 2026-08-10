@@ -73,10 +73,10 @@ public:
 	void SetControlTargets(const FDroneControlTargets& InTargets);
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Mode")
-	void SetFlightMode(EDroneFlightMode InMode);
+	void SetFlightMode(EAircraftFlightMode InMode);
 
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Mode")
-	EDroneFlightMode GetFlightMode() const;
+	EAircraftFlightMode GetFlightMode() const;
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Mode")
 	void Arm();
@@ -88,7 +88,7 @@ public:
 	void EmergencyStop();
 
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Mode")
-	EDroneArmState GetArmState() const;
+	EAircraftArmState GetArmState() const;
 
 	/* ------- 估计状态读取（直接从 Chaos 刚体合成） ------- */
 

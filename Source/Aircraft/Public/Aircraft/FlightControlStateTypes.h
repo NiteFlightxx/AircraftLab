@@ -2,7 +2,7 @@
 //
 // 归属说明（ChaosCloth 范式）：解锁/飞行/姿态模式枚举与飞控运行状态类型属于"求解器插件"
 // （对齐 UChaosClothConfig 等配置类型归属于 ChaosCloth 插件的做法）。
-// EDroneArmState / EDroneFlightMode 从 AircraftAssetEngine 的 AircraftAsset.h 下沉到本头文件，
+// EAircraftArmState / EAircraftFlightMode 从 AircraftAssetEngine 的 AircraftAsset.h 下沉到本头文件，
 // 名称不变，既有引用经 AircraftAsset.h 的 include 继续可用。
 
 #pragma once
@@ -13,7 +13,7 @@
 
 /** 无人机解锁状态枚举。 */
 UENUM(BlueprintType)
-enum class EDroneArmState : uint8
+enum class EAircraftArmState : uint8
 {
 	/** 上锁待机：电机不转动，不响应任何油门/姿态指令。 */
 	Disarmed UMETA(DisplayName = "Disarmed"),
@@ -33,7 +33,7 @@ enum class EDroneArmState : uint8
 
 /** 无人机飞行模式枚举。 */
 UENUM(BlueprintType)
-enum class EDroneFlightMode : uint8
+enum class EAircraftFlightMode : uint8
 {
 	/** 完全手动：飞控不干预姿态，摇杆直接控制电机输出。 */
 	Manual UMETA(DisplayName = "Manual"),
@@ -236,8 +236,8 @@ struct FAircraftFlightControlRuntimeState
 	FAircraftHoldTargets HoldTargets;
 	FAircraftHomeState HomeState;
 
-	EDroneArmState ArmState = EDroneArmState::Disarmed;
-	EDroneFlightMode ActiveFlightMode = EDroneFlightMode::Angle;
+	EAircraftArmState ArmState = EAircraftArmState::Disarmed;
+	EAircraftFlightMode ActiveFlightMode = EAircraftFlightMode::Angle;
 	EAircraftAttitudeMode AttitudeMode = EAircraftAttitudeMode::Angle;
 
 	bool bAltitudeHoldEnabled = false;

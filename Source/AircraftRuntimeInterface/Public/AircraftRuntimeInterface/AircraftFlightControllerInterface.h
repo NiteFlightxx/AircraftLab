@@ -60,6 +60,6 @@ public:
 	/** 输入组件窄通道：解锁/上锁请求。 */
 	virtual void RequestAircraftArm(bool bArm) = 0;
 
-	/** 输入组件窄通道：按 EDroneFlightMode 整型值请求飞行模式。 */
+	/** 输入组件窄通道：按 EAircraftFlightMode 整型值请求飞行模式。 */
 	virtual void RequestAircraftFlightMode(uint8 NewFlightMode) = 0;
 };
