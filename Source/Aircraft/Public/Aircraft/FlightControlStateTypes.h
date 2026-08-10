@@ -161,8 +161,8 @@ struct FAircraftPhysicsCache
 	FVector LinearVelocityCmPerSec = FVector::ZeroVector;
 	float GravityMagnitudeCmPerSecSq = 980.0f;
 	float MassKg = 0.0f;
-	float LinearDampingPerSecond = 0.0f;
-	float AngularDampingPerSecond = 0.0f;
+	FVector LinearDampingPerSecond = FVector::ZeroVector;
+	FVector AngularDampingPerSecond = FVector::ZeroVector;
 	FVector InertiaDiagonalKgM2 = FVector::ZeroVector;
 
 	FVector WorldUp = FVector::UpVector;

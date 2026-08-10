@@ -55,11 +55,14 @@ namespace
 }
 
 FVector FlightControlDynamics::ComputeLinearDampingFeedForward(
-	const FVector& DesiredVelocityCmPerSec, float LinearDampingPerSecond, float Scale)
+	const FVector& DesiredVelocityCmPerSec, const FVector& LinearDampingPerSecond, float Scale)
 {
-	const float EffectiveDamping = FMath::Max(LinearDampingPerSecond, 0.0f) * FMath::Max(Scale, 0.0f);
-	return FVector(DesiredVelocityCmPerSec.X * EffectiveDamping,
-		DesiredVelocityCmPerSec.Y * EffectiveDamping, 0.0f);
+	const FVector EffectiveDamping = LinearDampingPerSecond.ComponentMax(FVector::ZeroVector)
+		* FMath::Max(Scale, 0.0f);
+	return FVector(
+		DesiredVelocityCmPerSec.X * EffectiveDamping.X,
+		DesiredVelocityCmPerSec.Y * EffectiveDamping.Y,
+		0.0f);
 }
 
 float FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
@@ -73,11 +76,11 @@ float FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
 }
 
 FVector FlightControlDynamics::ComputeAngularDampingFeedForward(
-	const FVector& DesiredBodyRatesDegPerSec, float AngularDampingPerSecond,
+	const FVector& DesiredBodyRatesDegPerSec, const FVector& AngularDampingPerSecond,
 	const FVector& InertiaDiagonalKgM2, const FVector& PositiveTorqueAuthorityNm,
 	const FVector& NegativeTorqueAuthorityNm, float Scale)
 {
-	const float EffectiveDamping = FMath::Max(AngularDampingPerSecond, 0.0f)
+	const FVector EffectiveDamping = AngularDampingPerSecond.ComponentMax(FVector::ZeroVector)
 		* FMath::Max(Scale, 0.0f);
 	const FVector DesiredBodyRatesRadPerSec = DesiredBodyRatesDegPerSec * (PI / 180.0f);
 	const FVector RequiredTorqueNm = DesiredBodyRatesRadPerSec
@@ -185,7 +188,7 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 		OutDesiredVerticalVelocity = SlewVerticalVelocitySetpoint(OutDesiredVerticalVelocity);
 		LastVerticalDampingCollectiveFeedForward =
 			FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
-				OutDesiredVerticalVelocity, Context.PhysicsCache.LinearDampingPerSecond,
+				OutDesiredVerticalVelocity, Context.PhysicsCache.LinearDampingPerSecond.Z,
 				Context.PhysicsCache.GravityMagnitudeCmPerSecSq,
 				Config.HoverCollectiveCommand,
 				Config.VerticalDampingFeedForwardScale);
@@ -225,7 +228,7 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 	// PID_vz 输出 Δc 是总距偏移量，加在悬停点上
 	LastVerticalDampingCollectiveFeedForward =
 		FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
-			OutDesiredVerticalVelocity, Context.PhysicsCache.LinearDampingPerSecond,
+			OutDesiredVerticalVelocity, Context.PhysicsCache.LinearDampingPerSecond.Z,
 			Context.PhysicsCache.GravityMagnitudeCmPerSecSq, HoverCollective,
 			Config.VerticalDampingFeedForwardScale);
 	const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
@@ -540,7 +543,8 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 	const FlightControlDynamics::FDampingAwareHorizontalLimits DampingAwareLimits =
 		FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
 			Config.MaxHorizontalSpeedCmPerSec, PhysicalHorizontalAcceleration,
-			Context.PhysicsCache.LinearDampingPerSecond,
+			FMath::Max(Context.PhysicsCache.LinearDampingPerSecond.X,
+				Context.PhysicsCache.LinearDampingPerSecond.Y),
 			Config.DampingAccelerationReserveFraction);
 	const float ReachableHorizontalSpeed = DampingAwareLimits.MaxSpeedCmPerSec;
 

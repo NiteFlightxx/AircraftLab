@@ -197,7 +197,7 @@ private:
 	void CreateRuntimeObjects();
 	void ResolveFlightController();
 	/** 从飞控接口拉取 Dataflow 编译的 Autopilot 配置并装配子系统。 */
-	bool ResolveAutopilotConfig();
+	bool ResolveAutopilotConfig(bool bForceRefresh);
 	void ApplyAutopilotConfig();
 	void ApplyIntentMotionLimits();
 	void SetPathFollowingStrategy(EAircraftGuidanceStrategy Strategy);
@@ -208,6 +208,7 @@ private:
 	void UpdateHoverThrustEstimate(float DeltaSeconds);
 	void TickRootMotionIntent(float DeltaSeconds);
 	void CleanupRootMotionIntent(bool bStopMontage);
+	void UpdateTickEnabled();
 	void HandleRootMotionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	static void ApplyHeadingOptions(FAutopilotMovementIntent& Intent, const FAutopilotHeadingOptions& Heading);

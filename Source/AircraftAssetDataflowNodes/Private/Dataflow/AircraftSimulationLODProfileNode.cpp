@@ -65,7 +65,6 @@ void FAircraftSimulationLODProfileNode::Evaluate(UE::Dataflow::FContext& Context
 		SetLODProperty(Properties, TEXT("SimulationLOD.RunSlowLogic"), Profile.bRunSlowLogic);
 		SetLODProperty(Properties, TEXT("SimulationLOD.SlowLogicIntervalSeconds"), Profile.SlowLogicIntervalSeconds);
 		SetLODProperty(Properties, TEXT("SimulationLOD.SuggestedNetUpdateFrequency"), Profile.SuggestedNetUpdateFrequency);
-		SetLODProperty(Properties, TEXT("SimulationLOD.AllowDebugDraw"), Profile.bAllowDebugDraw);
 		SetLODProperty(Properties, TEXT("SimulationLOD.EnableNetworkDormancy"), Profile.bEnableNetworkDormancy);
 	}
 

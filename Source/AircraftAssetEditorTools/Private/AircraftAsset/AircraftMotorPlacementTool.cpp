@@ -6,6 +6,7 @@
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/AircraftComponent.h"
+#include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "ContextObjectStore.h"
 #include "InteractiveToolManager.h"

@@ -288,8 +288,6 @@ namespace UE::AircraftLab::AircraftAsset
 
 		void DefineSchema();
 		void Reset();
-		void PostSerialize(const FArchive& Ar);
-
 		bool FindOrAddGroup(const FName& GroupName);
 		int32 AddElements(int32 NumberElements, const FName& GroupName);
 

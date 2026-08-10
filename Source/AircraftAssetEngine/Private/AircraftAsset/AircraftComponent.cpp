@@ -21,8 +21,8 @@
 #include "Aircraft/FlightControlSolver.h"
 #include "AircraftAsset/AircraftSimulationGraph.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
+#include "AircraftAsset/AircraftSimulationProxy.h"
 #include "AircraftRuntimeInterface/AutopilotProvider.h"
-#include "Dataflow/DataflowSimulationManager.h"
 #include "Dataflow/DataflowSimulationManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftComponent)
@@ -64,7 +64,7 @@ void UAircraftComponent::SetAsset(UAircraftAssetBase* InAsset)
 	UpdateSimulationLOD();
 	ApplySolverSettingsToBodyInstance();
 
-	if (AircraftSimulationProxy.IsValid())
+	if (AircraftSimulationProxy.IsValid() && CurrentSimulationLOD == INDEX_NONE)
 	{
 		AircraftSimulationProxy->PostConstructor();
 	}
@@ -86,7 +86,7 @@ void UAircraftComponent::RefreshAssetState()
 	ApplyMassPropertiesToBodyInstance();
 	ApplySolverSettingsToBodyInstance();
 
-	if (AircraftSimulationProxy.IsValid())
+	if (AircraftSimulationProxy.IsValid() && CurrentSimulationLOD == INDEX_NONE)
 	{
 		AircraftSimulationProxy->PostConstructor();
 	}
@@ -125,48 +125,22 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 	// 2) 质心偏移（局部坐标系，单位厘米）。BodyInstance.COMNudge 是 UE 标准 API，单位为 cm。
 	Body->COMNudge = Mass.CenterOfMassOffsetCm;
 
-	// 3) 惯性张量 —— UE 没有 SetInertiaTensorOverride 这种直接 API；标准做法是 InertiaTensorScale。
-	//    我们的 InertiaDiagonalKgCmSq = Ixx, Iyy, Izz（kg·cm²）；对默认 PhysicsAsset 计算的张量
-	//    按比例缩放即可达到目标值。InertiaTensorScale 是 FVector，分别对应 X/Y/Z 轴。
-	//    这里采用近似：把 Body 默认惯性归一化后再乘以目标值。如果默认惯性不可用就直接传比例值。
-	Body->InertiaTensorScale = FVector(
-		FMath::Max(Mass.InertiaDiagonalKgCmSq.X, 1.f) / FMath::Max(Mass.MassKg * 100.f, 1.f),
-		FMath::Max(Mass.InertiaDiagonalKgCmSq.Y, 1.f) / FMath::Max(Mass.MassKg * 100.f, 1.f),
-		FMath::Max(Mass.InertiaDiagonalKgCmSq.Z, 1.f) / FMath::Max(Mass.MassKg * 100.f, 1.f));
-
-	// 4) 让 Chaos 重新计算质心与惯性张量，把上面三项变更落库到物理粒子。
+	// 3) 先恢复单位缩放并计算 PhysicsAsset 在目标质量/质心下的真实基础惯量。
+	Body->InertiaTensorScale = FVector::OneVector;
 	if (Body->IsValidBodyInstance())
 	{
 		Body->UpdateMassProperties();
+		const FVector BaseInertiaKgCmSq = Body->GetBodyInertiaTensor();
+		Body->InertiaTensorScale = FVector(
+			Mass.InertiaDiagonalKgCmSq.X / FMath::Max(BaseInertiaKgCmSq.X, UE_SMALL_NUMBER),
+			Mass.InertiaDiagonalKgCmSq.Y / FMath::Max(BaseInertiaKgCmSq.Y, UE_SMALL_NUMBER),
+			Mass.InertiaDiagonalKgCmSq.Z / FMath::Max(BaseInertiaKgCmSq.Z, UE_SMALL_NUMBER));
+		Body->UpdateMassProperties();
 	}
 
-	// 5) 阻尼（线性 + 角）—— 直接调用 UPrimitiveComponent 的标准 setter，等价 ChaosCloth
-	//    在 ClothComponent 中调用 SetLinearDamping/SetAngularDamping 的 GT 写入路径。
-	//    UE 的这俩 setter 只接标量，按轴向的 AngularDragPerAxis 这里折算为标量近似：
-	//      * Linear  : 用 LinearDragPerAxis 三轴的最大分量（保守上限，符合 UE 内部 v *= (1 - LinearDamping·dt) 的衰减语义）
-	//      * Angular : 用 AngularDragPerAxis 三轴的最大分量
-	//    SimulationProxy 中按轴的精细阻尼依然在物理子步的气动力路径里施加（FChaosEngineInterface::AddForce/Torque），
-	//    BodyInstance 上的 LinearDamping/AngularDamping 只作为 Chaos 求解器层面的稳定性兜底。
-	const float LinearDampingScalar = FMath::Max3(
-		Model->Aero.LinearDragPerAxis.X,
-		Model->Aero.LinearDragPerAxis.Y,
-		Model->Aero.LinearDragPerAxis.Z);
-
-	const float AngularDampingScalar = FMath::Max3(
-		Model->Aero.AngularDragPerAxis.X,
-		Model->Aero.AngularDragPerAxis.Y,
-		Model->Aero.AngularDragPerAxis.Z);
-
-	SetLinearDamping(LinearDampingScalar);
-	SetAngularDamping(AngularDampingScalar);
-
-	// 记录并推送给代理（阻尼前馈读取 Chaos 求解器层的真实阻尼值）
-	AppliedLinearDampingPerSecond = LinearDampingScalar;
-	AppliedAngularDampingPerSecond = AngularDampingScalar;
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->SetBodyDamping_GameThread(LinearDampingScalar, AngularDampingScalar);
-	}
+	// 轴向气动阻力只在 Proxy 的物理子步中施加，禁用 Chaos 标量阻尼以避免重复计算。
+	SetLinearDamping(0.0f);
+	SetAngularDamping(0.0f);
 }
 
 void UAircraftComponent::ApplySolverSettingsToBodyInstance()
@@ -293,8 +267,6 @@ void UAircraftComponent::GetEstimatedState(FDroneEstimatedState& OutState) const
 }
 
 /* ============================ Simulation ============================ */
-
-/* ============================ Simulation ============================ */
 //
 // 对齐 ChaosClothComponent 的 6 个 Simulation API：
 //   * SetEnableSimulation(b) / IsSimulationEnabled():
@@ -304,13 +276,15 @@ void UAircraftComponent::GetEstimatedState(FDroneEstimatedState& OutState) const
 //     临时挂起；与 SetEnableSimulation 解耦。等价于 ChaosClothComponent 的
 //         bSuspendSimulation || !IsSimulationEnabled()。
 //   * SoftReset / HardReset:
-//     与 ChaosClothAssetEditorMode 中的 bShouldResetSimulation/bHardReset 风格一致——
-//     这里 Component 层只重置 SimulationProxy 内部状态；EditorMode 层包一层 flag 让
-//     ModeTick 在合适时机触发整组件重新注册（HardReset）。
+//     在不替换跨线程 Proxy 实例的前提下，由物理线程消费重建请求。
 
 void UAircraftComponent::SetEnableSimulation(bool bEnable)
 {
 	bEnableSimulation = bEnable;
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
+	}
 }
 
 bool UAircraftComponent::IsSimulationEnabled() const
@@ -321,11 +295,19 @@ bool UAircraftComponent::IsSimulationEnabled() const
 void UAircraftComponent::SuspendSimulation()
 {
 	bSuspendSimulation = true;
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
+	}
 }
 
 void UAircraftComponent::ResumeSimulation()
 {
 	bSuspendSimulation = false;
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
+	}
 }
 
 bool UAircraftComponent::IsSimulationSuspended() const
@@ -345,10 +327,7 @@ void UAircraftComponent::SoftResetSimulation()
 
 void UAircraftComponent::HardResetSimulation()
 {
-	// 硬重置：销毁并重建 SimulationProxy（连同 PID 状态、电机一阶滞后状态全部清零），
-	// 并强制刷新组件资产同步（SkeletalMesh / PhysicsAsset / SimulationModel）。
-	ResetSimulationProxy();
-	BuildSimulationProxy();
+	// 保持代理实例与物理线程生命周期稳定，重建请求由下一物理子步消费。
 	RefreshAssetState();
 }
 
@@ -390,14 +369,7 @@ void UAircraftComponent::ClearSimulationLODOverride()
 
 EAircraftSimulationDriveMode UAircraftComponent::GetCurrentSimulationDriveMode() const
 {
-	const FAircraftSimulationModel* const Model = GetSimulationModel();
-	if (!Model || Model->SimulationLOD.LODs.IsEmpty())
-	{
-		return EAircraftSimulationDriveMode::FlightController;
-	}
-
-	const int32 SettingsIndex = FMath::Clamp(CurrentSimulationLOD, 0, Model->SimulationLOD.LODs.Num() - 1);
-	return Model->SimulationLOD.LODs[SettingsIndex].DriveMode;
+	return SimulationDriveMode;
 }
 
 void UAircraftComponent::UpdateSimulationLOD()
@@ -417,13 +389,10 @@ void UAircraftComponent::UpdateSimulationLOD()
 void UAircraftComponent::ApplySimulationLOD(int32 LodIndex)
 {
 	const FAircraftSimulationModel* const Model = GetSimulationModel();
-	if (!Model || !Model->IsValidLodIndex(LodIndex) || CurrentSimulationLOD == LodIndex)
+	if (!Model || !Model->IsValidLodIndex(LodIndex))
 	{
 		return;
 	}
-
-	const int32 PreviousLOD = CurrentSimulationLOD;
-	CurrentSimulationLOD = LodIndex;
 
 	const FAircraftSimulationLODRuntimeSettings* const Settings =
 		Model->SimulationLOD.LODs.IsEmpty()
@@ -432,42 +401,83 @@ void UAircraftComponent::ApplySimulationLOD(int32 LodIndex)
 	const EAircraftSimulationDriveMode DriveMode = Settings
 		? Settings->DriveMode
 		: EAircraftSimulationDriveMode::FlightController;
-	SetSimulationDriveMode(DriveMode,
+	ApplySimulationLOD(LodIndex, DriveMode,
 		DriveMode == EAircraftSimulationDriveMode::FlightController
 		|| DriveMode == EAircraftSimulationDriveMode::PhysicsConstraint);
+}
 
-	if (Settings)
+void UAircraftComponent::ApplySimulationLOD(
+	int32 LodIndex,
+	EAircraftSimulationDriveMode DriveMode,
+	bool bEnablePhysics)
+{
+	const FAircraftSimulationModel* const Model = GetSimulationModel();
+	if (!Model || !Model->IsValidLodIndex(LodIndex))
 	{
-		switch (Settings->CollisionMode)
-		{
-		case EAircraftSimulationCollisionMode::Disabled:
-			SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			break;
-		case EAircraftSimulationCollisionMode::QueryOnly:
-			SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-			break;
-		case EAircraftSimulationCollisionMode::QueryAndPhysics:
-		default:
-			SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-			break;
-		}
+		return;
 	}
 
-	ApplyMassPropertiesToBodyInstance();
-	ApplySolverSettingsToBodyInstance();
+	const bool bLODChanged = CurrentSimulationLOD != LodIndex;
+	const bool bDriveChanged = SimulationDriveMode != DriveMode
+		|| bSimulationPhysicsEnabled != bEnablePhysics;
+	if (!bLODChanged && !bDriveChanged)
+	{
+		return;
+	}
+
+	const int32 PreviousLOD = CurrentSimulationLOD;
+	CurrentSimulationLOD = LodIndex;
+	ApplySimulationDriveMode(DriveMode, bEnablePhysics);
+
+	if (bLODChanged)
+	{
+		const FAircraftSimulationLODRuntimeSettings* const Settings =
+			Model->SimulationLOD.LODs.IsValidIndex(LodIndex)
+				? &Model->SimulationLOD.LODs[LodIndex]
+				: nullptr;
+		if (Settings)
+		{
+			switch (Settings->CollisionMode)
+			{
+			case EAircraftSimulationCollisionMode::Disabled:
+				SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				break;
+			case EAircraftSimulationCollisionMode::QueryOnly:
+				SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+				break;
+			case EAircraftSimulationCollisionMode::QueryAndPhysics:
+			default:
+				SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				break;
+			}
+		}
+
+		ApplyMassPropertiesToBodyInstance();
+		ApplySolverSettingsToBodyInstance();
+		OnSimulationLODChanged.Broadcast(PreviousLOD, CurrentSimulationLOD);
+	}
+
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->PostConstructor();
 	}
-	OnSimulationLODChanged.Broadcast(PreviousLOD, CurrentSimulationLOD);
 }
 
 /* ==================== 替代驱动后端（NxGame 对齐，GT 执行） ==================== */
 
 void UAircraftComponent::SetSimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics)
 {
+	ApplySimulationDriveMode(NewDriveMode, bEnablePhysics);
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->PostConstructor();
+	}
+}
+
+void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics)
+{
 	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
-		&& NewDriveMode != EAircraftSimulationDriveMode::PhysicsConstraint)
+		&& (NewDriveMode != EAircraftSimulationDriveMode::PhysicsConstraint || !bEnablePhysics))
 	{
 		DestroySimulationConstraint();
 	}
@@ -819,7 +829,8 @@ void UAircraftComponent::GetAircraftAutopilotMotionLimits(
 		FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
 			FMath::Min(Config.MaxHorizontalSpeedCmPerSec, RequestedCruiseSpeedCmPerSec),
 			PhysicalAcceleration,
-			AppliedLinearDampingPerSecond,
+			FMath::Max(Model->Aero.LinearDragPerAxis.X, Model->Aero.LinearDragPerAxis.Y)
+				/ FMath::Max(Model->Mass.MassKg, UE_SMALL_NUMBER),
 			Config.DampingAccelerationReserveFraction);
 	OutMaxSpeedCmPerSec = DampingAwareLimits.MaxSpeedCmPerSec;
 	OutMaxAccelerationCmPerSecSq = DampingAwareLimits.MaxTrajectoryAccelerationCmPerSecSq;
@@ -1056,14 +1067,54 @@ void UAircraftComponent::SetSimulationDriveOverride(const FAircraftSimulationDri
 void UAircraftComponent::ClearSimulationDriveOverride()
 {
 	DriveOverride = FAircraftSimulationDriveOverride();
-	UpdateSimulationLOD();
+	if (const FAircraftSimulationModel* const Model = GetSimulationModel();
+		Model && Model->IsValidLodIndex(CurrentSimulationLOD))
+	{
+		const FAircraftSimulationLODRuntimeSettings* const Settings =
+			Model->SimulationLOD.LODs.IsValidIndex(CurrentSimulationLOD)
+				? &Model->SimulationLOD.LODs[CurrentSimulationLOD] : nullptr;
+		const EAircraftSimulationDriveMode DriveMode = Settings
+			? Settings->DriveMode : EAircraftSimulationDriveMode::FlightController;
+		SetSimulationDriveMode(DriveMode,
+			DriveMode == EAircraftSimulationDriveMode::FlightController
+			|| DriveMode == EAircraftSimulationDriveMode::PhysicsConstraint);
+	}
 }
 
 /* ==================== IAircraftSimulationLODConsumer ==================== */
 
 void UAircraftComponent::ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget)
 {
-	SetSimulationDriveMode(Budget.DriveMode, Budget.bEnablePhysics);
+	const FAircraftSimulationModel* const Model = GetSimulationModel();
+	if (Budget.LODIndex != INDEX_NONE && Model && Model->IsValidLodIndex(Budget.LODIndex))
+	{
+		ForcedSimulationLOD = Budget.LODIndex;
+		ApplySimulationLOD(Budget.LODIndex, Budget.DriveMode, Budget.bEnablePhysics);
+	}
+	else
+	{
+		SetSimulationDriveMode(Budget.DriveMode, Budget.bEnablePhysics);
+	}
+
+	switch (Budget.CollisionMode)
+	{
+	case EAircraftSimulationCollisionMode::Disabled:
+		SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		break;
+	case EAircraftSimulationCollisionMode::QueryOnly:
+		SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		break;
+	case EAircraftSimulationCollisionMode::QueryAndPhysics:
+	default:
+		SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		break;
+	}
+
+	if (AActor* const OwnerActor = GetOwner(); OwnerActor && OwnerActor->HasAuthority())
+	{
+		OwnerActor->SetNetUpdateFrequency(FMath::Max(Budget.SuggestedNetUpdateFrequency, 1.0f));
+		OwnerActor->SetNetDormancy(Budget.bEnableNetworkDormancy ? DORM_DormantAll : DORM_Awake);
+	}
 }
 
 bool UAircraftComponent::GetAircraftMotionTarget_Implementation(FAircraftMotionTarget& OutTarget) const
@@ -1097,18 +1148,8 @@ void UAircraftComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyC
 
 	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UAircraftComponent, Asset))
 	{
-		SyncSkeletalMeshComponentFromAsset();
-		ApplySolverSettingsToBodyInstance();
-		if (AircraftSimulationProxy.IsValid())
-		{
-			AircraftSimulationProxy->PostConstructor();
-		}
+		RefreshAssetState();
 	}
-}
-
-bool UAircraftComponent::CanEditChange(const FProperty* InProperty) const
-{
-	return Super::CanEditChange(InProperty);
 }
 #endif
 
@@ -1139,6 +1180,9 @@ void UAircraftComponent::OnRegister()
 
 void UAircraftComponent::OnUnregister()
 {
+	DestroySimulationConstraint();
+	MotionTargetSources.Reset();
+	AutopilotProviderObject = nullptr;
 	Super::OnUnregister();
 }
 
@@ -1192,6 +1236,10 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 				AircraftSimulationProxy->SetAutopilotInjection_GameThread(FAutopilotInjection());
 			}
 		}
+		else
+		{
+			AircraftSimulationProxy->SetAutopilotInjection_GameThread(FAutopilotInjection());
+		}
 	}
 
 	// GT 侧替代驱动后端（对齐 NxGame：约束/运动学驱动在 GT Tick 执行，不进物理子步）
@@ -1220,7 +1268,9 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 
 		float GroundDistanceCm = TNumericLimits<float>::Max();
 		if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-			Model && Model->Aero.GroundEffectStartHeightCm > UE_SMALL_NUMBER)
+			SimulationDriveMode == EAircraftSimulationDriveMode::FlightController
+			&& GetArmState() != EDroneArmState::Disarmed
+			&& Model && Model->Aero.GroundEffectStartHeightCm > UE_SMALL_NUMBER)
 		{
 			const FVector TraceStart = GetComponentTransform().TransformPosition(Model->Mass.CenterOfMassOffsetCm);
 			const FVector TraceEnd = TraceStart - FVector::UpVector * Model->Aero.GroundEffectStartHeightCm;
@@ -1241,41 +1291,12 @@ void UAircraftComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTim
 {
 	Super::AsyncPhysicsTickComponent(DeltaTime, SimTime);
 
-	// Stop/Pause 路径：完全对齐 ChaosClothComponent::OnTickComponent 的语义。
-	// IsSimulationSuspended() = bSuspendSimulation || !IsSimulationEnabled()，
-	// 已覆盖"临时挂起"与"总开关关闭/代理未建"两种状态 —— 跳过物理子步控制环路，
-	// 电机不再加力，飞机会平滑下落（这是 Pause 的预期行为）。
-	if (IsSimulationSuspended())
-	{
-		return;
-	}
-
-	// 仅 FlightController 驱动模式在物理子步跑控制循环（对齐 NxGame 分工）。
-	if (SimulationDriveMode != EAircraftSimulationDriveMode::FlightController)
-	{
-		return;
-	}
-
 	if (AircraftSimulationProxy.IsValid())
 	{
 		// Chaos 已按项目设置或 AircraftSolverConfig 的真实异步固定步长调用本函数，
 		// 飞控直接消费该步长，不能再在插件内伪造子步。
 		AircraftSimulationProxy->TickPhysicsThread(DeltaTime, SimTime, 1.0f);
 	}
-}
-
-bool UAircraftComponent::RequiresPreEndOfFrameSync() const
-{
-	return false;
-}
-
-void UAircraftComponent::OnPreEndOfFrameSync()
-{
-}
-
-void UAircraftComponent::OnAttachmentChanged()
-{
-	Super::OnAttachmentChanged();
 }
 
 /* ============================ IDataflowPhysicsSolverInterface ============================ */
@@ -1296,6 +1317,7 @@ void UAircraftComponent::BuildSimulationProxy()
 	{
 		AircraftSimulationProxy = MakeShared<FAircraftSimulationProxy>(*this);
 		AircraftSimulationProxy->PostConstructor();
+		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
 	}
 }
 
@@ -1336,6 +1358,7 @@ void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 	if (!Asset)
 	{
 		SetSkeletalMesh(nullptr);
+		SetPhysicsAsset(nullptr);
 		return;
 	}
 
@@ -1358,10 +1381,7 @@ void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 	SetSkeletalMesh(MeshToBind);
 
 	// PhysicsAsset：组件物理需要 UPhysicsAsset 才能工作（用作 chassis 的 Chaos 刚体配置）。
-	if (UPhysicsAsset* const Pa = Asset->GetPhysicsAsset())
-	{
-		SetPhysicsAsset(Pa);
-	}
+	SetPhysicsAsset(Asset->GetPhysicsAsset());
 }
 
 FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance() const

@@ -31,7 +31,6 @@ struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODRuntimeSettingsLite
 	bool bRunSlowLogic = true;
 	float SlowLogicIntervalSeconds = 0.0f;
 	float SuggestedNetUpdateFrequency = 30.0f;
-	bool bAllowDebugDraw = false;
 	bool bEnableNetworkDormancy = false;
 };
 
@@ -106,7 +105,7 @@ public:
 	bool IsEvaluationDue(float WorldTimeSeconds) const;
 	void MarkEvaluated(float WorldTimeSeconds);
 	float GetSecondsInCurrentLOD(float WorldTimeSeconds) const;
-	void ApplyLODFromSubsystem(int32 NewLODIndex, bool bNetworkProxy, float WorldTimeSeconds);
+	void ApplyLODFromSubsystem(int32 NewLODIndex, float WorldTimeSeconds);
 
 	/** 从 Owner 的 UAircraftComponent 读取 Dataflow 编译的 LOD 条目表。 */
 	bool GetLODSettings(TArray<FAircraftSimulationLODRuntimeSettingsLite>& OutSettings) const;
@@ -124,6 +123,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
 	float CombatKeepAliveSeconds = 5.0f;
 
+	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
+	float DamageKeepAliveSeconds = 5.0f;
+
 protected:
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation")
 	FAircraftSimulationImportance Importance;
@@ -140,7 +142,11 @@ private:
 	float LastLODChangeWorldTime = 0.0f;
 	float LastCombatActivityWorldTime = -1000.0f;
 	float LastDamageWorldTime = -1000.0f;
+	bool bHasAppliedBudget = false;
+	TWeakObjectPtr<class UAircraftComponent> AircraftComponent;
+	TArray<TWeakObjectPtr<UActorComponent>> Consumers;
 
+	void RefreshConsumerCache();
 	void RefreshConsumers();
 	FAircraftSimulationDriveOverride ResolveDriveOverride() const;
 };

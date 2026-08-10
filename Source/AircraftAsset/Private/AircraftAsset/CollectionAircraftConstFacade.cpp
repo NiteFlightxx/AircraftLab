@@ -171,12 +171,6 @@ namespace UE::AircraftLab::AircraftAsset
 		Collection.Reset();
 	}
 
-	void FCollectionAircraftFacade::PostSerialize(const FArchive& /*Ar*/)
-	{
-		// 反序列化后重建 schema 中可能新增的属性，旧资产数据保持原值。
-		GetAircraftCollection()->DefineSchema();
-	}
-
 	bool FCollectionAircraftFacade::FindOrAddGroup(const FName& GroupName)
 	{
 		FManagedArrayCollection& Collection = *GetManagedArrayCollection();

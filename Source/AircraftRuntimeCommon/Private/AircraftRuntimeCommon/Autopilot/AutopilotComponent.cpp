@@ -18,6 +18,7 @@ UAutopilotComponent::UAutopilotComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
 }
 
 void UAutopilotComponent::OnRegister()
@@ -31,7 +32,7 @@ void UAutopilotComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	ResolveFlightController();
-	ResolveAutopilotConfig();
+	ResolveAutopilotConfig(/*bForceRefresh=*/true);
 }
 
 void UAutopilotComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -51,11 +52,12 @@ void UAutopilotComponent::CreateRuntimeObjects()
 
 void UAutopilotComponent::ResolveFlightController()
 {
-	if (FlightController.GetInterface())
+	if (IsValid(FlightController.GetObject()) && FlightController.GetInterface())
 	{
 		return;
 	}
 	FlightControllerComponent = nullptr;
+	FlightController = nullptr;
 	if (AActor* const OwnerActor = GetOwner())
 	{
 		TArray<UActorComponent*> Components;
@@ -73,9 +75,9 @@ void UAutopilotComponent::ResolveFlightController()
 	}
 }
 
-bool UAutopilotComponent::ResolveAutopilotConfig()
+bool UAutopilotComponent::ResolveAutopilotConfig(bool bForceRefresh)
 {
-	if (bAutopilotConfigResolved)
+	if (bAutopilotConfigResolved && !bForceRefresh)
 	{
 		return true;
 	}
@@ -189,10 +191,11 @@ void UAutopilotComponent::SetAutopilotActive(bool bActive)
 				*GetNameSafe(GetOwner()));
 			return;
 		}
-		ResolveAutopilotConfig();
+		ResolveAutopilotConfig(/*bForceRefresh=*/true);
 		FlightModeBeforeActivation = FlightController->ActivateAircraftAutopilotControl();
 		bFlightModeBeforeActivationCaptured = true;
 		bAutopilotActive = true;
+		UpdateTickEnabled();
 
 		FAircraftAutopilotVehicleSnapshot Snapshot;
 		if (CaptureSnapshot(Snapshot))
@@ -215,6 +218,7 @@ void UAutopilotComponent::SetAutopilotActive(bool bActive)
 		bFlightModeBeforeActivationCaptured = false;
 		MovementExecutor.CancelActive(EAutopilotIntentFailureReason::AutopilotInactive);
 		InvalidateOutputs();
+		UpdateTickEnabled();
 	}
 }
 
@@ -267,7 +271,7 @@ void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 		}
 	}
 	// 资产热重载后配置可能失效
-	ResolveAutopilotConfig();
+	ResolveAutopilotConfig(/*bForceRefresh=*/false);
 
 	FAircraftAutopilotVehicleSnapshot Snapshot;
 	if (!CaptureSnapshot(Snapshot))
@@ -710,7 +714,13 @@ bool UAutopilotComponent::PlayMontage(const FAutopilotMontagePlayback& Playback,
 		ActiveRootMotionHandle = OutRootMotionHandle;
 		ActiveRootMotionStartPositionSeconds = Playback.StartPositionSeconds;
 		bRootMotionMontageEnded = false;
-		AnimInstance->OnMontageEnded.AddDynamic(this, &UAutopilotComponent::HandleRootMotionMontageEnded);
+		AnimInstance->OnMontageEnded.AddUniqueDynamic(this, &UAutopilotComponent::HandleRootMotionMontageEnded);
+		UpdateTickEnabled();
+	}
+	else
+	{
+		AnimInstance->Montage_Stop(0.0f, Playback.Montage);
+		return false;
 	}
 	return true;
 }
@@ -788,7 +798,7 @@ void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
 	// 完成判定：Montage 结束且已到位
 	const float Progress = IsValid(ActiveRootMotionMontage) && IsValid(ActiveRootMotionAnimInstance)
 		? FMath::Clamp(ActiveRootMotionAnimInstance->Montage_GetPosition(ActiveRootMotionMontage)
-			/ FMath::Max(ActiveRootMotionAnimInstance->Montage_GetPlayRate(ActiveRootMotionMontage) * ActiveRootMotionMontage->GetPlayLength(), UE_SMALL_NUMBER), 0.0f, 1.0f)
+			/ FMath::Max(ActiveRootMotionMontage->GetPlayLength(), UE_SMALL_NUMBER), 0.0f, 1.0f)
 		: 1.0f;
 	MovementExecutor.TickExternalIntent(ActiveRootMotionHandle, Snapshot, DeltaSeconds, bConsumed ? Progress : 1.0f);
 
@@ -816,6 +826,15 @@ void UAutopilotComponent::CleanupRootMotionIntent(bool bStopMontage)
 	ActiveRootMotionHandle = FAutopilotIntentHandle();
 	ActiveRootMotionTarget = FAircraftMotionTarget();
 	ActiveRootMotionDriveOverride = FAircraftSimulationDriveOverride();
+	UpdateTickEnabled();
+}
+
+void UAutopilotComponent::UpdateTickEnabled()
+{
+	const bool bBudgetAllowsTick = SimulationBudget.LODIndex == INDEX_NONE
+		|| (SimulationBudget.bRunSlowLogic && !SimulationBudget.bIsNetworkProxy);
+	SetComponentTickEnabled(bBudgetAllowsTick
+		&& (bAutopilotActive || ActiveRootMotionHandle.IsValid()));
 }
 
 void UAutopilotComponent::HandleRootMotionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
@@ -841,8 +860,9 @@ void UAutopilotComponent::HandleRootMotionMontageEnded(UAnimMontage* Montage, bo
 void UAutopilotComponent::ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget)
 {
 	SimulationBudget = Budget;
-	// 慢速逻辑节拍：由 LOD 预算控制本组件 Tick 频率
-	SetComponentTickInterval(Budget.bRunSlowLogic ? Budget.SlowLogicIntervalSeconds : 0.0f);
+	SetComponentTickInterval(FMath::Max(Budget.SlowLogicIntervalSeconds, 0.0f));
+	ResolveAutopilotConfig(/*bForceRefresh=*/true);
+	UpdateTickEnabled();
 }
 
 bool UAutopilotComponent::GetAircraftMotionTarget_Implementation(FAircraftMotionTarget& OutTarget) const

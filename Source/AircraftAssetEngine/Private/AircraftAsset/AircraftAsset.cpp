@@ -3,8 +3,11 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkeletalMeshSocket.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "Misc/SecureHash.h"
+#include "Serialization/MemoryWriter.h"
 #include "UObject/SoftObjectPath.h"
 #include "AircraftAsset/AircraftCollection.h"
+#include "AircraftAsset/AircraftAssetCustomVersion.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 
@@ -182,9 +185,23 @@ FString UAircraftAsset::BuildDerivedDataKey(const ITargetPlatform* TargetPlatfor
 	(void)TargetPlatform;
 
 	const USkeletalMesh* const SourceSkeletalMesh = GetSourceSkeletalMesh();
-	const FString SkeletalMeshKey = SourceSkeletalMesh ? SourceSkeletalMesh->GetPathName() : TEXT("None");
-	const FString PhysicsAssetKey = PhysicsAsset ? PhysicsAsset->GetPathName() : TEXT("None");
-	return FString::Printf(TEXT("AircraftAsset_NoRenderData_%s_%s"), *SkeletalMeshKey, *PhysicsAssetKey);
+	const FString SkeletalMeshKey = SourceSkeletalMesh
+		? SourceSkeletalMesh->GetOutermost()->GetPersistentGuid().ToString() : TEXT("None");
+	const FString PhysicsAssetKey = PhysicsAsset
+		? PhysicsAsset->GetOutermost()->GetPersistentGuid().ToString() : TEXT("None");
+
+	TArray<uint8> SerializedCollections;
+	FMemoryWriter Writer(SerializedCollections, /*bIsPersistent=*/true);
+	SerializeCollections(Writer,
+		const_cast<UAircraftAsset*>(this)->GetAircraftCollectionsInternal());
+	const FString CollectionHash = FMD5::HashBytes(
+		SerializedCollections.GetData(), SerializedCollections.Num());
+
+	return FString::Printf(TEXT("AircraftAsset_%d_%s_%s_%s"),
+		FAircraftAssetCustomVersion::LatestVersion,
+		*CollectionHash,
+		*SkeletalMeshKey,
+		*PhysicsAssetKey);
 }
 
 bool UAircraftAsset::IsInitialBuildDone() const
@@ -256,6 +273,7 @@ void UAircraftAsset::Build(
 
 void UAircraftAsset::Serialize(FArchive& Ar)
 {
+	Ar.UsingCustomVersion(FAircraftAssetCustomVersion::GUID);
 	Super::Serialize(Ar);
 	SerializeCollections(Ar, GetAircraftCollectionsInternal());
 }

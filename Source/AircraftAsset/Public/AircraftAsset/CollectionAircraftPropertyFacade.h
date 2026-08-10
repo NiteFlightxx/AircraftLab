@@ -30,7 +30,6 @@ namespace UE::AircraftLab::AircraftAsset
 		None = 0,
 		AppendNewProperties = 1 << 0,
 		UpdateExistingProperties = 1 << 1,
-		RemoveMissingProperties = 1 << 2,
 		DisableMissingProperties = 1 << 3,
 	};
 	ENUM_CLASS_FLAGS(EAircraftCollectionPropertyUpdateFlags)
@@ -422,7 +421,6 @@ public:
 	void Update(
 		const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection,
 		UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyUpdateFlags UpdateFlags);
-	void PostSerialize(const FArchive& Ar);
 };
 
 } // namespace UE::AircraftLab::AircraftAsset

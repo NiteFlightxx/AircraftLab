@@ -13,8 +13,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Dataflow/Interfaces/DataflowPhysicsSolver.h"
 
-#include "AircraftAsset/AircraftAsset.h"
-#include "AircraftAsset/AircraftSimulationProxy.h"
+#include "AircraftAsset/AircraftSimulationTypes.h"
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODConsumer.h"
 
@@ -23,6 +22,9 @@
 class UAircraftAssetBase;
 class UThumbnailInfo;
 class UPhysicsConstraintComponent;
+class FAircraftSimulationProxy;
+struct FAircraftSimulationModel;
+struct FAircraftSimulationLodModel;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnAircraftSimulationLODChanged,
@@ -211,7 +213,6 @@ protected:
 	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-	virtual bool CanEditChange(const FProperty* InProperty) const override;
 #endif
 	//~ End UObject Interface
 
@@ -222,9 +223,6 @@ protected:
 	virtual void OnDestroyPhysicsState() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void AsyncPhysicsTickComponent(float DeltaTime, float SimTime) override;
-	virtual bool RequiresPreEndOfFrameSync() const override;
-	virtual void OnPreEndOfFrameSync() override;
-	virtual void OnAttachmentChanged() override;
 	//~ End UActorComponent Interface
 
 	//~ Begin IDataflowPhysicsSolverInterface Interface
@@ -296,8 +294,7 @@ private:
 	 *   * MassKg                → BodyInstance->SetMassOverride(true) + UpdateMassProperties()
 	 *   * CenterOfMassOffsetCm  → BodyInstance->COMNudge（局部 cm 偏移）+ UpdateMassProperties()
 	 *   * InertiaDiagonalKgCmSq → BodyInstance->InertiaTensorScale（按默认惯性归一化后再缩放）
-	 *   * LinearDragPerAxis     → UPrimitiveComponent::SetLinearDamping(maxAxis)
-	 *   * AngularDragPerAxis    → UPrimitiveComponent::SetAngularDamping(maxAxis)
+	 *   * LinearDragPerAxis / AngularDragPerAxis → SimulationProxy 的逐轴阻力
 	 *
 	 * 调用时机：
 	 *   1) OnCreatePhysicsState() 之后立即同步（首次进入物理）；
@@ -313,13 +310,18 @@ private:
 	void ApplySolverSettingsToBodyInstance();
 	void UpdateSimulationLOD();
 	void ApplySimulationLOD(int32 LodIndex);
+	void ApplySimulationLOD(
+		int32 LodIndex,
+		EAircraftSimulationDriveMode DriveMode,
+		bool bEnablePhysics);
+	void ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics);
 
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
 	TObjectPtr<UAircraftAssetBase> Asset;
 
 	/**
 	 * 仿真总开关（对齐 ChaosClothComponent::bEnableSimulation）：
-	 *   false   ─►  IsSimulationEnabled() 始终返回 false，组件 AsyncPhysicsTickComponent 直接 short-circuit；
+	 *   false   ─►  IsSimulationEnabled() 始终返回 false，Proxy 在下一物理子步停止控制；
 	 *   true    ─►  仅当 SimulationProxy 已构造时才认为"实际开"。
 	 */
 	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Simulation")
@@ -327,7 +329,7 @@ private:
 
 	/**
 	 * 临时挂起开关（对齐 ChaosClothComponent::bSuspendSimulation）：
-	 *   true 会让 IsSimulationSuspended() = true，物理子步直接跳过控制环路（电机继续按一阶滞后衰减）。
+	 *   true 会让 IsSimulationSuspended() = true，Proxy 在下一物理子步停止施加控制力。
 	 */
 	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Simulation")
 	uint8 bSuspendSimulation : 1;
@@ -391,10 +393,6 @@ private:
 	FVector SavedSimulationAngularVelocityRadPerSec = FVector::ZeroVector;
 	/** 替代驱动下的估计速度跟踪。 */
 	FVector PreviousAlternativeVelocityCmPerSec = FVector::ZeroVector;
-
-	/** 最近一次写入 BodyInstance 的阻尼（供 Autopilot 运动限幅查询回读）。 */
-	float AppliedLinearDampingPerSecond = 0.0f;
-	float AppliedAngularDampingPerSecond = 0.0f;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(VisibleAnywhere, Instanced, AdvancedDisplay, Category = AircraftComponent)

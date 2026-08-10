@@ -15,6 +15,7 @@ void UAircraftSimulationWorldSubsystem::Deinitialize()
 {
 	RegisteredAircraft.Reset();
 	PlayerLocations.Reset();
+	bPlayerLocationsInitialized = false;
 	Super::Deinitialize();
 }
 
@@ -50,7 +51,8 @@ void UAircraftSimulationWorldSubsystem::Tick(float DeltaTime)
 	}
 
 	PlayerRefreshAccumulatorSeconds += DeltaTime;
-	if (PlayerRefreshAccumulatorSeconds >= PlayerRefreshIntervalSeconds)
+	if (!bPlayerLocationsInitialized || PlayerRefreshIntervalSeconds <= 0.0f
+		|| PlayerRefreshAccumulatorSeconds >= PlayerRefreshIntervalSeconds)
 	{
 		PlayerRefreshAccumulatorSeconds = 0.0f;
 		RefreshPlayerLocations();
@@ -60,15 +62,17 @@ void UAircraftSimulationWorldSubsystem::Tick(float DeltaTime)
 
 	// 时间切片：每帧最多评估 MaxEvaluationsPerFrame 架
 	const int32 Count = RegisteredAircraft.Num();
-	const int32 EvaluationBudget = FMath::Min(MaxEvaluationsPerFrame, Count);
-	for (int32 Evaluated = 0; Evaluated < EvaluationBudget; ++Evaluated)
+	const int32 EvaluationBudget = FMath::Min(FMath::Max(MaxEvaluationsPerFrame, 1), Count);
+	int32 Evaluated = 0;
+	for (int32 Visited = 0; Visited < Count && Evaluated < EvaluationBudget; ++Visited)
 	{
-		EvaluationCursor = (EvaluationCursor + 1) % Count;
 		UAircraftSimulationLODComponent* const Component = RegisteredAircraft[EvaluationCursor].Get();
+		EvaluationCursor = (EvaluationCursor + 1) % Count;
 		if (!Component || !Component->IsEvaluationDue(WorldTime))
 		{
 			continue;
 		}
+		++Evaluated;
 		Component->MarkEvaluated(WorldTime);
 		EvaluateAircraft(*Component, WorldTime);
 	}
@@ -137,13 +141,13 @@ void UAircraftSimulationWorldSubsystem::EvaluateAircraft(UAircraftSimulationLODC
 		}
 	}
 
-	const bool bNetworkProxy = GetWorld() && GetWorld()->GetNetMode() == NM_Client;
-	Component.ApplyLODFromSubsystem(DesiredLOD, bNetworkProxy, WorldTimeSeconds);
+	Component.ApplyLODFromSubsystem(DesiredLOD, WorldTimeSeconds);
 }
 
 void UAircraftSimulationWorldSubsystem::RefreshPlayerLocations()
 {
 	PlayerLocations.Reset();
+	bPlayerLocationsInitialized = true;
 	UWorld* const World = GetWorld();
 	if (!World)
 	{
@@ -163,12 +167,13 @@ void UAircraftSimulationWorldSubsystem::RefreshPlayerLocations()
 
 float UAircraftSimulationWorldSubsystem::FindNearestPlayerDistanceCm(const FVector& AircraftLocation) const
 {
-	float Best = TNumericLimits<float>::Max();
+	float BestSquared = TNumericLimits<float>::Max();
 	for (const FVector& PlayerLocation : PlayerLocations)
 	{
-		Best = FMath::Min(Best, static_cast<float>(FVector::Dist(AircraftLocation, PlayerLocation)));
+		BestSquared = FMath::Min(BestSquared,
+			static_cast<float>(FVector::DistSquared(AircraftLocation, PlayerLocation)));
 	}
-	return Best;
+	return BestSquared < TNumericLimits<float>::Max() ? FMath::Sqrt(BestSquared) : BestSquared;
 }
 
 void UAircraftSimulationWorldSubsystem::CompactRegistry()

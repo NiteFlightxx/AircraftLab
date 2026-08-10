@@ -17,7 +17,6 @@
 #include "AircraftAsset/AircraftSimulationProxy.h"
 
 #include "Aircraft/AircraftPhysicsUnits.h"
-#include "Aircraft/AircraftSimulationSolver.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
@@ -26,8 +25,6 @@
 #include "PBDRigidsSolver.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
-
-#include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftSimulationProxy)
 
 DEFINE_LOG_CATEGORY_STATIC(LogAircraftSimulationProxy, Log, All);
 
@@ -66,6 +63,7 @@ namespace AircraftProxyPrivate
 
 FAircraftSimulationProxy::FAircraftSimulationProxy(const UAircraftComponent& InAircraftComponent)
 	: AircraftComponent(InAircraftComponent)
+	, AircraftOwnerName(GetNameSafe(InAircraftComponent.GetOwner()))
 {
 }
 
@@ -73,25 +71,46 @@ FAircraftSimulationProxy::~FAircraftSimulationProxy() = default;
 
 void FAircraftSimulationProxy::PostConstructor()
 {
+	TSharedPtr<const FAircraftSimulationModel> NewSimulationModel;
 	if (const UAircraftAssetBase* const Asset = AircraftComponent.GetAsset())
 	{
-		SimulationModel = Asset->GetAircraftSimulationModel(0);
+		NewSimulationModel = Asset->GetAircraftSimulationModel(0);
 	}
-	else
-	{
-		SimulationModel.Reset();
-	}
-	ActiveLodModel = SimulationModel.IsValid()
-		? SimulationModel->GetLodModel(AircraftComponent.GetCurrentSimulationLOD())
-		: nullptr;
-	ActiveDriveMode = AircraftComponent.GetCurrentSimulationDriveMode();
 
-	// 全部 PT 控制状态归零（先于描述重建：Reset 会清空 RotorInfoBuffer）。
+	FScopeLock Lock(&InputCriticalSection);
+	PendingSimulationModel = MoveTemp(NewSimulationModel);
+	PendingLodIndex = AircraftComponent.GetCurrentSimulationLOD();
+	PendingDriveMode = AircraftComponent.GetCurrentSimulationDriveMode();
+	bPendingConfiguration = true;
+	PendingRotorHealthOps.Reset();
+	bArmRequest = false;
+	bEmergencyStop = false;
+	bRecoverAllRotors = false;
+}
+
+void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
+{
+	TSharedPtr<const FAircraftSimulationModel> NewSimulationModel;
+	int32 NewLodIndex = INDEX_NONE;
+	EAircraftSimulationDriveMode NewDriveMode = EAircraftSimulationDriveMode::None;
+	{
+		FScopeLock Lock(&InputCriticalSection);
+		if (!bPendingConfiguration)
+		{
+			return;
+		}
+		NewSimulationModel = MoveTemp(PendingSimulationModel);
+		NewLodIndex = PendingLodIndex;
+		NewDriveMode = PendingDriveMode;
+		bPendingConfiguration = false;
+	}
+
+	SimulationModel = MoveTemp(NewSimulationModel);
+	ActiveLodModel = SimulationModel.IsValid() ? SimulationModel->GetLodModel(NewLodIndex) : nullptr;
+	ActiveDriveMode = NewDriveMode;
 	ControlSolver.Reset();
 	ControlAllocator.Reset();
 	RotorFailureManager.ResetAuthority();
-
-	// 展开旋翼分配描述（GT 数据准备；产物是纯值，PT 只读）。
 	RebuildRotorDescriptors_PhysicsThread();
 	Runtime.HoldTargets.ResetHoldFlags();
 	Runtime.PreviousLinearVelocityCmPerSec = FVector::ZeroVector;
@@ -100,6 +119,7 @@ void FAircraftSimulationProxy::PostConstructor()
 	CameraShakeIntensity.store(0.0f, std::memory_order_relaxed);
 	CurrentCollectiveThrustCommand.store(0.0f, std::memory_order_relaxed);
 	bFailureActionPending.store(false, std::memory_order_relaxed);
+	bPendingControllerReset.store(false, std::memory_order_relaxed);
 
 	CurrentArmState.store(static_cast<uint8>(EDroneArmState::Disarmed), std::memory_order_relaxed);
 }
@@ -232,13 +252,14 @@ void FAircraftSimulationProxy::SetUseAutopilotSetpoint_GameThread(bool bEnabled)
 	bUseAutopilotSetpoint.store(bEnabled, std::memory_order_relaxed);
 	if (bEnabled)
 	{
-		// 启用 Autopilot 注入时复位位置/高度 PID，避免旧积分残留。
-		ControlSolver.PidStates.Position.Reset();
-		ControlSolver.PidStates.Velocity.Reset();
-		ControlSolver.PidStates.Altitude.Reset();
-		ControlSolver.PidStates.VerticalVelocity.Reset();
-		ControlSolver.bVerticalVelocitySetpointInitialized = false;
+		bPendingControllerReset.store(true, std::memory_order_release);
 	}
+}
+
+void FAircraftSimulationProxy::SetSimulationState_GameThread(bool bEnabled, bool bSuspended)
+{
+	bSimulationEnabled.store(bEnabled, std::memory_order_relaxed);
+	bSimulationSuspended.store(bSuspended, std::memory_order_relaxed);
 }
 
 void FAircraftSimulationProxy::SetFlightMode_GameThread(EDroneFlightMode InMode)
@@ -248,12 +269,14 @@ void FAircraftSimulationProxy::SetFlightMode_GameThread(EDroneFlightMode InMode)
 
 void FAircraftSimulationProxy::SetArmRequest_GameThread(bool bArm)
 {
-	bPendingArmRequest.store(bArm, std::memory_order_relaxed);
+	FScopeLock Lock(&InputCriticalSection);
+	bArmRequest = bArm;
 }
 
 void FAircraftSimulationProxy::SetEmergencyStop_GameThread(bool bStop)
 {
-	bPendingEmergencyStop.store(bStop, std::memory_order_relaxed);
+	FScopeLock Lock(&InputCriticalSection);
+	bEmergencyStop = bStop;
 }
 
 void FAircraftSimulationProxy::SetGroundDistance_GameThread(float DistanceCm)
@@ -264,12 +287,6 @@ void FAircraftSimulationProxy::SetGroundDistance_GameThread(float DistanceCm)
 void FAircraftSimulationProxy::SetGravity_GameThread(float GravityCmPerSecSq)
 {
 	GravityMagnitudeCmPerSecSq.store(FMath::Max(GravityCmPerSecSq, 0.0f), std::memory_order_relaxed);
-}
-
-void FAircraftSimulationProxy::SetBodyDamping_GameThread(float LinearDampingPerSecond, float AngularDampingPerSecond)
-{
-	BodyLinearDampingPerSecond.store(FMath::Max(LinearDampingPerSecond, 0.0f), std::memory_order_relaxed);
-	BodyAngularDampingPerSecond.store(FMath::Max(AngularDampingPerSecond, 0.0f), std::memory_order_relaxed);
 }
 
 void FAircraftSimulationProxy::FailRotor_GameThread(FName RotorName)
@@ -302,7 +319,8 @@ void FAircraftSimulationProxy::SetRotorEffectiveness_GameThread(FName RotorName,
 
 void FAircraftSimulationProxy::RecoverAllRotors_GameThread()
 {
-	bPendingRecoverAllRotors.store(true, std::memory_order_relaxed);
+	FScopeLock Lock(&InputCriticalSection);
+	bRecoverAllRotors = true;
 }
 
 void FAircraftSimulationProxy::GetEstimatedState_GameThread(FDroneEstimatedState& OutState) const
@@ -351,11 +369,10 @@ void FAircraftSimulationProxy::GetFailurePolicyStatus_GameThread(FAircraftFailur
 
 bool FAircraftSimulationProxy::ConsumeFailurePolicyAction_GameThread(EAircraftFailurePolicyAction& OutAction)
 {
-	if (!bFailureActionPending.load(std::memory_order_relaxed))
+	if (!bFailureActionPending.exchange(false, std::memory_order_acq_rel))
 	{
 		return false;
 	}
-	bFailureActionPending.store(false, std::memory_order_relaxed);
 	OutAction = static_cast<EAircraftFailurePolicyAction>(PendingFailureAction.load(std::memory_order_relaxed));
 	return true;
 }
@@ -371,7 +388,22 @@ void FAircraftSimulationProxy::ResetFailurePolicyLatch_GameThread()
 
 void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime, float ForceAccumulationScale)
 {
-	SimulationTime.store(SimTime, std::memory_order_relaxed);
+	ApplyPendingConfiguration_PhysicsThread();
+
+	if (!bSimulationEnabled.load(std::memory_order_relaxed)
+		|| bSimulationSuspended.load(std::memory_order_relaxed))
+	{
+		return;
+	}
+
+	if (bPendingControllerReset.exchange(false, std::memory_order_acq_rel))
+	{
+		ControlSolver.PidStates.Position.Reset();
+		ControlSolver.PidStates.Velocity.Reset();
+		ControlSolver.PidStates.Altitude.Reset();
+		ControlSolver.PidStates.VerticalVelocity.Reset();
+		ControlSolver.bVerticalVelocitySetpointInitialized = false;
+	}
 
 	// 仅 FlightController 驱动模式在 PT 跑控制循环；
 	// PhysicsConstraint / Kinematic 后端由组件在 GT 驱动（对齐 NxGame 分工）。
@@ -405,11 +437,18 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	FDroneControlTargets Targets;
 	FAutopilotInjection AutopilotInjection;
 	TArray<FPendingRotorHealthOp> RotorHealthOps;
+	bool bArmRequested = false;
+	bool bEmergencyRequested = false;
+	bool bRecoverAllRequested = false;
 	{
 		FScopeLock Lock(&InputCriticalSection);
 		Pilot = PendingPilotInput;
 		Targets = PendingTargets;
 		AutopilotInjection = PendingAutopilotInjection;
+		bArmRequested = bArmRequest;
+		bEmergencyRequested = bEmergencyStop;
+		bRecoverAllRequested = bRecoverAllRotors;
+		bRecoverAllRotors = false;
 		RotorHealthOps = MoveTemp(PendingRotorHealthOps);
 		PendingRotorHealthOps.Reset();
 	}
@@ -447,22 +486,20 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	Pilot = FilteredPilotInput;
 
 	const EDroneFlightMode Mode = static_cast<EDroneFlightMode>(PendingFlightMode.load(std::memory_order_relaxed));
-	const bool bArmRequest = bPendingArmRequest.load(std::memory_order_relaxed);
-	const bool bEmergency = bPendingEmergencyStop.load(std::memory_order_relaxed);
 
 	/* ----------------------------------------------------------------------
 	 * 2) ARM 状态机 + 一次性维护操作
 	 * ---------------------------------------------------------------------- */
 	EDroneArmState ArmState = static_cast<EDroneArmState>(CurrentArmState.load(std::memory_order_relaxed));
-	if (bEmergency)
+	if (bEmergencyRequested)
 	{
 		ArmState = EDroneArmState::EmergencyStop;
 	}
-	else if (bArmRequest && ArmState == EDroneArmState::Disarmed)
+	else if (bArmRequested && ArmState == EDroneArmState::Disarmed)
 	{
 		ArmState = EDroneArmState::Armed;
 	}
-	else if (!bArmRequest && ArmState == EDroneArmState::Armed)
+	else if (!bArmRequested && ArmState == EDroneArmState::Armed)
 	{
 		ArmState = EDroneArmState::Disarmed;
 	}
@@ -478,7 +515,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	}
 
 	// 旋翼健康操作（PT 消费，失效立即停转该旋翼并标记分配缓存脏）
-	if (bPendingRecoverAllRotors.exchange(false, std::memory_order_relaxed))
+	if (bRecoverAllRequested)
 	{
 		RotorFailureManager.RecoverAllRotors();
 		for (FAircraftRotorRuntimeState& State : RotorStates)
@@ -565,10 +602,12 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	PhysicsCache.LinearVelocityCmPerSec = LinearVelCmPerSec;
 	PhysicsCache.AngularVelocityBodyDegPerSec = AngularVelControllerDegPerSec;
 	PhysicsCache.GravityMagnitudeCmPerSecSq = GravityMagnitudeCmPerSecSq.load(std::memory_order_relaxed);
-	PhysicsCache.LinearDampingPerSecond = BodyLinearDampingPerSecond.load(std::memory_order_relaxed);
-	PhysicsCache.AngularDampingPerSecond = BodyAngularDampingPerSecond.load(std::memory_order_relaxed);
 	PhysicsCache.MassKg = ActiveLodModel->Mass.MassKg;
 	PhysicsCache.InertiaDiagonalKgM2 = ActiveLodModel->Mass.InertiaDiagonalKgCmSq * 1.e-4f;
+	PhysicsCache.LinearDampingPerSecond = ActiveLodModel->Aero.LinearDragPerAxis
+		/ FMath::Max(PhysicsCache.MassKg, UE_SMALL_NUMBER);
+	PhysicsCache.AngularDampingPerSecond = ActiveLodModel->Aero.AngularDragPerAxis
+		/ PhysicsCache.InertiaDiagonalKgM2.ComponentMax(FVector(UE_SMALL_NUMBER));
 	PhysicsCache.CenterOfMassOffsetBodyCm = ActiveLodModel->Mass.CenterOfMassOffsetCm;
 
 	// 刷新估计状态（控制循环读取 Runtime.EstimatedState）
@@ -782,10 +821,10 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		if (RotorFailureManager.EvaluatePolicy(Config.FailurePolicy, DeltaTime, TriggeredAction))
 		{
 			PendingFailureAction.store(static_cast<uint8>(TriggeredAction), std::memory_order_relaxed);
-			bFailureActionPending.store(true, std::memory_order_relaxed);
+			bFailureActionPending.store(true, std::memory_order_release);
 			UE_LOG(LogAircraftSimulationProxy, Warning,
 				TEXT("Aircraft failure policy triggered action %d on '%s'."),
-				static_cast<int32>(TriggeredAction), *GetNameSafe(AircraftComponent.GetOwner()));
+				static_cast<int32>(TriggeredAction), *AircraftOwnerName);
 		}
 	}
 
@@ -854,7 +893,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		RotorCommand.GeneratedReactionTorque = AppliedThrustN * Info.ReactionTorqueCoefficientM * Info.SpinDirectionSign;
 	}
 
-	// 气动阻尼（线性 + 角阻尼），以体坐标系阻尼系数施加（精细按轴；BodyInstance 标量阻尼为兜底）。
+	// 气动阻尼（线性 + 角阻尼），以体坐标系阻尼系数逐轴施加。
 	{
 		const FVector RelativeAirVelocityCmPerSec = LinearVelCmPerSec - ActiveLodModel->Aero.WindVelocityCmPerSec;
 		const FVector LinearVelBodyMps = WorldQuat.UnrotateVector(RelativeAirVelocityCmPerSec) * 0.01;
@@ -899,9 +938,4 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 void FAircraftSimulationProxy::SetAircraftBodyInstance(FBodyInstance* BodyInstance)
 {
 	AircraftBodyInstance.store(BodyInstance, std::memory_order_release);
-}
-
-FBodyInstance* FAircraftSimulationProxy::GetAircraftBodyInstance() const
-{
-	return AircraftBodyInstance.load(std::memory_order_acquire);
 }

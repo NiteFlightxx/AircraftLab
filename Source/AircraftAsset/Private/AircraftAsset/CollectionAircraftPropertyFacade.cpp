@@ -482,16 +482,6 @@ void FCollectionAircraftPropertyMutableFacade::Update(
 		}
 	}
 
-	if (EnumHasAnyFlags(UpdateFlags, EAircraftCollectionPropertyUpdateFlags::RemoveMissingProperties))
-	{
-		// TODO: Property removal needs a stable element-remapping policy before being enabled.
-	}
-}
-
-void FCollectionAircraftPropertyMutableFacade::PostSerialize(const FArchive& Ar)
-{
-	(void)Ar;
-	// TODO: Property facade post-serialize upgrade logic should be implemented together with versioning.
 }
 
 } // namespace UE::AircraftLab::AircraftAsset

@@ -18,7 +18,6 @@
 #include "Dataflow/Interfaces/DataflowPhysicsSolver.h"
 #include "HAL/CriticalSection.h"
 #include "Templates/SharedPointer.h"
-#include "Templates/UniquePtr.h"
 
 #include "Aircraft/FlightControlSolver.h"
 #include "Aircraft/ControlAllocator.h"
@@ -27,217 +26,14 @@
 #include "AircraftRuntimeInterface/AutopilotProvider.h"
 
 #include "AircraftAsset/AircraftSimulationModel.h"
+#include "AircraftAsset/AircraftSimulationTypes.h"
 
-#include "AircraftSimulationProxy.generated.h"
-
-class AActor;
 class UAircraftComponent;
-class UWorld;
 struct FBodyInstance;
-
-/* ===========================================================================
- *  飞行员摇杆/上层指令（蓝图侧入参）
- * =========================================================================== */
-
-/**
- * 飞行员摇杆输入（Blueprint 入参）
- *
- * 与 PX4/Betaflight 的 RC 通道一致：四通道归一化；上层 Pawn 把摇杆事件映射到这一结构后
- * 通过 UAircraftComponent::SetPilotInput 推送到代理层。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDronePilotInput
-{
-	GENERATED_BODY()
-
-	/** 油门（-1~+1，常规 4 旋翼仅使用 0~+1） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input", meta = (ClampMin = "-1.0", ClampMax = "1.0"))
-	float Throttle = 0.0f;
-
-	/** 滚转（-1~+1，正值右滚） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input", meta = (ClampMin = "-1.0", ClampMax = "1.0"))
-	float Roll = 0.0f;
-
-	/** 俯仰（-1~+1，正值前推/低头） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input", meta = (ClampMin = "-1.0", ClampMax = "1.0"))
-	float Pitch = 0.0f;
-
-	/** 偏航（-1~+1，正值顺时针偏航） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Input", meta = (ClampMin = "-1.0", ClampMax = "1.0"))
-	float Yaw = 0.0f;
-
-	void ResetAxes()
-	{
-		Throttle = 0.0f;
-		Roll = 0.0f;
-		Pitch = 0.0f;
-		Yaw = 0.0f;
-	}
-};
-
-/* ===========================================================================
- *  控制目标（位置/速度/姿态/角速率四级 setpoint）
- * =========================================================================== */
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDronePositionSetpoint
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	bool bEnabled = false;
-
-	/** 期望位置（厘米，世界系） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	FVector PositionCm = FVector::ZeroVector;
-
-	/** 期望偏航角（度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	float YawDegrees = 0.0f;
-};
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneVelocitySetpoint
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	bool bEnabled = false;
-
-	/** 期望速度向量（厘米/秒，世界系） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	FVector VelocityCmPerSec = FVector::ZeroVector;
-
-	/** 期望偏航角速率（度/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	float YawRateDegreesPerSec = 0.0f;
-};
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneAttitudeSetpoint
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	bool bEnabled = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	FRotator AttitudeDegrees = FRotator::ZeroRotator;
-
-	/** 期望总推力（0~1 归一化或牛顿值，由配置决定） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	float CollectiveThrust = 0.0f;
-};
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneRateSetpoint
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	bool bEnabled = false;
-
-	/** 期望机体角速率（度/秒，滚转/俯仰/偏航） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	FVector BodyRatesDegreesPerSec = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Setpoint")
-	float CollectiveThrust = 0.0f;
-};
-
-/**
- * 力旋量指令（control allocation 的输入）
- *
- * 上层飞控把 setpoint 解析成期望 wrench：F_z（机体 +Z 总推力）、τ=(τ_x,τ_y,τ_z)。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneWrenchCommand
-{
-	GENERATED_BODY()
-
-	/** 期望总推力（牛顿，沿机体 +Z） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	float CollectiveThrust = 0.0f;
-
-	/** 期望机体力矩（牛顿·米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FVector BodyTorque = FVector::ZeroVector;
-};
-
-class UAircraftAssetBase;
-
-/**
- * 完整控制目标：包含飞行模式与四级 setpoint
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneControlTargets
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDronePositionSetpoint Position;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneVelocitySetpoint Velocity;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneAttitudeSetpoint Attitude;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Control")
-	FDroneRateSetpoint Rate;
-};
-
-/* ===========================================================================
- *  估计状态（PT → GT 输出，蓝图可见）
- * =========================================================================== */
-
-/**
- * 运动学状态（位置/速度/姿态/角速度）
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneKinematicState
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	float TimeSeconds = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	FVector PositionCm = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	FVector VelocityCmPerSec = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	FVector AccelerationWorldCmPerSecSq = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	FRotator AttitudeDegrees = FRotator::ZeroRotator;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	FVector AngularVelocityBodyDegreesPerSec = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Nav")
-	FVector AngularAccelerationBodyDegreesPerSecSq = FVector::ZeroVector;
-};
-
-/**
- * 估计状态（直接读自 Chaos 刚体，不再含传感器置信度）
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneEstimatedState
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Estimator")
-	FDroneKinematicState State;
-};
 
 /* ===========================================================================
  *  仿真代理类（纯 C++，对齐 ChaosCloth FClothSimulationProxy）
  * =========================================================================== */
-
-class FAircraftSimulationSolver;
 
 /**
  * 多旋翼仿真代理
@@ -260,7 +56,7 @@ public:
 	FAircraftSimulationProxy& operator=(const FAircraftSimulationProxy&) = delete;
 	FAircraftSimulationProxy& operator=(FAircraftSimulationProxy&&) = delete;
 
-	/** 初始化（在 BuildSimulationProxy 后调用，组件 OnRegister 路径上触发） */
+	/** 捕获最新模型和驱动配置；物理线程在下一子步原子消费并完成重建。 */
 	virtual void PostConstructor();
 
 	//~ Begin GameThread API
@@ -275,9 +71,7 @@ public:
 	/** Autopilot 注入（GT 由组件从 IAutopilotProvider 拉取后写入）。 */
 	void SetAutopilotInjection_GameThread(const FAutopilotInjection& InInjection);
 	void SetUseAutopilotSetpoint_GameThread(bool bEnabled);
-
-	/** GT 读取的 BodyInstance 阻尼值（Chaos 求解器层），供阻尼前馈使用。 */
-	void SetBodyDamping_GameThread(float LinearDampingPerSecond, float AngularDampingPerSecond);
+	void SetSimulationState_GameThread(bool bEnabled, bool bSuspended);
 
 	/** 旋翼健康操作（GT 入口；经输入锁排队，PT 在下一子步消费并重建分配缓存）。 */
 	void FailRotor_GameThread(FName RotorName);
@@ -311,9 +105,6 @@ public:
 	//~ End PhysicsThread API
 
 	void SetAircraftBodyInstance(FBodyInstance* BodyInstance);
-	FBodyInstance* GetAircraftBodyInstance() const;
-
-	const UAircraftComponent& GetAircraftComponent() const { return AircraftComponent; }
 
 protected:
 	/**
@@ -335,6 +126,7 @@ protected:
 private:
 	/** 模型/几何变化后：展开旋翼分配描述并复位全部 PT 控制状态。 */
 	void RebuildRotorDescriptors_PhysicsThread();
+	void ApplyPendingConfiguration_PhysicsThread();
 	/** 由飞行模式推导能力缓存与姿态模式。 */
 	void UpdateModeCapabilities(EDroneFlightMode Mode);
 
@@ -343,17 +135,25 @@ private:
 	TSharedPtr<const FAircraftSimulationModel> SimulationModel;
 	const FAircraftSimulationLodModel* ActiveLodModel = nullptr;
 	EAircraftSimulationDriveMode ActiveDriveMode = EAircraftSimulationDriveMode::FlightController;
-	TUniquePtr<FAircraftSimulationSolver> Solver;
+	FString AircraftOwnerName;
 
 	/* GT → PT 双缓冲 */
 	mutable FCriticalSection InputCriticalSection;
 	FDronePilotInput PendingPilotInput;
 	FDroneControlTargets PendingTargets;
 	FAutopilotInjection PendingAutopilotInjection;
+	TSharedPtr<const FAircraftSimulationModel> PendingSimulationModel;
+	int32 PendingLodIndex = INDEX_NONE;
+	EAircraftSimulationDriveMode PendingDriveMode = EAircraftSimulationDriveMode::None;
+	bool bPendingConfiguration = false;
+	bool bArmRequest = false;
+	bool bEmergencyStop = false;
+	bool bRecoverAllRotors = false;
 	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EDroneFlightMode::Angle) };
-	std::atomic<bool> bPendingArmRequest{ false };
-	std::atomic<bool> bPendingEmergencyStop{ false };
 	std::atomic<bool> bUseAutopilotSetpoint{ false };
+	std::atomic<bool> bPendingControllerReset{ false };
+	std::atomic<bool> bSimulationEnabled{ true };
+	std::atomic<bool> bSimulationSuspended{ false };
 
 	/** 待处理的旋翼健康操作（GT 写、PT 取）。 */
 	struct FPendingRotorHealthOp
@@ -364,15 +164,14 @@ private:
 		float Effectiveness = 1.0f;
 	};
 	TArray<FPendingRotorHealthOp> PendingRotorHealthOps;
-	std::atomic<bool> bPendingRecoverAllRotors{ false };
 
 	/* PT → GT 输出缓冲 */
 	mutable FCriticalSection OutputCriticalSection;
 	FDroneEstimatedState LatestEstimated;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftFailurePolicyStatus LatestPolicyStatus;
-	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EDroneArmState::Armed) };
-	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EDroneFlightMode::PositionHold) };
+	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EDroneArmState::Disarmed) };
+	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EDroneFlightMode::Angle) };
 	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
 	std::atomic<uint8> PendingFailureAction{ static_cast<uint8>(EAircraftFailurePolicyAction::WarningOnly) };
 	std::atomic<bool> bFailureActionPending{ false };
@@ -380,11 +179,8 @@ private:
 
 	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
-	std::atomic<float> SimulationTime{ 0.f };
 	std::atomic<float> GroundDistanceCm{ TNumericLimits<float>::Max() };
 	std::atomic<float> GravityMagnitudeCmPerSecSq{ 980.0f };
-	std::atomic<float> BodyLinearDampingPerSecond{ 0.0f };
-	std::atomic<float> BodyAngularDampingPerSecond{ 0.0f };
 	std::atomic<float> CameraShakeIntensity{ 0.0f };
 
 	/* ---- PT 内部状态（只在 PT 上访问，不需要锁）---- */

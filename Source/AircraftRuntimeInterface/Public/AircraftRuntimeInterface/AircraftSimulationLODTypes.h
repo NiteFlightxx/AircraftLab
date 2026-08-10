@@ -63,9 +63,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationLODSettings
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "建议网络更新频率", ClampMin = "1.0", Units = "Hz"))
 	float SuggestedNetUpdateFrequency = 30.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "允许调试绘制"))
-	bool bAllowDebugDraw = false;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "启用网络休眠"))
 	bool bEnableNetworkDormancy = false;
 };
@@ -171,9 +168,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationBudget
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::Disabled;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	bool bAllowDebugDraw = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	bool bEnableNetworkDormancy = false;

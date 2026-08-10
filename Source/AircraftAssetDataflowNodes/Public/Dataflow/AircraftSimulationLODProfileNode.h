@@ -41,7 +41,6 @@ struct FAircraftSimulationLODProfileData
 	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides)) bool bRunSlowLogic = true;
 	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides, ClampMin = "0.0")) float SlowLogicIntervalSeconds = 0.0f;
 	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides, ClampMin = "1.0")) float SuggestedNetUpdateFrequency = 30.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides)) bool bAllowDebugDraw = false;
 	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides)) bool bEnableNetworkDormancy = false;
 };
 

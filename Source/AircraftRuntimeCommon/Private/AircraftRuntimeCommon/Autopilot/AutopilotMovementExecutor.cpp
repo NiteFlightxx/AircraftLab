@@ -477,15 +477,13 @@ void FAircraftAutopilotMovementExecutor::UpdateCompletion(
 	const float YawError = FMath::Abs(FMath::FindDeltaAngleDegrees(
 		Snapshot.YawDegrees, ProfiledSetpoint.YawDegrees));
 
-	const bool bTrajectoryDone = TrajectoryGenerator.IsComplete()
-		|| ActiveIntent.Type == EAutopilotMovementIntentType::Hold;
 	const bool bWithinTolerance =
 		HorizontalError <= Criteria.HorizontalToleranceCm
 		&& VerticalError <= Criteria.VerticalToleranceCm
 		&& Speed <= Criteria.SpeedToleranceCmPerSec
 		&& YawError <= Criteria.YawToleranceDegrees;
 
-	if (bTrajectoryDone && bWithinTolerance)
+	if (bWithinTolerance)
 	{
 		StableTimeSeconds += FMath::Max(DeltaSeconds, 0.0f);
 		if (StableTimeSeconds >= Criteria.StableTimeSeconds)

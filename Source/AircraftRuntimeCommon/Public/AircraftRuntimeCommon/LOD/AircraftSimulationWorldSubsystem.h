@@ -45,4 +45,5 @@ private:
 	TArray<FVector> PlayerLocations;
 	int32 EvaluationCursor = 0;
 	float PlayerRefreshAccumulatorSeconds = 0.0f;
+	bool bPlayerLocationsInitialized = false;
 };

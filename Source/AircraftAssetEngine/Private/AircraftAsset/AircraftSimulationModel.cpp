@@ -347,7 +347,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		Settings.bRunSlowLogic = Properties.GetValue<bool>(TEXT("SimulationLOD.RunSlowLogic"), Settings.bRunSlowLogic);
 		Settings.SlowLogicIntervalSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.SlowLogicIntervalSeconds"), Settings.SlowLogicIntervalSeconds);
 		Settings.SuggestedNetUpdateFrequency = Properties.GetValue<float>(TEXT("SimulationLOD.SuggestedNetUpdateFrequency"), Settings.SuggestedNetUpdateFrequency);
-		Settings.bAllowDebugDraw = Properties.GetValue<bool>(TEXT("SimulationLOD.AllowDebugDraw"), Settings.bAllowDebugDraw);
 		Settings.bEnableNetworkDormancy = Properties.GetValue<bool>(TEXT("SimulationLOD.EnableNetworkDormancy"), Settings.bEnableNetworkDormancy);
 		return Settings;
 	}

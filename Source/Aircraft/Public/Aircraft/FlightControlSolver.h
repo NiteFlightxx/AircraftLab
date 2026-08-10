@@ -61,7 +61,7 @@ namespace FlightControlDynamics
 
 	/** Chaos 线性阻尼 a_drag=-d·v 的逆模型：维持目标速度所需 a_ff=d·v_des。 */
 	AIRCRAFT_API FVector ComputeLinearDampingFeedForward(
-		const FVector& DesiredVelocityCmPerSec, float LinearDampingPerSecond, float Scale);
+		const FVector& DesiredVelocityCmPerSec, const FVector& LinearDampingPerSecond, float Scale);
 
 	/** 将垂直阻尼加速度换算为相对悬停总距的前馈偏移。 */
 	AIRCRAFT_API float ComputeVerticalDampingCollectiveFeedForward(
@@ -70,7 +70,7 @@ namespace FlightControlDynamics
 
 	/** 将稳态角阻尼力矩换算成控制分配器使用的归一化轴指令。 */
 	AIRCRAFT_API FVector ComputeAngularDampingFeedForward(
-		const FVector& DesiredBodyRatesDegPerSec, float AngularDampingPerSecond,
+		const FVector& DesiredBodyRatesDegPerSec, const FVector& AngularDampingPerSecond,
 		const FVector& InertiaDiagonalKgM2, const FVector& PositiveTorqueAuthorityNm,
 		const FVector& NegativeTorqueAuthorityNm, float Scale);
 

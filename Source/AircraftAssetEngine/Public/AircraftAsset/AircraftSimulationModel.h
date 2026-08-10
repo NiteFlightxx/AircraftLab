@@ -37,7 +37,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODRuntimeSettings
 	bool bRunSlowLogic = true;
 	float SlowLogicIntervalSeconds = 0.0f;
 	float SuggestedNetUpdateFrequency = 30.0f;
-	bool bAllowDebugDraw = false;
 	bool bEnableNetworkDormancy = false;
 };
 

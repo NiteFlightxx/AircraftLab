@@ -58,14 +58,14 @@ bool FAircraftLinearDampingFeedForwardTest::RunTest(const FString& Parameters)
 {
 	const FVector DesiredVelocity(800.0, -400.0, 125.0);
 	const FVector FeedForward = FlightControlDynamics::ComputeLinearDampingFeedForward(
-		DesiredVelocity, 0.3f, 1.0f);
+		DesiredVelocity, FVector(0.3f), 1.0f);
 
 	TestTrue(TEXT("Feedforward opposes modeled drag at the desired horizontal velocity"),
 		FeedForward.Equals(FVector(240.0, -120.0, 0.0), 1.e-4));
 	TestTrue(TEXT("Zero damping produces zero feedforward"),
-		FlightControlDynamics::ComputeLinearDampingFeedForward(DesiredVelocity, 0.0f, 1.0f).IsNearlyZero());
+		FlightControlDynamics::ComputeLinearDampingFeedForward(DesiredVelocity, FVector::ZeroVector, 1.0f).IsNearlyZero());
 	TestTrue(TEXT("Negative scale is safely clamped to zero"),
-		FlightControlDynamics::ComputeLinearDampingFeedForward(DesiredVelocity, 0.3f, -1.0f).IsNearlyZero());
+		FlightControlDynamics::ComputeLinearDampingFeedForward(DesiredVelocity, FVector(0.3f), -1.0f).IsNearlyZero());
 	return true;
 }
 
@@ -79,7 +79,7 @@ bool FAircraftVelocityPidMaintainsTargetSpeedTest::RunTest(const FString& Parame
 	FAircraftFlightControlRuntimeState Runtime;
 	Runtime.EstimatedState.State.VelocityCmPerSec = FVector(800.0, 0.0, 0.0);
 	FAircraftPhysicsCache PhysicsCache;
-	PhysicsCache.LinearDampingPerSecond = 0.3f;
+	PhysicsCache.LinearDampingPerSecond = FVector(0.3f);
 	FAircraftModeCapabilities Capabilities;
 	FAircraftFlightControllerRuntimeConfig Config;
 	FAircraftManualCommand ManualCommand;
@@ -160,7 +160,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftAngularDampingFeedForwardTest::RunTest(const FString& Parameters)
 {
 	const FVector FeedForward = FlightControlDynamics::ComputeAngularDampingFeedForward(
-		FVector(90.0f, -180.0f, 0.0f), 2.0f,
+		FVector(90.0f, -180.0f, 0.0f), FVector(2.0f),
 		FVector(1.0f, 2.0f, 3.0f), FVector(10.0f, 10.0f, 10.0f),
 		FVector(8.0f, 8.0f, 8.0f), 1.0f);
 	TestEqual(TEXT("Positive rate uses positive torque authority"),
