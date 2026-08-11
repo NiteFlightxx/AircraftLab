@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetDataflowNodes 中"配置类"节点（如 ClothPhysicalMeshConfigNode）：
 // 写入单元素 Frame group 的全部静态字段。
 
 #pragma once

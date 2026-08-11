@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Public/FlightControllerTypes.h 的分配段 +
 // FlightControllerAllocation.cpp 的每旋翼描述信息。
 //
 // 分配器不直接依赖资产模块的 FDroneRotorDefinition；代理（Proxy）在缓存重建边界

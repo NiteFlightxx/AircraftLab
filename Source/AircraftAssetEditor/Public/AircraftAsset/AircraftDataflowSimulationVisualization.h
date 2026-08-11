@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEditor/Private/ChaosClothAsset/ClothDataflowSimulationVisualization.h
 //
 // 引擎 FDataflowEditorToolkit Simulation 视口的多旋翼仿真可视化：
 //   * GetDisplayString —— Simulation 视口左上角状态文本

@@ -1,4 +1,3 @@
-// 移植自 NxGame AircraftLab/Private/Tests/FlightFailurePolicyTests.cpp。
 
 #include "Aircraft/RotorFailureManager.h"
 #include "Misc/AutomationTest.h"

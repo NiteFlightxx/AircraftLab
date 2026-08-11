@@ -1,5 +1,3 @@
-// 对应 NxGame AircraftLab/Public/AircraftInputComponent.h（+ Private/.cpp）。
-// 范式分歧：NxGame 直接调用 UFlightControllerComponent；本实现经契约层
 // IAircraftFlightControllerInterface 的窄通道（SetAircraftPilotInputAxes 等）下发，
 // 输入组件不依赖具体飞控组件类型。
 //

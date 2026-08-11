@@ -20,7 +20,6 @@ enum class EAircraftGuidanceStrategyNode : uint8
 };
 
 /**
- * Autopilot 配置（对应 NxGame UAutopilotProfileAsset 的全部可调参数）。
  * 协调转弯 / 路径制导 / 悬停推力估计器三段。
  */
 USTRUCT(BlueprintType)

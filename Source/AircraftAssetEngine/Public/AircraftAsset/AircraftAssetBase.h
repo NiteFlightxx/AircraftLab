@@ -24,7 +24,6 @@ struct FAircraftSimulationModel;
 /**
  * 多旋翼资产基类
  *
- * 与 ChaosCloth 中的 UChaosClothAssetBase 完全对齐：作为 USkinnedAsset 的抽象派生，仅声明
  * "聚合多个 Collection / 暴露 Dataflow / 提供运行时静态模型"等接口。具体的几何/编辑器数据
  * 在 UAircraftAsset 中实现。
  */

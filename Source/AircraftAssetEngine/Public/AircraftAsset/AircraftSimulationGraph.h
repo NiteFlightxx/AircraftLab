@@ -1,6 +1,5 @@
 // 多旋翼默认 Simulation 图（程序化创建，无二进制资产依赖）。
 //
-// 对齐布料三件套中的 DF_ClothSolver.uasset，但以纯代码实现：
 //   布料链：DF_ClothSolver.uasset（二进制）+ BP_ClothPreview 类默认值引用 + 组件属性
 //   我们：  本函数（瞬态单例）        + 组件 OnRegister 惰性填充     + 组件属性（可覆盖）
 //

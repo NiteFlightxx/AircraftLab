@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEditor 内容包中的 BP_ClothPreview（C++ 等价物）。
 //
 // 职责：引擎 UDataflowEditor 打开 Aircraft 资产时，FDataflowSimulationScene 会 spawn 本类作为
 // Simulation 视口的预览 Actor。引擎的挂接机制（见 UDataflowBaseContent::SetActorProperties 与

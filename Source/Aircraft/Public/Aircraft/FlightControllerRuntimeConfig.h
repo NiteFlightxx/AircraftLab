@@ -1,7 +1,5 @@
-// 对应 NxGame AircraftLab/Public/FlightControllerProfileAsset.h 的 FFlightControllerRuntimeConfig。
 //
 // 归属说明（ChaosCloth 范式）：本类型原在 AircraftAssetEngine 的 AircraftSimulationModel.h，
-// 现下沉到求解器模块（对齐 ChaosCloth 插件拥有 UChaosClothConfig 的做法），
 // 使 Aircraft 模块的求解器/分配器无需依赖资产模块即可消费配置。
 // 结构仍保持"Dataflow 编译出的平铺纯值快照"：不持有 UObject，GT 构建、PT 只读。
 

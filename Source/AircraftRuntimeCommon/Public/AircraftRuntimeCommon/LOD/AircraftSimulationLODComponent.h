@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Public/AircraftSimulationLODComponent.h（+ Private/.cpp）。
 // 范式分歧：LOD 条目来源由 UAircraftSimulationLODProfileAsset 改为
 // UAircraftComponent 资产的 Dataflow 编译产物（SimulationLOD.LODs，
 // 经 IAircraftSimulationLODController 契约刷新）。
@@ -110,7 +109,6 @@ public:
 	/** 从 Owner 的 UAircraftComponent 读取 Dataflow 编译的 LOD 条目表。 */
 	bool GetLODSettings(TArray<FAircraftSimulationLODRuntimeSettingsLite>& OutSettings) const;
 
-	/** 评估策略标量（原 NxGame Profile 级参数，Dataflow 化后作为组件级调参）。 */
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
 	float EvaluationIntervalSeconds = 0.25f;
 

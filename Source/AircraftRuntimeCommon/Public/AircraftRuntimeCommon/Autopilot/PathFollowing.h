@@ -1,5 +1,3 @@
-// 对应 NxGame AircraftAutopilot 的 PathFollowing/（PurePursuit / VectorField / 策略枚举）。
-// 与 NxGame 的分歧：UObject 策略基类改为纯 C++；制导参数来自
 // FAircraftAutopilotRuntimeConfig（Dataflow 编译产物），不再是独立 Profile 资产。
 //
 // 制导律 vs 轨迹跟踪：路径跟踪只关心"贴着路径走"，允许因扰动落后名义进度，

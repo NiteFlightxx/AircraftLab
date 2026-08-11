@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetTools 的模块化特性依赖倒置模式
 // （IClothingAssetFactoryProvider / IClothAssetSkeletalMeshConverterClassProvider 同位）。
 //
 // 低层模块（AircraftAssetTools）持有工厂，高层编辑器模块（AircraftAssetEditor）

@@ -1,5 +1,3 @@
-// 对齐 ChaosClothAssetTools/Public/ChaosClothAsset/ClothAssetFactory.h
-// （从 AircraftAssetEditor 迁入；工厂归属 Tools 层，对齐 ChaosCloth 分层）。
 
 #pragma once
 

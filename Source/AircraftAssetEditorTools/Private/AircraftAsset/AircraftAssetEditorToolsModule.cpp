@@ -15,7 +15,6 @@ IMPLEMENT_MODULE(FAircraftAssetEditorToolsModule, AircraftAssetEditorTools)
 namespace
 {
 	/**
-	 * 空命令绑定（对齐 ChaosClothAssetEditorTools 的 FClothToolActionCommandBindings）：
 	 * 当前 Aircraft 工具无专属热键，保留接口挂点以便后续添加。
 	 */
 	class FAircraftToolActionCommandBindings : public UE::Dataflow::FDataflowToolRegistry::IDataflowToolActionCommands
@@ -38,7 +37,6 @@ namespace
 
 void FAircraftAssetEditorToolsModule::StartupModule()
 {
-	// 节点类型 → 交互工具映射（对齐 ChaosClothAssetEditorToolsModule 的注册配方）：
 	// 在 Dataflow 图编辑器中选中对应节点时提供"进入工具"按钮。
 	TSharedRef<FAircraftToolActionCommandBindings> CommandBindings = MakeShared<FAircraftToolActionCommandBindings>();
 

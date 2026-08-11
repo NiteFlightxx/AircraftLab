@@ -7,7 +7,6 @@
 
 #include "AircraftRotorFailurePolicyConfigNode.generated.h"
 
-/** 控制能力不足时由组件执行的降级动作（节点侧枚举，与运行时 EAircraftFailurePolicyAction 对齐）。 */
 UENUM()
 enum class EAircraftFailurePolicyActionNode : uint8
 {

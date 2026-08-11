@@ -1,8 +1,6 @@
-// 对齐 ClothingSystemRuntimeInterface/Public/ClothingAssetBase.h 的"纯契约层"职责。
 //
 // 模块定位：本模块（AircraftRuntimeInterface）只承载跨模块的稳定公共契约，不含任何实现，
 // 与 ClothingSystemRuntimeInterface 在布料体系中的地位一一对应。
-// 本头文件对应 NxGame AircraftCore/Public/AircraftFlightControllerInterface.h：
 // 高层制导（Autopilot）→ 飞控（UAircraftComponent）的窄接口。
 
 #pragma once

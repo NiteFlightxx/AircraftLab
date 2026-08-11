@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAsset/Private/ChaosClothAsset/ClothCollection.cpp
 //
 // 多旋翼 schema 实际定义。所有 Group / Attribute 名常量在 Private 命名空间内集中管理，
 // 与 Public 头里的 Get* 一一对应。

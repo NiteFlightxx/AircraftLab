@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Public/AircraftType.h 中的 PID 原语段。
 // 求解器内部类型：纯 C++（非反射），只在物理线程控制循环中使用。
 
 #pragma once

@@ -1,5 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Private/AutopilotMovementExecutor.cpp。
-// 按头文件语义对齐重写：意图生命周期（Submit/Update/Cancel/Hold）、轨迹重建
 // （IsSameTrajectoryAs 去抖）、完成判定（到达判据 + 稳定时间 + 超时）、事件队列。
 
 #include "AircraftRuntimeCommon/Autopilot/AutopilotMovementExecutor.h"
@@ -159,7 +157,6 @@ FAutopilotIntentHandle FAircraftAutopilotMovementExecutor::Submit(
 		return ActiveResult.Handle;
 	}
 
-	// 保持 Accepted；首次 BuildSetpoint 才迁移到 Executing（对齐 NxGame 行为规范）。
 	StartedEvents.Add(ActiveResult);
 	return ActiveResult.Handle;
 }

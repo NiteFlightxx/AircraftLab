@@ -1,5 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Private/AutopilotComponent.cpp（管线编排对齐重写）。
-// Root Motion 桥接保持 NxGame 语义：消费 Montage 根位移 → 发布 FAircraftMotionTarget
 // （经 IAircraftSimulationLODConsumer）+ 按命令类型发布驱动覆盖。
 
 #include "AircraftRuntimeCommon/Autopilot/AutopilotComponent.h"

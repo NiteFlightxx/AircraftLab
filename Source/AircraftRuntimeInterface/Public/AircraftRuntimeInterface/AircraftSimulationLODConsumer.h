@@ -1,5 +1,3 @@
-// 对齐 ClothingSystemRuntimeInterface 的契约层职责。
-// 对应 NxGame AircraftCore/Public/AircraftSimulationLODConsumer.h：
 // LOD 世界子系统与飞控组件之间的小契约，子系统永不依赖具体飞行特性。
 
 #pragma once

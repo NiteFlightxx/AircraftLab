@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Private/AircraftSimulationLODComponent.cpp（对齐重写）。
 // LOD 条目来源：Owner 的 UAircraftComponent → GetSimulationModel()->SimulationLOD.LODs。
 
 #include "AircraftRuntimeCommon/LOD/AircraftSimulationLODComponent.h"

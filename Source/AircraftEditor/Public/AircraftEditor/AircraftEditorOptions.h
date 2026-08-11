@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEditor/Public/ChaosClothAsset/ClothEditorOptions.h
 //
 // 编辑器选项（UDeveloperSettings 持久化 + CVar 双向绑定）：
 // 控制 Aircraft 资产双击时默认打开 Dataflow 资产编辑器还是简易属性编辑器。

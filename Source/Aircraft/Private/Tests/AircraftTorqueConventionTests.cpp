@@ -1,4 +1,3 @@
-// 移植自 NxGame AircraftLab/Private/Tests/AircraftTorqueConventionTests.cpp。
 // FAircraftBodyAxesConfig 的职责已由平铺 FAircraftFlightControllerRuntimeConfig 的轴映射方法承担。
 
 #include "Aircraft/FlightControllerRuntimeConfig.h"

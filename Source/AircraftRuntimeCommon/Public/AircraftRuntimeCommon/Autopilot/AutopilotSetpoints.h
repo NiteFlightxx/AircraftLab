@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Public/AutopilotSetpoints.h。
 //
 // Autopilot 轨迹整形与前馈设定值。数据流方向（严格自上而下）：
 //   FTrajectoryPoint (TrajectoryGen)

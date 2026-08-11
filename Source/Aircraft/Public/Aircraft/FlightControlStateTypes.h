@@ -1,7 +1,5 @@
-// 对应 NxGame AircraftLab/Public/AircraftType.h + FlightControllerTypes.h 的运行状态段。
 //
 // 归属说明（ChaosCloth 范式）：解锁/飞行/姿态模式枚举与飞控运行状态类型属于"求解器插件"
-// （对齐 UChaosClothConfig 等配置类型归属于 ChaosCloth 插件的做法）。
 // EAircraftArmState / EAircraftFlightMode 从 AircraftAssetEngine 的 AircraftAsset.h 下沉到本头文件，
 // 名称不变，既有引用经 AircraftAsset.h 的 include 继续可用。
 
@@ -173,7 +171,6 @@ struct FAircraftPhysicsCache
 
 /**
  * 手动指令（摇杆/意图经整形后进入求解器的最小集合）。
- * 对应 NxGame 求解器上下文中的 MovementIntent 消费字段。
  */
 struct FAircraftManualCommand
 {

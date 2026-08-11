@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Private/AirscrewComponent.cpp 的电机/旋翼物理模型段
 // （UpdateRotorState / ComputeTargetRpm / GetEffectiveTargetCommand），
 // 剥离 USceneComponent 身份后成为纯运行时模型：PT 零 UObject。
 //

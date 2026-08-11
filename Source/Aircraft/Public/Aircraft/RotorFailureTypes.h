@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab 的 FlightControllerTypes.h（旋翼健康段）+
 // FlightControllerProfileAsset.h（失效策略配置段）。
 // 这些诊断类型对蓝图可见，供组件/调试 UI 直接回读。
 
@@ -114,7 +113,6 @@ enum class EAircraftFailurePolicyAction : uint8
 /**
  * 旋翼故障与控制权限降级策略。
  * 任一启用的阈值不满足并持续 ConfirmationTimeSeconds 后触发 Action。
- * 默认值对齐 NxGame 的 FFlightControllerFailurePolicyConfig。
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFT_API FAircraftFailurePolicyConfig

@@ -1,4 +1,3 @@
-// 对齐 NxGame AircraftAutopilot/Private/Tests/MovementExecutionTests.cpp 的行为规范
 // （按新执行器 API 重写核心用例：提交/完成/取消/超时/替换/事件）。
 
 #if WITH_DEV_AUTOMATION_TESTS

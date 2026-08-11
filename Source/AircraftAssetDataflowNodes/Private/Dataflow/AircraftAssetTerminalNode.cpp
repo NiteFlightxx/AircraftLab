@@ -10,7 +10,6 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAssetTerminalNode)
 
-// 对齐 ChaosClothAssetDataflowNodes::FChaosClothAssetTerminalNode：
 // Terminal 节点是 Dataflow 图末端，把当前 ManagedArrayCollection 提交给 UAircraftAsset::Build()，
 // 由资产编译产生 FAircraftSimulationModel。校验和用于跳过几何/结构未变的情况，避免重复 Build。
 

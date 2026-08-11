@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEngine/Private/ChaosClothAsset/ClothComponent.cpp
 //
 // 多旋翼组件实现：组件生命周期 + 资产绑定 + GT API 转发到 Proxy + 物理子步入口。
 
@@ -269,7 +268,6 @@ void UAircraftComponent::GetEstimatedState(FDroneEstimatedState& OutState) const
 
 /* ============================ Simulation ============================ */
 //
-// 对齐 ChaosClothComponent 的 6 个 Simulation API：
 //   * SetEnableSimulation(b) / IsSimulationEnabled():
 //     总开关 + 实际开关（要求 SimulationProxy 存在）。等价于 ChaosClothComponent 的
 //         bEnableSimulation && ClothSimulationProxy.IsValid()。
@@ -464,7 +462,6 @@ void UAircraftComponent::ApplySimulationLOD(
 	}
 }
 
-/* ==================== 替代驱动后端（NxGame 对齐，GT 执行） ==================== */
 
 void UAircraftComponent::SetSimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics)
 {
@@ -1164,7 +1161,6 @@ void UAircraftComponent::OnRegister()
 	SyncSkeletalMeshComponentFromAsset();
 	Super::OnRegister();
 
-	// 默认 Simulation 图惰性填充（纯代码，无二进制资产依赖；对齐布料 DF_ClothSolver +
 	// BP_ClothPreview 类默认值的等价物）。仅当用户未逐实例指定自定义图时发生 ——
 	// 填充后 OnCreatePhysicsState 的 RegisterSimulationInterface 即生效，
 	// 预览组件/PIE/放置 Pawn 全部自动注册进管理器。
@@ -1204,7 +1200,6 @@ void UAircraftComponent::OnCreatePhysicsState()
 
 void UAircraftComponent::OnDestroyPhysicsState()
 {
-	// 对称反注册（对齐引擎 GlobalDestroyPhysicsDelegate 的调用点）。
 	UE::Dataflow::UnregisterSimulationInterface(this);
 
 	if (AircraftSimulationProxy.IsValid())
@@ -1221,7 +1216,6 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	UpdateSimulationLOD();
 
 	// TG_PrePhysics：从 Autopilot 提供者拉取本周期的注入设定值（无锁交接依赖
-	// TG_PrePhysics 先于物理子步的引擎调度保证，与 NxGame 一致）。
 	if (AircraftSimulationProxy.IsValid() && bUseAutopilotSetpoint)
 	{
 		RefreshAutopilotProvider();
@@ -1243,7 +1237,6 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		}
 	}
 
-	// GT 侧替代驱动后端（对齐 NxGame：约束/运动学驱动在 GT Tick 执行，不进物理子步）
 	switch (SimulationDriveMode)
 	{
 	case EAircraftSimulationDriveMode::PhysicsConstraint:

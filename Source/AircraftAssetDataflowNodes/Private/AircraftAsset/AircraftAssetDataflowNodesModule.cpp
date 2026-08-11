@@ -34,7 +34,6 @@ namespace UE::AircraftLab::DataflowNodes
 
 void FAircraftAssetDataflowNodesModule::StartupModule()
 {
-	// 节点画布颜色统一取自 FColorScheme（对齐 ChaosClothAssetTools/ColorScheme.h 的单点定义）。
 	using FAircraftColorScheme = UE::AircraftLab::AircraftAsset::FColorScheme;
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY_NODE_COLORS_BY_CATEGORY(
 		"Aircraft", FAircraftColorScheme::NodeHeader, FAircraftColorScheme::NodeBody);
@@ -66,7 +65,6 @@ void FAircraftAssetDataflowNodesModule::StartupModule()
 	UE::Dataflow::RegisterNodeFilter(FDataflowTerminalNode::StaticType());
 	UE_DATAFLOW_REGISTER_CATEGORY_FORASSET_TYPE("Aircraft", UAircraftAsset);
 
-	// 视口视图模式 + 旋翼渲染回调（对齐 ChaosCloth 的 RegisterRenderingCallbacks）
 	UE::AircraftLab::DataflowNodes::RegisterAircraftRenderingCallbacks();
 }
 

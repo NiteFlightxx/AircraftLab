@@ -1,5 +1,3 @@
-// 对齐 ClothingSystemRuntimeInterface 的契约层职责。
-// 对应 NxGame AircraftCore/Public/AircraftSimulationLODTypes.h：
 // 模拟 LOD 的共享数据类型（驱动/碰撞模式、LOD 条目、预算、运动目标）。
 //
 // 注意：EAircraftSimulationDriveMode / EAircraftSimulationCollisionMode 原本定义在

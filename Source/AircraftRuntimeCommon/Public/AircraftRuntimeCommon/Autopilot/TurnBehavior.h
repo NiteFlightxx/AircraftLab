@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Public/Turn/TurnBehavior.h（+ Private/.cpp）。
 // 纯 C++ 化；转弯限幅来自 FAircraftAutopilotRuntimeConfig。
 //
 // 协调转弯（bank turn）：|v| ≥ 速度阈值时，由期望航向变化率算向心加速度

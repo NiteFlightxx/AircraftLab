@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEngine/Private/ChaosClothAsset/ClothSimulationModel.cpp
 //
 // 把 FAircraftCollection 的 schema 数据"编译"成运行时只读的 FAircraftSimulationModel：
 //   * Frame 单元素组    → FDroneMassProperties + FDroneAerodynamicsConfig + FrameType + RootBone

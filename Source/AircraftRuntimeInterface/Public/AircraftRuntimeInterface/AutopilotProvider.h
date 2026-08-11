@@ -1,5 +1,3 @@
-// 对齐 ClothingSystemRuntimeInterface 的契约层职责。
-// 对应 NxGame AircraftCore/Public/AutopilotProvider.h：
 // Autopilot（AircraftRuntimeCommon 模块）→ 飞控（AircraftAssetEngine 模块）的纯数据 setpoint 契约。
 
 #pragma once

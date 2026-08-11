@@ -1,8 +1,5 @@
-// 对齐 ClothingSystemRuntimeInterface 的契约层职责。
-// 对应 NxGame AircraftAutopilot/Public/AutopilotProfileAsset.h（含 TurnLimits /
 // PurePursuit / VectorField / HoverThrustEstimator 配置段）。
 //
-// Dataflow 范式差异：NxGame 用独立 UPrimaryDataAsset 承载 Autopilot 配置；
 // 本插件中配置经 AircraftAutopilotConfigNode 写入 Collection 属性键（Autopilot.*），
 // 由 FAircraftSimulationModel 在 Build() 时编译为本纯值快照，
 // UAutopilotComponent（AircraftRuntimeCommon）运行时只读消费——两边都只依赖本契约层。
@@ -27,7 +24,6 @@ enum class EAircraftGuidanceStrategy : uint8
 
 /**
  * Dataflow 编译后的 Autopilot 运行时配置（纯值快照，PT/GT 只读）。
- * 默认值与 NxGame UAutopilotProfileAsset 一致。
  */
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftAutopilotRuntimeConfig
 {

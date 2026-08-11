@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Public/AircraftSimulationWorldSubsystem.h（+ Private/.cpp）。
 // 集中的时间切片策略评估器；不依赖飞控或 Autopilot 具体类型。
 
 #pragma once

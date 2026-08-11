@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Private/AircraftSimulationWorldSubsystem.cpp（对齐重写）。
 // 评估策略：重要性强制最高档 → 驱动覆盖 → 距离分档（滞回 + 最短驻留时间）。
 
 #include "AircraftRuntimeCommon/LOD/AircraftSimulationWorldSubsystem.h"

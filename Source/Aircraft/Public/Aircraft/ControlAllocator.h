@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Public/FlightControllerRuntimeObjects.h 的 FControlAllocator +
 // Private/FlightControllerAllocation.cpp 的分配算法。
 //
 // 控制分配问题：
@@ -6,7 +5,6 @@
 //   使 J·u ≈ W（J 为 4×N 控制效率矩阵）。N > 4 时欠定，用阻尼伪逆取最小范数解；
 //   解违反 [0,1] 约束时用迭代主动集算法逐个锁定饱和旋翼。
 //
-// 与 NxGame 的差异：分配器不访问 UAirscrewComponent/资产 UObject，
 // 由代理在缓存重建边界展开 FAircraftRotorAllocationInfo 纯值描述（PT 零 UObject）。
 
 #pragma once

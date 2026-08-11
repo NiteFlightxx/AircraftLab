@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Private/Trajectory/TrajectoryGenerator.cpp（逐函数对齐移植）。
 
 #include "AircraftRuntimeCommon/Autopilot/TrajectoryGenerator.h"
 

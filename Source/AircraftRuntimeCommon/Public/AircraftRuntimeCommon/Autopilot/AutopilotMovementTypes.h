@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Public/AutopilotMovementTypes.h（直接移植）。
 // 意图句柄/结果/状态、类型化命令（MoveTo/FollowPath/Orbit/CircleArc/Velocity/RootMotion）、
 // Montage 播放参数。意图契约类型（FAutopilotMovementIntent 等）在 AircraftRuntimeInterface。
 

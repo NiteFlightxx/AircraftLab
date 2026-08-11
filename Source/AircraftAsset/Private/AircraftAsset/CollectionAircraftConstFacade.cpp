@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAsset/Private/ChaosClothAsset/CollectionClothFacade.cpp
 //
 // 多旋翼 schema 的 Group / Attribute 名常量定义 + Facade 实现。
 

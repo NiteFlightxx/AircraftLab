@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetDataflowNodesModule.cpp 中的 FClothSurfaceRenderCallbacks 模式。
 //
 // 旋翼布局渲染回调：从 Collection 的 Propellers 组读出每个旋翼的位置/推力轴/半径/旋向，
 // 生成旋翼圆盘（三角扇）+ 推力轴箭头（细长四棱锥）几何，写入 Dataflow 渲染门面。

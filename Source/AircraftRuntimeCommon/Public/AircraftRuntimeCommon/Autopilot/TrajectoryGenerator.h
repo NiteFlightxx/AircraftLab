@@ -1,5 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Public/Trajectory/TrajectoryGenerator.h（+ Private/.cpp）。
-// 与 NxGame 的分歧：由 UObject 改为纯 C++ 类（段对象 TUniquePtr 持有），行为逐函数对齐。
 //
 // 轨迹生成器：把 FTrajectoryRequest 转成时间参数化设定值序列。
 // 梯形速度剖面：加速段/巡航段/减速段，减速段从"距终点 s_dec"处开始 → 天然提前减速；

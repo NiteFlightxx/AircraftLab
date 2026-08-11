@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetDataflowNodes/Private/ChaosClothAsset/ClothDataflowViewModes.h
 //
 // Aircraft 资产 Dataflow 视口的构造视图模式：3D 模拟视图（机架/旋翼布局预览）。
 

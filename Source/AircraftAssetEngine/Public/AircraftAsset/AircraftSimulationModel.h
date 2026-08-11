@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAsset/Public/ChaosClothAsset/ClothSimulationModel.h
 //
 // 职责：承载"资产/编译期产生、运行时只读"的多旋翼静态模型（机体 + 气动 + 电机 + 旋翼定义）。
 // 这一层等价于 ChaosCloth 的 FChaosClothSimulationLodModel，给 FAircraftSimulationProxy
@@ -13,7 +12,6 @@
 #include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
 // FAircraftFlightControllerRuntimeConfig 已下沉到求解器模块
-// （Aircraft/Public/Aircraft/FlightControllerRuntimeConfig.h，对齐 UChaosClothConfig 归属 ChaosCloth 的做法），
 // 名称与字段不变，此处 include 复用。
 #include "Aircraft/FlightControllerRuntimeConfig.h"
 
@@ -26,7 +24,6 @@ class UPhysicsAsset;
 class USkeletalMesh;
 struct FManagedArrayCollection;
 
-/** Dataflow 编译后的单级模拟 LOD 策略（字段对齐 NxGame FAircraftSimulationLODSettings）。 */
 struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODRuntimeSettings
 {
 	FName Name = NAME_None;
@@ -384,7 +381,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 /**
  * Aircraft 运行时模型容器。
  *
- * 对齐 ChaosCloth 的 FChaosClothSimulationModel：共享资产引用只保存一份，每个
  * Dataflow Terminal 的 Collection LOD 编译为一个独立的 LodModels 元素。
  */
 struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel

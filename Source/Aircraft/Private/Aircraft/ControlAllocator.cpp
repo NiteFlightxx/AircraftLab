@@ -1,5 +1,3 @@
-// 对应 NxGame AircraftLab/Private/FlightControllerAllocation.cpp 的分配器主体
-// （RebuildAllocationCache / Allocate / BuildJacobianColumn 逐段对齐重写）。
 
 #include "Aircraft/ControlAllocator.h"
 

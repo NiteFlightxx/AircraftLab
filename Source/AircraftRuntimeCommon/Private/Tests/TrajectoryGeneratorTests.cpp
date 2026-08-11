@@ -1,4 +1,3 @@
-// 移植自 NxGame AircraftAutopilot/Private/Tests/TrajectoryGeneratorTests.cpp。
 
 #if WITH_DEV_AUTOMATION_TESTS
 

@@ -1,8 +1,5 @@
-// 对应 NxGame AircraftAutopilot 的 Trajectory/*Segment.h/.cpp（Line/Bezier/Circle/Orbit/MinSnap）。
 //
-// 与 NxGame 的刻意分歧：段类型由 UObject（EditInlineNew/BlueprintNativeEvent）改为纯 C++
 // 多态类（TUniquePtr 持有）——段只被 TrajectoryGenerator 内部实例化，无蓝图扩展需求；
-// 纯 C++ 免去反射开销且 PT 友好。行为与算法逐段对齐 NxGame 实现。
 
 #pragma once
 

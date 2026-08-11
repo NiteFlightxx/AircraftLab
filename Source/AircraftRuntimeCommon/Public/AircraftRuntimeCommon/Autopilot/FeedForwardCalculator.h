@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Public/FeedForward/FeedForwardCalculator.h（+ Private/.cpp）。
 // 纯 C++ 化。把整形后设定值的名义量与重力补偿集中为 FFeedForward。
 
 #pragma once

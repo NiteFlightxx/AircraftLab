@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Public/MotionProfile/MotionProfileTypes.h。
 //
 // Motion Profile 限幅参数 + Slew 限幅器：把轨迹生成器的名义设定值限幅为
 // 物理可达设定值（V/A/Jerk 有界），与飞控硬限幅（对 PID 输出 clamp）互补：

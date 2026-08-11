@@ -1,4 +1,3 @@
-// 对齐 ChaosCloth 插件内求解器的单位纪律（对应 NxGame AircraftLab/Public/AircraftPhysicsUnits.h）。
 //
 // AircraftLab 对外统一使用 SI 力学单位（N、N·m）；
 // Chaos 使用厘米、千克、秒，只允许在物理引擎边界调用这里的转换函数。

@@ -1,14 +1,11 @@
-// 对应 NxGame AircraftAutopilot/Public/AutopilotComponent.h（+ Private/.cpp 管线）。
 //
 // Autopilot 组件：一次执行一个移动意图，向飞控发布连续设定值。
 // 导航、避障与 Gameplay 决策刻意不在本组件内。
 //
-// 与 NxGame 的范式分歧（Dataflow 化）：
 //   * 配置来源从 UAutopilotProfileAsset 改为飞控接口的
 //     GetAircraftAutopilotRuntimeConfig()（Dataflow 编译产物，经契约层读取）；
 //   * 内部子对象由 UObject 改为纯 C++ 成员（Executor/MotionProfile/FeedForward/Turn/EKF）。
 //
-// Tick 管线（TG_PrePhysics，对齐 NxGame 顺序）：
 //   CaptureSnapshot → Executor.BuildSetpoint → PathFollowing.Update → ApplyHeading
 //   → TurnBehavior.Compute → MotionProfile.Update → HoverThrustEstimator.Update
 //   → FeedForwardCalculator.Compute → UpdateCompletion → BroadcastIntentEvents

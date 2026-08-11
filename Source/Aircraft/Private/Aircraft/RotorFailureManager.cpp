@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Private/RotorFailureManager.cpp（逐函数对齐重写）。
 
 #include "Aircraft/RotorFailureManager.h"
 

@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Public/MotionProfile/MotionProfile.h（+ Private/.cpp）。
 // 纯 C++ 化；限幅参数来自 FMotionProfileLimits（由意图约束/物理限幅装配）。
 //
 // Motion Profile：把名义设定值（FTrajectoryPoint）限幅为物理可达设定值

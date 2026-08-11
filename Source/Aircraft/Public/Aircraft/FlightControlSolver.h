@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Public/FlightControllerRuntimeObjects.h 的求解器段 +
 // Private/FlightControllerControl.cpp 的实现。
 //
 // 级联控制解算器：垂直通道（高度→垂速→总距）、水平通道（位置→速度→倾角）、

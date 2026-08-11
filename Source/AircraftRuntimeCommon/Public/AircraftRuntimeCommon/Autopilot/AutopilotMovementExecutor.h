@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Private/AutopilotMovementExecutor.h（+ .cpp）。
 // 纯 C++ 化（UObject → 普通类，由 UAutopilotComponent 以 TUniquePtr 持有）。
 //
 // 移动意图执行器：一次执行一个 FAutopilotMovementIntent，内部维护

@@ -475,7 +475,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			return nullptr;
 		}
 
-		// 内嵌 Dataflow（对齐 ChaosClothAsset 的 EmbeddedDataflow 范式）：
 		//   Outer = 资产本体，仅 RF_Transactional（无 RF_Public/RF_Standalone）→
 		//   IsAsset() == false，UDataflow 内联序列化进 Aircraft 资产包，
 		//   不注册进资产注册表，不在 Content Browser 生成独立 DF_* 资产。
@@ -518,7 +517,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 		return CreateAircraftDataflowAsset(AircraftAsset);
 	}
 
-	// 对齐 ChaosClothAssetEditor 的 UAssetDefinition_ClothAsset::LaunchClothDataflowAssetEditor：
 	// 直接使用引擎 UDataflowEditor（自带 Members / Scene Outliner / SpreadSheets / OutputLog /
 	// Simulation+Construction 双视口 / Timeline / 工具分类面板），不再走自制的 Panel Editor。
 	bool OpenAircraftAssetEditor(UAircraftAssetBase* AircraftAsset)
@@ -552,7 +550,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				}
 
 				// 工具分类：左侧出现 "General"（引擎内置）与 "Aircraft"（AircraftAssetEditorTools
-				// 模块注册的节点→工具映射）两个类别页签，对齐布料的 {"General","Cloth"}。
 				AssetEditor->RegisterToolCategories({ "General", "Aircraft" });
 
 				// Simulation 视口预览类（布料传 BP_ClothPreview；我们用等价的 C++ 类）。

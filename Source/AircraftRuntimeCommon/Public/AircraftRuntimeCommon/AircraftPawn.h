@@ -1,5 +1,3 @@
-// 对应 NxGame AircraftLab/Public/AircraftPawn.h（+ Private/.cpp）。
-// 范式分歧：NxGame 的机身是普通 USkeletalMeshComponent + UFlightControllerComponent；
 // 本插件中 UAircraftComponent 自身即骨骼网格组件（Dataflow 资产直驱），直接作为根组件。
 
 #pragma once

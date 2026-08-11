@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEngine/Private/ChaosClothAsset/ClothSimulationProxy.cpp
 //
 // FAircraftSimulationProxy：多旋翼飞控代理。控制律核心已下沉到 Aircraft 求解器模块
 // （FFlightControlSolver / FControlAllocator / 旋翼模型 / 失效管理器），本文件只做编排：
@@ -154,14 +153,12 @@ void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
 	}
 	ControlAllocator.SetRotorDescriptors(Infos);
 
-	// 旋翼运行时状态与模型索引对齐。
 	RotorStates.SetNum(Infos.Num());
 	for (FAircraftRotorRuntimeState& State : RotorStates)
 	{
 		State.Reset();
 	}
 
-	// 健康表按名称对齐（保留既有条目，新增补默认，多余的移除）。
 	TMap<FName, FAircraftRotorHealthState> NewHealth;
 	for (const FAircraftRotorAllocationInfo& Info : Infos)
 	{
@@ -414,7 +411,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	}
 
 	// 仅 FlightController 驱动模式在 PT 跑控制循环；
-	// PhysicsConstraint / Kinematic 后端由组件在 GT 驱动（对齐 NxGame 分工）。
 	if (!ActiveLodModel
 		|| ActiveDriveMode != EAircraftSimulationDriveMode::FlightController)
 	{
@@ -426,7 +422,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	}
 	if (RotorStates.Num() != ActiveLodModel->Rotors.Num())
 	{
-		// 旋翼数量在运行时变化；重新对齐。
 		RebuildRotorDescriptors_PhysicsThread();
 	}
 
@@ -607,7 +602,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		FMath::RadiansToDegrees(Config.BodyAngularToController(AngularVelBodyRadPerSec).Z));
 	const FRotator AttitudeDeg = Config.GetControlWorldRotation(WorldQuat).Rotator();
 
-	// 填充物理缓存（NxGame FPhysicsCache 等价物）
 	PhysicsCache.BodyTransform = WorldXform;
 	PhysicsCache.LinearVelocityCmPerSec = LinearVelCmPerSec;
 	PhysicsCache.AngularVelocityBodyDegPerSec = AngularVelControllerDegPerSec;
@@ -771,7 +765,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	}
 
 	/* ----------------------------------------------------------------------
-	 * 7) 串级控制循环（NxGame RunControlLoop 等价物）
 	 * ---------------------------------------------------------------------- */
 	FAircraftFlightControlSolverContext SolverContext{
 		Runtime, PhysicsCache, ModeCapabilities, Config, ManualCommand, EffectiveInjection,
@@ -890,7 +883,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 			WorldPos,
 			/*bAllowSubstepping=*/false, /*bIsLocalForce=*/false, /*bIsInternal=*/true);
 
-		// 反扭矩：方向 = 推力轴 × (T × k_τ × SpinSign)（CW=-1，CCW=+1，NxGame 约定）
 		const FVector ReactionTorqueWorldNm = WorldAxis
 			* (AppliedThrustN * Info.ReactionTorqueCoefficientM * Info.SpinDirectionSign);
 		FChaosEngineInterface::AddTorque_AssumesLocked(

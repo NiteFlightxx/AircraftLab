@@ -1,4 +1,3 @@
-// 移植自 NxGame AircraftLab/Private/Tests/FlightControlDynamicsTests.cpp。
 // 适配点：嵌套 Profile 配置 → 平铺 FAircraftFlightControllerRuntimeConfig（自带权威默认值）；
 // FAutopilotMovementIntent → FAircraftManualCommand；类型前缀 FFlightControl* → FAircraftFlightControl*。
 

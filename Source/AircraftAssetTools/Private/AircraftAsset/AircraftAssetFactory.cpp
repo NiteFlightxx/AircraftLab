@@ -1,10 +1,8 @@
-// 对齐 ChaosClothAssetTools/Private/ChaosClothAsset/ClothAssetFactory.cpp
 //
 // 与 ChaosCloth 的刻意分歧：ChaosCloth 用 DF_*.uasset 二进制模板 +
 // SetDataflowFromTemplatePicker；Aircraft 无随包二进制模板资产，模板图由
 // IAircraftDataflowTemplateProvider 模块化特性（实现注册于 AircraftAssetEditor）
 // 程序化生成。无提供者（如自动化测试/命令行）时退化为空 Dataflow，
-// 对齐 UChaosClothAssetFactory 的 GIsAutomationTesting 路径。
 
 #include "AircraftAsset/AircraftAssetFactory.h"
 

@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEngine/Public/ChaosClothAsset/ClothAsset.h
 //
 // 职责：UAircraftAsset 是多旋翼资产的具体实现，承载骨骼网格 + 物理资产 + 多个
 // FManagedArrayCollection（描述机架/电机/桨/PID/手感等），并在 Build() 时编译成
@@ -11,7 +10,6 @@
 #include "AircraftAsset/AircraftAssetBase.h"
 
 // EAircraftArmState / EAircraftFlightMode / EAircraftAttitudeMode 已下沉到求解器模块
-// （Aircraft/Public/Aircraft/FlightControlStateTypes.h，对齐 UChaosClothConfig 归属 ChaosCloth 的做法），
 // 名称不变，此处 include 复用。
 #include "Aircraft/FlightControlStateTypes.h"
 

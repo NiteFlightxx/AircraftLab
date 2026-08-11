@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Private/Turn/TurnBehavior.cpp（对齐移植）。
 
 #include "AircraftRuntimeCommon/Autopilot/TurnBehavior.h"
 

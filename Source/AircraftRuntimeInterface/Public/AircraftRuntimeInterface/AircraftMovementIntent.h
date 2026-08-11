@@ -1,5 +1,3 @@
-// 对齐 ClothingSystemRuntimeInterface 的契约层职责。
-// 对应 NxGame AircraftCore/Public/AircraftMovementIntent.h：
 // 玩家、Autopilot 和 GameplayPolicy 共用的唯一移动意图契约。
 
 #pragma once

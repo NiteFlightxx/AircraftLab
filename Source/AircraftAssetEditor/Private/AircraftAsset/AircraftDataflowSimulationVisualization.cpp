@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEditor/Private/ChaosClothAsset/ClothDataflowSimulationVisualization.cpp。
 // 组件获取路径：FDataflowSimulationScene::GetPreviewActor()->GetComponentByClass<UAircraftComponent>()。
 // 旧调试绘制菜单（CenterOfMass/Rotors/ThrustVectors/Torque/Velocity 开关）已随组件侧
 // DrawDebug 代码一并移除 —— 后续重新规划调试绘制功能后再恢复菜单。

@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Private/MotionProfile/MotionProfile.cpp（逐段对齐移植）。
 
 #include "AircraftRuntimeCommon/Autopilot/MotionProfile.h"
 

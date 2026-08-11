@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Private/HoverThrust/HoverThrustEstimator.cpp（对齐移植）。
 
 #include "AircraftRuntimeCommon/Autopilot/HoverThrustEstimator.h"
 

@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Public/HoverThrust/HoverThrustEstimator.h（+ Private/.cpp）。
 // 配置字段由 FAircraftAutopilotRuntimeConfig 承载（Dataflow 编译产物）。
 //
 // 悬停推力零阶 EKF（对标 PX4 hover_thrust_estimator）：

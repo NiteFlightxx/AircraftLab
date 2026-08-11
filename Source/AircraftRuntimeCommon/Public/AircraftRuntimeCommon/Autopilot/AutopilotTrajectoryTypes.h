@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftAutopilot/Public/Trajectory/AutopilotTrajectoryTypes.h。
 //
 // Trajectory Generator 核心数据类型。坐标系双轨制：内部 Frenet 路径坐标系
 // （弧长/切向/法向）供路径跟踪算法；对外 FTrajectoryPoint 输出世界系设定值。

@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEditorTools 的 InteractiveTool 风格：
 // 一个 Tool = ToolBuilder + Tool + ToolProperties，ToolManager 在 Activate 时实例化。
 //
 // MotorPlacementTool：可视化拖拽机架上的旋翼位置（机体坐标系下的 X/Y 偏移）。

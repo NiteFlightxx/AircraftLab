@@ -1,5 +1,3 @@
-// 对应 NxGame AircraftLab/Private/FlightControllerControl.cpp（逐函数对齐重写）。
-// 配置来源由 NxGame 的嵌套 Profile 结构改为本模块的平铺 FAircraftFlightControllerRuntimeConfig。
 
 #include "Aircraft/FlightControlSolver.h"
 

@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Public/FlightControllerRuntimeObjects.h 的 FRotorFailureManager +
 // Private/RotorFailureManager.cpp。
 //
 // 旋翼健康管理器：健康状态表、控制权限评估（相对全健康基准归一化）、失效策略判定

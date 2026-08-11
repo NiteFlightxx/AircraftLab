@@ -1,4 +1,3 @@
-// 移植自 NxGame AircraftLab/Private/Tests/AircraftPhysicsUnitsTests.cpp。
 
 #include "Aircraft/AircraftPhysicsUnits.h"
 #include "Misc/AutomationTest.h"

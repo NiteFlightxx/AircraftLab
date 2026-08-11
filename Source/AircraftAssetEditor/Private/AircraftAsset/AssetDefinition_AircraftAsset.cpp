@@ -28,7 +28,6 @@ TSoftClassPtr<UObject> UAssetDefinition_AircraftAsset::GetAssetClass() const
 
 FLinearColor UAssetDefinition_AircraftAsset::GetAssetColor() const
 {
-	// 资产色统一取自 FColorScheme（对齐 ChaosClothAssetTools/ColorScheme.h）
 	return UE::AircraftLab::AircraftAsset::FColorScheme::Asset;
 }
 
@@ -51,7 +50,6 @@ EAssetCommandResult UAssetDefinition_AircraftAsset::OpenAssets(const FAssetOpenA
 	if (AircraftAssets.Num() > 0)
 	{
 		// 编辑器选项（Aircraft.EnableDataflowEditor CVar，经 UAircraftEditorOptions 双向绑定）分流，
-		// 默认打开引擎统一的 FDataflowEditorToolkit（对齐 ChaosCloth 5.9：该面板从 5.8 起就是
 		// 布料资产的正式编辑器，旧的自制 Panel Editor 路线已废弃）。
 		// 直接读 CVar 以避免 AircraftAssetEditor → AircraftEditor 的模块依赖。
 		bool bOpenInDataflowEditor = true;

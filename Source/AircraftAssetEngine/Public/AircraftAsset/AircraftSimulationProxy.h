@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEngine/Public/ChaosClothAsset/ClothSimulationProxy.h
 //
 // 职责：飞控运行时数据结构 + 仿真代理类（线程间数据中转 / 飞控算法执行体）。
 // FAircraftSimulationProxy 与 ChaosCloth 的 FClothSimulationProxy 一一对应：
@@ -7,7 +6,6 @@
 //   * 通过 FChaosEngineInterface::Add*_AssumesLocked 把结果作用到 Chaos 刚体。
 //
 // 控制律核心（PID/求解器/分配器/旋翼模型/失效管理）位于 Aircraft 求解器模块
-// （对齐 ChaosCloth 插件拥有求解器的分层），本代理只做编排与线程边界管理。
 // 内部状态全部使用 Aircraft 模块的纯 C++ 类型（PT 零 UObject）。
 
 #pragma once
@@ -32,7 +30,6 @@ class UAircraftComponent;
 struct FBodyInstance;
 
 /* ===========================================================================
- *  仿真代理类（纯 C++，对齐 ChaosCloth FClothSimulationProxy）
  * =========================================================================== */
 
 /**
@@ -99,7 +96,6 @@ public:
 	/**
 	 * 物理线程子步入口。AsyncPhysicsTickComponent 路径下 DeltaTime 是物理子步长（恒定高频），
 	 * 适合直接作为 PID 的离散步长。仅在 FlightController 驱动模式下执行控制循环；
-	 * PhysicsConstraint / Kinematic 后端由组件在 GT 驱动（对齐 NxGame 的分工）。
 	 */
 	void TickPhysicsThread(float DeltaTime, float SimTime, float ForceAccumulationScale = 1.0f);
 	//~ End PhysicsThread API

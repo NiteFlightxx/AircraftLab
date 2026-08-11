@@ -1,4 +1,3 @@
-// 对应 NxGame AircraftLab/Private/AircraftInputComponent.cpp（对齐重写）。
 
 #include "AircraftRuntimeCommon/Input/AircraftInputComponent.h"
 

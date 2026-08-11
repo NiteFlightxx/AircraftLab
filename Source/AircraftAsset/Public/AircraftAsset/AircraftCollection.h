@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAsset/Public/ChaosClothAsset/ClothCollection.h
 //
 // 多旋翼资产的 schema 容器。FConstAircraftCollection / FAircraftCollection 是 ManagedArrayCollection
 // 的强类型只读/可写包装，按"Group → Attribute → ManagedArray<T>"三层结构暴露所有 schema 字段。
@@ -11,7 +10,6 @@
 //   Solver             | 0 或 1            | 可选的 Chaos 异步固定时间步与刚体迭代覆盖
 //   Frame              | 1                 | 机架类型 + 质量惯性 + 气动 + 风场 + 地面效应
 //   Motors             | N（电机数）       | 电机一阶滞后参数 + 怠速/最大转速
-//   Propellers         | N（与电机对齐）   | 旋翼位置/方向/旋向 + 推力/反扭矩系数
 //   FlightController   | 1                 | 串级 PID 12 通道增益 + 限幅 + 控制器配置
 //   GameFeel           | 1                 | RC 曲线、死区、手感倾角与悬停油门
 

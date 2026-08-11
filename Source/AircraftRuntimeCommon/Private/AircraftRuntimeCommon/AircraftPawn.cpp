@@ -21,7 +21,6 @@ AAircraftPawn::AAircraftPawn()
 	AutopilotComponent = CreateDefaultSubobject<UAutopilotComponent>(TEXT("AutopilotComponent"));
 	SimulationLOD = CreateDefaultSubobject<UAircraftSimulationLODComponent>(TEXT("SimulationLOD"));
 
-	// 网络：服务器/模拟代理使用预测插值（对齐 NxGame 的物理复制模式）。
 	SetReplicatingMovement(true);
 }
 

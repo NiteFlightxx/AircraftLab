@@ -1,4 +1,3 @@
-// 对齐 NxGame 控制分配行为规范（FlightControllerAllocation.cpp 的算法契约）：
 // 悬停四旋翼均分总距；失效旋翼整列清零并由剩余旋翼重分配；指令反演与电机正向模型互逆。
 
 #include "Aircraft/ControlAllocator.h"

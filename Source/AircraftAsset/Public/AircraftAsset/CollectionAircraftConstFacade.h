@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAsset/Public/ChaosClothAsset/CollectionClothFacade.h
 //
 // 多旋翼资产 schema 的 Facade 包装层。组名 / 属性名常量集中暴露给 Dataflow 节点等外部使用方。
 

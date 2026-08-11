@@ -21,7 +21,6 @@ FAircraftAssetEditorModule::~FAircraftAssetEditorModule() = default;
 namespace UE::AircraftDataflowEditor
 {
 	/**
-	 * 程序化模板图提供者（对齐 ChaosCloth 的模块化特性依赖倒置）：
 	 * 工厂在 AircraftAssetTools（低层），模板生成在本模块（高层），经特性注册解耦。
 	 */
 	struct FAircraftDataflowTemplateProvider
@@ -85,7 +84,6 @@ void FAircraftAssetEditorModule::StartupModule()
 		UE::AircraftLab::AircraftAsset::IAircraftDataflowTemplateProvider::GetFeatureName(),
 		TemplateProvider.Get());
 
-	// 引擎 Dataflow 编辑器的可视化注册（对齐 ChaosClothAssetEditorModule 三件套中的两件）：
 	//   - Construction 视口：旋翼几何由 AircraftAssetDataflowNodes 的 RenderingFactory 回调负责，
 	//     此挂载点保留扩展位置；
 	//   - Simulation 视口：调试绘制开关菜单 + 视口左上角状态文本。
@@ -94,7 +92,6 @@ void FAircraftAssetEditorModule::StartupModule()
 	UE::Dataflow::FDataflowSimulationVisualizationRegistry::GetInstance()
 		.RegisterVisualization(MakeUnique<FAircraftDataflowSimulationVisualization>());
 
-	// Dataflow 资产菜单（"在 Dataflow 编辑器中打开"等，对齐 ChaosClothAssetEditorModule）
 	DataflowAssetMenusHandle = UE::DataflowAssetDefinitionHelpers::RegisterDataflowAssetMenus(
 		UAircraftAsset::StaticClass());
 }

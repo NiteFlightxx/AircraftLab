@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetTools/Public/ChaosClothAsset/ColorScheme.h
 //
 // Aircraft 资产的统一配色：资产缩略图/类别色 + Dataflow 节点画布色。
 // 节点注册（AircraftAssetDataflowNodes）与 AssetDefinition（AircraftAssetEditor）
@@ -19,7 +18,6 @@ namespace UE::AircraftLab::AircraftAsset
 		static constexpr FColor NodeHeader = FColor(0, 166, 255);
 		static constexpr FColor NodeBody = FColor(0, 0, 0, 115);
 
-		/** Terminal 类别节点头/体色（深红，对齐 ChaosClothAsset 风格）。 */
 		static constexpr FColor TerminalNodeHeader = FColor(166, 41, 31);
 		static constexpr FColor TerminalNodeBody = FColor(0, 0, 0, 115);
 	};

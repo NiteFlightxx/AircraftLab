@@ -1,4 +1,3 @@
-// 对齐 ChaosClothAssetEngine/Public/ChaosClothAsset/ClothComponent.h
 //
 // 职责：UAircraftComponent 是挂在 Pawn 上的多旋翼组件。
 // 与 ChaosCloth 的 UChaosClothComponent（继承 USkinnedMesh，自算蒙皮）不同：无人机不需要自算
@@ -144,7 +143,6 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "AircraftComponent|Simulation LOD")
 	FOnAircraftSimulationLODChanged OnSimulationLODChanged;
 
-	/* ------- Autopilot 注入（对齐 NxGame 的 IAutopilotProvider 拉取模式） ------- */
 
 	/** 启用后，TG_PrePhysics 每帧从 AutopilotProvider 拉取 FAutopilotInjection 注入飞控。 */
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Autopilot")
@@ -157,7 +155,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Autopilot")
 	void SetAutopilotProvider(UObject* Provider);
 
-	/* ------- 旋翼健康 / 失效策略（NxGame 等价 API） ------- */
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
 	bool FailRotor(FName RotorName);
@@ -189,7 +186,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
 	void ClearAircraftMotionTarget();
 
-	/** 精确临时驱动请求（对齐 NxGame 的 DriveOverride）。 */
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
 	void SetSimulationDriveOverride(const FAircraftSimulationDriveOverride& InOverride);
 
@@ -270,7 +266,6 @@ private:
 	void SyncSkeletalMeshComponentFromAsset();
 	FBodyInstance* ResolveChassisBodyInstance() const;
 
-	/* ------- 替代驱动后端（NxGame 对齐，GT 执行） ------- */
 
 	/** 创建 6-DOF 物理约束后端（约束参数取自当前 LOD 的 FlightController 配置）。 */
 	bool CreateSimulationConstraint();
@@ -320,7 +315,6 @@ private:
 	TObjectPtr<UAircraftAssetBase> Asset;
 
 	/**
-	 * 仿真总开关（对齐 ChaosClothComponent::bEnableSimulation）：
 	 *   false   ─►  IsSimulationEnabled() 始终返回 false，Proxy 在下一物理子步停止控制；
 	 *   true    ─►  仅当 SimulationProxy 已构造时才认为"实际开"。
 	 */
@@ -328,7 +322,6 @@ private:
 	uint8 bEnableSimulation : 1;
 
 	/**
-	 * 临时挂起开关（对齐 ChaosClothComponent::bSuspendSimulation）：
 	 *   true 会让 IsSimulationSuspended() = true，Proxy 在下一物理子步停止施加控制力。
 	 */
 	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Simulation")
@@ -341,7 +334,6 @@ private:
 	int32 ForcedSimulationLOD = INDEX_NONE;
 
 	/**
-	 * 仿真求解用的 Dataflow 图配置（对齐 ChaosClothComponent::SimulationAsset）。
 	 *
 	 * 默认填充（OnRegister 惰性进行）：DataflowAsset 为空时自动填入插件共享的程序化
 	 * Simulation 图（UE::AircraftLab::AircraftAsset::GetOrCreateAircraftSimulationGraph，
