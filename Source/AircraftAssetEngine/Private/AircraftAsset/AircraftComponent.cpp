@@ -136,6 +136,21 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 			Mass.InertiaDiagonalKgCmSq.Y / FMath::Max(BaseInertiaKgCmSq.Y, UE_SMALL_NUMBER),
 			Mass.InertiaDiagonalKgCmSq.Z / FMath::Max(BaseInertiaKgCmSq.Z, UE_SMALL_NUMBER));
 		Body->UpdateMassProperties();
+
+		UE_LOG(LogAircraftComponent, Verbose,
+			TEXT("[AircraftDF.MassApply] Owner=%s LOD=%d AssetMass=%.3fkg ActualMass=%.3fkg COM=(%+.2f,%+.2f,%+.2f)cm AssetInertia=(%.1f,%.1f,%.1f)kgcm2 ActualInertia=(%.1f,%.1f,%.1f)kgcm2 Scale=(%.4f,%.4f,%.4f)"),
+			*GetNameSafe(GetOwner()), CurrentSimulationLOD,
+			Mass.MassKg, Body->GetBodyMass(),
+			Body->COMNudge.X, Body->COMNudge.Y, Body->COMNudge.Z,
+			Mass.InertiaDiagonalKgCmSq.X,
+			Mass.InertiaDiagonalKgCmSq.Y,
+			Mass.InertiaDiagonalKgCmSq.Z,
+			Body->GetBodyInertiaTensor().X,
+			Body->GetBodyInertiaTensor().Y,
+			Body->GetBodyInertiaTensor().Z,
+			Body->InertiaTensorScale.X,
+			Body->InertiaTensorScale.Y,
+			Body->InertiaTensorScale.Z);
 	}
 
 }

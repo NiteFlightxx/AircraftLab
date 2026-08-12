@@ -23,8 +23,32 @@
 #include "PBDRigidsSolver.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
+#include "HAL/IConsoleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogAircraftSimulationProxy, Log, All);
+
+namespace AircraftDebugCVars
+{
+	static TAutoConsoleVariable<int32> CVarDebugLog(
+		TEXT("aircraft.DebugLog"), 0,
+		TEXT("Enable rate-limited Aircraft Dataflow flight-control diagnostics."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarDebugLogInterval(
+		TEXT("aircraft.DebugLogInterval"), 0.2f,
+		TEXT("Aircraft Dataflow diagnostic interval in seconds. Zero logs every physics step."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarDebugRotors(
+		TEXT("aircraft.DebugRotors"), 0,
+		TEXT("Include per-rotor commands in Aircraft Dataflow diagnostics."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarDebugSigns(
+		TEXT("aircraft.DebugSigns"), 1,
+		TEXT("Enable roll and pitch sign-consistency warnings in Aircraft Dataflow diagnostics."),
+		ECVF_Default);
+}
 
 namespace AircraftProxyPrivate
 {
@@ -52,6 +76,45 @@ namespace AircraftProxyPrivate
 	{
 		const FVector Forward = GetPlanarHeadingDirection(BodyRotation, Config);
 		return FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X));
+	}
+
+	const TCHAR* GetFlightModeLabel(const EAircraftFlightMode Mode)
+	{
+		switch (Mode)
+		{
+		case EAircraftFlightMode::Manual: return TEXT("Manual");
+		case EAircraftFlightMode::Acro: return TEXT("Acro");
+		case EAircraftFlightMode::Angle: return TEXT("Angle");
+		case EAircraftFlightMode::AltitudeHold: return TEXT("AltitudeHold");
+		case EAircraftFlightMode::PositionHold: return TEXT("PositionHold");
+		case EAircraftFlightMode::VelocityHold: return TEXT("VelocityHold");
+		case EAircraftFlightMode::Mission: return TEXT("Mission");
+		case EAircraftFlightMode::ReturnToHome: return TEXT("ReturnToHome");
+		case EAircraftFlightMode::AutoLand: return TEXT("AutoLand");
+		default: return TEXT("Unknown");
+		}
+	}
+
+	const TCHAR* GetDriveModeLabel(const EAircraftSimulationDriveMode Mode)
+	{
+		switch (Mode)
+		{
+		case EAircraftSimulationDriveMode::FlightController: return TEXT("FlightController");
+		case EAircraftSimulationDriveMode::PhysicsConstraint: return TEXT("PhysicsConstraint");
+		case EAircraftSimulationDriveMode::Kinematic: return TEXT("Kinematic");
+		case EAircraftSimulationDriveMode::None: return TEXT("None");
+		default: return TEXT("Unknown");
+		}
+	}
+
+	int32 GetSignBucket(const float Value, const float Deadband)
+	{
+		return Value > Deadband ? 1 : Value < -Deadband ? -1 : 0;
+	}
+
+	const TCHAR* GetSignLabel(const int32 Sign)
+	{
+		return Sign > 0 ? TEXT("+") : Sign < 0 ? TEXT("-") : TEXT("0");
 	}
 }
 
@@ -105,6 +168,7 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 
 	SimulationModel = MoveTemp(NewSimulationModel);
 	ActiveLodModel = SimulationModel.IsValid() ? SimulationModel->GetLodModel(NewLodIndex) : nullptr;
+	ActiveLodIndex = NewLodIndex;
 	ActiveDriveMode = NewDriveMode;
 	ControlSolver.Reset();
 	ControlAllocator.Reset();
@@ -116,11 +180,285 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	CurrentCollectiveThrustCommand.store(0.0f, std::memory_order_relaxed);
 	bFailureActionPending.store(false, std::memory_order_relaxed);
 	bPendingControllerReset.store(false, std::memory_order_relaxed);
+	DebugLogAccumulatorSeconds = 0.0f;
+	bHasPreviousDebugSample = false;
+	bDebugConfigurationPending = true;
 
 	CurrentArmState.store(static_cast<uint8>(EAircraftArmState::Armed), std::memory_order_relaxed);
 	bControllerEnabled.store(
 		ActiveLodModel ? ActiveLodModel->FlightController.bControllerEnabledByDefault : true,
 		std::memory_order_relaxed);
+	if (AircraftDebugCVars::CVarDebugLog.GetValueOnAnyThread() != 0)
+	{
+		UE_LOG(LogAircraftSimulationProxy, Log,
+			TEXT("[AircraftDF.Rebuild] Owner=%s LOD=%d Drive=%s Model=%d Arm=Armed Controller=%d Rotors=%d"),
+			*AircraftOwnerName, ActiveLodIndex,
+			AircraftProxyPrivate::GetDriveModeLabel(ActiveDriveMode),
+			ActiveLodModel ? 1 : 0,
+			bControllerEnabled.load(std::memory_order_relaxed) ? 1 : 0,
+			ActiveLodModel ? ActiveLodModel->Rotors.Num() : 0);
+	}
+}
+
+void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
+	const float DeltaTime,
+	const FDronePilotInput& Pilot,
+	const FAircraftManualCommand& ManualCommand,
+	const float CollectiveCommand,
+	const float DesiredVerticalVelocityCmPerSec,
+	const FRotator& DesiredAttitude,
+	const FVector& DesiredBodyRatesDegPerSec,
+	const FVector& AxisCommands)
+{
+	if (AircraftDebugCVars::CVarDebugLog.GetValueOnAnyThread() == 0 || !ActiveLodModel)
+	{
+		return;
+	}
+
+	DebugLogAccumulatorSeconds += DeltaTime;
+	const float IntervalSeconds = FMath::Max(
+		AircraftDebugCVars::CVarDebugLogInterval.GetValueOnAnyThread(), 0.0f);
+	if (IntervalSeconds > UE_SMALL_NUMBER
+		&& DebugLogAccumulatorSeconds + UE_SMALL_NUMBER < IntervalSeconds)
+	{
+		return;
+	}
+	DebugLogAccumulatorSeconds = 0.0f;
+
+	const FAircraftFlightControllerRuntimeConfig& Config = ActiveLodModel->FlightController;
+	const FAircraftKinematicState& State = Runtime.EstimatedState.State;
+	const EAircraftFlightMode Mode = static_cast<EAircraftFlightMode>(
+		CurrentFlightMode.load(std::memory_order_relaxed));
+	const EAircraftArmState ArmState = static_cast<EAircraftArmState>(
+		CurrentArmState.load(std::memory_order_relaxed));
+	const bool bControllerIsEnabled = bControllerEnabled.load(std::memory_order_relaxed);
+
+	if (bDebugConfigurationPending)
+	{
+		double TotalMaxThrustN = 0.0;
+		UE_LOG(LogAircraftSimulationProxy, Log,
+			TEXT("[AircraftDF.Config] Owner=%s LOD=%d Drive=%s Arm=%d Controller=%d Rotors=%d ForwardAxis=%d AssetMass=%.3fkg AssetCOM=(%+.2f,%+.2f,%+.2f)cm AssetInertia=(%.1f,%.1f,%.1f)kgcm2 ChaosMass=%.3fkg ChaosCOM=(%+.2f,%+.2f,%+.2f)cm ChaosInertia=(%.4f,%.4f,%.4f)kgm2 DampingL=(%.3f,%.3f,%.3f) DampingA=(%.3f,%.3f,%.3f)"),
+			*AircraftOwnerName, ActiveLodIndex, AircraftProxyPrivate::GetDriveModeLabel(ActiveDriveMode),
+			static_cast<int32>(ArmState), bControllerIsEnabled ? 1 : 0,
+			ControlAllocator.RotorInfoBuffer.Num(), static_cast<int32>(Config.ForwardAxis),
+			ActiveLodModel->Mass.MassKg,
+			ActiveLodModel->Mass.CenterOfMassOffsetCm.X,
+			ActiveLodModel->Mass.CenterOfMassOffsetCm.Y,
+			ActiveLodModel->Mass.CenterOfMassOffsetCm.Z,
+			ActiveLodModel->Mass.InertiaDiagonalKgCmSq.X,
+			ActiveLodModel->Mass.InertiaDiagonalKgCmSq.Y,
+			ActiveLodModel->Mass.InertiaDiagonalKgCmSq.Z,
+			PhysicsCache.MassKg,
+			PhysicsCache.CenterOfMassOffsetBodyCm.X,
+			PhysicsCache.CenterOfMassOffsetBodyCm.Y,
+			PhysicsCache.CenterOfMassOffsetBodyCm.Z,
+			PhysicsCache.InertiaDiagonalKgM2.X,
+			PhysicsCache.InertiaDiagonalKgM2.Y,
+			PhysicsCache.InertiaDiagonalKgM2.Z,
+			PhysicsCache.LinearDampingPerSecond.X,
+			PhysicsCache.LinearDampingPerSecond.Y,
+			PhysicsCache.LinearDampingPerSecond.Z,
+			PhysicsCache.AngularDampingPerSecond.X,
+			PhysicsCache.AngularDampingPerSecond.Y,
+			PhysicsCache.AngularDampingPerSecond.Z);
+
+		for (int32 RotorIndex = 0; RotorIndex < ControlAllocator.RotorInfoBuffer.Num(); ++RotorIndex)
+		{
+			const FAircraftRotorAllocationInfo& Info = ControlAllocator.RotorInfoBuffer[RotorIndex];
+			const FVector4 Jacobian = FAircraftControlAllocator::BuildJacobianColumn(Info, Config);
+			TotalMaxThrustN += Info.MaxPhysicalThrustN;
+			UE_LOG(LogAircraftSimulationProxy, Log,
+				TEXT("[AircraftDF.RotorLayout] [%d:%s] Enabled=%d ArmCm=(%+.1f,%+.1f,%+.1f) Axis=(%+.3f,%+.3f,%+.3f) Spin=%s Jacobian=(%.2fN,%+.3f,%+.3f,%+.3fNm) Max=%.2fN AllocMax=%.2fN Idle/MaxRPM=%.0f/%.0f"),
+				RotorIndex, *Info.RotorName.ToString(), Info.bEnabled ? 1 : 0,
+				Info.PositionFromCenterOfMassBodyCm.X,
+				Info.PositionFromCenterOfMassBodyCm.Y,
+				Info.PositionFromCenterOfMassBodyCm.Z,
+				Info.ThrustAxisBody.X, Info.ThrustAxisBody.Y, Info.ThrustAxisBody.Z,
+				Info.SpinDirectionSign < 0.0f ? TEXT("CW") : TEXT("CCW"),
+				Jacobian[0], Jacobian[1], Jacobian[2], Jacobian[3],
+				Info.MaxPhysicalThrustN, Info.MaxAllocatedThrustN,
+				Info.Motor.IdleRpm, Info.Motor.MaxRpm);
+		}
+		const double WeightN = PhysicsCache.MassKg * PhysicsCache.GravityMagnitudeCmPerSecSq * 0.01;
+		UE_LOG(LogAircraftSimulationProxy, Log,
+			TEXT("[AircraftDF.UnitCheck] Weight=%.2fN TotalRotorMax=%.2fN MaxTWR=%.3f HoverConfig=%.3f HoverRequired=%.3f"),
+			WeightN, TotalMaxThrustN,
+			WeightN > UE_SMALL_NUMBER ? TotalMaxThrustN / WeightN : 0.0,
+			Config.HoverCollectiveCommand,
+			TotalMaxThrustN > UE_SMALL_NUMBER ? WeightN / TotalMaxThrustN : 0.0);
+		if (WeightN > UE_SMALL_NUMBER && TotalMaxThrustN / WeightN < 1.05)
+		{
+			UE_LOG(LogAircraftSimulationProxy, Warning,
+				TEXT("[AircraftDF.UnitCheck] Owner=%s cannot hover: MaxTWR=%.3f."),
+				*AircraftOwnerName, TotalMaxThrustN / WeightN);
+		}
+		bDebugConfigurationPending = false;
+	}
+
+	const FVector VelocityError = ControlSolver.LastDesiredHorizontalVelocityCmPerSec - State.VelocityCmPerSec;
+	UE_LOG(LogAircraftSimulationProxy, Log,
+		TEXT("[AircraftDF.Flight] t=%.3f dt=%.5f Owner=%s LOD=%d Mode=%s Arm=%d Controller=%d Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) Pos=(%.1f,%.1f,%.1f) Vel=(%+.1f,%+.1f,%+.1f) Att(R/P/Y)=(%+.2f,%+.2f,%+.2f) DesiredAtt=(%+.2f,%+.2f,%+.2f)"),
+		State.TimeSeconds, DeltaTime, *AircraftOwnerName, ActiveLodIndex,
+		AircraftProxyPrivate::GetFlightModeLabel(Mode), static_cast<int32>(ArmState),
+		bControllerIsEnabled ? 1 : 0,
+		Pilot.Throttle, Pilot.Roll, Pilot.Pitch, Pilot.Yaw,
+		State.PositionCm.X, State.PositionCm.Y, State.PositionCm.Z,
+		State.VelocityCmPerSec.X, State.VelocityCmPerSec.Y, State.VelocityCmPerSec.Z,
+		State.AttitudeDegrees.Roll, State.AttitudeDegrees.Pitch, State.AttitudeDegrees.Yaw,
+		DesiredAttitude.Roll, DesiredAttitude.Pitch, DesiredAttitude.Yaw);
+
+	UE_LOG(LogAircraftSimulationProxy, Log,
+		TEXT("[AircraftDF.Velocity] ManualVel=(%+.1f,%+.1f,%+.1f) DesiredXY=(%+.1f,%+.1f) ErrorXY=(%+.1f,%+.1f) DragFF=(%+.1f,%+.1f) TrajectoryFF=(%+.1f,%+.1f) AccelCmd=(%+.1f,%+.1f) HoldPos=%d Brake=%d Held=(%.1f,%.1f,%.1f)"),
+		ManualCommand.DesiredVelocityCmPerSec.X,
+		ManualCommand.DesiredVelocityCmPerSec.Y,
+		ManualCommand.DesiredVelocityCmPerSec.Z,
+		ControlSolver.LastDesiredHorizontalVelocityCmPerSec.X,
+		ControlSolver.LastDesiredHorizontalVelocityCmPerSec.Y,
+		VelocityError.X, VelocityError.Y,
+		ControlSolver.LastVelocityDragFeedForwardCmPerSecSq.X,
+		ControlSolver.LastVelocityDragFeedForwardCmPerSecSq.Y,
+		ControlSolver.LastTrajectoryAccelerationFeedForwardCmPerSecSq.X,
+		ControlSolver.LastTrajectoryAccelerationFeedForwardCmPerSecSq.Y,
+		ControlSolver.LastDesiredHorizontalAccelerationCmPerSecSq.X,
+		ControlSolver.LastDesiredHorizontalAccelerationCmPerSecSq.Y,
+		Runtime.HoldTargets.bPositionHoldInitialized ? 1 : 0,
+		Runtime.HoldTargets.bHorizontalBrakeBeforeHold ? 1 : 0,
+		Runtime.HoldTargets.HeldPositionCm.X,
+		Runtime.HoldTargets.HeldPositionCm.Y,
+		Runtime.HoldTargets.HeldPositionCm.Z);
+
+	double CurrentTotalThrustN = 0.0;
+	FVector AppliedForceBodyN = FVector::ZeroVector;
+	FVector AppliedTorqueControllerNm = FVector::ZeroVector;
+	for (int32 RotorIndex = 0; RotorIndex < RotorStates.Num(); ++RotorIndex)
+	{
+		if (!ControlAllocator.RotorInfoBuffer.IsValidIndex(RotorIndex))
+		{
+			continue;
+		}
+		const FAircraftRotorAllocationInfo& Info = ControlAllocator.RotorInfoBuffer[RotorIndex];
+		const FAircraftRotorRuntimeState& RotorState = RotorStates[RotorIndex];
+		const FVector ForceBodyN = Info.ThrustAxisBody * RotorState.CurrentThrustForceN;
+		const FVector PhysicalTorqueBodyNm = FVector::CrossProduct(
+			Info.PositionFromCenterOfMassBodyCm * 0.01, ForceBodyN)
+			+ Info.ThrustAxisBody * RotorState.CurrentReactionTorqueNm * Info.SpinDirectionSign;
+		CurrentTotalThrustN += RotorState.CurrentThrustForceN;
+		AppliedForceBodyN += ForceBodyN;
+		AppliedTorqueControllerNm += Config.BodyTorqueToController(PhysicalTorqueBodyNm);
+	}
+
+	const double WeightN = PhysicsCache.MassKg * PhysicsCache.GravityMagnitudeCmPerSecSq * 0.01;
+	const double MaxVerticalThrustN = ControlAllocator.Cache.RowScale[0];
+	UE_LOG(LogAircraftSimulationProxy, Log,
+		TEXT("[AircraftDF.Thrust] Collective=%.4f Hover(Config/Required)=%.4f/%.4f DesiredVz=%+.1f VzFF=%+.5f Thrust(Current/Weight/Authority)=%.2f/%.2f/%.2fN AxisCmd=(%+.4f,%+.4f,%+.4f) Rate(Current/Desired)=(%+.2f,%+.2f,%+.2f)/(%+.2f,%+.2f,%+.2f)"),
+		CollectiveCommand, Config.HoverCollectiveCommand,
+		MaxVerticalThrustN > UE_SMALL_NUMBER ? WeightN / MaxVerticalThrustN : 0.0,
+		DesiredVerticalVelocityCmPerSec,
+		ControlSolver.LastVerticalDampingCollectiveFeedForward,
+		CurrentTotalThrustN, WeightN, MaxVerticalThrustN,
+		AxisCommands.X, AxisCommands.Y, AxisCommands.Z,
+		State.AngularVelocityBodyDegreesPerSec.X,
+		State.AngularVelocityBodyDegreesPerSec.Y,
+		State.AngularVelocityBodyDegreesPerSec.Z,
+		DesiredBodyRatesDegPerSec.X,
+		DesiredBodyRatesDegPerSec.Y,
+		DesiredBodyRatesDegPerSec.Z);
+
+	const FVector DesiredTorqueNm = Runtime.ControlOutput.BodyTorque;
+	const FVector AllocatedTorqueNm(
+		ControlAllocator.Diagnostics.AllocatedWrench[1] * ControlAllocator.Cache.RowScale[1],
+		ControlAllocator.Diagnostics.AllocatedWrench[2] * ControlAllocator.Cache.RowScale[2],
+		ControlAllocator.Diagnostics.AllocatedWrench[3] * ControlAllocator.Cache.RowScale[3]);
+	const FVector TorqueAlphaDegPerSecSq(
+		PhysicsCache.InertiaDiagonalKgM2.X > UE_SMALL_NUMBER
+			? FMath::RadiansToDegrees(AppliedTorqueControllerNm.X / PhysicsCache.InertiaDiagonalKgM2.X) : 0.0,
+		PhysicsCache.InertiaDiagonalKgM2.Y > UE_SMALL_NUMBER
+			? FMath::RadiansToDegrees(AppliedTorqueControllerNm.Y / PhysicsCache.InertiaDiagonalKgM2.Y) : 0.0,
+		PhysicsCache.InertiaDiagonalKgM2.Z > UE_SMALL_NUMBER
+			? FMath::RadiansToDegrees(AppliedTorqueControllerNm.Z / PhysicsCache.InertiaDiagonalKgM2.Z) : 0.0);
+	const FVector ExpectedAlphaDegPerSecSq = TorqueAlphaDegPerSecSq
+		- State.AngularVelocityBodyDegreesPerSec * PhysicsCache.AngularDampingPerSecond;
+	UE_LOG(LogAircraftSimulationProxy, Log,
+		TEXT("[AircraftDF.Torque] Desired=(%+.3f,%+.3f,%+.3f)Nm DampingFF=(%+.4f,%+.4f,%+.4f) Allocated=(%+.3f,%+.3f,%+.3f)Nm Applied=(%+.3f,%+.3f,%+.3f)Nm ForceBody=(%+.2f,%+.2f,%+.2f)N Residual=%.5f Saturated=%d Alpha(Expected/Measured)=(%+.1f,%+.1f,%+.1f)/(%+.1f,%+.1f,%+.1f)deg/s2"),
+		DesiredTorqueNm.X, DesiredTorqueNm.Y, DesiredTorqueNm.Z,
+		ControlSolver.LastAngularDampingFeedForward.X,
+		ControlSolver.LastAngularDampingFeedForward.Y,
+		ControlSolver.LastAngularDampingFeedForward.Z,
+		AllocatedTorqueNm.X, AllocatedTorqueNm.Y, AllocatedTorqueNm.Z,
+		AppliedTorqueControllerNm.X, AppliedTorqueControllerNm.Y, AppliedTorqueControllerNm.Z,
+		AppliedForceBodyN.X, AppliedForceBodyN.Y, AppliedForceBodyN.Z,
+		ControlAllocator.Diagnostics.ResidualMagnitude,
+		ControlAllocator.Diagnostics.SaturatedMotors.Num(),
+		ExpectedAlphaDegPerSecSq.X, ExpectedAlphaDegPerSecSq.Y, ExpectedAlphaDegPerSecSq.Z,
+		State.AngularAccelerationBodyDegreesPerSecSq.X,
+		State.AngularAccelerationBodyDegreesPerSecSq.Y,
+		State.AngularAccelerationBodyDegreesPerSecSq.Z);
+	if (ControlAllocator.Diagnostics.ResidualMagnitude > 0.05)
+	{
+		UE_LOG(LogAircraftSimulationProxy, Warning,
+			TEXT("[AircraftDF.Allocation] Owner=%s residual %.5f exceeds 0.05; saturated rotors=%d."),
+			*AircraftOwnerName, ControlAllocator.Diagnostics.ResidualMagnitude,
+			ControlAllocator.Diagnostics.SaturatedMotors.Num());
+	}
+
+	if (AircraftDebugCVars::CVarDebugRotors.GetValueOnAnyThread() != 0)
+	{
+		FString RotorSummary;
+		for (int32 RotorIndex = 0; RotorIndex < Runtime.ControlOutput.RotorCommands.Num(); ++RotorIndex)
+		{
+			const FAircraftRotorCommand& Command = Runtime.ControlOutput.RotorCommands[RotorIndex];
+			const float AllocatedCommand = ControlAllocator.CommandBuffer.IsValidIndex(RotorIndex)
+				? ControlAllocator.CommandBuffer[RotorIndex] : 0.0f;
+			RotorSummary += FString::Printf(
+				TEXT("[%d:%s Alloc=%.3f Cmd=%.3f TargetRPM=%.0f RPM=%.0f Thrust=%.2fN] "),
+				RotorIndex, *Command.RotorName.ToString(), AllocatedCommand, Command.NormalizedCommand,
+				Command.TargetRpm, Command.CurrentRpm, Command.GeneratedThrust);
+		}
+		UE_LOG(LogAircraftSimulationProxy, Log, TEXT("[AircraftDF.Rotors] %s"), *RotorSummary);
+	}
+
+	if (AircraftDebugCVars::CVarDebugSigns.GetValueOnAnyThread() != 0)
+	{
+		const auto LogAxisSignMismatch = [this, &State, &DesiredAttitude, &DesiredBodyRatesDegPerSec, &AxisCommands](
+			const TCHAR* AxisName, const float Angle, const float PreviousAngle,
+			const float DesiredAngle, const float Rate, const float DesiredRate, const float AxisCommand)
+		{
+			const int32 AngleDeltaSign = AircraftProxyPrivate::GetSignBucket(
+				FRotator::NormalizeAxis(Angle - PreviousAngle), 0.05f);
+			const int32 RateSign = AircraftProxyPrivate::GetSignBucket(Rate, 1.0f);
+			const int32 ErrorSign = AircraftProxyPrivate::GetSignBucket(
+				FRotator::NormalizeAxis(DesiredAngle - Angle), 0.1f);
+			const int32 DesiredRateSign = AircraftProxyPrivate::GetSignBucket(DesiredRate, 0.5f);
+			const int32 CommandSign = AircraftProxyPrivate::GetSignBucket(AxisCommand, 0.005f);
+			const int32 RateErrorSign = AircraftProxyPrivate::GetSignBucket(DesiredRate - Rate, 0.5f);
+			const bool bRateMatchesAngle = !bHasPreviousDebugSample
+				|| AngleDeltaSign == 0 || RateSign == 0 || AngleDeltaSign == RateSign;
+			const bool bOuterLoopMatches = ErrorSign == 0 || DesiredRateSign == 0
+				|| ErrorSign == DesiredRateSign;
+			const bool bRateLoopMatches = RateErrorSign == 0 || CommandSign == 0
+				|| RateErrorSign == CommandSign;
+			if (!bRateMatchesAngle || !bOuterLoopMatches || !bRateLoopMatches)
+			{
+				UE_LOG(LogAircraftSimulationProxy, Warning,
+					TEXT("[AircraftDF.Sign] Axis=%s AngleDelta/Rate=%s/%s Error/DesiredRate=%s/%s RateError/Command=%s/%s Att=%+.2f Desired=%+.2f Rate=%+.2f DesiredRate=%+.2f Cmd=%+.4f"),
+					AxisName,
+					AircraftProxyPrivate::GetSignLabel(AngleDeltaSign), AircraftProxyPrivate::GetSignLabel(RateSign),
+					AircraftProxyPrivate::GetSignLabel(ErrorSign), AircraftProxyPrivate::GetSignLabel(DesiredRateSign),
+					AircraftProxyPrivate::GetSignLabel(RateErrorSign),
+					AircraftProxyPrivate::GetSignLabel(CommandSign),
+					Angle, DesiredAngle, Rate, DesiredRate, AxisCommand);
+			}
+		};
+		LogAxisSignMismatch(TEXT("Roll"), State.AttitudeDegrees.Roll, DebugPreviousAttitudeDegrees.Roll,
+			DesiredAttitude.Roll, State.AngularVelocityBodyDegreesPerSec.X,
+			DesiredBodyRatesDegPerSec.X, AxisCommands.X);
+		LogAxisSignMismatch(TEXT("Pitch"), State.AttitudeDegrees.Pitch, DebugPreviousAttitudeDegrees.Pitch,
+			DesiredAttitude.Pitch, State.AngularVelocityBodyDegreesPerSec.Y,
+			DesiredBodyRatesDegPerSec.Y, AxisCommands.Y);
+	}
+
+	DebugPreviousAttitudeDegrees = State.AttitudeDegrees;
+	bHasPreviousDebugSample = true;
 }
 
 void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
@@ -844,6 +1182,11 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		RotorCommand.GeneratedThrust = AppliedThrustN;
 		RotorCommand.GeneratedReactionTorque = AppliedThrustN * Info.ReactionTorqueCoefficientM * Info.SpinDirectionSign;
 	}
+
+	MaybeEmitDebugLog_PhysicsThread(
+		DeltaTime, Pilot, ManualCommand, CollectiveCommand,
+		DesiredVerticalVelocityCmPerSec, DesiredAttitude,
+		DesiredBodyRatesDegPerSec, AxisCommands);
 
 	/* ----------------------------------------------------------------------
 	 * 11) 估计状态与诊断写回 GT
