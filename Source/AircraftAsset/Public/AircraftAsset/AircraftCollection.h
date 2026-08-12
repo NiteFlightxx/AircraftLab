@@ -64,7 +64,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FName>* GetFrameRootBone() const { return FrameRootBone; }
 		const TManagedArray<float>* GetFrameMassKg() const { return FrameMassKg; }
 		const TManagedArray<FVector3f>* GetFrameCenterOfMassOffsetCm() const { return FrameCenterOfMassOffsetCm; }
-		const TManagedArray<FVector3f>* GetFrameInertiaDiagonalKgCmSq() const { return FrameInertiaDiagonalKgCmSq; }
+		const TManagedArray<FVector3f>* GetFrameInertiaTensorScale() const { return FrameInertiaTensorScale; }
 
 		/* ------------------------- Motors group (N elements) ------------------------- */
 		const TManagedArray<FName>* GetMotorName() const { return MotorName; }
@@ -140,7 +140,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FName>* FrameRootBone = nullptr;
 		const TManagedArray<float>* FrameMassKg = nullptr;
 		const TManagedArray<FVector3f>* FrameCenterOfMassOffsetCm = nullptr;
-		const TManagedArray<FVector3f>* FrameInertiaDiagonalKgCmSq = nullptr;
+		const TManagedArray<FVector3f>* FrameInertiaTensorScale = nullptr;
 
 		/* Motors */
 		const TManagedArray<FName>* MotorName = nullptr;
@@ -257,7 +257,7 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, FrameRootBone)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FrameMassKg)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameCenterOfMassOffsetCm)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameInertiaDiagonalKgCmSq)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameInertiaTensorScale)
 
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, MotorName)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(bool, MotorEnabled)

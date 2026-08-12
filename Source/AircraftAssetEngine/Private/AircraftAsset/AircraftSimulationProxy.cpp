@@ -19,6 +19,7 @@
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "Chaos/ChaosEngineInterface.h"
+#include "Chaos/Particle/ParticleUtilities.h"
 #include "Chaos/PhysicsObject.h"
 #include "PBDRigidsSolver.h"
 #include "PhysicsEngine/BodyInstance.h"
@@ -237,7 +238,7 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 	{
 		double TotalMaxThrustN = 0.0;
 		UE_LOG(LogAircraftSimulationProxy, Log,
-			TEXT("[AircraftDF.Config] Owner=%s LOD=%d Drive=%s Arm=%d Controller=%d Rotors=%d ForwardAxis=%d AssetMass=%.3fkg AssetCOM=(%+.2f,%+.2f,%+.2f)cm AssetInertia=(%.1f,%.1f,%.1f)kgcm2 ChaosMass=%.3fkg ChaosCOM=(%+.2f,%+.2f,%+.2f)cm ChaosInertia=(%.4f,%.4f,%.4f)kgm2 DampingL=(%.3f,%.3f,%.3f) DampingA=(%.3f,%.3f,%.3f)"),
+			TEXT("[AircraftDF.Config] Owner=%s LOD=%d Drive=%s Arm=%d Controller=%d Rotors=%d ForwardAxis=%d AssetMass=%.3fkg AssetCOM=(%+.2f,%+.2f,%+.2f)cm InertiaScale=(%.3f,%.3f,%.3f) ChaosMass=%.3fkg ChaosCOM=(%+.2f,%+.2f,%+.2f)cm ChaosInertia=(%.4f,%.4f,%.4f)kgm2 DampingL=(%.3f,%.3f,%.3f) DampingA=(%.3f,%.3f,%.3f)"),
 			*AircraftOwnerName, ActiveLodIndex, AircraftProxyPrivate::GetDriveModeLabel(ActiveDriveMode),
 			static_cast<int32>(ArmState), bControllerIsEnabled ? 1 : 0,
 			ControlAllocator.RotorInfoBuffer.Num(), static_cast<int32>(Config.ForwardAxis),
@@ -245,9 +246,9 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 			ActiveLodModel->Mass.CenterOfMassOffsetCm.X,
 			ActiveLodModel->Mass.CenterOfMassOffsetCm.Y,
 			ActiveLodModel->Mass.CenterOfMassOffsetCm.Z,
-			ActiveLodModel->Mass.InertiaDiagonalKgCmSq.X,
-			ActiveLodModel->Mass.InertiaDiagonalKgCmSq.Y,
-			ActiveLodModel->Mass.InertiaDiagonalKgCmSq.Z,
+			ActiveLodModel->Mass.InertiaTensorScale.X,
+			ActiveLodModel->Mass.InertiaTensorScale.Y,
+			ActiveLodModel->Mass.InertiaTensorScale.Z,
 			PhysicsCache.MassKg,
 			PhysicsCache.CenterOfMassOffsetBodyCm.X,
 			PhysicsCache.CenterOfMassOffsetBodyCm.Y,
@@ -1154,25 +1155,26 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		State.SetNormalizedCommand(Cmd);
 		State.Update(DeltaTime, Info, Rotor.CommandScale, Rotor.IsEnabled());
 
-		// 推力方向/作用点：机体 → 世界
+		// 与权威组件边界一致：合力直接作用于刚体，偏心矩显式按真实 Chaos 质心计算。
+		// 这样物理施加值与分配器的 r×F 定义严格相同，也不会依赖高层位置施力接口的约定。
 		const FVector LocalPosCm = Rotor.PositionLocalCm;
 		const FVector WorldPos = WorldXform.TransformPosition(LocalPosCm);
 		const FVector WorldAxis = WorldQuat.RotateVector(Info.ThrustAxisBody).GetSafeNormal();
 
 		const float AppliedThrustN = State.CurrentThrustForceN;
 		const FVector ForceN = WorldAxis * AppliedThrustN;
-		FChaosEngineInterface::AddForceAtPosition_AssumesLocked(
-			ActorHandle,
-			AircraftPhysicsUnits::NewtonsToChaosForce(ForceN) * ForceAccumulationScale,
-			WorldPos,
-			/*bAllowSubstepping=*/false, /*bIsLocalForce=*/false, /*bIsInternal=*/true);
+		const FVector ForceChaos = AircraftPhysicsUnits::NewtonsToChaosForce(ForceN)
+			* ForceAccumulationScale;
+		Handle->AddForce(ForceChaos, false);
+		const FVector CenterOfMassWorld(Chaos::FParticleUtilitiesGT::GetCoMWorldPosition(Handle));
+		Handle->AddTorque(FVector::CrossProduct(WorldPos - CenterOfMassWorld, ForceChaos), false);
 
 		const FVector ReactionTorqueWorldNm = WorldAxis
 			* (AppliedThrustN * Info.ReactionTorqueCoefficientM * Info.SpinDirectionSign);
-		FChaosEngineInterface::AddTorque_AssumesLocked(
-			ActorHandle,
-			AircraftPhysicsUnits::NewtonMetersToChaosTorque(ReactionTorqueWorldNm) * ForceAccumulationScale,
-			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
+		Handle->AddTorque(
+			AircraftPhysicsUnits::NewtonMetersToChaosTorque(ReactionTorqueWorldNm)
+				* ForceAccumulationScale,
+			true);
 
 		FAircraftRotorCommand& RotorCommand = Runtime.ControlOutput.RotorCommands[i];
 		RotorCommand.RotorName = Info.RotorName;

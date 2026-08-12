@@ -57,8 +57,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		OutModel.Mass.MassKg = ReadFirst<float>(ConstCollection.GetFrameMassKg(), 1.2f);
 		OutModel.Mass.CenterOfMassOffsetCm = FVector3fToVector(
 			ReadFirst<FVector3f>(ConstCollection.GetFrameCenterOfMassOffsetCm(), FVector3f::ZeroVector));
-		OutModel.Mass.InertiaDiagonalKgCmSq = FVector3fToVector(
-			ReadFirst<FVector3f>(ConstCollection.GetFrameInertiaDiagonalKgCmSq(), FVector3f(5000.f, 5000.f, 9000.f)));
+		OutModel.Mass.InertiaTensorScale = FVector3fToVector(
+			ReadFirst<FVector3f>(ConstCollection.GetFrameInertiaTensorScale(), FVector3f::OneVector));
 
 
 		/* Flight controller. Dataflow values override the authoritative runtime defaults. */

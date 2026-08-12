@@ -47,7 +47,7 @@ namespace UE::AircraftLab::AircraftAsset
 		extern AIRCRAFTASSET_API const FName FrameRootBone;
 		extern AIRCRAFTASSET_API const FName FrameMassKg;
 		extern AIRCRAFTASSET_API const FName FrameCenterOfMassOffsetCm;
-		extern AIRCRAFTASSET_API const FName FrameInertiaDiagonalKgCmSq;
+		extern AIRCRAFTASSET_API const FName FrameInertiaTensorScale;
 
 		/* Motors */
 		extern AIRCRAFTASSET_API const FName MotorName;
@@ -167,7 +167,7 @@ namespace UE::AircraftLab::AircraftAsset
 		TConstArrayView<FName> GetFrameRootBone() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameRootBone()); }
 		TConstArrayView<float> GetFrameMassKg() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameMassKg()); }
 		TConstArrayView<FVector3f> GetFrameCenterOfMassOffsetCm() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameCenterOfMassOffsetCm()); }
-		TConstArrayView<FVector3f> GetFrameInertiaDiagonalKgCmSq() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameInertiaDiagonalKgCmSq()); }
+		TConstArrayView<FVector3f> GetFrameInertiaTensorScale() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameInertiaTensorScale()); }
 
 		/* ------------------------- Motors ------------------------- */
 		TConstArrayView<FName> GetMotorName() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetMotorName()); }
@@ -300,7 +300,7 @@ namespace UE::AircraftLab::AircraftAsset
 		TArrayView<FName> GetFrameRootBone()                  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameRootBone()); }
 		TArrayView<float> GetFrameMassKg()                    { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameMassKg()); }
 		TArrayView<FVector3f> GetFrameCenterOfMassOffsetCm()  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameCenterOfMassOffsetCm()); }
-		TArrayView<FVector3f> GetFrameInertiaDiagonalKgCmSq() { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameInertiaDiagonalKgCmSq()); }
+		TArrayView<FVector3f> GetFrameInertiaTensorScale() { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameInertiaTensorScale()); }
 
 		/* Motors */
 		TArrayView<FName> GetMotorName()                      { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetMotorName()); }

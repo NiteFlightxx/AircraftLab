@@ -25,10 +25,10 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	FManagedArrayCollection InCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	if (!FMath::IsFinite(MassKg) || MassKg <= 0.0f
 		|| !FMath::IsFinite(CenterOfMassOffsetCm.X) || !FMath::IsFinite(CenterOfMassOffsetCm.Y) || !FMath::IsFinite(CenterOfMassOffsetCm.Z)
-		|| !FMath::IsFinite(InertiaDiagonalKgCmSq.X) || !FMath::IsFinite(InertiaDiagonalKgCmSq.Y) || !FMath::IsFinite(InertiaDiagonalKgCmSq.Z)
-		|| InertiaDiagonalKgCmSq.X <= 0.0f || InertiaDiagonalKgCmSq.Y <= 0.0f || InertiaDiagonalKgCmSq.Z <= 0.0f)
+		|| !FMath::IsFinite(InertiaTensorScale.X) || !FMath::IsFinite(InertiaTensorScale.Y) || !FMath::IsFinite(InertiaTensorScale.Z)
+		|| InertiaTensorScale.X <= 0.0f || InertiaTensorScale.Y <= 0.0f || InertiaTensorScale.Z <= 0.0f)
 	{
-		Context.Error(FText::FromString(TEXT("Aircraft frame mass and principal inertia values must be finite and positive.")), this);
+		Context.Error(FText::FromString(TEXT("Aircraft frame mass and inertia tensor scale values must be finite and positive.")), this);
 		SetValue(Context, MoveTemp(InCollection), &Collection);
 		return;
 	}
@@ -50,9 +50,9 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	{
 		ComArr[0] = CenterOfMassOffsetCm;
 	}
-	if (TArrayView<FVector3f> InertiaArr = Facade.GetFrameInertiaDiagonalKgCmSq(); InertiaArr.Num() > 0)
+	if (TArrayView<FVector3f> InertiaScaleArr = Facade.GetFrameInertiaTensorScale(); InertiaScaleArr.Num() > 0)
 	{
-		InertiaArr[0] = InertiaDiagonalKgCmSq;
+		InertiaScaleArr[0] = InertiaTensorScale;
 	}
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
 	Properties.DefineSchema();

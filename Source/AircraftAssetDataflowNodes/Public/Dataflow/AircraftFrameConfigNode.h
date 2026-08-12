@@ -52,9 +52,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia")
 	FVector3f CenterOfMassOffsetCm = FVector3f::ZeroVector;
 
-	/** 主惯量对角线 Ixx, Iyy, Izz（千克·厘米²）。 */
+	/** PhysicsAsset 计算出的惯性张量逐轴缩放；(1,1,1) 保持原始惯性。 */
 	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (ClampMin = "0.01"))
-	FVector3f InertiaDiagonalKgCmSq = FVector3f(5000.f, 5000.f, 9000.f);
+	FVector3f InertiaTensorScale = FVector3f::OneVector;
 
 	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
 };

@@ -95,7 +95,7 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetFrameRootBone());
 	AccumulateArray(Facade.GetFrameMassKg());
 	AccumulateArray(Facade.GetFrameCenterOfMassOffsetCm());
-	AccumulateArray(Facade.GetFrameInertiaDiagonalKgCmSq());
+	AccumulateArray(Facade.GetFrameInertiaTensorScale());
 
 	/* Motors：电机数量 / 名字 / 一阶滞后参数都是结构性的 */
 	AccumulateArray(Facade.GetMotorName());

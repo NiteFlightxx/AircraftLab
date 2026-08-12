@@ -109,50 +109,32 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 	}
 
 	const FDroneMassProperties& Mass = Model->Mass;
-
-	// 1) 总质量（千克）—— 等价 ChaosCloth 在 ClothComponent 中设置 ClothMass 的语义。
-	//    UE 的 BodyInstance::SetMassOverride 接受千克单位，并在 UpdateMassProperties 内
-	//    重新计算惯性张量与质心；后续步骤再覆盖 COM/Inertia。
-	if (Mass.MassKg > KINDA_SMALL_NUMBER)
+	if (!Body->IsValidBodyInstance()
+		|| Mass.MassKg <= KINDA_SMALL_NUMBER
+		|| Mass.InertiaTensorScale.GetMin() <= KINDA_SMALL_NUMBER)
 	{
-		Body->SetMassOverride(Mass.MassKg, /*bNewOverrideMass=*/true);
-	}
-	else
-	{
-		Body->SetMassOverride(0.f, /*bNewOverrideMass=*/false);
+		return;
 	}
 
-	// 2) 质心偏移（局部坐标系，单位厘米）。BodyInstance.COMNudge 是 UE 标准 API，单位为 cm。
+	// 由 PhysicsAsset 几何计算基础质量属性，再覆盖质量、质心偏移和惯性张量缩放。
+	Body->SetMassOverride(Mass.MassKg, /*bNewOverrideMass=*/true);
 	Body->COMNudge = Mass.CenterOfMassOffsetCm;
+	Body->InertiaTensorScale = Mass.InertiaTensorScale;
+	Body->UpdateMassProperties();
 
-	// 3) 先恢复单位缩放并计算 PhysicsAsset 在目标质量/质心下的真实基础惯量。
-	Body->InertiaTensorScale = FVector::OneVector;
-	if (Body->IsValidBodyInstance())
-	{
-		Body->UpdateMassProperties();
-		const FVector BaseInertiaKgCmSq = Body->GetBodyInertiaTensor();
-		Body->InertiaTensorScale = FVector(
-			Mass.InertiaDiagonalKgCmSq.X / FMath::Max(BaseInertiaKgCmSq.X, UE_SMALL_NUMBER),
-			Mass.InertiaDiagonalKgCmSq.Y / FMath::Max(BaseInertiaKgCmSq.Y, UE_SMALL_NUMBER),
-			Mass.InertiaDiagonalKgCmSq.Z / FMath::Max(BaseInertiaKgCmSq.Z, UE_SMALL_NUMBER));
-		Body->UpdateMassProperties();
-
-		UE_LOG(LogAircraftComponent, Verbose,
-			TEXT("[AircraftDF.MassApply] Owner=%s LOD=%d AssetMass=%.3fkg ActualMass=%.3fkg COM=(%+.2f,%+.2f,%+.2f)cm AssetInertia=(%.1f,%.1f,%.1f)kgcm2 ActualInertia=(%.1f,%.1f,%.1f)kgcm2 Scale=(%.4f,%.4f,%.4f)"),
-			*GetNameSafe(GetOwner()), CurrentSimulationLOD,
-			Mass.MassKg, Body->GetBodyMass(),
-			Body->COMNudge.X, Body->COMNudge.Y, Body->COMNudge.Z,
-			Mass.InertiaDiagonalKgCmSq.X,
-			Mass.InertiaDiagonalKgCmSq.Y,
-			Mass.InertiaDiagonalKgCmSq.Z,
-			Body->GetBodyInertiaTensor().X,
-			Body->GetBodyInertiaTensor().Y,
-			Body->GetBodyInertiaTensor().Z,
-			Body->InertiaTensorScale.X,
-			Body->InertiaTensorScale.Y,
-			Body->InertiaTensorScale.Z);
-	}
-
+	UE_LOG(LogAircraftComponent, Log,
+		TEXT("[AircraftDF.MassApply] Owner=%s LOD=%d ConfigMass=%.3fkg ActualMass=%.3fkg COMNudge=(%+.2f,%+.2f,%+.2f)cm InertiaScale=(%.3f,%.3f,%.3f) ActualInertia=(%.1f,%.1f,%.1f)kgcm2"),
+		*GetNameSafe(GetOwner()), CurrentSimulationLOD,
+		Mass.MassKg, Body->GetBodyMass(),
+		Mass.CenterOfMassOffsetCm.X,
+		Mass.CenterOfMassOffsetCm.Y,
+		Mass.CenterOfMassOffsetCm.Z,
+		Mass.InertiaTensorScale.X,
+		Mass.InertiaTensorScale.Y,
+		Mass.InertiaTensorScale.Z,
+		Body->GetBodyInertiaTensor().X,
+		Body->GetBodyInertiaTensor().Y,
+		Body->GetBodyInertiaTensor().Z);
 }
 
 void UAircraftComponent::ApplySolverSettingsToBodyInstance()

@@ -77,9 +77,9 @@ struct AIRCRAFTASSETENGINE_API FDroneMassProperties
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body")
 	FVector CenterOfMassOffsetCm = FVector::ZeroVector;
 
-	/** 惯性矩对角线分量 Ixx, Iyy, Izz（千克·厘米²） */
+	/** PhysicsAsset 计算出的惯性张量逐轴缩放；(1,1,1) 保持原始惯性。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body", meta = (ClampMin = "0.0"))
-	FVector InertiaDiagonalKgCmSq = FVector(5000.0f, 5000.0f, 9000.0f);
+	FVector InertiaTensorScale = FVector::OneVector;
 };
 
 /**

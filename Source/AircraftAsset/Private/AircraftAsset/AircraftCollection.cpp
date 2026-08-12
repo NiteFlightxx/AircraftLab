@@ -34,7 +34,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FrameRootBone(TEXT("RootBone"));
 		const FName FrameMassKg(TEXT("MassKg"));
 		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
-		const FName FrameInertiaDiagonalKgCmSq(TEXT("InertiaDiagonalKgCmSq"));
+		const FName FrameInertiaTensorScale(TEXT("InertiaTensorScale"));
 
 		/* Motors attributes */
 		const FName MotorName(TEXT("Name"));
@@ -124,7 +124,7 @@ namespace UE::AircraftLab::AircraftAsset
 		FrameRootBone = Collection.FindAttributeTyped<FName>(Private::FrameRootBone, Private::FrameGroup);
 		FrameMassKg = Collection.FindAttributeTyped<float>(Private::FrameMassKg, Private::FrameGroup);
 		FrameCenterOfMassOffsetCm = Collection.FindAttributeTyped<FVector3f>(Private::FrameCenterOfMassOffsetCm, Private::FrameGroup);
-		FrameInertiaDiagonalKgCmSq = Collection.FindAttributeTyped<FVector3f>(Private::FrameInertiaDiagonalKgCmSq, Private::FrameGroup);
+		FrameInertiaTensorScale = Collection.FindAttributeTyped<FVector3f>(Private::FrameInertiaTensorScale, Private::FrameGroup);
 
 		/* Motors */
 		MotorName = Collection.FindAttributeTyped<FName>(Private::MotorName, Private::MotorsGroup);
@@ -228,7 +228,7 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::FrameGroup, Private::FrameRootBone, FName());
 		AddAttribute(Private::FrameGroup, Private::FrameMassKg, float(0));
 		AddAttribute(Private::FrameGroup, Private::FrameCenterOfMassOffsetCm, FVector3f::ZeroVector);
-		AddAttribute(Private::FrameGroup, Private::FrameInertiaDiagonalKgCmSq, FVector3f::ZeroVector);
+		AddAttribute(Private::FrameGroup, Private::FrameInertiaTensorScale, FVector3f::OneVector);
 		EnsureSingleElement(Private::FrameGroup);
 
 		/* Motors */

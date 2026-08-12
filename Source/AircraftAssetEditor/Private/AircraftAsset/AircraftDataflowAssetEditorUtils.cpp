@@ -262,7 +262,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.ForwardAxis = EAircraftForwardAxisNode::PositiveY;
 					Node.MassKg = 100.0f;
 					Node.CenterOfMassOffsetCm = FVector3f::ZeroVector;
-					Node.InertiaDiagonalKgCmSq = FVector3f(5000.f, 5000.f, 9000.f);
+					Node.InertiaTensorScale = FVector3f::OneVector;
 				});
 
 			/* ---------- 3-6. 四个单旋翼 Airscrew Profile 节点 ---------- */

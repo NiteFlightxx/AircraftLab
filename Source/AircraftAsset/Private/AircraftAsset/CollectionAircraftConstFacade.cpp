@@ -32,7 +32,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FrameRootBone(TEXT("RootBone"));
 		const FName FrameMassKg(TEXT("MassKg"));
 		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
-		const FName FrameInertiaDiagonalKgCmSq(TEXT("InertiaDiagonalKgCmSq"));
+		const FName FrameInertiaTensorScale(TEXT("InertiaTensorScale"));
 
 		const FName MotorName(TEXT("Name"));
 		const FName MotorEnabled(TEXT("Enabled"));
