@@ -125,11 +125,22 @@ private:
 	void ApplyPendingConfiguration_PhysicsThread();
 	/** 由飞行模式推导能力缓存与姿态模式。 */
 	void UpdateModeCapabilities(EAircraftFlightMode Mode);
+	/** 按控制台开关限频输出权威飞控同口径的运行诊断。 */
+	void MaybeEmitDebugLog_PhysicsThread(
+		float DeltaTime,
+		const FDronePilotInput& Pilot,
+		const FAircraftManualCommand& ManualCommand,
+		float CollectiveCommand,
+		float DesiredVerticalVelocityCmPerSec,
+		const FRotator& DesiredAttitude,
+		const FVector& DesiredBodyRatesDegPerSec,
+		const FVector& AxisCommands);
 
 	const UAircraftComponent& AircraftComponent;
 
 	TSharedPtr<const FAircraftSimulationModel> SimulationModel;
 	const FAircraftSimulationLodModel* ActiveLodModel = nullptr;
+	int32 ActiveLodIndex = INDEX_NONE;
 	EAircraftSimulationDriveMode ActiveDriveMode = EAircraftSimulationDriveMode::FlightController;
 	FString AircraftOwnerName;
 
@@ -194,4 +205,10 @@ private:
 	FAircraftModeCapabilities ModeCapabilities;
 	/* 单旋翼运行时状态（与 SimulationModel.Rotors 一一对应，索引一致） */
 	TArray<FAircraftRotorRuntimeState> RotorStates;
+
+	/* 调试状态仅由 PT 访问。 */
+	float DebugLogAccumulatorSeconds = 0.0f;
+	FRotator DebugPreviousAttitudeDegrees = FRotator::ZeroRotator;
+	bool bHasPreviousDebugSample = false;
+	bool bDebugConfigurationPending = true;
 };
