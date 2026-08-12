@@ -8,10 +8,10 @@
 //   -------------------+-------------------+--------------------------------------------------
 //   Import             | 1                 | 骨骼网格 / 物理资产软引用
 //   Solver             | 0 或 1            | 可选的 Chaos 异步固定时间步与刚体迭代覆盖
-//   Frame              | 1                 | 机架类型 + 质量惯性 + 气动 + 风场 + 地面效应
+//   Frame              | 1                 | 机架类型 + 质量/质心/惯量
 //   Motors             | N（电机数）       | 电机一阶滞后参数 + 怠速/最大转速
 //   FlightController   | 1                 | 串级 PID 12 通道增益 + 限幅 + 控制器配置
-//   GameFeel           | 1                 | RC 曲线、死区、手感倾角与悬停油门
+//   GameFeel           | 1                 | 纯表现参数
 
 #pragma once
 
@@ -67,11 +67,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* GetFrameMassKg() const { return FrameMassKg; }
 		const TManagedArray<FVector3f>* GetFrameCenterOfMassOffsetCm() const { return FrameCenterOfMassOffsetCm; }
 		const TManagedArray<FVector3f>* GetFrameInertiaDiagonalKgCmSq() const { return FrameInertiaDiagonalKgCmSq; }
-		const TManagedArray<FVector3f>* GetFrameLinearDragPerAxis() const { return FrameLinearDragPerAxis; }
-		const TManagedArray<FVector3f>* GetFrameAngularDragPerAxis() const { return FrameAngularDragPerAxis; }
-		const TManagedArray<FVector3f>* GetFrameWindVelocityCmPerSec() const { return FrameWindVelocityCmPerSec; }
-		const TManagedArray<float>* GetFrameGroundEffectStartHeightCm() const { return FrameGroundEffectStartHeightCm; }
-		const TManagedArray<float>* GetFrameGroundEffectStrength() const { return FrameGroundEffectStrength; }
 
 		/* ------------------------- Motors group (N elements) ------------------------- */
 		const TManagedArray<FName>* GetMotorName() const { return MotorName; }
@@ -131,12 +126,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* GetFcAllocationDamping() const { return FcAllocationDamping; }
 
 		/* ------------------------- GameFeel group (1 element) ------------------------- */
-		const TManagedArray<float>* GetGameFeelRcExpoRoll() const { return GameFeelRcExpoRoll; }
-		const TManagedArray<float>* GetGameFeelRcExpoPitch() const { return GameFeelRcExpoPitch; }
-		const TManagedArray<float>* GetGameFeelRcExpoYaw() const { return GameFeelRcExpoYaw; }
-		const TManagedArray<float>* GetGameFeelRcExpoThrottle() const { return GameFeelRcExpoThrottle; }
-		const TManagedArray<float>* GetGameFeelInputDeadzone() const { return GameFeelInputDeadzone; }
-		const TManagedArray<float>* GetGameFeelStickResponseTimeSeconds() const { return GameFeelStickResponseTimeSeconds; }
 		const TManagedArray<float>* GetGameFeelCameraShakeScale() const { return GameFeelCameraShakeScale; }
 
 		const FManagedArrayCollection& GetCollection() const { return *ManagedArrayCollection; }
@@ -164,11 +153,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* FrameMassKg = nullptr;
 		const TManagedArray<FVector3f>* FrameCenterOfMassOffsetCm = nullptr;
 		const TManagedArray<FVector3f>* FrameInertiaDiagonalKgCmSq = nullptr;
-		const TManagedArray<FVector3f>* FrameLinearDragPerAxis = nullptr;
-		const TManagedArray<FVector3f>* FrameAngularDragPerAxis = nullptr;
-		const TManagedArray<FVector3f>* FrameWindVelocityCmPerSec = nullptr;
-		const TManagedArray<float>* FrameGroundEffectStartHeightCm = nullptr;
-		const TManagedArray<float>* FrameGroundEffectStrength = nullptr;
 
 		/* Motors */
 		const TManagedArray<FName>* MotorName = nullptr;
@@ -227,12 +211,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* FcAllocationDamping = nullptr;
 
 		/* GameFeel */
-		const TManagedArray<float>* GameFeelRcExpoRoll = nullptr;
-		const TManagedArray<float>* GameFeelRcExpoPitch = nullptr;
-		const TManagedArray<float>* GameFeelRcExpoYaw = nullptr;
-		const TManagedArray<float>* GameFeelRcExpoThrottle = nullptr;
-		const TManagedArray<float>* GameFeelInputDeadzone = nullptr;
-		const TManagedArray<float>* GameFeelStickResponseTimeSeconds = nullptr;
 		const TManagedArray<float>* GameFeelCameraShakeScale = nullptr;
 	};
 
@@ -302,11 +280,6 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FrameMassKg)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameCenterOfMassOffsetCm)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameInertiaDiagonalKgCmSq)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameLinearDragPerAxis)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameAngularDragPerAxis)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameWindVelocityCmPerSec)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FrameGroundEffectStartHeightCm)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FrameGroundEffectStrength)
 
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, MotorName)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(bool, MotorEnabled)
@@ -359,12 +332,6 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcDerivativeCutoffHz)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcAllocationDamping)
 
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoRoll)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoPitch)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoYaw)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelRcExpoThrottle)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelInputDeadzone)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelStickResponseTimeSeconds)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelCameraShakeScale)
 
 #undef UE_AIRCRAFT_DEFINE_MUTABLE_GETTER

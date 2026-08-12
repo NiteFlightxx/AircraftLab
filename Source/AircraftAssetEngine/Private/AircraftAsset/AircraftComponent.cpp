@@ -138,9 +138,6 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 		Body->UpdateMassProperties();
 	}
 
-	// 轴向气动阻力只在 Proxy 的物理子步中施加，禁用 Chaos 标量阻尼以避免重复计算。
-	SetLinearDamping(0.0f);
-	SetAngularDamping(0.0f);
 }
 
 void UAircraftComponent::ApplySolverSettingsToBodyInstance()
@@ -220,7 +217,7 @@ EAircraftFlightMode UAircraftComponent::GetFlightMode() const
 {
 	return AircraftSimulationProxy.IsValid()
 		? AircraftSimulationProxy->GetFlightMode_GameThread()
-		: EAircraftFlightMode::Angle;
+		: EAircraftFlightMode::PositionHold;
 }
 
 void UAircraftComponent::Arm()
@@ -823,12 +820,12 @@ void UAircraftComponent::GetAircraftAutopilotMotionLimits(
 		* FMath::Tan(FMath::DegreesToRadians(Config.MaxTiltAngleDegrees));
 	const float PhysicalAcceleration = FMath::Min(
 		Config.MaxHorizontalAccelerationCmPerSecSq, TiltLimitedAcceleration);
+	const float LinearDampingPerSecond = GetLinearDamping();
 	const FlightControlDynamics::FDampingAwareHorizontalLimits DampingAwareLimits =
 		FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
 			FMath::Min(Config.MaxHorizontalSpeedCmPerSec, RequestedCruiseSpeedCmPerSec),
 			PhysicalAcceleration,
-			FMath::Max(Model->Aero.LinearDragPerAxis.X, Model->Aero.LinearDragPerAxis.Y)
-				/ FMath::Max(Model->Mass.MassKg, UE_SMALL_NUMBER),
+			LinearDampingPerSecond,
 			Config.DampingAccelerationReserveFraction);
 	OutMaxSpeedCmPerSec = DampingAwareLimits.MaxSpeedCmPerSec;
 	OutMaxAccelerationCmPerSecSq = DampingAwareLimits.MaxTrajectoryAccelerationCmPerSecSq;
@@ -1260,23 +1257,6 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			AircraftSimulationProxy->SetGravity_GameThread(-World->GetGravityZ());
 		}
 
-		float GroundDistanceCm = TNumericLimits<float>::Max();
-		if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-			SimulationDriveMode == EAircraftSimulationDriveMode::FlightController
-			&& GetArmState() != EAircraftArmState::Disarmed
-			&& Model && Model->Aero.GroundEffectStartHeightCm > UE_SMALL_NUMBER)
-		{
-			const FVector TraceStart = GetComponentTransform().TransformPosition(Model->Mass.CenterOfMassOffsetCm);
-			const FVector TraceEnd = TraceStart - FVector::UpVector * Model->Aero.GroundEffectStartHeightCm;
-			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(AircraftGroundEffect), false, GetOwner());
-			FHitResult Hit;
-			const FCollisionObjectQueryParams ObjectQueryParams(FCollisionObjectQueryParams::InitType::AllStaticObjects);
-			if (GetWorld() && GetWorld()->LineTraceSingleByObjectType(Hit, TraceStart, TraceEnd, ObjectQueryParams, QueryParams))
-			{
-				GroundDistanceCm = Hit.Distance;
-			}
-		}
-		AircraftSimulationProxy->SetGroundDistance_GameThread(GroundDistanceCm);
 	}
 
 }

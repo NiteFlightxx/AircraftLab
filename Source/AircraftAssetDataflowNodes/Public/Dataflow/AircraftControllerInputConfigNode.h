@@ -16,10 +16,6 @@ struct FAircraftControllerInputConfig
 	UPROPERTY(EditAnywhere, Category = "Hold", meta = (ClampMin = "0.0", ClampMax = "1.0")) float VerticalHoldStickDeadband = 0.08f;
 	UPROPERTY(EditAnywhere, Category = "Hold", meta = (ClampMin = "0.0", ClampMax = "1.0")) float YawHoldStickDeadband = 0.05f;
 	UPROPERTY(EditAnywhere, Category = "Hold", meta = (ClampMin = "0.0")) float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
-	UPROPERTY(EditAnywhere, Category = "Shaping", meta = (ClampMin = "0.0", ClampMax = "1.0")) FVector3f RcExpoRollPitchYaw = FVector3f(0.3f, 0.3f, 0.2f);
-	UPROPERTY(EditAnywhere, Category = "Shaping", meta = (ClampMin = "0.0", ClampMax = "1.0")) float RcExpoThrottle = 0.0f;
-	UPROPERTY(EditAnywhere, Category = "Shaping", meta = (ClampMin = "0.0", ClampMax = "1.0")) float InputDeadzone = 0.05f;
-	UPROPERTY(EditAnywhere, Category = "Shaping", meta = (ClampMin = "0.0")) float StickResponseTimeSeconds = 0.04f;
 	UPROPERTY(EditAnywhere, Category = "Presentation", meta = (ClampMin = "0.0")) float CameraShakeScale = 0.0f;
 };
 

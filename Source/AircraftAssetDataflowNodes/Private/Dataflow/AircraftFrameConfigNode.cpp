@@ -49,27 +49,6 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	{
 		InertiaArr[0] = InertiaDiagonalKgCmSq;
 	}
-	if (TArrayView<FVector3f> LinDragArr = Facade.GetFrameLinearDragPerAxis(); LinDragArr.Num() > 0)
-	{
-		LinDragArr[0] = LinearDragPerAxis;
-	}
-	if (TArrayView<FVector3f> AngDragArr = Facade.GetFrameAngularDragPerAxis(); AngDragArr.Num() > 0)
-	{
-		AngDragArr[0] = AngularDragPerAxis;
-	}
-	if (TArrayView<FVector3f> WindArr = Facade.GetFrameWindVelocityCmPerSec(); WindArr.Num() > 0)
-	{
-		WindArr[0] = WindVelocityCmPerSec;
-	}
-	if (TArrayView<float> GeStartArr = Facade.GetFrameGroundEffectStartHeightCm(); GeStartArr.Num() > 0)
-	{
-		GeStartArr[0] = GroundEffectStartHeightCm;
-	}
-	if (TArrayView<float> GeStrengthArr = Facade.GetFrameGroundEffectStrength(); GeStrengthArr.Num() > 0)
-	{
-		GeStrengthArr[0] = GroundEffectStrength;
-	}
-
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
 	Properties.DefineSchema();
 	int32 ForwardAxisIndex = Properties.GetKeyNameIndex(TEXT("Frame.ForwardAxis"));

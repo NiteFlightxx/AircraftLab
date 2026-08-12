@@ -4,6 +4,7 @@
 #include "Dataflow/AircraftAttitudeControllerConfigNode.h"
 #include "Dataflow/AircraftAltitudeControllerConfigNode.h"
 #include "Dataflow/AircraftControlAllocatorConfigNode.h"
+#include "Dataflow/AircraftControllerInputConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
@@ -24,6 +25,15 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 	const FAircraftFrameConfigNode Frame(UE::Dataflow::FNodeParameters{});
 	TestEqual(TEXT("Aircraft frame defaults to +Y forward"), Frame.ForwardAxis, EAircraftForwardAxisNode::PositiveY);
 	TestEqual(TEXT("Frame config exposes only its Collection input"), Frame.GetNumInputs(), 1);
+	const FAircraftControllerInputConfig Input;
+	TestEqual(TEXT("Controller input preserves authoritative horizontal hold deadband"),
+		Input.HorizontalHoldStickDeadband, 0.08f);
+	TestEqual(TEXT("Controller input preserves authoritative vertical hold deadband"),
+		Input.VerticalHoldStickDeadband, 0.08f);
+	TestEqual(TEXT("Controller input preserves authoritative yaw hold deadband"),
+		Input.YawHoldStickDeadband, 0.05f);
+	TestEqual(TEXT("Controller input preserves authoritative brake-to-hold speed"),
+		Input.HorizontalBrakeToHoldSpeedCmPerSec, 20.0f);
 	const FAircraftSolverConfigNode Solver(UE::Dataflow::FNodeParameters{});
 	TestEqual(TEXT("Solver config exposes only its Collection input"), Solver.GetNumInputs(), 1);
 	const FAircraftSkeletalMeshSourceNode Source(UE::Dataflow::FNodeParameters{});

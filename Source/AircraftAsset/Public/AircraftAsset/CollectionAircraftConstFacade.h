@@ -50,11 +50,6 @@ namespace UE::AircraftLab::AircraftAsset
 		extern AIRCRAFTASSET_API const FName FrameMassKg;
 		extern AIRCRAFTASSET_API const FName FrameCenterOfMassOffsetCm;
 		extern AIRCRAFTASSET_API const FName FrameInertiaDiagonalKgCmSq;
-		extern AIRCRAFTASSET_API const FName FrameLinearDragPerAxis;
-		extern AIRCRAFTASSET_API const FName FrameAngularDragPerAxis;
-		extern AIRCRAFTASSET_API const FName FrameWindVelocityCmPerSec;
-		extern AIRCRAFTASSET_API const FName FrameGroundEffectStartHeightCm;
-		extern AIRCRAFTASSET_API const FName FrameGroundEffectStrength;
 
 		/* Motors */
 		extern AIRCRAFTASSET_API const FName MotorName;
@@ -111,12 +106,6 @@ namespace UE::AircraftLab::AircraftAsset
 		extern AIRCRAFTASSET_API const FName FcAllocationDamping;
 
 		/* GameFeel */
-		extern AIRCRAFTASSET_API const FName GameFeelRcExpoRoll;
-		extern AIRCRAFTASSET_API const FName GameFeelRcExpoPitch;
-		extern AIRCRAFTASSET_API const FName GameFeelRcExpoYaw;
-		extern AIRCRAFTASSET_API const FName GameFeelRcExpoThrottle;
-		extern AIRCRAFTASSET_API const FName GameFeelInputDeadzone;
-		extern AIRCRAFTASSET_API const FName GameFeelStickResponseTimeSeconds;
 		extern AIRCRAFTASSET_API const FName GameFeelCameraShakeScale;
 	}
 
@@ -191,11 +180,6 @@ namespace UE::AircraftLab::AircraftAsset
 		TConstArrayView<float> GetFrameMassKg() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameMassKg()); }
 		TConstArrayView<FVector3f> GetFrameCenterOfMassOffsetCm() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameCenterOfMassOffsetCm()); }
 		TConstArrayView<FVector3f> GetFrameInertiaDiagonalKgCmSq() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameInertiaDiagonalKgCmSq()); }
-		TConstArrayView<FVector3f> GetFrameLinearDragPerAxis() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameLinearDragPerAxis()); }
-		TConstArrayView<FVector3f> GetFrameAngularDragPerAxis() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameAngularDragPerAxis()); }
-		TConstArrayView<FVector3f> GetFrameWindVelocityCmPerSec() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameWindVelocityCmPerSec()); }
-		TConstArrayView<float> GetFrameGroundEffectStartHeightCm() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameGroundEffectStartHeightCm()); }
-		TConstArrayView<float> GetFrameGroundEffectStrength() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameGroundEffectStrength()); }
 
 		/* ------------------------- Motors ------------------------- */
 		TConstArrayView<FName> GetMotorName() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetMotorName()); }
@@ -252,12 +236,6 @@ namespace UE::AircraftLab::AircraftAsset
 		TConstArrayView<float> GetFcAllocationDamping() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFcAllocationDamping()); }
 
 		/* ------------------------- GameFeel ------------------------- */
-		TConstArrayView<float> GetGameFeelRcExpoRoll() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelRcExpoRoll()); }
-		TConstArrayView<float> GetGameFeelRcExpoPitch() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelRcExpoPitch()); }
-		TConstArrayView<float> GetGameFeelRcExpoYaw() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelRcExpoYaw()); }
-		TConstArrayView<float> GetGameFeelRcExpoThrottle() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelRcExpoThrottle()); }
-		TConstArrayView<float> GetGameFeelInputDeadzone() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelInputDeadzone()); }
-		TConstArrayView<float> GetGameFeelStickResponseTimeSeconds() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelStickResponseTimeSeconds()); }
 		TConstArrayView<float> GetGameFeelCameraShakeScale() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetGameFeelCameraShakeScale()); }
 
 	protected:
@@ -345,11 +323,6 @@ namespace UE::AircraftLab::AircraftAsset
 		TArrayView<float> GetFrameMassKg()                    { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameMassKg()); }
 		TArrayView<FVector3f> GetFrameCenterOfMassOffsetCm()  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameCenterOfMassOffsetCm()); }
 		TArrayView<FVector3f> GetFrameInertiaDiagonalKgCmSq() { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameInertiaDiagonalKgCmSq()); }
-		TArrayView<FVector3f> GetFrameLinearDragPerAxis()     { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameLinearDragPerAxis()); }
-		TArrayView<FVector3f> GetFrameAngularDragPerAxis()    { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameAngularDragPerAxis()); }
-		TArrayView<FVector3f> GetFrameWindVelocityCmPerSec()  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameWindVelocityCmPerSec()); }
-		TArrayView<float> GetFrameGroundEffectStartHeightCm() { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameGroundEffectStartHeightCm()); }
-		TArrayView<float> GetFrameGroundEffectStrength()      { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameGroundEffectStrength()); }
 
 		/* Motors */
 		TArrayView<FName> GetMotorName()                      { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetMotorName()); }
@@ -406,12 +379,6 @@ namespace UE::AircraftLab::AircraftAsset
 		TArrayView<float> GetFcAllocationDamping()          { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFcAllocationDamping()); }
 
 		/* GameFeel */
-		TArrayView<float> GetGameFeelRcExpoRoll()              { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelRcExpoRoll()); }
-		TArrayView<float> GetGameFeelRcExpoPitch()             { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelRcExpoPitch()); }
-		TArrayView<float> GetGameFeelRcExpoYaw()               { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelRcExpoYaw()); }
-		TArrayView<float> GetGameFeelRcExpoThrottle()          { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelRcExpoThrottle()); }
-		TArrayView<float> GetGameFeelInputDeadzone()           { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelInputDeadzone()); }
-		TArrayView<float> GetGameFeelStickResponseTimeSeconds(){ return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelStickResponseTimeSeconds()); }
 		TArrayView<float> GetGameFeelCameraShakeScale()        { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetGameFeelCameraShakeScale()); }
 
 	private:

@@ -284,12 +284,11 @@ private:
 	void RefreshAutopilotProvider();
 
 	/**
-	 * 把 SimulationModel.Mass / SimulationModel.Aero（FrameConfig 中的质量/质心/惯性/阻尼参数）
+	 * 把 SimulationModel.Mass（FrameConfig 中的质量/质心/惯量参数）
 	 * 写入底盘 BodyInstance + Component（GT 标准 setter 路径）：
 	 *   * MassKg                → BodyInstance->SetMassOverride(true) + UpdateMassProperties()
 	 *   * CenterOfMassOffsetCm  → BodyInstance->COMNudge（局部 cm 偏移）+ UpdateMassProperties()
 	 *   * InertiaDiagonalKgCmSq → BodyInstance->InertiaTensorScale（按默认惯性归一化后再缩放）
-	 *   * LinearDragPerAxis / AngularDragPerAxis → SimulationProxy 的逐轴阻力
 	 *
 	 * 调用时机：
 	 *   1) OnCreatePhysicsState() 之后立即同步（首次进入物理）；

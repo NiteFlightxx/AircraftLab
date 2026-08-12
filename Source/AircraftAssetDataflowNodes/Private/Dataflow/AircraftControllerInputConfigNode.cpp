@@ -33,12 +33,6 @@ void FAircraftControllerInputConfigNode::Evaluate(UE::Dataflow::FContext& Contex
 	FCollectionAircraftFacade Facade(AircraftCollection);
 	Facade.DefineSchema();
 #define UE_AIRCRAFT_WRITE_INPUT(GetterName, Value) if (TArrayView<float> Values = Facade.Get##GetterName(); !Values.IsEmpty()) { Values[0] = Value; }
-	UE_AIRCRAFT_WRITE_INPUT(GameFeelRcExpoRoll, Config.RcExpoRollPitchYaw.X)
-	UE_AIRCRAFT_WRITE_INPUT(GameFeelRcExpoPitch, Config.RcExpoRollPitchYaw.Y)
-	UE_AIRCRAFT_WRITE_INPUT(GameFeelRcExpoYaw, Config.RcExpoRollPitchYaw.Z)
-	UE_AIRCRAFT_WRITE_INPUT(GameFeelRcExpoThrottle, Config.RcExpoThrottle)
-	UE_AIRCRAFT_WRITE_INPUT(GameFeelInputDeadzone, Config.InputDeadzone)
-	UE_AIRCRAFT_WRITE_INPUT(GameFeelStickResponseTimeSeconds, Config.StickResponseTimeSeconds)
 	UE_AIRCRAFT_WRITE_INPUT(GameFeelCameraShakeScale, Config.CameraShakeScale)
 #undef UE_AIRCRAFT_WRITE_INPUT
 

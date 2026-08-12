@@ -35,11 +35,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FrameMassKg(TEXT("MassKg"));
 		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
 		const FName FrameInertiaDiagonalKgCmSq(TEXT("InertiaDiagonalKgCmSq"));
-		const FName FrameLinearDragPerAxis(TEXT("LinearDragPerAxis"));
-		const FName FrameAngularDragPerAxis(TEXT("AngularDragPerAxis"));
-		const FName FrameWindVelocityCmPerSec(TEXT("WindVelocityCmPerSec"));
-		const FName FrameGroundEffectStartHeightCm(TEXT("GroundEffectStartHeightCm"));
-		const FName FrameGroundEffectStrength(TEXT("GroundEffectStrength"));
 
 		const FName MotorName(TEXT("Name"));
 		const FName MotorEnabled(TEXT("Enabled"));
@@ -92,12 +87,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FcDerivativeCutoffHz(TEXT("DerivativeCutoffHz"));
 		const FName FcAllocationDamping(TEXT("AllocationDamping"));
 
-		const FName GameFeelRcExpoRoll(TEXT("RcExpoRoll"));
-		const FName GameFeelRcExpoPitch(TEXT("RcExpoPitch"));
-		const FName GameFeelRcExpoYaw(TEXT("RcExpoYaw"));
-		const FName GameFeelRcExpoThrottle(TEXT("RcExpoThrottle"));
-		const FName GameFeelInputDeadzone(TEXT("InputDeadzone"));
-		const FName GameFeelStickResponseTimeSeconds(TEXT("StickResponseTimeSeconds"));
 		const FName GameFeelCameraShakeScale(TEXT("CameraShakeScale"));
 	}
 

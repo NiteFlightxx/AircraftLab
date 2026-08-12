@@ -62,7 +62,6 @@ public:
 	void SetFlightMode_GameThread(EAircraftFlightMode InMode);
 	void SetArmRequest_GameThread(bool bArm);
 	void SetEmergencyStop_GameThread(bool bStop);
-	void SetGroundDistance_GameThread(float DistanceCm);
 	void SetGravity_GameThread(float GravityCmPerSecSq);
 
 	/** Autopilot 注入（GT 由组件从 IAutopilotProvider 拉取后写入）。 */
@@ -145,7 +144,7 @@ private:
 	bool bArmRequest = true;
 	bool bEmergencyStop = false;
 	bool bRecoverAllRotors = false;
-	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EAircraftFlightMode::Angle) };
+	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EAircraftFlightMode::PositionHold) };
 	std::atomic<bool> bUseAutopilotSetpoint{ false };
 	std::atomic<bool> bPendingControllerReset{ false };
 	std::atomic<bool> bSimulationEnabled{ true };
@@ -167,7 +166,7 @@ private:
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftFailurePolicyStatus LatestPolicyStatus;
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Armed) };
-	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EAircraftFlightMode::Angle) };
+	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EAircraftFlightMode::PositionHold) };
 	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
 	std::atomic<uint8> PendingFailureAction{ static_cast<uint8>(EAircraftFailurePolicyAction::WarningOnly) };
 	std::atomic<bool> bFailureActionPending{ false };
@@ -175,7 +174,6 @@ private:
 
 	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
-	std::atomic<float> GroundDistanceCm{ TNumericLimits<float>::Max() };
 	std::atomic<float> GravityMagnitudeCmPerSecSq{ 980.0f };
 	std::atomic<float> CameraShakeIntensity{ 0.0f };
 
@@ -193,9 +191,6 @@ private:
 	FAircraftPhysicsCache PhysicsCache;
 	/** 模式能力缓存。 */
 	FAircraftModeCapabilities ModeCapabilities;
-	/** 经整形的摇杆输入（PT 滤波状态）。 */
-	FDronePilotInput FilteredPilotInput;
-
 	/* 单旋翼运行时状态（与 SimulationModel.Rotors 一一对应，索引一致） */
 	TArray<FAircraftRotorRuntimeState> RotorStates;
 };

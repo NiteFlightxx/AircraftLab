@@ -37,11 +37,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FrameMassKg(TEXT("MassKg"));
 		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
 		const FName FrameInertiaDiagonalKgCmSq(TEXT("InertiaDiagonalKgCmSq"));
-		const FName FrameLinearDragPerAxis(TEXT("LinearDragPerAxis"));
-		const FName FrameAngularDragPerAxis(TEXT("AngularDragPerAxis"));
-		const FName FrameWindVelocityCmPerSec(TEXT("WindVelocityCmPerSec"));
-		const FName FrameGroundEffectStartHeightCm(TEXT("GroundEffectStartHeightCm"));
-		const FName FrameGroundEffectStrength(TEXT("GroundEffectStrength"));
 
 		/* Motors attributes */
 		const FName MotorName(TEXT("Name"));
@@ -98,12 +93,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FcAllocationDamping(TEXT("AllocationDamping"));
 
 		/* GameFeel attributes */
-		const FName GameFeelRcExpoRoll(TEXT("RcExpoRoll"));
-		const FName GameFeelRcExpoPitch(TEXT("RcExpoPitch"));
-		const FName GameFeelRcExpoYaw(TEXT("RcExpoYaw"));
-		const FName GameFeelRcExpoThrottle(TEXT("RcExpoThrottle"));
-		const FName GameFeelInputDeadzone(TEXT("InputDeadzone"));
-		const FName GameFeelStickResponseTimeSeconds(TEXT("StickResponseTimeSeconds"));
 		const FName GameFeelCameraShakeScale(TEXT("CameraShakeScale"));
 	}
 
@@ -148,11 +137,6 @@ namespace UE::AircraftLab::AircraftAsset
 		FrameMassKg = Collection.FindAttributeTyped<float>(Private::FrameMassKg, Private::FrameGroup);
 		FrameCenterOfMassOffsetCm = Collection.FindAttributeTyped<FVector3f>(Private::FrameCenterOfMassOffsetCm, Private::FrameGroup);
 		FrameInertiaDiagonalKgCmSq = Collection.FindAttributeTyped<FVector3f>(Private::FrameInertiaDiagonalKgCmSq, Private::FrameGroup);
-		FrameLinearDragPerAxis = Collection.FindAttributeTyped<FVector3f>(Private::FrameLinearDragPerAxis, Private::FrameGroup);
-		FrameAngularDragPerAxis = Collection.FindAttributeTyped<FVector3f>(Private::FrameAngularDragPerAxis, Private::FrameGroup);
-		FrameWindVelocityCmPerSec = Collection.FindAttributeTyped<FVector3f>(Private::FrameWindVelocityCmPerSec, Private::FrameGroup);
-		FrameGroundEffectStartHeightCm = Collection.FindAttributeTyped<float>(Private::FrameGroundEffectStartHeightCm, Private::FrameGroup);
-		FrameGroundEffectStrength = Collection.FindAttributeTyped<float>(Private::FrameGroundEffectStrength, Private::FrameGroup);
 
 		/* Motors */
 		MotorName = Collection.FindAttributeTyped<FName>(Private::MotorName, Private::MotorsGroup);
@@ -209,12 +193,6 @@ namespace UE::AircraftLab::AircraftAsset
 		FcAllocationDamping = Collection.FindAttributeTyped<float>(Private::FcAllocationDamping, Private::FlightControllerGroup);
 
 		/* GameFeel */
-		GameFeelRcExpoRoll = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoRoll, Private::GameFeelGroup);
-		GameFeelRcExpoPitch = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoPitch, Private::GameFeelGroup);
-		GameFeelRcExpoYaw = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoYaw, Private::GameFeelGroup);
-		GameFeelRcExpoThrottle = Collection.FindAttributeTyped<float>(Private::GameFeelRcExpoThrottle, Private::GameFeelGroup);
-		GameFeelInputDeadzone = Collection.FindAttributeTyped<float>(Private::GameFeelInputDeadzone, Private::GameFeelGroup);
-		GameFeelStickResponseTimeSeconds = Collection.FindAttributeTyped<float>(Private::GameFeelStickResponseTimeSeconds, Private::GameFeelGroup);
 		GameFeelCameraShakeScale = Collection.FindAttributeTyped<float>(Private::GameFeelCameraShakeScale, Private::GameFeelGroup);
 	}
 
@@ -273,11 +251,6 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::FrameGroup, Private::FrameMassKg, float(0));
 		AddAttribute(Private::FrameGroup, Private::FrameCenterOfMassOffsetCm, FVector3f::ZeroVector);
 		AddAttribute(Private::FrameGroup, Private::FrameInertiaDiagonalKgCmSq, FVector3f::ZeroVector);
-		AddAttribute(Private::FrameGroup, Private::FrameLinearDragPerAxis, FVector3f::ZeroVector);
-		AddAttribute(Private::FrameGroup, Private::FrameAngularDragPerAxis, FVector3f::ZeroVector);
-		AddAttribute(Private::FrameGroup, Private::FrameWindVelocityCmPerSec, FVector3f::ZeroVector);
-		AddAttribute(Private::FrameGroup, Private::FrameGroundEffectStartHeightCm, float(0));
-		AddAttribute(Private::FrameGroup, Private::FrameGroundEffectStrength, float(0));
 		EnsureSingleElement(Private::FrameGroup);
 
 		/* Motors */
@@ -340,12 +313,6 @@ namespace UE::AircraftLab::AircraftAsset
 
 		/* GameFeel */
 		AddOrFindGroup(Private::GameFeelGroup);
-		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoRoll, float(0));
-		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoPitch, float(0));
-		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoYaw, float(0));
-		AddAttribute(Private::GameFeelGroup, Private::GameFeelRcExpoThrottle, float(0));
-		AddAttribute(Private::GameFeelGroup, Private::GameFeelInputDeadzone, float(0));
-		AddAttribute(Private::GameFeelGroup, Private::GameFeelStickResponseTimeSeconds, float(0));
 		AddAttribute(Private::GameFeelGroup, Private::GameFeelCameraShakeScale, float(0));
 		EnsureSingleElement(Private::GameFeelGroup);
 

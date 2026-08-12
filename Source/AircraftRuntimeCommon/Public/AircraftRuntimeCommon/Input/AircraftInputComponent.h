@@ -56,14 +56,6 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Input")
 	TObjectPtr<UInputAction> IA_Turn;
 
-	/** 解锁/上锁输入（可选）。 */
-	UPROPERTY(EditAnywhere, Category = "Aircraft|Input")
-	TObjectPtr<UInputAction> IA_Arm;
-
-	/** 紧急停止输入（可选）。 */
-	UPROPERTY(EditAnywhere, Category = "Aircraft|Input")
-	TObjectPtr<UInputAction> IA_EmergencyStop;
-
 	/** (Throttle, Roll, Pitch, Yaw)。 */
 	FVector4 PilotInputAxes = FVector4(0.0, 0.0, 0.0, 0.0);
 
@@ -76,8 +68,6 @@ private:
 	void ResetMove(const FInputActionValue& Value);
 	void ResetThrottle(const FInputActionValue& Value);
 	void ResetTurn(const FInputActionValue& Value);
-	void InputArm(const FInputActionValue& Value);
-	void InputEmergencyStop(const FInputActionValue& Value);
 
 	void PushPilotInput() const;
 	void ResolveFlightController() const;

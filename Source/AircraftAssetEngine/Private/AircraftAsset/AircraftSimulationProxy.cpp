@@ -4,14 +4,13 @@
 //
 // 物理子步算法（FlightController 驱动模式下每个 AsyncPhysicsTick 子步调一次）：
 //   1. 取走 GT 写入的 PendingPilotInput / PendingTargets / AutopilotInjection / 旋翼健康操作
-//   2. 输入整形（死区/Expo/响应时间，PT 上消费，采样率无关）
-//   3. ARM 状态机
-//   4. 从 Chaos 刚体句柄读取真值 → FAircraftPhysicsCache + 估计状态
-//   5. 摇杆 → FAircraftManualCommand（含航向坐标系变换与保持死区）
-//   6. 串级控制：垂直通道 → 期望姿态 → 航向 → 期望角速率（四元数误差+参考模型）→ 归一化力矩
-//   7. 阻尼伪逆控制分配（失效感知 + 饱和回传抗 windup + 倾斜补偿）
-//   8. 电机一阶滞后 → FChaosEngineInterface 力/扭矩注入（SI→Chaos 边界换算）
-//   9. 失效策略评估（触发动作经原子回传 GT）+ 估计状态写回
+//   2. ARM 状态机
+//   3. 从 Chaos 刚体句柄读取真值 → FAircraftPhysicsCache + 估计状态
+//   4. 摇杆 → FAircraftManualCommand（含航向坐标系变换与保持死区）
+//   5. 串级控制：垂直通道 → 期望姿态 → 航向 → 期望角速率（四元数误差+参考模型）→ 归一化力矩
+//   6. 阻尼伪逆控制分配（失效感知 + 饱和回传抗 windup + 倾斜补偿）
+//   7. 电机一阶滞后 → FChaosEngineInterface 力/扭矩注入（SI→Chaos 边界换算）
+//   8. 失效策略评估（触发动作经原子回传 GT）+ 估计状态写回
 
 #include "AircraftAsset/AircraftSimulationProxy.h"
 
@@ -114,7 +113,6 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	Runtime.HoldTargets.ResetHoldFlags();
 	Runtime.PreviousLinearVelocityCmPerSec = FVector::ZeroVector;
 	Runtime.bHasPreviousLinearVelocity = false;
-	FilteredPilotInput.ResetAxes();
 	CameraShakeIntensity.store(0.0f, std::memory_order_relaxed);
 	CurrentCollectiveThrustCommand.store(0.0f, std::memory_order_relaxed);
 	bFailureActionPending.store(false, std::memory_order_relaxed);
@@ -278,11 +276,6 @@ void FAircraftSimulationProxy::SetEmergencyStop_GameThread(bool bStop)
 {
 	FScopeLock Lock(&InputCriticalSection);
 	bEmergencyStop = bStop;
-}
-
-void FAircraftSimulationProxy::SetGroundDistance_GameThread(float DistanceCm)
-{
-	GroundDistanceCm.store(FMath::Max(DistanceCm, 0.0f), std::memory_order_relaxed);
 }
 
 void FAircraftSimulationProxy::SetGravity_GameThread(float GravityCmPerSecSq)
@@ -456,38 +449,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		PendingRotorHealthOps.Reset();
 	}
 
-	// 输入整形（死区/Expo/响应时间）在 PT 上消费，采样率无关。
-	const FAircraftGameFeelRuntimeConfig& GameFeel = ActiveLodModel->GameFeel;
-	auto ShapeAxis = [&GameFeel](float Value, float Expo)
-	{
-		const float Clamped = FMath::Clamp(Value, -1.0f, 1.0f);
-		const float Magnitude = FMath::Abs(Clamped);
-		const float Deadzone = FMath::Clamp(GameFeel.InputDeadzone, 0.0f, 0.99f);
-		if (Magnitude <= Deadzone)
-		{
-			return 0.0f;
-		}
-		const float Remapped = (Magnitude - Deadzone) / (1.0f - Deadzone);
-		const float ClampedExpo = FMath::Clamp(Expo, 0.0f, 1.0f);
-		const float Shaped = FMath::Lerp(Remapped, Remapped * Remapped * Remapped, ClampedExpo);
-		return FMath::Sign(Clamped) * Shaped;
-	};
-
-	FDronePilotInput ShapedPilot;
-	ShapedPilot.Roll = ShapeAxis(Pilot.Roll, GameFeel.RcExpoRoll);
-	ShapedPilot.Pitch = ShapeAxis(Pilot.Pitch, GameFeel.RcExpoPitch);
-	ShapedPilot.Yaw = ShapeAxis(Pilot.Yaw, GameFeel.RcExpoYaw);
-	ShapedPilot.Throttle = ShapeAxis(Pilot.Throttle, GameFeel.RcExpoThrottle);
-	const float ResponseTime = FMath::Max(GameFeel.StickResponseTimeSeconds, 0.0f);
-	const float InputAlpha = ResponseTime > UE_SMALL_NUMBER
-		? FMath::Clamp(DeltaTime / (ResponseTime + DeltaTime), 0.0f, 1.0f)
-		: 1.0f;
-	FilteredPilotInput.Roll = FMath::Lerp(FilteredPilotInput.Roll, ShapedPilot.Roll, InputAlpha);
-	FilteredPilotInput.Pitch = FMath::Lerp(FilteredPilotInput.Pitch, ShapedPilot.Pitch, InputAlpha);
-	FilteredPilotInput.Yaw = FMath::Lerp(FilteredPilotInput.Yaw, ShapedPilot.Yaw, InputAlpha);
-	FilteredPilotInput.Throttle = FMath::Lerp(FilteredPilotInput.Throttle, ShapedPilot.Throttle, InputAlpha);
-	Pilot = FilteredPilotInput;
-
 	const EAircraftFlightMode Mode = static_cast<EAircraftFlightMode>(PendingFlightMode.load(std::memory_order_relaxed));
 
 	/* ----------------------------------------------------------------------
@@ -609,10 +570,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	PhysicsCache.MassKg = static_cast<float>(Handle->M());
 	PhysicsCache.InertiaDiagonalKgM2 = Config.BodyAxisMagnitudesToControl(
 		FVector(Handle->I()) * 1.e-4f);
-	PhysicsCache.LinearDampingPerSecond = ActiveLodModel->Aero.LinearDragPerAxis
-		/ FMath::Max(PhysicsCache.MassKg, UE_SMALL_NUMBER);
-	PhysicsCache.AngularDampingPerSecond = ActiveLodModel->Aero.AngularDragPerAxis
-		/ PhysicsCache.InertiaDiagonalKgM2.ComponentMax(FVector(UE_SMALL_NUMBER));
+	PhysicsCache.LinearDampingPerSecond = FVector(static_cast<float>(Handle->LinearEtherDrag()));
+	PhysicsCache.AngularDampingPerSecond = FVector(static_cast<float>(Handle->AngularEtherDrag()));
 	PhysicsCache.CenterOfMassOffsetBodyCm = FVector(Handle->CenterOfMass());
 
 	// 刷新估计状态（控制循环读取 Runtime.EstimatedState）
@@ -664,10 +623,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		LatestEstimated.State.PositionCm = WorldPosCm;
 		LatestEstimated.State.VelocityCmPerSec = LinearVelCmPerSec;
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
-		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = FVector(
-			FMath::RadiansToDegrees(AngularVelBodyRadPerSec.X),
-			FMath::RadiansToDegrees(AngularVelBodyRadPerSec.Y),
-			FMath::RadiansToDegrees(AngularVelBodyRadPerSec.Z));
+		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
 		return;
 	}
 
@@ -846,17 +802,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	MotorLoad = ControlAllocator.CommandBuffer.IsEmpty()
 		? 0.0f : MotorLoad / static_cast<float>(ControlAllocator.CommandBuffer.Num());
 	CameraShakeIntensity.store(
-		FMath::Clamp(MotorLoad * FMath::Max(GameFeel.CameraShakeScale, 0.0f), 0.0f, 1.0f),
+		FMath::Clamp(MotorLoad * FMath::Max(ActiveLodModel->CameraShakeScale, 0.0f), 0.0f, 1.0f),
 		std::memory_order_relaxed);
-
-	// 地面效应：低于起始高度时按平方增益放大推力。
-	const float GroundEffectStartHeightCm = FMath::Max(ActiveLodModel->Aero.GroundEffectStartHeightCm, 0.0f);
-	const float GroundDistance = GroundDistanceCm.load(std::memory_order_relaxed);
-	const float GroundEffectAlpha = GroundEffectStartHeightCm > UE_SMALL_NUMBER
-		? 1.0f - FMath::Clamp(GroundDistance / GroundEffectStartHeightCm, 0.0f, 1.0f)
-		: 0.0f;
-	const float GroundEffectScale = 1.0f
-		+ FMath::Max(ActiveLodModel->Aero.GroundEffectStrength, 0.0f) * FMath::Square(GroundEffectAlpha);
 
 	Runtime.ControlOutput.RotorCommands.SetNum(RotorStates.Num());
 	for (int32 i = 0; i < RotorStates.Num(); ++i)
@@ -875,7 +822,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		const FVector WorldPos = WorldXform.TransformPosition(LocalPosCm);
 		const FVector WorldAxis = WorldQuat.RotateVector(Info.ThrustAxisBody).GetSafeNormal();
 
-		const float AppliedThrustN = State.CurrentThrustForceN * GroundEffectScale;
+		const float AppliedThrustN = State.CurrentThrustForceN;
 		const FVector ForceN = WorldAxis * AppliedThrustN;
 		FChaosEngineInterface::AddForceAtPosition_AssumesLocked(
 			ActorHandle,
@@ -899,29 +846,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		RotorCommand.GeneratedReactionTorque = AppliedThrustN * Info.ReactionTorqueCoefficientM * Info.SpinDirectionSign;
 	}
 
-	// 气动阻尼（线性 + 角阻尼），以体坐标系阻尼系数逐轴施加。
-	{
-		const FVector RelativeAirVelocityCmPerSec = LinearVelCmPerSec - ActiveLodModel->Aero.WindVelocityCmPerSec;
-		const FVector LinearVelBodyMps = WorldQuat.UnrotateVector(RelativeAirVelocityCmPerSec) * 0.01;
-		const FVector LinearDragForceBody = -FVector(
-			ActiveLodModel->Aero.LinearDragPerAxis.X * LinearVelBodyMps.X,
-			ActiveLodModel->Aero.LinearDragPerAxis.Y * LinearVelBodyMps.Y,
-			ActiveLodModel->Aero.LinearDragPerAxis.Z * LinearVelBodyMps.Z);
-		const FVector LinearDragForceWorld = WorldQuat.RotateVector(LinearDragForceBody);
-		FChaosEngineInterface::AddForce_AssumesLocked(
-			ActorHandle, LinearDragForceWorld * 100.f * ForceAccumulationScale,
-			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
-
-		const FVector AngularDragTorqueBody = -FVector(
-			ActiveLodModel->Aero.AngularDragPerAxis.X * AngularVelBodyRadPerSec.X,
-			ActiveLodModel->Aero.AngularDragPerAxis.Y * AngularVelBodyRadPerSec.Y,
-			ActiveLodModel->Aero.AngularDragPerAxis.Z * AngularVelBodyRadPerSec.Z);
-		const FVector AngularDragTorqueWorld = WorldQuat.RotateVector(AngularDragTorqueBody);
-		FChaosEngineInterface::AddTorque_AssumesLocked(
-			ActorHandle, AngularDragTorqueWorld * 10000.f * ForceAccumulationScale,
-			/*bAllowSubstepping=*/false, /*bAccelChange=*/false, /*bIsInternal=*/true);
-	}
-
 	/* ----------------------------------------------------------------------
 	 * 11) 估计状态与诊断写回 GT
 	 * ---------------------------------------------------------------------- */
@@ -932,10 +856,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		LatestEstimated.State.VelocityCmPerSec = LinearVelCmPerSec;
 		LatestEstimated.State.AccelerationWorldCmPerSecSq = Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq;
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
-		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = FVector(
-			FMath::RadiansToDegrees(AngularVelBodyRadPerSec.X),
-			FMath::RadiansToDegrees(AngularVelBodyRadPerSec.Y),
-			FMath::RadiansToDegrees(AngularVelBodyRadPerSec.Z));
+		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
 		LatestAuthorityInfo = RotorFailureManager.AuthorityInfo;
 		LatestPolicyStatus = RotorFailureManager.PolicyStatus;
 	}

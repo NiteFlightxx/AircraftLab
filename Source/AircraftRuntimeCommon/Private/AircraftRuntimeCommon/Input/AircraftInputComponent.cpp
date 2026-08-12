@@ -88,14 +88,6 @@ void UAircraftInputComponent::BindInput(UInputComponent* PlayerInputComponent)
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Completed, this, &UAircraftInputComponent::ResetTurn);
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Canceled, this, &UAircraftInputComponent::ResetTurn);
 	}
-	if (IA_Arm)
-	{
-		EnhancedInput->BindAction(IA_Arm, ETriggerEvent::Started, this, &UAircraftInputComponent::InputArm);
-	}
-	if (IA_EmergencyStop)
-	{
-		EnhancedInput->BindAction(IA_EmergencyStop, ETriggerEvent::Started, this, &UAircraftInputComponent::InputEmergencyStop);
-	}
 }
 
 void UAircraftInputComponent::PushPilotInput() const
@@ -150,25 +142,4 @@ void UAircraftInputComponent::ResetTurn(const FInputActionValue& Value)
 {
 	PilotInputAxes.W = 0.0;
 	PushPilotInput();
-}
-
-void UAircraftInputComponent::InputArm(const FInputActionValue& Value)
-{
-	ResolveFlightController();
-	if (IAircraftFlightControllerInterface* const FC =
-		Cast<IAircraftFlightControllerInterface>(FlightControllerComponent.Get()))
-	{
-		FC->RequestAircraftArm(true);
-	}
-}
-
-void UAircraftInputComponent::InputEmergencyStop(const FInputActionValue& Value)
-{
-	// 急停 = 立即上锁（飞控侧 EmergencyStop 由失效策略/急停通道触发）
-	ResolveFlightController();
-	if (IAircraftFlightControllerInterface* const FC =
-		Cast<IAircraftFlightControllerInterface>(FlightControllerComponent.Get()))
-	{
-		FC->RequestAircraftArm(false);
-	}
 }

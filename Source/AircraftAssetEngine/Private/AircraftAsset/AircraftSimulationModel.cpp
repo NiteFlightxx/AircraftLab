@@ -61,14 +61,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		OutModel.Mass.InertiaDiagonalKgCmSq = FVector3fToVector(
 			ReadFirst<FVector3f>(ConstCollection.GetFrameInertiaDiagonalKgCmSq(), FVector3f(5000.f, 5000.f, 9000.f)));
 
-		OutModel.Aero.LinearDragPerAxis = FVector3fToVector(
-			ReadFirst<FVector3f>(ConstCollection.GetFrameLinearDragPerAxis(), FVector3f(0.12f, 0.12f, 0.18f)));
-		OutModel.Aero.AngularDragPerAxis = FVector3fToVector(
-			ReadFirst<FVector3f>(ConstCollection.GetFrameAngularDragPerAxis(), FVector3f(0.02f, 0.02f, 0.03f)));
-		OutModel.Aero.WindVelocityCmPerSec = FVector3fToVector(
-			ReadFirst<FVector3f>(ConstCollection.GetFrameWindVelocityCmPerSec(), FVector3f::ZeroVector));
-		OutModel.Aero.GroundEffectStartHeightCm = ReadFirst<float>(ConstCollection.GetFrameGroundEffectStartHeightCm(), 80.f);
-		OutModel.Aero.GroundEffectStrength = ReadFirst<float>(ConstCollection.GetFrameGroundEffectStrength(), 0.15f);
 
 		/* Flight controller. Dataflow values override the authoritative runtime defaults. */
 		OutModel.FlightController.PositionKp = ReadFirst<FVector3f>(
@@ -240,20 +232,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		}
 
 		/* Input/game-feel preprocessing */
-		OutModel.GameFeel.RcExpoRoll = ReadFirst<float>(
-			ConstCollection.GetGameFeelRcExpoRoll(), OutModel.GameFeel.RcExpoRoll);
-		OutModel.GameFeel.RcExpoPitch = ReadFirst<float>(
-			ConstCollection.GetGameFeelRcExpoPitch(), OutModel.GameFeel.RcExpoPitch);
-		OutModel.GameFeel.RcExpoYaw = ReadFirst<float>(
-			ConstCollection.GetGameFeelRcExpoYaw(), OutModel.GameFeel.RcExpoYaw);
-		OutModel.GameFeel.RcExpoThrottle = ReadFirst<float>(
-			ConstCollection.GetGameFeelRcExpoThrottle(), OutModel.GameFeel.RcExpoThrottle);
-		OutModel.GameFeel.InputDeadzone = ReadFirst<float>(
-			ConstCollection.GetGameFeelInputDeadzone(), OutModel.GameFeel.InputDeadzone);
-		OutModel.GameFeel.StickResponseTimeSeconds = ReadFirst<float>(
-			ConstCollection.GetGameFeelStickResponseTimeSeconds(), OutModel.GameFeel.StickResponseTimeSeconds);
-		OutModel.GameFeel.CameraShakeScale = ReadFirst<float>(
-			ConstCollection.GetGameFeelCameraShakeScale(), OutModel.GameFeel.CameraShakeScale);
+		OutModel.CameraShakeScale = ReadFirst<float>(
+			ConstCollection.GetGameFeelCameraShakeScale(), OutModel.CameraShakeScale);
 
 		/* Motors → 临时 map（按 Name 索引），供 Propeller 解析时关联 */
 		TMap<FName, FDroneMotorModelConfig> MotorByName;

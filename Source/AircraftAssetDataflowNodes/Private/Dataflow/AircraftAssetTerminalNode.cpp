@@ -97,11 +97,6 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetFrameMassKg());
 	AccumulateArray(Facade.GetFrameCenterOfMassOffsetCm());
 	AccumulateArray(Facade.GetFrameInertiaDiagonalKgCmSq());
-	AccumulateArray(Facade.GetFrameLinearDragPerAxis());
-	AccumulateArray(Facade.GetFrameAngularDragPerAxis());
-	AccumulateArray(Facade.GetFrameWindVelocityCmPerSec());
-	AccumulateArray(Facade.GetFrameGroundEffectStartHeightCm());
-	AccumulateArray(Facade.GetFrameGroundEffectStrength());
 
 	/* Motors：电机数量 / 名字 / 一阶滞后参数都是结构性的 */
 	AccumulateArray(Facade.GetMotorName());
@@ -158,14 +153,7 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetFcDerivativeCutoffHz());
 	AccumulateArray(Facade.GetFcAllocationDamping());
 
-	/* GameFeel：手感参数仅影响 input pre-processing，不是结构性数据，
-	 * 但放入校验和后任何手感修改也会触发增量重建。 */
-	AccumulateArray(Facade.GetGameFeelRcExpoRoll());
-	AccumulateArray(Facade.GetGameFeelRcExpoPitch());
-	AccumulateArray(Facade.GetGameFeelRcExpoYaw());
-	AccumulateArray(Facade.GetGameFeelRcExpoThrottle());
-	AccumulateArray(Facade.GetGameFeelInputDeadzone());
-	AccumulateArray(Facade.GetGameFeelStickResponseTimeSeconds());
+	/* 纯表现参数也进入校验和，修改后触发增量重建。 */
 	AccumulateArray(Facade.GetGameFeelCameraShakeScale());
 
 	// Chaos Cloth 把 Collection Property Facade 作为可扩展配置层。键、值、字符串和标记都必须

@@ -43,18 +43,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODProfileRuntimeConfig
 	TArray<FAircraftSimulationLODRuntimeSettings> LODs;
 };
 
-/** Dataflow 编译后的输入手感参数。 */
-struct AIRCRAFTASSETENGINE_API FAircraftGameFeelRuntimeConfig
-{
-	float RcExpoRoll = 0.30f;
-	float RcExpoPitch = 0.30f;
-	float RcExpoYaw = 0.20f;
-	float RcExpoThrottle = 0.0f;
-	float InputDeadzone = 0.05f;
-	float StickResponseTimeSeconds = 0.04f;
-	float CameraShakeScale = 0.0f;
-};
-
 /**
  * 螺旋桨旋转方向枚举
  *
@@ -113,38 +101,6 @@ struct AIRCRAFTASSETENGINE_API FDroneMassProperties
 	/** 惯性矩对角线分量 Ixx, Iyy, Izz（千克·厘米²） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body", meta = (ClampMin = "0.0"))
 	FVector InertiaDiagonalKgCmSq = FVector(5000.0f, 5000.0f, 9000.0f);
-};
-
-/**
- * 空气动力学参数（线性/角阻尼、地面效应、风场）
- *
- * 阻力近似为线性阻尼 F_drag = -D · v（v 为体坐标系速度），其中 D 为对角阵 LinearDragPerAxis；
- * 同理力矩阻尼 τ_drag = -A · ω。地面效应用一个分段线性增益按高度叠加在悬停推力上。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneAerodynamicsConfig
-{
-	GENERATED_BODY()
-
-	/** 线性阻尼系数（X/Y/Z，单位：阻力/速度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero", meta = (ClampMin = "0.0"))
-	FVector LinearDragPerAxis = FVector(0.12f, 0.12f, 0.18f);
-
-	/** 角阻尼系数（滚转/俯仰/偏航，单位：阻力矩/角速度） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero", meta = (ClampMin = "0.0"))
-	FVector AngularDragPerAxis = FVector(0.02f, 0.02f, 0.03f);
-
-	/** 地面效应起始高度（厘米，低于此高度时推力增加） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero", meta = (ClampMin = "0.0"))
-	float GroundEffectStartHeightCm = 80.0f;
-
-	/** 地面效应强度（0~1，最大额外推力比例） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero", meta = (ClampMin = "0.0"))
-	float GroundEffectStrength = 0.15f;
-
-	/** 外部风场速度（厘米/秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Aero")
-	FVector WindVelocityCmPerSec = FVector::ZeroVector;
 };
 
 /**
@@ -319,12 +275,11 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	/** 质量与惯性 */
 	FDroneMassProperties Mass;
 
-	/** 气动 */
-	FDroneAerodynamicsConfig Aero;
-
-	/** 飞控和输入手感的运行时只读快照。 */
+	/** 飞控运行时只读快照。 */
 	FAircraftFlightControllerRuntimeConfig FlightController;
-	FAircraftGameFeelRuntimeConfig GameFeel;
+
+	/** 纯表现参数，不参与输入或飞行动力学。 */
+	float CameraShakeScale = 0.0f;
 
 	/** Autopilot 运行时只读快照（AutopilotConfigNode 编译产物）。 */
 	FAircraftAutopilotRuntimeConfig Autopilot;
@@ -344,9 +299,8 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 		VelocitySolverIterationCount = 2;
 		ProjectionSolverIterationCount = 1;
 		Mass = FDroneMassProperties();
-		Aero = FDroneAerodynamicsConfig();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
-		GameFeel = FAircraftGameFeelRuntimeConfig();
+		CameraShakeScale = 0.0f;
 		Autopilot = FAircraftAutopilotRuntimeConfig();
 		Rotors.Reset();
 	}

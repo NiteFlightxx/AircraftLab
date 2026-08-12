@@ -35,9 +35,7 @@ enum class EAircraftForwardAxisNode : uint8
 	NegativeY UMETA(DisplayName = "-Y"),
 };
 
-/**
- * 机架配置节点：写入 Frame 单元素组的全部字段（机架类型 + 质量惯性 + 气动 + 风场）。
- */
+/** 机架配置节点：写入机架类型、控制轴约定、质量、质心和惯量。 */
 USTRUCT(meta = (DataflowAircraft))
 struct FAircraftFrameConfigNode : public FDataflowNode
 {
@@ -77,26 +75,6 @@ public:
 	/** 主惯量对角线 Ixx, Iyy, Izz（千克·厘米²）。 */
 	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (ClampMin = "0.0"))
 	FVector3f InertiaDiagonalKgCmSq = FVector3f(5000.f, 5000.f, 9000.f);
-
-	/** 线性阻尼系数（X/Y/Z），力 = -D · v。 */
-	UPROPERTY(EditAnywhere, Category = "Frame|Aero", meta = (ClampMin = "0.0"))
-	FVector3f LinearDragPerAxis = FVector3f(0.12f, 0.12f, 0.18f);
-
-	/** 角阻尼系数（Roll/Pitch/Yaw），力矩 = -A · ω。 */
-	UPROPERTY(EditAnywhere, Category = "Frame|Aero", meta = (ClampMin = "0.0"))
-	FVector3f AngularDragPerAxis = FVector3f(0.02f, 0.02f, 0.03f);
-
-	/** 外部风场速度（厘米/秒，世界系）。 */
-	UPROPERTY(EditAnywhere, Category = "Frame|Aero")
-	FVector3f WindVelocityCmPerSec = FVector3f::ZeroVector;
-
-	/** 地面效应起始高度（厘米）。 */
-	UPROPERTY(EditAnywhere, Category = "Frame|Aero", meta = (ClampMin = "0.0"))
-	float GroundEffectStartHeightCm = 80.f;
-
-	/** 地面效应额外推力比例（0~1）。 */
-	UPROPERTY(EditAnywhere, Category = "Frame|Aero", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float GroundEffectStrength = 0.15f;
 
 	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
 };

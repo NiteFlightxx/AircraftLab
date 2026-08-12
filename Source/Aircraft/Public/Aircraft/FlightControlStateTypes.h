@@ -232,7 +232,7 @@ struct FAircraftFlightControlRuntimeState
 	FAircraftHomeState HomeState;
 
 	EAircraftArmState ArmState = EAircraftArmState::Disarmed;
-	EAircraftFlightMode ActiveFlightMode = EAircraftFlightMode::Angle;
+	EAircraftFlightMode ActiveFlightMode = EAircraftFlightMode::PositionHold;
 	EAircraftAttitudeMode AttitudeMode = EAircraftAttitudeMode::Angle;
 
 	bool bAltitudeHoldEnabled = false;

@@ -60,6 +60,10 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	const FAircraftSimulationModel FrameConfigModel(CollectionsWithoutOverride, TEXT("FrameConfig"));
 	TestEqual(TEXT("Frame config owns the runtime forward axis"),
 		FrameConfigModel.GetLodModel(0)->FlightController.ForwardAxis, uint8(3));
+	(*AircraftCollection.GetGameFeelCameraShakeScale())[0] = 0.35f;
+	const FAircraftSimulationModel PresentationModel(CollectionsWithoutOverride, TEXT("Presentation"));
+	TestEqual(TEXT("Camera shake remains a presentation-only runtime value"),
+		PresentationModel.GetLodModel(0)->CameraShakeScale, 0.35f);
 
 	Collection->AddElements(1, AircraftCollectionGroup::Solver);
 	AircraftCollection.UpdateArrays();

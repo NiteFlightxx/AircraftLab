@@ -251,7 +251,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.PhysicsAsset = LoadObject<UPhysicsAsset>(nullptr, *DefaultPhysicsAssetPath);
 				});
 
-			/* ---------- 2. Frame 节点（机架 + 质量惯性 + 气动） ---------- */
+			/* ---------- 2. Frame 节点（机架 + 质量/质心/惯量） ---------- */
 			const FCreatedTemplateNode FrameNode = AddConfiguredTemplateNode<FAircraftFrameConfigNode>(
 				DataflowAsset,
 				TEXT("AircraftFrameConfig"),
@@ -264,11 +264,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.MassKg = 100.0f;
 					Node.CenterOfMassOffsetCm = FVector3f::ZeroVector;
 					Node.InertiaDiagonalKgCmSq = FVector3f(5000.f, 5000.f, 9000.f);
-					Node.LinearDragPerAxis = FVector3f(0.12f, 0.12f, 0.18f);
-					Node.AngularDragPerAxis = FVector3f(0.02f, 0.02f, 0.03f);
-					Node.WindVelocityCmPerSec = FVector3f::ZeroVector;
-					Node.GroundEffectStartHeightCm = 80.f;
-					Node.GroundEffectStrength = 0.15f;
 				});
 
 			/* ---------- 3-6. 四个单旋翼 Airscrew Profile 节点 ---------- */
@@ -403,7 +398,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			 * 主干：Source → Frame → R1..R4 → Limits → Position → Attitude → Altitude → Allocator → Input
 			 * 每级 LOD 只挂它自己的 DriveMode 实际消费的数据（Terminal/Build 均不做静态 schema
 			 * 校验，缺失组运行时走默认值）——按需求分叉的最精简拓扑：
-			 * LOD0（飞控驱动）：Input → LOD0           —— 完整链（电机+旋翼+FC+GameFeel）
+			 * LOD0（飞控驱动）：Input → LOD0           —— 完整链（电机+旋翼+飞控）
 			 * LOD1（约束驱动）：Frame → Constraint → LOD1 —— 只需机架（质量惯性）+ 约束参数
 			 * LOD2（运动学驱动）：Frame → Kinematic → LOD2 —— 只需机架 + 运动学插值参数
 			 * LOD3（无驱动）：Frame → LOD3            —— 只需机架
