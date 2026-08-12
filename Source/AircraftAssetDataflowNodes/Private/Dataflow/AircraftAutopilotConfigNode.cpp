@@ -24,13 +24,31 @@ void FAircraftAutopilotConfigNode::Evaluate(UE::Dataflow::FContext& Context, con
 		return;
 	}
 
-	if (Config.PurePursuitMinLookAheadCm > Config.PurePursuitMaxLookAheadCm)
+	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
+	const float Values[] = { Config.CoordinatedTurnSpeedThresholdCmPerSec, Config.MaxBankAngleDegrees,
+		Config.MaxLateralAccelCmPerSecSq, Config.PurePursuitLookAheadGain, Config.PurePursuitMinLookAheadCm,
+		Config.PurePursuitMaxLookAheadCm, Config.VectorFieldCrossTrackGain,
+		Config.VectorFieldMaxCrossTrackCorrectionCm, Config.InitialStateVariance,
+		Config.ProcessNoiseVariance, Config.AccelNoiseVariance, Config.GateSize,
+		Config.MinHoverThrust, Config.MaxHoverThrust };
+	bool bInvalid = false;
+	for (const float Value : Values)
 	{
-		Context.Error(FText::FromString(TEXT("Autopilot pure-pursuit look-ahead must satisfy Min <= Max.")), this);
+		bInvalid |= !FMath::IsFinite(Value) || Value < 0.0f;
+	}
+	bInvalid |= Config.MaxBankAngleDegrees > 60.0f
+		|| Config.PurePursuitMinLookAheadCm > Config.PurePursuitMaxLookAheadCm
+		|| Config.AccelNoiseVariance < 0.001f || Config.GateSize < 1.0f
+		|| Config.MinHoverThrust > Config.MaxHoverThrust || Config.MaxHoverThrust > 1.0f;
+	if (bInvalid)
+	{
+		Context.Error(FText::FromString(TEXT("Autopilot values are outside their valid ranges or ordered incorrectly.")), this);
+		SetValue(Context, InputCollection, &Collection);
+		return;
 	}
 
 	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		GetValue<FManagedArrayCollection>(Context, &Collection));
+		InputCollection);
 	FCollectionAircraftFacade Facade(AircraftCollection);
 	Facade.DefineSchema();
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);

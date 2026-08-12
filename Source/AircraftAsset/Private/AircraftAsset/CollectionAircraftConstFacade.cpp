@@ -16,7 +16,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName Motors(TEXT("Motors"));
 		const FName Propellers(TEXT("Propellers"));
 		const FName FlightController(TEXT("FlightController"));
-		const FName GameFeel(TEXT("GameFeel"));
 	}
 
 	namespace AircraftCollectionAttribute
@@ -31,14 +30,12 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName ProjectionSolverIterationCount(TEXT("ProjectionSolverIterationCount"));
 
 		const FName FrameRootBone(TEXT("RootBone"));
-		const FName FrameType(TEXT("FrameType"));
 		const FName FrameMassKg(TEXT("MassKg"));
 		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
 		const FName FrameInertiaDiagonalKgCmSq(TEXT("InertiaDiagonalKgCmSq"));
 
 		const FName MotorName(TEXT("Name"));
 		const FName MotorEnabled(TEXT("Enabled"));
-		const FName MotorMinRpm(TEXT("MinRpm"));
 		const FName MotorIdleRpm(TEXT("IdleRpm"));
 		const FName MotorMaxRpm(TEXT("MaxRpm"));
 		const FName MotorSpinUpTimeSeconds(TEXT("SpinUpTimeSeconds"));
@@ -51,10 +48,8 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PropellerSocketName(TEXT("SocketName"));
 		const FName PropellerUseSocketTransform(TEXT("UseSocketTransform"));
 		const FName PropellerPositionLocalCm(TEXT("PositionLocalCm"));
-		const FName PropellerRotationLocalEulerDeg(TEXT("RotationLocalEulerDeg"));
 		const FName PropellerThrustAxisLocal(TEXT("ThrustAxisLocal"));
 		const FName PropellerSpinDirection(TEXT("SpinDirection"));
-		const FName PropellerRadiusCm(TEXT("RadiusCm"));
 		const FName PropellerMaxThrustForce(TEXT("MaxThrustForce"));
 		const FName PropellerThrustCoefficient(TEXT("ThrustCoefficient"));
 		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
@@ -68,8 +63,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FcVelocityKi(TEXT("VelocityKi"));
 		const FName FcVelocityKd(TEXT("VelocityKd"));
 		const FName FcAngleKp(TEXT("AngleKp"));
-		const FName FcAngleKi(TEXT("AngleKi"));
-		const FName FcAngleKd(TEXT("AngleKd"));
 		const FName FcRateKp(TEXT("RateKp"));
 		const FName FcRateKi(TEXT("RateKi"));
 		const FName FcRateKd(TEXT("RateKd"));
@@ -84,10 +77,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FcMaxClimbRateCmPerSec(TEXT("MaxClimbRateCmPerSec"));
 		const FName FcMaxDescentRateCmPerSec(TEXT("MaxDescentRateCmPerSec"));
 		const FName FcMaxHorizontalSpeedCmPerSec(TEXT("MaxHorizontalSpeedCmPerSec"));
-		const FName FcDerivativeCutoffHz(TEXT("DerivativeCutoffHz"));
 		const FName FcAllocationDamping(TEXT("AllocationDamping"));
-
-		const FName GameFeelCameraShakeScale(TEXT("CameraShakeScale"));
 	}
 
 	/* ===========================================================================

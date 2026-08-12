@@ -8,10 +8,9 @@
 //   -------------------+-------------------+--------------------------------------------------
 //   Import             | 1                 | 骨骼网格 / 物理资产软引用
 //   Solver             | 0 或 1            | 可选的 Chaos 异步固定时间步与刚体迭代覆盖
-//   Frame              | 1                 | 机架类型 + 质量/质心/惯量
+//   Frame              | 1                 | 质量/质心/惯量
 //   Motors             | N（电机数）       | 电机一阶滞后参数 + 怠速/最大转速
 //   FlightController   | 1                 | 串级 PID 12 通道增益 + 限幅 + 控制器配置
-//   GameFeel           | 1                 | 纯表现参数
 
 #pragma once
 
@@ -63,7 +62,6 @@ namespace UE::AircraftLab::AircraftAsset
 
 		/* ------------------------- Frame group (1 element) ------------------------- */
 		const TManagedArray<FName>* GetFrameRootBone() const { return FrameRootBone; }
-		const TManagedArray<uint8>* GetFrameType() const { return FrameType; }
 		const TManagedArray<float>* GetFrameMassKg() const { return FrameMassKg; }
 		const TManagedArray<FVector3f>* GetFrameCenterOfMassOffsetCm() const { return FrameCenterOfMassOffsetCm; }
 		const TManagedArray<FVector3f>* GetFrameInertiaDiagonalKgCmSq() const { return FrameInertiaDiagonalKgCmSq; }
@@ -71,7 +69,6 @@ namespace UE::AircraftLab::AircraftAsset
 		/* ------------------------- Motors group (N elements) ------------------------- */
 		const TManagedArray<FName>* GetMotorName() const { return MotorName; }
 		const TManagedArray<bool>* GetMotorEnabled() const { return MotorEnabled; }
-		const TManagedArray<float>* GetMotorMinRpm() const { return MotorMinRpm; }
 		const TManagedArray<float>* GetMotorIdleRpm() const { return MotorIdleRpm; }
 		const TManagedArray<float>* GetMotorMaxRpm() const { return MotorMaxRpm; }
 		const TManagedArray<float>* GetMotorSpinUpTimeSeconds() const { return MotorSpinUpTimeSeconds; }
@@ -85,10 +82,8 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FName>* GetPropellerSocketName() const { return PropellerSocketName; }
 		const TManagedArray<bool>* GetPropellerUseSocketTransform() const { return PropellerUseSocketTransform; }
 		const TManagedArray<FVector3f>* GetPropellerPositionLocalCm() const { return PropellerPositionLocalCm; }
-		const TManagedArray<FVector3f>* GetPropellerRotationLocalEulerDeg() const { return PropellerRotationLocalEulerDeg; }
 		const TManagedArray<FVector3f>* GetPropellerThrustAxisLocal() const { return PropellerThrustAxisLocal; }
 		const TManagedArray<uint8>* GetPropellerSpinDirection() const { return PropellerSpinDirection; }
-		const TManagedArray<float>* GetPropellerRadiusCm() const { return PropellerRadiusCm; }
 		const TManagedArray<float>* GetPropellerMaxThrustForce() const { return PropellerMaxThrustForce; }
 		const TManagedArray<float>* GetPropellerThrustCoefficient() const { return PropellerThrustCoefficient; }
 		const TManagedArray<float>* GetPropellerReactionTorqueCoefficient() const { return PropellerReactionTorqueCoefficient; }
@@ -104,8 +99,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FVector3f>* GetFcVelocityKi() const { return FcVelocityKi; }
 		const TManagedArray<FVector3f>* GetFcVelocityKd() const { return FcVelocityKd; }
 		const TManagedArray<FVector3f>* GetFcAngleKp() const { return FcAngleKp; }
-		const TManagedArray<FVector3f>* GetFcAngleKi() const { return FcAngleKi; }
-		const TManagedArray<FVector3f>* GetFcAngleKd() const { return FcAngleKd; }
 		const TManagedArray<FVector3f>* GetFcRateKp() const { return FcRateKp; }
 		const TManagedArray<FVector3f>* GetFcRateKi() const { return FcRateKi; }
 		const TManagedArray<FVector3f>* GetFcRateKd() const { return FcRateKd; }
@@ -122,11 +115,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* GetFcMaxClimbRateCmPerSec() const { return FcMaxClimbRateCmPerSec; }
 		const TManagedArray<float>* GetFcMaxDescentRateCmPerSec() const { return FcMaxDescentRateCmPerSec; }
 		const TManagedArray<float>* GetFcMaxHorizontalSpeedCmPerSec() const { return FcMaxHorizontalSpeedCmPerSec; }
-		const TManagedArray<float>* GetFcDerivativeCutoffHz() const { return FcDerivativeCutoffHz; }
 		const TManagedArray<float>* GetFcAllocationDamping() const { return FcAllocationDamping; }
-
-		/* ------------------------- GameFeel group (1 element) ------------------------- */
-		const TManagedArray<float>* GetGameFeelCameraShakeScale() const { return GameFeelCameraShakeScale; }
 
 		const FManagedArrayCollection& GetCollection() const { return *ManagedArrayCollection; }
 		TSharedRef<const FManagedArrayCollection> GetManagedArrayCollection() const { return ManagedArrayCollection; }
@@ -149,7 +138,6 @@ namespace UE::AircraftLab::AircraftAsset
 
 		/* Frame */
 		const TManagedArray<FName>* FrameRootBone = nullptr;
-		const TManagedArray<uint8>* FrameType = nullptr;
 		const TManagedArray<float>* FrameMassKg = nullptr;
 		const TManagedArray<FVector3f>* FrameCenterOfMassOffsetCm = nullptr;
 		const TManagedArray<FVector3f>* FrameInertiaDiagonalKgCmSq = nullptr;
@@ -157,7 +145,6 @@ namespace UE::AircraftLab::AircraftAsset
 		/* Motors */
 		const TManagedArray<FName>* MotorName = nullptr;
 		const TManagedArray<bool>* MotorEnabled = nullptr;
-		const TManagedArray<float>* MotorMinRpm = nullptr;
 		const TManagedArray<float>* MotorIdleRpm = nullptr;
 		const TManagedArray<float>* MotorMaxRpm = nullptr;
 		const TManagedArray<float>* MotorSpinUpTimeSeconds = nullptr;
@@ -171,10 +158,8 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FName>* PropellerSocketName = nullptr;
 		const TManagedArray<bool>* PropellerUseSocketTransform = nullptr;
 		const TManagedArray<FVector3f>* PropellerPositionLocalCm = nullptr;
-		const TManagedArray<FVector3f>* PropellerRotationLocalEulerDeg = nullptr;
 		const TManagedArray<FVector3f>* PropellerThrustAxisLocal = nullptr;
 		const TManagedArray<uint8>* PropellerSpinDirection = nullptr;
-		const TManagedArray<float>* PropellerRadiusCm = nullptr;
 		const TManagedArray<float>* PropellerMaxThrustForce = nullptr;
 		const TManagedArray<float>* PropellerThrustCoefficient = nullptr;
 		const TManagedArray<float>* PropellerReactionTorqueCoefficient = nullptr;
@@ -189,8 +174,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FVector3f>* FcVelocityKi = nullptr;
 		const TManagedArray<FVector3f>* FcVelocityKd = nullptr;
 		const TManagedArray<FVector3f>* FcAngleKp = nullptr;
-		const TManagedArray<FVector3f>* FcAngleKi = nullptr;
-		const TManagedArray<FVector3f>* FcAngleKd = nullptr;
 		const TManagedArray<FVector3f>* FcRateKp = nullptr;
 		const TManagedArray<FVector3f>* FcRateKi = nullptr;
 		const TManagedArray<FVector3f>* FcRateKd = nullptr;
@@ -207,11 +190,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<float>* FcMaxClimbRateCmPerSec = nullptr;
 		const TManagedArray<float>* FcMaxDescentRateCmPerSec = nullptr;
 		const TManagedArray<float>* FcMaxHorizontalSpeedCmPerSec = nullptr;
-		const TManagedArray<float>* FcDerivativeCutoffHz = nullptr;
 		const TManagedArray<float>* FcAllocationDamping = nullptr;
-
-		/* GameFeel */
-		const TManagedArray<float>* GameFeelCameraShakeScale = nullptr;
 	};
 
 	/**
@@ -276,14 +255,12 @@ namespace UE::AircraftLab::AircraftAsset
 		TManagedArray<Type>* Get##Name() { return const_cast<TManagedArray<Type>*>(FConstAircraftCollection::Get##Name()); }
 
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, FrameRootBone)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(uint8, FrameType)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FrameMassKg)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameCenterOfMassOffsetCm)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameInertiaDiagonalKgCmSq)
 
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, MotorName)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(bool, MotorEnabled)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorMinRpm)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorIdleRpm)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorMaxRpm)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, MotorSpinUpTimeSeconds)
@@ -296,10 +273,8 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, PropellerSocketName)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(bool, PropellerUseSocketTransform)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, PropellerPositionLocalCm)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, PropellerRotationLocalEulerDeg)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, PropellerThrustAxisLocal)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(uint8, PropellerSpinDirection)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerRadiusCm)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerMaxThrustForce)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerThrustCoefficient)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerReactionTorqueCoefficient)
@@ -313,8 +288,6 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcVelocityKi)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcVelocityKd)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcAngleKp)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcAngleKi)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcAngleKd)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcRateKp)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcRateKi)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcRateKd)
@@ -329,10 +302,7 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcMaxClimbRateCmPerSec)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcMaxDescentRateCmPerSec)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcMaxHorizontalSpeedCmPerSec)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcDerivativeCutoffHz)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FcAllocationDamping)
-
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, GameFeelCameraShakeScale)
 
 #undef UE_AIRCRAFT_DEFINE_MUTABLE_GETTER
 

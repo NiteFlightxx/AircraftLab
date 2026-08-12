@@ -157,8 +157,6 @@ namespace
 				* GetReferencePoseComponentTransform(ReferenceSkeleton, SocketBoneIndex);
 			const FTransform SocketBodyTransform = SocketComponentTransform.GetRelativeTransform(RootComponentTransform);
 			Rotor.PositionLocalCm = SocketBodyTransform.GetLocation();
-			Rotor.RotationLocal = SocketBodyTransform.Rotator();
-			Rotor.ThrustAxisLocal = SocketBodyTransform.TransformVectorNoScale(Rotor.ThrustAxisLocal).GetSafeNormal();
 		}
 	}
 }
@@ -244,14 +242,9 @@ void UAircraftAsset::Build(
 	// 每级 LOD 需要哪些组由它的 DriveMode 在运行时自行消费，缺失组走默认值
 	// （FAircraftSimulationModel 构建对缺组本就容错）。图的正确性由作者人为控制
 	// —— Frame→Constraint→LOD1 这类"按需求挂载"的精简支路是合法拓扑。
-	bool bHasValidationErrors = InAircraftCollections.IsEmpty();
 	if (InAircraftCollections.IsEmpty())
 	{
 		AppendValidationError(0, LOCTEXT("MissingAircraftCollection", "At least one aircraft collection is required."));
-	}
-
-	if (bHasValidationErrors)
-	{
 		return;
 	}
 

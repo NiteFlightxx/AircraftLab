@@ -1,6 +1,6 @@
 //
 // 把 FAircraftCollection 的 schema 数据"编译"成运行时只读的 FAircraftSimulationModel：
-//   * Frame 单元素组    → FDroneMassProperties + FDroneAerodynamicsConfig + FrameType + RootBone
+//   * Frame 单元素组    → FDroneMassProperties + RootBone
 //   * Motors 多元素组   → FDroneMotorModelConfig 数组
 //   * Propellers 多元素组 → FDroneRotorDefinition 数组（同时把 Motor 字段嵌入）
 //
@@ -54,7 +54,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		OutModel.RootBone = ReadFirst<FName>(ConstCollection.GetFrameRootBone(), NAME_None);
 
 		/* Frame */
-		OutModel.FrameType = static_cast<EDroneFrameType>(ReadFirst<uint8>(ConstCollection.GetFrameType(), 0));
 		OutModel.Mass.MassKg = ReadFirst<float>(ConstCollection.GetFrameMassKg(), 1.2f);
 		OutModel.Mass.CenterOfMassOffsetCm = FVector3fToVector(
 			ReadFirst<FVector3f>(ConstCollection.GetFrameCenterOfMassOffsetCm(), FVector3f::ZeroVector));
@@ -105,8 +104,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			ConstCollection.GetFcMaxDescentRateCmPerSec(), OutModel.FlightController.MaxDescentRateCmPerSec);
 		OutModel.FlightController.MaxHorizontalSpeedCmPerSec = ReadFirst<float>(
 			ConstCollection.GetFcMaxHorizontalSpeedCmPerSec(), OutModel.FlightController.MaxHorizontalSpeedCmPerSec);
-		OutModel.FlightController.DerivativeCutoffHz = ReadFirst<float>(
-			ConstCollection.GetFcDerivativeCutoffHz(), OutModel.FlightController.DerivativeCutoffHz);
 		OutModel.FlightController.AllocationDamping = ReadFirst<float>(
 			ConstCollection.GetFcAllocationDamping(), OutModel.FlightController.AllocationDamping);
 
@@ -129,16 +126,22 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.HoverCollectiveCommand"), OutModel.FlightController.HoverCollectiveCommand);
 			OutModel.FlightController.MaxCollectiveCommand = Properties.GetValue<float>(
 				TEXT("FlightController.MaxCollectiveCommand"), OutModel.FlightController.MaxCollectiveCommand);
-			OutModel.FlightController.VelocityDerivativeCutoffHz = Properties.GetValue<float>(
-				TEXT("FlightController.Position.VelocityDerivativeCutoffHz"), OutModel.FlightController.VelocityDerivativeCutoffHz);
+			OutModel.FlightController.PositionKff = Properties.GetValue<FVector3f>(TEXT("FlightController.Position.PositionKff"), OutModel.FlightController.PositionKff);
 			OutModel.FlightController.PositionIntegralLimit = Properties.GetValue<FVector3f>(
 				TEXT("FlightController.Position.PositionIntegralLimit"), OutModel.FlightController.PositionIntegralLimit);
 			OutModel.FlightController.PositionOutputLimit = Properties.GetValue<FVector3f>(
 				TEXT("FlightController.Position.PositionOutputLimit"), OutModel.FlightController.PositionOutputLimit);
+			OutModel.FlightController.PositionDerivativeCutoffHz = Properties.GetValue<FVector3f>(TEXT("FlightController.Position.PositionDerivativeCutoffHz"), OutModel.FlightController.PositionDerivativeCutoffHz);
+			OutModel.FlightController.bPositionXFreezeIntegralWhenSaturated = Properties.GetValue<bool>(TEXT("FlightController.Position.PositionXFreezeIntegralWhenSaturated"), OutModel.FlightController.bPositionXFreezeIntegralWhenSaturated);
+			OutModel.FlightController.bPositionYFreezeIntegralWhenSaturated = Properties.GetValue<bool>(TEXT("FlightController.Position.PositionYFreezeIntegralWhenSaturated"), OutModel.FlightController.bPositionYFreezeIntegralWhenSaturated);
+			OutModel.FlightController.VelocityKff = Properties.GetValue<FVector3f>(TEXT("FlightController.Position.VelocityKff"), OutModel.FlightController.VelocityKff);
 			OutModel.FlightController.VelocityIntegralLimit = Properties.GetValue<FVector3f>(
 				TEXT("FlightController.Position.VelocityIntegralLimit"), OutModel.FlightController.VelocityIntegralLimit);
 			OutModel.FlightController.VelocityOutputLimit = Properties.GetValue<FVector3f>(
 				TEXT("FlightController.Position.VelocityOutputLimit"), OutModel.FlightController.VelocityOutputLimit);
+			OutModel.FlightController.VelocityDerivativeCutoffHz = Properties.GetValue<FVector3f>(TEXT("FlightController.Position.VelocityDerivativeCutoffHz"), OutModel.FlightController.VelocityDerivativeCutoffHz);
+			OutModel.FlightController.bVelocityXFreezeIntegralWhenSaturated = Properties.GetValue<bool>(TEXT("FlightController.Position.VelocityXFreezeIntegralWhenSaturated"), OutModel.FlightController.bVelocityXFreezeIntegralWhenSaturated);
+			OutModel.FlightController.bVelocityYFreezeIntegralWhenSaturated = Properties.GetValue<bool>(TEXT("FlightController.Position.VelocityYFreezeIntegralWhenSaturated"), OutModel.FlightController.bVelocityYFreezeIntegralWhenSaturated);
 			OutModel.FlightController.LinearDampingFeedForwardScale = Properties.GetValue<float>(
 				TEXT("FlightController.Position.LinearDampingFeedForwardScale"), OutModel.FlightController.LinearDampingFeedForwardScale);
 			OutModel.FlightController.DampingAccelerationReserveFraction = Properties.GetValue<float>(
@@ -149,6 +152,9 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.Attitude.RateIntegralLimit"), OutModel.FlightController.RateIntegralLimit);
 			OutModel.FlightController.RateOutputLimit = Properties.GetValue<FVector3f>(
 				TEXT("FlightController.Attitude.RateOutputLimit"), OutModel.FlightController.RateOutputLimit);
+			OutModel.FlightController.bRollRateFreezeIntegralWhenSaturated = Properties.GetValue<bool>(TEXT("FlightController.Attitude.RollRateFreezeIntegralWhenSaturated"), OutModel.FlightController.bRollRateFreezeIntegralWhenSaturated);
+			OutModel.FlightController.bPitchRateFreezeIntegralWhenSaturated = Properties.GetValue<bool>(TEXT("FlightController.Attitude.PitchRateFreezeIntegralWhenSaturated"), OutModel.FlightController.bPitchRateFreezeIntegralWhenSaturated);
+			OutModel.FlightController.bYawRateFreezeIntegralWhenSaturated = Properties.GetValue<bool>(TEXT("FlightController.Attitude.YawRateFreezeIntegralWhenSaturated"), OutModel.FlightController.bYawRateFreezeIntegralWhenSaturated);
 			OutModel.FlightController.AngularDampingFeedForwardScale = Properties.GetValue<float>(
 				TEXT("FlightController.Attitude.AngularDampingFeedForwardScale"), OutModel.FlightController.AngularDampingFeedForwardScale);
 			OutModel.FlightController.bEnableAttitudeReferenceModel = Properties.GetValue<bool>(
@@ -157,8 +163,12 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.Attitude.ReferenceModelNaturalFrequency"), OutModel.FlightController.ReferenceModelNaturalFrequency);
 			OutModel.FlightController.ReferenceModelRateFeedForwardLimitDegPerSec = Properties.GetValue<float>(
 				TEXT("FlightController.Attitude.ReferenceModelRateFeedForwardLimit"), OutModel.FlightController.ReferenceModelRateFeedForwardLimitDegPerSec);
+			OutModel.FlightController.AltitudeKff = Properties.GetValue<float>(TEXT("FlightController.Altitude.AltitudeKff"), OutModel.FlightController.AltitudeKff);
+			OutModel.FlightController.AltitudeDerivativeCutoffHz = Properties.GetValue<float>(TEXT("FlightController.Altitude.AltitudeDerivativeCutoffHz"), OutModel.FlightController.AltitudeDerivativeCutoffHz);
+			OutModel.FlightController.bAltitudeFreezeIntegralWhenSaturated = Properties.GetValue<bool>(TEXT("FlightController.Altitude.AltitudeFreezeIntegralWhenSaturated"), OutModel.FlightController.bAltitudeFreezeIntegralWhenSaturated);
 			OutModel.FlightController.VerticalVelocityDerivativeCutoffHz = Properties.GetValue<float>(
 				TEXT("FlightController.Altitude.VerticalVelocityDerivativeCutoffHz"), OutModel.FlightController.VerticalVelocityDerivativeCutoffHz);
+			OutModel.FlightController.bVerticalVelocityFreezeIntegralWhenSaturated = Properties.GetValue<bool>(TEXT("FlightController.Altitude.VerticalVelocityFreezeIntegralWhenSaturated"), OutModel.FlightController.bVerticalVelocityFreezeIntegralWhenSaturated);
 			OutModel.FlightController.AltitudeIntegralLimit = Properties.GetValue<float>(
 				TEXT("FlightController.Altitude.AltitudeIntegralLimit"), OutModel.FlightController.AltitudeIntegralLimit);
 			OutModel.FlightController.AltitudeOutputLimit = Properties.GetValue<float>(
@@ -181,6 +191,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.Input.YawHoldStickDeadband"), OutModel.FlightController.YawHoldStickDeadband);
 			OutModel.FlightController.HorizontalBrakeToHoldSpeedCmPerSec = Properties.GetValue<float>(
 				TEXT("FlightController.Input.HorizontalBrakeToHoldSpeedCmPerSec"), OutModel.FlightController.HorizontalBrakeToHoldSpeedCmPerSec);
+			OutModel.FlightController.bControllerEnabledByDefault = Properties.GetValue<bool>(
+				TEXT("FlightController.Execution.ControllerEnabledByDefault"), OutModel.FlightController.bControllerEnabledByDefault);
 			OutModel.FlightController.ConstraintLinearPositionStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearPositionStrength"), OutModel.FlightController.ConstraintLinearPositionStrength);
 			OutModel.FlightController.ConstraintLinearVelocityStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearVelocityStrength"), OutModel.FlightController.ConstraintLinearVelocityStrength);
 			OutModel.FlightController.ConstraintLinearForceLimit = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearForceLimit"), OutModel.FlightController.ConstraintLinearForceLimit);
@@ -231,15 +243,10 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			Autopilot.MaxHoverThrust = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.MaxHoverThrust"), Autopilot.MaxHoverThrust);
 		}
 
-		/* Input/game-feel preprocessing */
-		OutModel.CameraShakeScale = ReadFirst<float>(
-			ConstCollection.GetGameFeelCameraShakeScale(), OutModel.CameraShakeScale);
-
 		/* Motors → 临时 map（按 Name 索引），供 Propeller 解析时关联 */
 		TMap<FName, FDroneMotorModelConfig> MotorByName;
 		const TManagedArray<FName>* MotorNames = ConstCollection.GetMotorName();
 		const TManagedArray<bool>* MotorEnabled = ConstCollection.GetMotorEnabled();
-		const TManagedArray<float>* MotorMin = ConstCollection.GetMotorMinRpm();
 		const TManagedArray<float>* MotorIdle = ConstCollection.GetMotorIdleRpm();
 		const TManagedArray<float>* MotorMax = ConstCollection.GetMotorMaxRpm();
 		const TManagedArray<float>* MotorSpinUp = ConstCollection.GetMotorSpinUpTimeSeconds();
@@ -252,7 +259,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		{
 			const FName Name = (*MotorNames)[i];
 			FDroneMotorModelConfig Motor;
-			Motor.MinRpm = (MotorMin && i < MotorMin->Num()) ? (*MotorMin)[i] : 0.f;
 			Motor.IdleRpm = (MotorIdle && i < MotorIdle->Num()) ? (*MotorIdle)[i] : 1500.f;
 			Motor.MaxRpm = (MotorMax && i < MotorMax->Num()) ? (*MotorMax)[i] : 12000.f;
 			Motor.SpinUpTimeSeconds = (MotorSpinUp && i < MotorSpinUp->Num()) ? (*MotorSpinUp)[i] : 0.06f;
@@ -273,10 +279,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		const TManagedArray<FName>* PropSockets = ConstCollection.GetPropellerSocketName();
 		const TManagedArray<bool>* PropUseSockets = ConstCollection.GetPropellerUseSocketTransform();
 		const TManagedArray<FVector3f>* PropPos = ConstCollection.GetPropellerPositionLocalCm();
-		const TManagedArray<FVector3f>* PropRot = ConstCollection.GetPropellerRotationLocalEulerDeg();
 		const TManagedArray<FVector3f>* PropAxes = ConstCollection.GetPropellerThrustAxisLocal();
 		const TManagedArray<uint8>* PropSpins = ConstCollection.GetPropellerSpinDirection();
-		const TManagedArray<float>* PropRadii = ConstCollection.GetPropellerRadiusCm();
 		const TManagedArray<float>* PropMaxThr = ConstCollection.GetPropellerMaxThrustForce();
 		const TManagedArray<float>* PropKT = ConstCollection.GetPropellerThrustCoefficient();
 		const TManagedArray<float>* PropKQ = ConstCollection.GetPropellerReactionTorqueCoefficient();
@@ -293,13 +297,10 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			Rotor.bUseSocketTransform = (PropUseSockets && i < PropUseSockets->Num()) ? (*PropUseSockets)[i] : false;
 			Rotor.PositionLocalCm = FVector3fToVector(
 				(PropPos && i < PropPos->Num()) ? (*PropPos)[i] : FVector3f::ZeroVector);
-			const FVector3f EulerF = (PropRot && i < PropRot->Num()) ? (*PropRot)[i] : FVector3f::ZeroVector;
-			Rotor.RotationLocal = FRotator(static_cast<double>(EulerF.Y), static_cast<double>(EulerF.Z), static_cast<double>(EulerF.X));
 			Rotor.ThrustAxisLocal = FVector3fToVector(
 				(PropAxes && i < PropAxes->Num()) ? (*PropAxes)[i] : FVector3f(0.f, 0.f, 1.f));
 			Rotor.SpinDirection = static_cast<EDroneRotorSpinDirection>(
 				(PropSpins && i < PropSpins->Num()) ? (*PropSpins)[i] : 0);
-			Rotor.RadiusCm = (PropRadii && i < PropRadii->Num()) ? (*PropRadii)[i] : 12.f;
 			Rotor.MaxThrustForce = (PropMaxThr && i < PropMaxThr->Num()) ? (*PropMaxThr)[i] : 9.f;
 			Rotor.ThrustCoefficient = (PropKT && i < PropKT->Num()) ? (*PropKT)[i] : 1.f;
 			Rotor.ReactionTorqueCoefficient = (PropKQ && i < PropKQ->Num()) ? (*PropKQ)[i] : 0.03f;
@@ -347,6 +348,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		Settings.SlowLogicIntervalSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.SlowLogicIntervalSeconds"), Settings.SlowLogicIntervalSeconds);
 		Settings.SuggestedNetUpdateFrequency = Properties.GetValue<float>(TEXT("SimulationLOD.SuggestedNetUpdateFrequency"), Settings.SuggestedNetUpdateFrequency);
 		Settings.bEnableNetworkDormancy = Properties.GetValue<bool>(TEXT("SimulationLOD.EnableNetworkDormancy"), Settings.bEnableNetworkDormancy);
+		Settings.bAllowDebugDraw = Properties.GetValue<bool>(TEXT("SimulationLOD.AllowDebugDraw"), Settings.bAllowDebugDraw);
 		return Settings;
 	}
 }

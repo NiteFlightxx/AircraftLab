@@ -34,14 +34,13 @@ struct FAircraftSimulationLODProfileData
 	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftProfileDriveMode DriveMode = EAircraftProfileDriveMode::FlightController;
 	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftProfileCollisionMode CollisionMode = EAircraftProfileCollisionMode::QueryAndPhysics;
 
-	/** 扩展段（距离/节拍/网络），默认关闭以保持最小 LOD 描述。 */
-	UPROPERTY(EditAnywhere, Category = "LOD|Extended") bool bUseExtendedSettings = false;
 	/** 距最近玩家的名义上限距离；最后一个 LOD 是无限距离兜底。 */
-	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides, ClampMin = "0.0")) float MaxDistanceCm = 6000.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides)) bool bRunSlowLogic = true;
-	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides, ClampMin = "0.0")) float SlowLogicIntervalSeconds = 0.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides, ClampMin = "1.0")) float SuggestedNetUpdateFrequency = 30.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD|Extended", meta = (EditCondition = "bUseExtendedSettings", EditConditionHides)) bool bEnableNetworkDormancy = false;
+	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "0.0")) float MaxDistanceCm = 6000.0f;
+	UPROPERTY(EditAnywhere, Category = "LOD") bool bRunSlowLogic = true;
+	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "0.0")) float SlowLogicIntervalSeconds = 0.0f;
+	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "1.0")) float SuggestedNetUpdateFrequency = 30.0f;
+	UPROPERTY(EditAnywhere, Category = "LOD") bool bEnableNetworkDormancy = false;
+	UPROPERTY(EditAnywhere, Category = "LOD") bool bAllowDebugDraw = false;
 };
 
 USTRUCT(meta = (DataflowAircraft))

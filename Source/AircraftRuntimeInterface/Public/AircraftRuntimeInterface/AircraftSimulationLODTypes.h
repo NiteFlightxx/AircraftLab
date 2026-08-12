@@ -63,6 +63,9 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationLODSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "启用网络休眠"))
 	bool bEnableNetworkDormancy = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "允许调试绘制"))
+	bool bAllowDebugDraw = false;
 };
 
 /** 活跃运动源发布的精确临时驱动请求。 */
@@ -169,6 +172,9 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationBudget
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	bool bEnableNetworkDormancy = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	bool bAllowDebugDraw = false;
 };
 
 /** 由制导、Root Motion、动画或 Gameplay 发布的共享运动目标。 */

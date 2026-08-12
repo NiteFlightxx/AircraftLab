@@ -85,6 +85,7 @@ bool UAircraftSimulationLODComponent::GetLODSettings(TArray<FAircraftSimulationL
 		Lite.SlowLogicIntervalSeconds = Settings.SlowLogicIntervalSeconds;
 		Lite.SuggestedNetUpdateFrequency = Settings.SuggestedNetUpdateFrequency;
 		Lite.bEnableNetworkDormancy = Settings.bEnableNetworkDormancy;
+		Lite.bAllowDebugDraw = Settings.bAllowDebugDraw;
 		OutSettings.Add(Lite);
 	}
 	return OutSettings.Num() > 0;
@@ -288,6 +289,7 @@ void UAircraftSimulationLODComponent::RefreshAircraftSimulationDrive_Implementat
 	Budget.SuggestedNetUpdateFrequency = Entry.SuggestedNetUpdateFrequency;
 	Budget.CollisionMode = Entry.CollisionMode;
 	Budget.bEnableNetworkDormancy = Entry.bEnableNetworkDormancy;
+	Budget.bAllowDebugDraw = Entry.bAllowDebugDraw;
 
 	for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
 	{

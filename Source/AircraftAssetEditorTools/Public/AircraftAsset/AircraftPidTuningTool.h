@@ -37,8 +37,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "PID|Velocity", meta = (ClampMin = "0.0")) FVector VelocityKd = FVector(0.60, 0.60, 0.0);
 
 	UPROPERTY(EditAnywhere, Category = "PID|Angle", meta = (ClampMin = "0.0"))    FVector AngleKp = FVector(4.5, 4.5, 3.0);
-	UPROPERTY(EditAnywhere, Category = "PID|Angle", meta = (ClampMin = "0.0"))    FVector AngleKi = FVector::ZeroVector;
-	UPROPERTY(EditAnywhere, Category = "PID|Angle", meta = (ClampMin = "0.0"))    FVector AngleKd = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere, Category = "PID|Rate", meta = (ClampMin = "0.0"))     FVector RateKp = FVector(0.0080, 0.0080, 0.0012);
 	UPROPERTY(EditAnywhere, Category = "PID|Rate", meta = (ClampMin = "0.0"))     FVector RateKi = FVector(0.0010, 0.0010, 0.00015);
@@ -57,7 +55,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (ClampMin = "0.0"))   float MaxDescentRateCmPerSec = 200.f;
 	UPROPERTY(EditAnywhere, Category = "PID|Limits", meta = (ClampMin = "0.0"))   float MaxHorizontalSpeedCmPerSec = 800.f;
 
-	UPROPERTY(EditAnywhere, Category = "PID|Filter", meta = (ClampMin = "0.0"))   float DerivativeCutoffHz = 15.f;
 	UPROPERTY(EditAnywhere, Category = "PID|Allocation", meta = (ClampMin = "0.0")) float AllocationDamping = 0.05f;
 };
 

@@ -31,6 +31,7 @@ struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODRuntimeSettingsLite
 	float SlowLogicIntervalSeconds = 0.0f;
 	float SuggestedNetUpdateFrequency = 30.0f;
 	bool bEnableNetworkDormancy = false;
+	bool bAllowDebugDraw = false;
 };
 
 UCLASS(ClassGroup = (Aircraft), meta = (BlueprintSpawnableComponent))
@@ -113,10 +114,10 @@ public:
 	float EvaluationIntervalSeconds = 0.25f;
 
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
-	float DistanceHysteresisCm = 500.0f;
+	float DistanceHysteresisCm = 2000.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
-	float MinimumLODResidenceSeconds = 2.0f;
+	float MinimumLODResidenceSeconds = 1.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
 	float CombatKeepAliveSeconds = 5.0f;

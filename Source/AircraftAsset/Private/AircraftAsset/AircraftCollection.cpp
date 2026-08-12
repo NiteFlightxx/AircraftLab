@@ -18,7 +18,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName MotorsGroup(TEXT("Motors"));
 		const FName PropellersGroup(TEXT("Propellers"));
 		const FName FlightControllerGroup(TEXT("FlightController"));
-		const FName GameFeelGroup(TEXT("GameFeel"));
 
 		/* Import attributes */
 		const FName SkeletalMeshSoftObjectPathName(TEXT("SkeletalMeshSoftObjectPathName"));
@@ -33,7 +32,6 @@ namespace UE::AircraftLab::AircraftAsset
 
 		/* Frame attributes */
 		const FName FrameRootBone(TEXT("RootBone"));
-		const FName FrameType(TEXT("FrameType"));
 		const FName FrameMassKg(TEXT("MassKg"));
 		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
 		const FName FrameInertiaDiagonalKgCmSq(TEXT("InertiaDiagonalKgCmSq"));
@@ -41,7 +39,6 @@ namespace UE::AircraftLab::AircraftAsset
 		/* Motors attributes */
 		const FName MotorName(TEXT("Name"));
 		const FName MotorEnabled(TEXT("Enabled"));
-		const FName MotorMinRpm(TEXT("MinRpm"));
 		const FName MotorIdleRpm(TEXT("IdleRpm"));
 		const FName MotorMaxRpm(TEXT("MaxRpm"));
 		const FName MotorSpinUpTimeSeconds(TEXT("SpinUpTimeSeconds"));
@@ -55,10 +52,8 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PropellerSocketName(TEXT("SocketName"));
 		const FName PropellerUseSocketTransform(TEXT("UseSocketTransform"));
 		const FName PropellerPositionLocalCm(TEXT("PositionLocalCm"));
-		const FName PropellerRotationLocalEulerDeg(TEXT("RotationLocalEulerDeg"));
 		const FName PropellerThrustAxisLocal(TEXT("ThrustAxisLocal"));
 		const FName PropellerSpinDirection(TEXT("SpinDirection"));
-		const FName PropellerRadiusCm(TEXT("RadiusCm"));
 		const FName PropellerMaxThrustForce(TEXT("MaxThrustForce"));
 		const FName PropellerThrustCoefficient(TEXT("ThrustCoefficient"));
 		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
@@ -73,8 +68,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FcVelocityKi(TEXT("VelocityKi"));
 		const FName FcVelocityKd(TEXT("VelocityKd"));
 		const FName FcAngleKp(TEXT("AngleKp"));
-		const FName FcAngleKi(TEXT("AngleKi"));
-		const FName FcAngleKd(TEXT("AngleKd"));
 		const FName FcRateKp(TEXT("RateKp"));
 		const FName FcRateKi(TEXT("RateKi"));
 		const FName FcRateKd(TEXT("RateKd"));
@@ -89,11 +82,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName FcMaxClimbRateCmPerSec(TEXT("MaxClimbRateCmPerSec"));
 		const FName FcMaxDescentRateCmPerSec(TEXT("MaxDescentRateCmPerSec"));
 		const FName FcMaxHorizontalSpeedCmPerSec(TEXT("MaxHorizontalSpeedCmPerSec"));
-		const FName FcDerivativeCutoffHz(TEXT("DerivativeCutoffHz"));
 		const FName FcAllocationDamping(TEXT("AllocationDamping"));
-
-		/* GameFeel attributes */
-		const FName GameFeelCameraShakeScale(TEXT("CameraShakeScale"));
 	}
 
 	FConstAircraftCollection::FConstAircraftCollection(const TSharedRef<const FManagedArrayCollection>& InManagedArrayCollection)
@@ -133,7 +122,6 @@ namespace UE::AircraftLab::AircraftAsset
 
 		/* Frame */
 		FrameRootBone = Collection.FindAttributeTyped<FName>(Private::FrameRootBone, Private::FrameGroup);
-		FrameType = Collection.FindAttributeTyped<uint8>(Private::FrameType, Private::FrameGroup);
 		FrameMassKg = Collection.FindAttributeTyped<float>(Private::FrameMassKg, Private::FrameGroup);
 		FrameCenterOfMassOffsetCm = Collection.FindAttributeTyped<FVector3f>(Private::FrameCenterOfMassOffsetCm, Private::FrameGroup);
 		FrameInertiaDiagonalKgCmSq = Collection.FindAttributeTyped<FVector3f>(Private::FrameInertiaDiagonalKgCmSq, Private::FrameGroup);
@@ -141,7 +129,6 @@ namespace UE::AircraftLab::AircraftAsset
 		/* Motors */
 		MotorName = Collection.FindAttributeTyped<FName>(Private::MotorName, Private::MotorsGroup);
 		MotorEnabled = Collection.FindAttributeTyped<bool>(Private::MotorEnabled, Private::MotorsGroup);
-		MotorMinRpm = Collection.FindAttributeTyped<float>(Private::MotorMinRpm, Private::MotorsGroup);
 		MotorIdleRpm = Collection.FindAttributeTyped<float>(Private::MotorIdleRpm, Private::MotorsGroup);
 		MotorMaxRpm = Collection.FindAttributeTyped<float>(Private::MotorMaxRpm, Private::MotorsGroup);
 		MotorSpinUpTimeSeconds = Collection.FindAttributeTyped<float>(Private::MotorSpinUpTimeSeconds, Private::MotorsGroup);
@@ -155,10 +142,8 @@ namespace UE::AircraftLab::AircraftAsset
 		PropellerSocketName = Collection.FindAttributeTyped<FName>(Private::PropellerSocketName, Private::PropellersGroup);
 		PropellerUseSocketTransform = Collection.FindAttributeTyped<bool>(Private::PropellerUseSocketTransform, Private::PropellersGroup);
 		PropellerPositionLocalCm = Collection.FindAttributeTyped<FVector3f>(Private::PropellerPositionLocalCm, Private::PropellersGroup);
-		PropellerRotationLocalEulerDeg = Collection.FindAttributeTyped<FVector3f>(Private::PropellerRotationLocalEulerDeg, Private::PropellersGroup);
 		PropellerThrustAxisLocal = Collection.FindAttributeTyped<FVector3f>(Private::PropellerThrustAxisLocal, Private::PropellersGroup);
 		PropellerSpinDirection = Collection.FindAttributeTyped<uint8>(Private::PropellerSpinDirection, Private::PropellersGroup);
-		PropellerRadiusCm = Collection.FindAttributeTyped<float>(Private::PropellerRadiusCm, Private::PropellersGroup);
 		PropellerMaxThrustForce = Collection.FindAttributeTyped<float>(Private::PropellerMaxThrustForce, Private::PropellersGroup);
 		PropellerThrustCoefficient = Collection.FindAttributeTyped<float>(Private::PropellerThrustCoefficient, Private::PropellersGroup);
 		PropellerReactionTorqueCoefficient = Collection.FindAttributeTyped<float>(Private::PropellerReactionTorqueCoefficient, Private::PropellersGroup);
@@ -173,8 +158,6 @@ namespace UE::AircraftLab::AircraftAsset
 		FcVelocityKi = Collection.FindAttributeTyped<FVector3f>(Private::FcVelocityKi, Private::FlightControllerGroup);
 		FcVelocityKd = Collection.FindAttributeTyped<FVector3f>(Private::FcVelocityKd, Private::FlightControllerGroup);
 		FcAngleKp = Collection.FindAttributeTyped<FVector3f>(Private::FcAngleKp, Private::FlightControllerGroup);
-		FcAngleKi = Collection.FindAttributeTyped<FVector3f>(Private::FcAngleKi, Private::FlightControllerGroup);
-		FcAngleKd = Collection.FindAttributeTyped<FVector3f>(Private::FcAngleKd, Private::FlightControllerGroup);
 		FcRateKp = Collection.FindAttributeTyped<FVector3f>(Private::FcRateKp, Private::FlightControllerGroup);
 		FcRateKi = Collection.FindAttributeTyped<FVector3f>(Private::FcRateKi, Private::FlightControllerGroup);
 		FcRateKd = Collection.FindAttributeTyped<FVector3f>(Private::FcRateKd, Private::FlightControllerGroup);
@@ -189,11 +172,7 @@ namespace UE::AircraftLab::AircraftAsset
 		FcMaxClimbRateCmPerSec = Collection.FindAttributeTyped<float>(Private::FcMaxClimbRateCmPerSec, Private::FlightControllerGroup);
 		FcMaxDescentRateCmPerSec = Collection.FindAttributeTyped<float>(Private::FcMaxDescentRateCmPerSec, Private::FlightControllerGroup);
 		FcMaxHorizontalSpeedCmPerSec = Collection.FindAttributeTyped<float>(Private::FcMaxHorizontalSpeedCmPerSec, Private::FlightControllerGroup);
-		FcDerivativeCutoffHz = Collection.FindAttributeTyped<float>(Private::FcDerivativeCutoffHz, Private::FlightControllerGroup);
 		FcAllocationDamping = Collection.FindAttributeTyped<float>(Private::FcAllocationDamping, Private::FlightControllerGroup);
-
-		/* GameFeel */
-		GameFeelCameraShakeScale = Collection.FindAttributeTyped<float>(Private::GameFeelCameraShakeScale, Private::GameFeelGroup);
 	}
 
 	FAircraftCollection::FAircraftCollection(const TSharedRef<FManagedArrayCollection>& InManagedArrayCollection)
@@ -247,7 +226,6 @@ namespace UE::AircraftLab::AircraftAsset
 		/* Frame */
 		AddOrFindGroup(Private::FrameGroup);
 		AddAttribute(Private::FrameGroup, Private::FrameRootBone, FName());
-		AddAttribute(Private::FrameGroup, Private::FrameType, uint8(0));
 		AddAttribute(Private::FrameGroup, Private::FrameMassKg, float(0));
 		AddAttribute(Private::FrameGroup, Private::FrameCenterOfMassOffsetCm, FVector3f::ZeroVector);
 		AddAttribute(Private::FrameGroup, Private::FrameInertiaDiagonalKgCmSq, FVector3f::ZeroVector);
@@ -257,7 +235,6 @@ namespace UE::AircraftLab::AircraftAsset
 		AddOrFindGroup(Private::MotorsGroup);
 		AddAttribute(Private::MotorsGroup, Private::MotorName, FName());
 		AddAttribute(Private::MotorsGroup, Private::MotorEnabled, bool(true));
-		AddAttribute(Private::MotorsGroup, Private::MotorMinRpm, float(0));
 		AddAttribute(Private::MotorsGroup, Private::MotorIdleRpm, float(0));
 		AddAttribute(Private::MotorsGroup, Private::MotorMaxRpm, float(0));
 		AddAttribute(Private::MotorsGroup, Private::MotorSpinUpTimeSeconds, float(0));
@@ -272,10 +249,8 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::PropellersGroup, Private::PropellerSocketName, FName());
 		AddAttribute(Private::PropellersGroup, Private::PropellerUseSocketTransform, bool(true));
 		AddAttribute(Private::PropellersGroup, Private::PropellerPositionLocalCm, FVector3f::ZeroVector);
-		AddAttribute(Private::PropellersGroup, Private::PropellerRotationLocalEulerDeg, FVector3f::ZeroVector);
 		AddAttribute(Private::PropellersGroup, Private::PropellerThrustAxisLocal, FVector3f(0.f, 0.f, 1.f));
 		AddAttribute(Private::PropellersGroup, Private::PropellerSpinDirection, uint8(0));
-		AddAttribute(Private::PropellersGroup, Private::PropellerRadiusCm, float(0));
 		AddAttribute(Private::PropellersGroup, Private::PropellerMaxThrustForce, float(0));
 		AddAttribute(Private::PropellersGroup, Private::PropellerThrustCoefficient, float(0));
 		AddAttribute(Private::PropellersGroup, Private::PropellerReactionTorqueCoefficient, float(0));
@@ -291,8 +266,6 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKi, FVector3f::ZeroVector);
 		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKd, FVector3f::ZeroVector);
 		AddAttribute(Private::FlightControllerGroup, Private::FcAngleKp, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcAngleKi, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcAngleKd, FVector3f::ZeroVector);
 		AddAttribute(Private::FlightControllerGroup, Private::FcRateKp, FVector3f::ZeroVector);
 		AddAttribute(Private::FlightControllerGroup, Private::FcRateKi, FVector3f::ZeroVector);
 		AddAttribute(Private::FlightControllerGroup, Private::FcRateKd, FVector3f::ZeroVector);
@@ -307,14 +280,8 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::FlightControllerGroup, Private::FcMaxClimbRateCmPerSec, float(400));
 		AddAttribute(Private::FlightControllerGroup, Private::FcMaxDescentRateCmPerSec, float(250));
 		AddAttribute(Private::FlightControllerGroup, Private::FcMaxHorizontalSpeedCmPerSec, float(1200));
-		AddAttribute(Private::FlightControllerGroup, Private::FcDerivativeCutoffHz, float(0));
 		AddAttribute(Private::FlightControllerGroup, Private::FcAllocationDamping, float(1e-3f));
 		EnsureSingleElement(Private::FlightControllerGroup);
-
-		/* GameFeel */
-		AddOrFindGroup(Private::GameFeelGroup);
-		AddAttribute(Private::GameFeelGroup, Private::GameFeelCameraShakeScale, float(0));
-		EnsureSingleElement(Private::GameFeelGroup);
 
 		EnsureImportSchema();
 		UpdateArrays();

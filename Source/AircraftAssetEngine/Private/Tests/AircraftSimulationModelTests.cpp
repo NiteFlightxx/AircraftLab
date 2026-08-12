@@ -60,11 +60,6 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	const FAircraftSimulationModel FrameConfigModel(CollectionsWithoutOverride, TEXT("FrameConfig"));
 	TestEqual(TEXT("Frame config owns the runtime forward axis"),
 		FrameConfigModel.GetLodModel(0)->FlightController.ForwardAxis, uint8(3));
-	(*AircraftCollection.GetGameFeelCameraShakeScale())[0] = 0.35f;
-	const FAircraftSimulationModel PresentationModel(CollectionsWithoutOverride, TEXT("Presentation"));
-	TestEqual(TEXT("Camera shake remains a presentation-only runtime value"),
-		PresentationModel.GetLodModel(0)->CameraShakeScale, 0.35f);
-
 	Collection->AddElements(1, AircraftCollectionGroup::Solver);
 	AircraftCollection.UpdateArrays();
 	(*AircraftCollection.GetAsyncFixedTimeStepSize())[0] = 1.0f / 120.0f;
@@ -180,6 +175,54 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 	TestEqual(TEXT("Vector-field strategy reaches the runtime model"), LOD->Autopilot.GuidanceStrategy, uint8(1));
 	TestEqual(TEXT("Vector-field gain reaches the runtime model"), LOD->Autopilot.VectorFieldCrossTrackGain, 0.02f);
 	TestEqual(TEXT("Min hover thrust reaches the runtime model"), LOD->Autopilot.MinHoverThrust, 0.15f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftCompletePidConfigCompilationTest,
+	"AircraftLab.Dataflow.Runtime.CompletePidConfigCompilation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UE::AircraftLab::AircraftAsset;
+
+	const TSharedRef<FManagedArrayCollection> Collection = MakeShared<FManagedArrayCollection>();
+	FAircraftCollection AircraftCollection(Collection);
+	AircraftCollection.DefineSchema();
+	FCollectionAircraftPropertyMutableFacade Properties(Collection);
+	Properties.DefineSchema();
+	auto Set = [&Properties](const TCHAR* Key, const auto& Value)
+	{
+		const int32 Index = Properties.AddProperty(Key, EAircraftCollectionPropertyFlags::Enabled);
+		Properties.SetValue(Index, Value);
+	};
+
+	Set(TEXT("FlightController.Position.PositionKff"), FVector3f(0.7f, 0.8f, 0.0f));
+	Set(TEXT("FlightController.Position.PositionDerivativeCutoffHz"), FVector3f(3.0f, 4.0f, 0.0f));
+	Set(TEXT("FlightController.Position.PositionXFreezeIntegralWhenSaturated"), false);
+	Set(TEXT("FlightController.Position.VelocityKff"), FVector3f(0.5f, 0.6f, 0.0f));
+	Set(TEXT("FlightController.Position.VelocityDerivativeCutoffHz"), FVector3f(8.0f, 9.0f, 0.0f));
+	Set(TEXT("FlightController.Attitude.RollRateFreezeIntegralWhenSaturated"), false);
+	Set(TEXT("FlightController.Altitude.AltitudeKff"), 0.75f);
+	Set(TEXT("FlightController.Altitude.AltitudeDerivativeCutoffHz"), 2.0f);
+	Set(TEXT("FlightController.Altitude.VerticalVelocityFreezeIntegralWhenSaturated"), false);
+	Set(TEXT("FlightController.Execution.ControllerEnabledByDefault"), false);
+
+	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = { Collection };
+	const FAircraftSimulationModel Model(Collections, TEXT("CompletePid"));
+	const FAircraftFlightControllerRuntimeConfig& Config = Model.GetLodModel(0)->FlightController;
+	TestEqual(TEXT("Position X Kff compiles"), Config.GetPositionPidGains(0).Kff, 0.7f);
+	TestEqual(TEXT("Position Y derivative cutoff compiles"), Config.GetPositionPidGains(1).DerivativeCutoffHz, 4.0f);
+	TestFalse(TEXT("Position X anti-windup configuration compiles"), Config.GetPositionPidGains(0).bFreezeIntegralWhenSaturated);
+	TestEqual(TEXT("Velocity Y Kff compiles"), Config.GetVelocityPidGains(1).Kff, 0.6f);
+	TestEqual(TEXT("Velocity X derivative cutoff compiles"), Config.GetVelocityPidGains(0).DerivativeCutoffHz, 8.0f);
+	TestFalse(TEXT("Roll-rate anti-windup configuration compiles"), Config.GetRatePidGains(0).bFreezeIntegralWhenSaturated);
+	TestEqual(TEXT("Altitude Kff compiles"), Config.GetAltitudePidGains().Kff, 0.75f);
+	TestEqual(TEXT("Altitude derivative cutoff compiles"), Config.GetAltitudePidGains().DerivativeCutoffHz, 2.0f);
+	TestFalse(TEXT("Vertical-velocity anti-windup configuration compiles"), Config.GetVerticalVelocityPidGains().bFreezeIntegralWhenSaturated);
+	TestFalse(TEXT("Controller execution default compiles"), Config.bControllerEnabledByDefault);
 	return true;
 }
 

@@ -34,6 +34,7 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 		Input.YawHoldStickDeadband, 0.05f);
 	TestEqual(TEXT("Controller input preserves authoritative brake-to-hold speed"),
 		Input.HorizontalBrakeToHoldSpeedCmPerSec, 20.0f);
+	TestTrue(TEXT("Controller is enabled by default"), Input.bControllerEnabledByDefault);
 	const FAircraftSolverConfigNode Solver(UE::Dataflow::FNodeParameters{});
 	TestEqual(TEXT("Solver config exposes only its Collection input"), Solver.GetNumInputs(), 1);
 	const FAircraftSkeletalMeshSourceNode Source(UE::Dataflow::FNodeParameters{});
@@ -45,32 +46,31 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 		&& Limits.HoverCollectiveCommand <= Limits.MaxCollectiveCommand);
 	const FAircraftPositionControllerConfig Position;
 	TestTrue(TEXT("Position controller has positive velocity derivative cutoff"),
-		Position.VelocityDerivativeCutoffHz > 0.0f);
+		Position.VelocityX.DerivativeCutoffHz > 0.0f);
 	TestEqual(TEXT("Position controller preserves authoritative velocity integral limit"),
-		Position.VelocityIntegralLimit.X, 3000.0f);
+		Position.VelocityX.IntegralLimit, 3000.0f);
 	TestEqual(TEXT("Position controller preserves authoritative acceleration output limit"),
-		Position.VelocityOutputLimit.X, 600.0f);
+		Position.VelocityX.OutputLimit, 600.0f);
 	const FAircraftAttitudeControllerConfig Attitude;
 	TestTrue(TEXT("Attitude controller has a positive reference-model frequency"),
 		Attitude.ReferenceModelNaturalFrequency > 0.0f);
 	TestEqual(TEXT("Attitude controller preserves authoritative roll-rate output limit"),
-		Attitude.RateOutputLimit.X, 0.35f);
+		Attitude.RollRate.OutputLimit, 0.35f);
 	TestEqual(TEXT("Attitude controller preserves authoritative yaw-rate output limit"),
-		Attitude.RateOutputLimit.Z, 0.20f);
+		Attitude.YawRate.OutputLimit, 0.20f);
 	const FAircraftAltitudeControllerConfig Altitude;
 	TestTrue(TEXT("Altitude controller has a positive vertical-velocity derivative cutoff"),
-		Altitude.VerticalVelocityDerivativeCutoffHz > 0.0f);
+		Altitude.VerticalVelocity.DerivativeCutoffHz > 0.0f);
 	TestEqual(TEXT("Altitude controller preserves authoritative vertical integral limit"),
-		Altitude.VerticalVelocityIntegralLimit, 2500.0f);
+		Altitude.VerticalVelocity.IntegralLimit, 2500.0f);
 	TestEqual(TEXT("Altitude controller preserves authoritative collective output limit"),
-		Altitude.VerticalVelocityOutputLimit, 0.30f);
+		Altitude.VerticalVelocity.OutputLimit, 0.30f);
 	TestTrue(TEXT("Control allocator has non-negative damping"),
 		FAircraftControlAllocatorConfig().DampedPseudoInverseLambda >= 0.0f);
 
 	const FAircraftAirscrewProfileData Airscrew;
 	TestFalse(TEXT("A single airscrew profile has an identity"), Airscrew.Name.IsNone());
 	TestTrue(TEXT("A single airscrew profile is enabled by default"), Airscrew.bEnabled);
-	TestTrue(TEXT("A single airscrew profile has a positive radius"), Airscrew.RadiusCm > 0.0f);
 	TestTrue(TEXT("Airscrew profile has positive maximum RPM"), Airscrew.Motor.MaxRpm > Airscrew.Motor.IdleRpm);
 	TestTrue(TEXT("Airscrew profile has a non-zero thrust axis"), !Airscrew.ThrustAxisLocal.IsNearlyZero());
 

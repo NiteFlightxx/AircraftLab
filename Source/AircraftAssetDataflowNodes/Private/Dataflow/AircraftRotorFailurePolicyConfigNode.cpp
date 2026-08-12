@@ -24,13 +24,23 @@ void FAircraftRotorFailurePolicyConfigNode::Evaluate(UE::Dataflow::FContext& Con
 		return;
 	}
 
-	if (Config.MinimumHealthyRotorCount < 0)
+	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
+	auto InvalidAuthority = [](float Value) { return !FMath::IsFinite(Value) || Value < 0.0f || Value > 1.0f; };
+	if (Config.MinimumHealthyRotorCount < 0
+		|| InvalidAuthority(Config.MinimumCollectiveAuthority)
+		|| InvalidAuthority(Config.MinimumRollAuthority)
+		|| InvalidAuthority(Config.MinimumPitchAuthority)
+		|| InvalidAuthority(Config.MinimumYawAuthority)
+		|| !FMath::IsFinite(Config.ConfirmationTimeSeconds) || Config.ConfirmationTimeSeconds < 0.0f
+		|| !FMath::IsFinite(Config.RecoveryConfirmationTimeSeconds) || Config.RecoveryConfirmationTimeSeconds < 0.0f)
 	{
-		Context.Error(FText::FromString(TEXT("Failure-policy minimum healthy rotor count must be non-negative.")), this);
+		Context.Error(FText::FromString(TEXT("Failure-policy rotor count, authority thresholds, and confirmation times are invalid.")), this);
+		SetValue(Context, InputCollection, &Collection);
+		return;
 	}
 
 	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		GetValue<FManagedArrayCollection>(Context, &Collection));
+		InputCollection);
 	FCollectionAircraftFacade Facade(AircraftCollection);
 	Facade.DefineSchema();
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);

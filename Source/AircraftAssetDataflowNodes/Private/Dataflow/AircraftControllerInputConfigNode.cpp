@@ -23,18 +23,25 @@ void FAircraftControllerInputConfigNode::Evaluate(UE::Dataflow::FContext& Contex
 	{
 		return;
 	}
-	if (Config.HorizontalBrakeToHoldSpeedCmPerSec < 0.0f)
+	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
+	if (!FMath::IsFinite(Config.HorizontalHoldStickDeadband)
+		|| !FMath::IsFinite(Config.VerticalHoldStickDeadband)
+		|| !FMath::IsFinite(Config.YawHoldStickDeadband)
+		|| !FMath::IsFinite(Config.HorizontalBrakeToHoldSpeedCmPerSec)
+		|| Config.HorizontalBrakeToHoldSpeedCmPerSec < 0.0f
+		|| Config.HorizontalHoldStickDeadband < 0.0f || Config.HorizontalHoldStickDeadband > 1.0f
+		|| Config.VerticalHoldStickDeadband < 0.0f || Config.VerticalHoldStickDeadband > 1.0f
+		|| Config.YawHoldStickDeadband < 0.0f || Config.YawHoldStickDeadband > 1.0f)
 	{
-		Context.Error(FText::FromString(TEXT("Controller-input brake-to-hold speed must be non-negative.")), this);
+		Context.Error(FText::FromString(TEXT("Controller-input deadbands or brake-to-hold speed are outside their valid range.")), this);
+		SetValue(Context, InputCollection, &Collection);
+		return;
 	}
 
 	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		GetValue<FManagedArrayCollection>(Context, &Collection));
+		InputCollection);
 	FCollectionAircraftFacade Facade(AircraftCollection);
 	Facade.DefineSchema();
-#define UE_AIRCRAFT_WRITE_INPUT(GetterName, Value) if (TArrayView<float> Values = Facade.Get##GetterName(); !Values.IsEmpty()) { Values[0] = Value; }
-	UE_AIRCRAFT_WRITE_INPUT(GameFeelCameraShakeScale, Config.CameraShakeScale)
-#undef UE_AIRCRAFT_WRITE_INPUT
 
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
 	Properties.DefineSchema();
@@ -42,5 +49,6 @@ void FAircraftControllerInputConfigNode::Evaluate(UE::Dataflow::FContext& Contex
 	SetConfigProperty(Properties, TEXT("FlightController.Input.VerticalHoldStickDeadband"), Config.VerticalHoldStickDeadband);
 	SetConfigProperty(Properties, TEXT("FlightController.Input.YawHoldStickDeadband"), Config.YawHoldStickDeadband);
 	SetConfigProperty(Properties, TEXT("FlightController.Input.HorizontalBrakeToHoldSpeedCmPerSec"), Config.HorizontalBrakeToHoldSpeedCmPerSec);
+	SetConfigProperty(Properties, TEXT("FlightController.Execution.ControllerEnabledByDefault"), Config.bControllerEnabledByDefault);
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

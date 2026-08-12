@@ -1,5 +1,5 @@
 //
-// 旋翼布局渲染回调：从 Collection 的 Propellers 组读出每个旋翼的位置/推力轴/半径/旋向，
+// 旋翼布局渲染回调：从 Collection 的 Propellers 组读出每个旋翼的位置/推力轴/旋向，
 // 生成旋翼圆盘（三角扇）+ 推力轴箭头（细长四棱锥）几何，写入 Dataflow 渲染门面。
 // CW 旋翼青色、CCW 品红（与 UAircraftComponent 调试绘制配色一致）。
 
@@ -67,7 +67,6 @@ namespace UE::AircraftLab::DataflowNodes
 
 			const TConstArrayView<FVector3f> Positions = Facade.GetPropellerPositionLocalCm();
 			const TConstArrayView<FVector3f> Axes = Facade.GetPropellerThrustAxisLocal();
-			const TConstArrayView<float> Radii = Facade.GetPropellerRadiusCm();
 			const TConstArrayView<uint8> Spins = Facade.GetPropellerSpinDirection();
 
 			const int32 NumRotors = Positions.Num();
@@ -85,8 +84,7 @@ namespace UE::AircraftLab::DataflowNodes
 				const FVector Center = FVector(Positions[RotorIndex]);
 				const FVector Axis = (Axes.IsValidIndex(RotorIndex) ? FVector(Axes[RotorIndex]) : FVector::UpVector)
 					.GetSafeNormal();
-				const float Radius = Radii.IsValidIndex(RotorIndex)
-					? FMath::Max(static_cast<float>(Radii[RotorIndex]), 1.0f) : 12.0f;
+				constexpr float Radius = 12.0f;
 				// 0 = Clockwise（EDroneRotorSpinDirection::Clockwise）
 				const bool bClockwise = Spins.IsValidIndex(RotorIndex) && Spins[RotorIndex] == 0;
 				const FLinearColor Color = bClockwise ? FLinearColor(0.0f, 0.9f, 0.9f) : FLinearColor(0.9f, 0.1f, 0.9f);

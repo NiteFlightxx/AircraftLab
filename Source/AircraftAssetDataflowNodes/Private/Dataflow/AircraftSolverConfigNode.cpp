@@ -17,11 +17,20 @@ void FAircraftSolverConfigNode::AddProperties(FPropertyHelper& /*PropertyHelper*
 }
 
 void FAircraftSolverConfigNode::EvaluateAircraftCollection(
-	UE::Dataflow::FContext& /*Context*/,
+	UE::Dataflow::FContext& Context,
 	const TSharedRef<FManagedArrayCollection>& AircraftCollection,
 	FAircraftConfigNodeBase::FAircraftFacade& InFacade) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
+	if (!FMath::IsFinite(AsyncFixedTimeStepSize)
+		|| AsyncFixedTimeStepSize < 0.001f || AsyncFixedTimeStepSize > 0.066667f
+		|| PositionSolverIterationCount < 0 || PositionSolverIterationCount > 255
+		|| VelocitySolverIterationCount < 0 || VelocitySolverIterationCount > 255
+		|| ProjectionSolverIterationCount < 0 || ProjectionSolverIterationCount > 255)
+	{
+		Context.Error(FText::FromString(TEXT("Solver time step or iteration count is outside its valid range.")), this);
+		return;
+	}
 
 	if (AircraftCollection->NumElements(AircraftCollectionGroup::Solver) == 0)
 	{
@@ -33,13 +42,13 @@ void FAircraftSolverConfigNode::EvaluateAircraftCollection(
 	}
 
 	InFacade.FindOrAddAttribute<float>(AircraftCollectionAttribute::AsyncFixedTimeStepSize, AircraftCollectionGroup::Solver)[0] =
-		FMath::Clamp(AsyncFixedTimeStepSize, 0.001f, 0.066667f);
+		AsyncFixedTimeStepSize;
 	InFacade.FindOrAddAttribute<uint8>(AircraftCollectionAttribute::OverrideIterationCounts, AircraftCollectionGroup::Solver)[0] =
 		bOverrideIterationCounts ? uint8(1) : uint8(0);
 	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::PositionSolverIterationCount, AircraftCollectionGroup::Solver)[0] =
-		FMath::Clamp(PositionSolverIterationCount, 0, 255);
+		PositionSolverIterationCount;
 	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::VelocitySolverIterationCount, AircraftCollectionGroup::Solver)[0] =
-		FMath::Clamp(VelocitySolverIterationCount, 0, 255);
+		VelocitySolverIterationCount;
 	InFacade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::ProjectionSolverIterationCount, AircraftCollectionGroup::Solver)[0] =
-		FMath::Clamp(ProjectionSolverIterationCount, 0, 255);
+		ProjectionSolverIterationCount;
 }

@@ -62,6 +62,8 @@ public:
 	void SetFlightMode_GameThread(EAircraftFlightMode InMode);
 	void SetArmRequest_GameThread(bool bArm);
 	void SetEmergencyStop_GameThread(bool bStop);
+	void SetControllerEnabled_GameThread(bool bEnabled);
+	bool IsControllerEnabled_GameThread() const;
 	void SetGravity_GameThread(float GravityCmPerSecSq);
 
 	/** Autopilot 注入（GT 由组件从 IAutopilotProvider 拉取后写入）。 */
@@ -78,7 +80,6 @@ public:
 	void GetEstimatedState_GameThread(FDroneEstimatedState& OutState) const;
 	/** 替代驱动后端（约束/运动学，GT 执行）写回估计状态，覆盖 PT 输出槽。 */
 	void SetEstimatedStateOverride_GameThread(const FDroneEstimatedState& InState);
-	float GetCameraShakeIntensity_GameThread() const;
 	EAircraftArmState GetArmState_GameThread() const;
 	EAircraftFlightMode GetFlightMode_GameThread() const;
 	float GetCollectiveThrustCommand_GameThread() const;
@@ -149,6 +150,7 @@ private:
 	std::atomic<bool> bPendingControllerReset{ false };
 	std::atomic<bool> bSimulationEnabled{ true };
 	std::atomic<bool> bSimulationSuspended{ false };
+	std::atomic<bool> bControllerEnabled{ true };
 
 	/** 待处理的旋翼健康操作（GT 写、PT 取）。 */
 	struct FPendingRotorHealthOp
@@ -175,7 +177,6 @@ private:
 	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
 	std::atomic<float> GravityMagnitudeCmPerSecSq{ 980.0f };
-	std::atomic<float> CameraShakeIntensity{ 0.0f };
 
 	/* ---- PT 内部状态（只在 PT 上访问，不需要锁）---- */
 

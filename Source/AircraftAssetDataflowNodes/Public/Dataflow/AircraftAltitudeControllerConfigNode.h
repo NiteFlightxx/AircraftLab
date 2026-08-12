@@ -4,6 +4,7 @@
 #include "Dataflow/DataflowEngine.h"
 #include "Dataflow/DataflowNode.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
+#include "Dataflow/AircraftPidConfigNodeTypes.h"
 
 #include "AircraftAltitudeControllerConfigNode.generated.h"
 
@@ -12,17 +13,8 @@ struct FAircraftAltitudeControllerConfig
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeKp = 1.20f;
-	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeKi = 0.0f;
-	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeKd = 0.20f;
-	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeIntegralLimit = 0.0f;
-	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ClampMin = "0.0")) float AltitudeOutputLimit = 300.0f;
-	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityKp = 0.0015f;
-	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityKi = 0.00020f;
-	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityKd = 0.00050f;
-	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityIntegralLimit = 2500.0f;
-	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityOutputLimit = 0.30f;
-	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ClampMin = "0.0")) float VerticalVelocityDerivativeCutoffHz = 10.0f;
+	UPROPERTY(EditAnywhere, Category = "Altitude", meta = (ShowOnlyInnerProperties)) FAircraftPidChannelConfig Altitude { 1.20f, 0.0f, 0.20f, 1.0f, 0.0f, 300.0f, 0.0f, true };
+	UPROPERTY(EditAnywhere, Category = "Vertical Velocity", meta = (ShowOnlyInnerProperties)) FAircraftFeedbackPidChannelConfig VerticalVelocity { 0.0015f, 0.00020f, 0.00050f, 2500.0f, 0.30f, 10.0f, true };
 	UPROPERTY(EditAnywhere, Category = "Damping Feed Forward", meta = (ClampMin = "0.0")) float VerticalDampingFeedForwardScale = 1.0f;
 };
 

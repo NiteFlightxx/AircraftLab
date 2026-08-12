@@ -23,6 +23,15 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	}
 
 	FManagedArrayCollection InCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
+	if (!FMath::IsFinite(MassKg) || MassKg <= 0.0f
+		|| !FMath::IsFinite(CenterOfMassOffsetCm.X) || !FMath::IsFinite(CenterOfMassOffsetCm.Y) || !FMath::IsFinite(CenterOfMassOffsetCm.Z)
+		|| !FMath::IsFinite(InertiaDiagonalKgCmSq.X) || !FMath::IsFinite(InertiaDiagonalKgCmSq.Y) || !FMath::IsFinite(InertiaDiagonalKgCmSq.Z)
+		|| InertiaDiagonalKgCmSq.X <= 0.0f || InertiaDiagonalKgCmSq.Y <= 0.0f || InertiaDiagonalKgCmSq.Z <= 0.0f)
+	{
+		Context.Error(FText::FromString(TEXT("Aircraft frame mass and principal inertia values must be finite and positive.")), this);
+		SetValue(Context, MoveTemp(InCollection), &Collection);
+		return;
+	}
 	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(MoveTemp(InCollection));
 
 	FCollectionAircraftFacade Facade(AircraftCollection);
@@ -32,10 +41,6 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	if (TArrayView<FName> RootBoneArr = Facade.GetFrameRootBone(); RootBoneArr.Num() > 0)
 	{
 		RootBoneArr[0] = RootBone;
-	}
-	if (TArrayView<uint8> FrameTypeArr = Facade.GetFrameType(); FrameTypeArr.Num() > 0)
-	{
-		FrameTypeArr[0] = static_cast<uint8>(FrameType);
 	}
 	if (TArrayView<float> MassArr = Facade.GetFrameMassKg(); MassArr.Num() > 0)
 	{

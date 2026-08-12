@@ -1,6 +1,6 @@
 //
 // 职责：UAircraftAsset 是多旋翼资产的具体实现，承载骨骼网格 + 物理资产 + 多个
-// FManagedArrayCollection（描述机架/电机/桨/PID/手感等），并在 Build() 时编译成
+// FManagedArrayCollection（描述机体、电机、旋翼和飞控等），并在 Build() 时编译成
 // FAircraftSimulationModel。
 
 #pragma once

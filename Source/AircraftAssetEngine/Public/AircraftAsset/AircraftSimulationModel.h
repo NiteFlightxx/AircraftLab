@@ -35,6 +35,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODRuntimeSettings
 	float SlowLogicIntervalSeconds = 0.0f;
 	float SuggestedNetUpdateFrequency = 30.0f;
 	bool bEnableNetworkDormancy = false;
+	bool bAllowDebugDraw = false;
 };
 
 /** Dataflow 编译后的模拟 LOD Profile。 */
@@ -56,28 +57,6 @@ enum class EDroneRotorSpinDirection : uint8
 
 	/** 逆时针（CCW）：从机体上方俯视为逆时针。 */
 	CounterClockwise UMETA(DisplayName = "Counter-Clockwise")
-};
-
-/**
- * 无人机机架类型枚举（仅决定默认旋翼布局；自定义机架走 Custom）
- */
-UENUM(BlueprintType)
-enum class EDroneFrameType : uint8
-{
-	/** 四轴 X 型布局。 */
-	QuadX UMETA(DisplayName = "Quad X"),
-
-	/** 四轴 + 型布局。 */
-	QuadPlus UMETA(DisplayName = "Quad Plus"),
-
-	/** 六轴 X 型布局。 */
-	HexX UMETA(DisplayName = "Hex X"),
-
-	/** 八轴 X 型布局。 */
-	OctoX UMETA(DisplayName = "Octo X"),
-
-	/** 自定义布局。 */
-	Custom UMETA(DisplayName = "Custom")
 };
 
 /**
@@ -117,10 +96,6 @@ USTRUCT(BlueprintType)
 struct AIRCRAFTASSETENGINE_API FDroneMotorModelConfig
 {
 	GENERATED_BODY()
-
-	/** 最小转速（RPM） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
-	float MinRpm = 0.0f;
 
 	/** 怠速转速（RPM，解锁后低速旋转） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
@@ -180,10 +155,6 @@ struct AIRCRAFTASSETENGINE_API FDroneRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
 	FVector PositionLocalCm = FVector::ZeroVector;
 
-	/** 旋翼局部旋转 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	FRotator RotationLocal = FRotator::ZeroRotator;
-
 	/** 推力方向（机体坐标系，通常为向上） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
 	FVector ThrustAxisLocal = FVector::UpVector;
@@ -191,10 +162,6 @@ struct AIRCRAFTASSETENGINE_API FDroneRotorDefinition
 	/** 旋转方向 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
 	EDroneRotorSpinDirection SpinDirection = EDroneRotorSpinDirection::CounterClockwise;
-
-	/** 螺旋桨半径（厘米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
-	float RadiusCm = 12.0f;
 
 	/** 最大推力（牛顿） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
@@ -256,9 +223,6 @@ struct AIRCRAFTASSETENGINE_API FDroneRotorDefinition
  */
 struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 {
-	/** 机架类型（决定默认混控矩阵） */
-	EDroneFrameType FrameType = EDroneFrameType::QuadX;
-
 	/** 物理底盘根骨骼。NAME_None 时使用组件主 BodyInstance。 */
 	FName RootBone = NAME_None;
 
@@ -278,9 +242,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	/** 飞控运行时只读快照。 */
 	FAircraftFlightControllerRuntimeConfig FlightController;
 
-	/** 纯表现参数，不参与输入或飞行动力学。 */
-	float CameraShakeScale = 0.0f;
-
 	/** Autopilot 运行时只读快照（AutopilotConfigNode 编译产物）。 */
 	FAircraftAutopilotRuntimeConfig Autopilot;
 
@@ -290,7 +251,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	/** 重置到默认空模型 */
 	void Reset()
 	{
-		FrameType = EDroneFrameType::QuadX;
 		RootBone = NAME_None;
 		bOverrideSolverAsyncDeltaTime = false;
 		SolverAsyncDeltaTime = 0.0f;
@@ -300,7 +260,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 		ProjectionSolverIterationCount = 1;
 		Mass = FDroneMassProperties();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
-		CameraShakeScale = 0.0f;
 		Autopilot = FAircraftAutopilotRuntimeConfig();
 		Rotors.Reset();
 	}

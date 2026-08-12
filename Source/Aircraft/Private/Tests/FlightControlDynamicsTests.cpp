@@ -38,12 +38,12 @@ bool FAircraftDefaultBodyAxesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Kinematic body rotation preserves the requested control heading"),
 		Config.GetControlWorldRotation(DesiredBodyWorld).Equals(DesiredControlWorld, 1.e-4f));
 
-	FAircraftFlightControllerRuntimeConfig LegacyAxes;
-	LegacyAxes.ForwardAxis = 0; // +X
-	TestTrue(TEXT("+X remains available for legacy models"),
-		LegacyAxes.GetForwardAxisBody().Equals(FVector::ForwardVector, 1.e-4f));
-	TestTrue(TEXT("Legacy +X torque mapping is unchanged"),
-		LegacyAxes.ControllerTorqueToBody(ControllerTorque).Equals(
+	FAircraftFlightControllerRuntimeConfig PositiveXAxes;
+	PositiveXAxes.ForwardAxis = 0; // +X
+	TestTrue(TEXT("+X is available as an explicit body-axis configuration"),
+		PositiveXAxes.GetForwardAxisBody().Equals(FVector::ForwardVector, 1.e-4f));
+	TestTrue(TEXT("+X torque mapping follows the configured body axes"),
+		PositiveXAxes.ControllerTorqueToBody(ControllerTorque).Equals(
 			FVector(-1.0f, -2.0f, 3.0f), 1.e-4f));
 	return true;
 }
@@ -375,14 +375,25 @@ bool FAircraftAuthoritativePidLimitsTest::RunTest(const FString& Parameters)
 	const FAircraftPidGains VerticalVelocity = Config.GetVerticalVelocityPidGains();
 
 	TestEqual(TEXT("Position output uses the authoritative speed limit"), Position.OutputLimit, 800.0f);
+	TestEqual(TEXT("Position uses authoritative velocity feed-forward"), Position.Kff, 1.0f);
+	TestEqual(TEXT("Position derivative filter defaults to disabled"), Position.DerivativeCutoffHz, 0.0f);
 	TestEqual(TEXT("Velocity integral uses the authoritative limit"), Velocity.IntegralLimit, 3000.0f);
 	TestEqual(TEXT("Velocity output uses the authoritative acceleration limit"), Velocity.OutputLimit, 600.0f);
+	TestEqual(TEXT("Velocity uses authoritative acceleration feed-forward"), Velocity.Kff, 1.0f);
+	TestEqual(TEXT("Velocity derivative filter matches the authoritative cutoff"), Velocity.DerivativeCutoffHz, 12.0f);
 	TestEqual(TEXT("Roll rate integral uses the authoritative limit"), RollRate.IntegralLimit, 120.0f);
 	TestEqual(TEXT("Roll rate output uses the authoritative limit"), RollRate.OutputLimit, 0.35f);
+	TestEqual(TEXT("Rate PID does not duplicate reference-model feed-forward"), RollRate.Kff, 0.0f);
 	TestEqual(TEXT("Yaw rate output uses the authoritative limit"), YawRate.OutputLimit, 0.20f);
 	TestEqual(TEXT("Altitude output uses the authoritative climb-rate limit"), Altitude.OutputLimit, 300.0f);
+	TestEqual(TEXT("Altitude uses authoritative vertical-velocity feed-forward"), Altitude.Kff, 1.0f);
 	TestEqual(TEXT("Vertical velocity integral uses the authoritative limit"), VerticalVelocity.IntegralLimit, 2500.0f);
 	TestEqual(TEXT("Vertical velocity output uses the authoritative collective limit"), VerticalVelocity.OutputLimit, 0.30f);
+	TestEqual(TEXT("Vertical velocity uses baseline-thrust instead of duplicate PID feed-forward"), VerticalVelocity.Kff, 0.0f);
+	TestTrue(TEXT("All authoritative PID channels freeze integration while saturated"),
+		Position.bFreezeIntegralWhenSaturated && Velocity.bFreezeIntegralWhenSaturated
+		&& RollRate.bFreezeIntegralWhenSaturated && Altitude.bFreezeIntegralWhenSaturated
+		&& VerticalVelocity.bFreezeIntegralWhenSaturated);
 	return true;
 }
 

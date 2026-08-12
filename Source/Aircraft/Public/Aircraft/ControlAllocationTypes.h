@@ -10,7 +10,6 @@
 /** 电机动态模型参数（分配器指令反演与旋翼模型共用）。 */
 struct FAircraftMotorModelParams
 {
-	float MinRpm = 0.0f;
 	float IdleRpm = 1500.0f;
 	float MaxRpm = 12000.0f;
 	float SpinUpTimeSeconds = 0.06f;

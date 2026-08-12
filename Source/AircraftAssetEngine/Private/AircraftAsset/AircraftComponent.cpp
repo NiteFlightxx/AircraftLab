@@ -251,6 +251,21 @@ EAircraftArmState UAircraftComponent::GetArmState() const
 		: EAircraftArmState::Disarmed;
 }
 
+void UAircraftComponent::SetControllerEnabled(bool bEnabled)
+{
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->SetControllerEnabled_GameThread(bEnabled);
+	}
+}
+
+bool UAircraftComponent::IsControllerEnabled() const
+{
+	return AircraftSimulationProxy.IsValid()
+		? AircraftSimulationProxy->IsControllerEnabled_GameThread()
+		: false;
+}
+
 void UAircraftComponent::GetEstimatedState(FDroneEstimatedState& OutState) const
 {
 	if (AircraftSimulationProxy.IsValid())
@@ -1370,11 +1385,4 @@ FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance() const
 		}
 	}
 	return MutableThis->GetBodyInstance();
-}
-
-float UAircraftComponent::GetCameraShakeIntensity() const
-{
-	return AircraftSimulationProxy.IsValid()
-		? AircraftSimulationProxy->GetCameraShakeIntensity_GameThread()
-		: 0.0f;
 }

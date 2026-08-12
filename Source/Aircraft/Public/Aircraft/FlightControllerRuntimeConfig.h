@@ -23,30 +23,47 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	FVector3f PositionKp = FVector3f(0.40f, 0.40f, 0.0f);
 	FVector3f PositionKi = FVector3f::ZeroVector;
 	FVector3f PositionKd = FVector3f(0.30f, 0.30f, 0.0f);
+	FVector3f PositionKff = FVector3f(1.0f, 1.0f, 0.0f);
 	FVector3f PositionIntegralLimit = FVector3f::ZeroVector;
 	FVector3f PositionOutputLimit = FVector3f(800.0f, 800.0f, 0.0f);
+	FVector3f PositionDerivativeCutoffHz = FVector3f::ZeroVector;
+	bool bPositionXFreezeIntegralWhenSaturated = true;
+	bool bPositionYFreezeIntegralWhenSaturated = true;
 	FVector3f VelocityKp = FVector3f(1.50f, 1.50f, 0.0f);
 	FVector3f VelocityKi = FVector3f(0.01f, 0.01f, 0.0f);
 	FVector3f VelocityKd = FVector3f(0.60f, 0.60f, 0.0f);
+	FVector3f VelocityKff = FVector3f(1.0f, 1.0f, 0.0f);
 	FVector3f VelocityIntegralLimit = FVector3f(3000.0f, 3000.0f, 0.0f);
 	FVector3f VelocityOutputLimit = FVector3f(600.0f, 600.0f, 0.0f);
+	FVector3f VelocityDerivativeCutoffHz = FVector3f(12.0f, 12.0f, 0.0f);
+	bool bVelocityXFreezeIntegralWhenSaturated = true;
+	bool bVelocityYFreezeIntegralWhenSaturated = true;
 	FVector3f AttitudeGains = FVector3f(4.5f, 4.5f, 3.0f);
 	FVector3f RateKp = FVector3f(0.0080f, 0.0080f, 0.0012f);
 	FVector3f RateKi = FVector3f(0.0010f, 0.0010f, 0.00015f);
 	FVector3f RateKd = FVector3f(0.00040f, 0.00040f, 0.00008f);
 	FVector3f RateIntegralLimit = FVector3f(120.0f, 120.0f, 120.0f);
 	FVector3f RateOutputLimit = FVector3f(0.35f, 0.35f, 0.20f);
+	FVector3f RateDerivativeCutoffHz = FVector3f(18.0f, 18.0f, 15.0f);
+	bool bRollRateFreezeIntegralWhenSaturated = true;
+	bool bPitchRateFreezeIntegralWhenSaturated = true;
+	bool bYawRateFreezeIntegralWhenSaturated = true;
 
 	float AltitudeKp = 1.20f;
 	float AltitudeKi = 0.0f;
 	float AltitudeKd = 0.20f;
+	float AltitudeKff = 1.0f;
 	float AltitudeIntegralLimit = 0.0f;
 	float AltitudeOutputLimit = 300.0f;
+	float AltitudeDerivativeCutoffHz = 0.0f;
+	bool bAltitudeFreezeIntegralWhenSaturated = true;
 	float VerticalVelocityKp = 0.0015f;
 	float VerticalVelocityKi = 0.00020f;
 	float VerticalVelocityKd = 0.00050f;
 	float VerticalVelocityIntegralLimit = 2500.0f;
 	float VerticalVelocityOutputLimit = 0.30f;
+	float VerticalVelocityDerivativeCutoffHz = 10.0f;
+	bool bVerticalVelocityFreezeIntegralWhenSaturated = true;
 
 	float MaxTiltAngleDegrees = 25.0f;
 	float MaxYawRateDegreesPerSec = 90.0f;
@@ -60,13 +77,9 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	float MinCollectiveCommand = 0.0f;
 	float HoverCollectiveCommand = 0.5f;
 	float MaxCollectiveCommand = 1.0f;
-	float DerivativeCutoffHz = 15.0f;
 	float AllocationDamping = 0.05f;
 
 	/** 按职责拆分、由不同驱动后端消费的扩展配置。 */
-	float VelocityDerivativeCutoffHz = 12.0f;
-	FVector3f RateDerivativeCutoffHz = FVector3f(18.0f, 18.0f, 15.0f);
-	float VerticalVelocityDerivativeCutoffHz = 10.0f;
 	float LinearDampingFeedForwardScale = 1.0f;
 	float DampingAccelerationReserveFraction = 0.2f;
 	float AngularDampingFeedForwardScale = 1.0f;
@@ -90,6 +103,7 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	bool bKinematicSweepMovement = true;
 	float KinematicPositionCorrectionRate = 8.0f;
 	float KinematicRotationInterpSpeed = 8.0f;
+	bool bControllerEnabledByDefault = true;
 
 	/** 旋翼失效与控制权限降级策略（属性键 FlightController.Failure.*）。 */
 	FAircraftFailurePolicyConfig FailurePolicy;
@@ -102,6 +116,11 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	{
 		FAircraftPidGains G(PositionKp[Axis], PositionKi[Axis], PositionKd[Axis],
 			PositionIntegralLimit[Axis], PositionOutputLimit[Axis]);
+		G.Kff = PositionKff[Axis];
+		G.DerivativeCutoffHz = PositionDerivativeCutoffHz[Axis];
+		G.bFreezeIntegralWhenSaturated = Axis == 0
+			? bPositionXFreezeIntegralWhenSaturated
+			: bPositionYFreezeIntegralWhenSaturated;
 		return G;
 	}
 
@@ -109,7 +128,11 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	{
 		FAircraftPidGains G(VelocityKp[Axis], VelocityKi[Axis], VelocityKd[Axis],
 			VelocityIntegralLimit[Axis], VelocityOutputLimit[Axis]);
-		G.DerivativeCutoffHz = VelocityDerivativeCutoffHz;
+		G.Kff = VelocityKff[Axis];
+		G.DerivativeCutoffHz = VelocityDerivativeCutoffHz[Axis];
+		G.bFreezeIntegralWhenSaturated = Axis == 0
+			? bVelocityXFreezeIntegralWhenSaturated
+			: bVelocityYFreezeIntegralWhenSaturated;
 		return G;
 	}
 
@@ -119,13 +142,20 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 			RateIntegralLimit[Axis], RateOutputLimit[Axis]);
 		G.Kff = 0.0f; // 角速率环为纯反馈；前馈由独立阻尼模型经外部 Kff=1 通道注入
 		G.DerivativeCutoffHz = RateDerivativeCutoffHz[Axis];
+		G.bFreezeIntegralWhenSaturated = Axis == 0
+			? bRollRateFreezeIntegralWhenSaturated
+			: (Axis == 1 ? bPitchRateFreezeIntegralWhenSaturated : bYawRateFreezeIntegralWhenSaturated);
 		return G;
 	}
 
 	FAircraftPidGains GetAltitudePidGains() const
 	{
-		return FAircraftPidGains(AltitudeKp, AltitudeKi, AltitudeKd,
+		FAircraftPidGains G(AltitudeKp, AltitudeKi, AltitudeKd,
 			AltitudeIntegralLimit, AltitudeOutputLimit);
+		G.Kff = AltitudeKff;
+		G.DerivativeCutoffHz = AltitudeDerivativeCutoffHz;
+		G.bFreezeIntegralWhenSaturated = bAltitudeFreezeIntegralWhenSaturated;
+		return G;
 	}
 
 	FAircraftPidGains GetVerticalVelocityPidGains() const
@@ -134,6 +164,7 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 			VerticalVelocityIntegralLimit, VerticalVelocityOutputLimit);
 		G.Kff = 0.0f;
 		G.DerivativeCutoffHz = VerticalVelocityDerivativeCutoffHz;
+		G.bFreezeIntegralWhenSaturated = bVerticalVelocityFreezeIntegralWhenSaturated;
 		return G;
 	}
 

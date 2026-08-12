@@ -113,12 +113,14 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	Runtime.HoldTargets.ResetHoldFlags();
 	Runtime.PreviousLinearVelocityCmPerSec = FVector::ZeroVector;
 	Runtime.bHasPreviousLinearVelocity = false;
-	CameraShakeIntensity.store(0.0f, std::memory_order_relaxed);
 	CurrentCollectiveThrustCommand.store(0.0f, std::memory_order_relaxed);
 	bFailureActionPending.store(false, std::memory_order_relaxed);
 	bPendingControllerReset.store(false, std::memory_order_relaxed);
 
 	CurrentArmState.store(static_cast<uint8>(EAircraftArmState::Armed), std::memory_order_relaxed);
+	bControllerEnabled.store(
+		ActiveLodModel ? ActiveLodModel->FlightController.bControllerEnabledByDefault : true,
+		std::memory_order_relaxed);
 }
 
 void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
@@ -139,7 +141,6 @@ void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
 			Info.MaxAllocatedThrustN = Info.MaxPhysicalThrustN * FMath::Clamp(Rotor.ControlAuthorityScale, 0.0f, 1.0f);
 			Info.ReactionTorqueCoefficientM = Rotor.GetEffectiveReactionTorqueCoefficient();
 			Info.SpinDirectionSign = Rotor.GetSpinDirectionSign();
-			Info.Motor.MinRpm = Rotor.Motor.MinRpm;
 			Info.Motor.IdleRpm = Rotor.Motor.IdleRpm;
 			Info.Motor.MaxRpm = Rotor.Motor.MaxRpm;
 			Info.Motor.SpinUpTimeSeconds = Rotor.Motor.SpinUpTimeSeconds;
@@ -278,6 +279,20 @@ void FAircraftSimulationProxy::SetEmergencyStop_GameThread(bool bStop)
 	bEmergencyStop = bStop;
 }
 
+void FAircraftSimulationProxy::SetControllerEnabled_GameThread(bool bEnabled)
+{
+	bControllerEnabled.store(bEnabled, std::memory_order_relaxed);
+	if (!bEnabled)
+	{
+		bPendingControllerReset.store(true, std::memory_order_release);
+	}
+}
+
+bool FAircraftSimulationProxy::IsControllerEnabled_GameThread() const
+{
+	return bControllerEnabled.load(std::memory_order_relaxed);
+}
+
 void FAircraftSimulationProxy::SetGravity_GameThread(float GravityCmPerSecSq)
 {
 	GravityMagnitudeCmPerSecSq.store(FMath::Max(GravityCmPerSecSq, 0.0f), std::memory_order_relaxed);
@@ -327,11 +342,6 @@ void FAircraftSimulationProxy::SetEstimatedStateOverride_GameThread(const FDrone
 {
 	FScopeLock Lock(&OutputCriticalSection);
 	LatestEstimated = InState;
-}
-
-float FAircraftSimulationProxy::GetCameraShakeIntensity_GameThread() const
-{
-	return CameraShakeIntensity.load(std::memory_order_relaxed);
 }
 
 EAircraftArmState FAircraftSimulationProxy::GetArmState_GameThread() const
@@ -471,7 +481,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	CurrentFlightMode.store(static_cast<uint8>(Mode), std::memory_order_relaxed);
 	UpdateModeCapabilities(Mode);
 
-	const bool bMotorsOn = (ArmState == EAircraftArmState::Armed);
+	const bool bMotorsOn = ArmState == EAircraftArmState::Armed
+		&& bControllerEnabled.load(std::memory_order_relaxed);
 
 	if (bPendingPolicyLatchReset.exchange(false, std::memory_order_relaxed))
 	{
@@ -615,7 +626,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 					Rotor.CommandScale, Rotor.IsEnabled());
 			}
 		}
-		CameraShakeIntensity.store(0.0f, std::memory_order_relaxed);
 		CurrentCollectiveThrustCommand.store(0.0f, std::memory_order_relaxed);
 
 		FScopeLock Lock(&OutputCriticalSection);
@@ -794,17 +804,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	/* ----------------------------------------------------------------------
 	 * 10) 电机一阶滞后 + Chaos 力/扭矩注入
 	 * ---------------------------------------------------------------------- */
-	float MotorLoad = 0.0f;
-	for (const float Command : ControlAllocator.CommandBuffer)
-	{
-		MotorLoad += FMath::Square(FMath::Clamp(Command, 0.0f, 1.0f));
-	}
-	MotorLoad = ControlAllocator.CommandBuffer.IsEmpty()
-		? 0.0f : MotorLoad / static_cast<float>(ControlAllocator.CommandBuffer.Num());
-	CameraShakeIntensity.store(
-		FMath::Clamp(MotorLoad * FMath::Max(ActiveLodModel->CameraShakeScale, 0.0f), 0.0f, 1.0f),
-		std::memory_order_relaxed);
-
 	Runtime.ControlOutput.RotorCommands.SetNum(RotorStates.Num());
 	for (int32 i = 0; i < RotorStates.Num(); ++i)
 	{

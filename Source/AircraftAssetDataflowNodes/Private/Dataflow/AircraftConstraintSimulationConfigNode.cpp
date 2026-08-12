@@ -23,8 +23,21 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	{
 		return;
 	}
+	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
+	const float Values[] = { Config.LinearPositionStrength, Config.LinearVelocityStrength,
+		Config.LinearForceLimit, Config.AngularPositionStrength, Config.AngularVelocityStrength,
+		Config.AngularTorqueLimit };
+	for (const float Value : Values)
+	{
+		if (!FMath::IsFinite(Value) || Value < 0.0f)
+		{
+			Context.Error(FText::FromString(TEXT("Constraint-simulation strengths and limits must be finite and non-negative.")), this);
+			SetValue(Context, InputCollection, &Collection);
+			return;
+		}
+	}
 	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		GetValue<FManagedArrayCollection>(Context, &Collection));
+		InputCollection);
 	FCollectionAircraftFacade Facade(AircraftCollection);
 	Facade.DefineSchema();
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);

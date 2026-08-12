@@ -23,8 +23,16 @@ void FAircraftKinematicSimulationConfigNode::Evaluate(UE::Dataflow::FContext& Co
 	{
 		return;
 	}
+	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
+	if (!FMath::IsFinite(Config.PositionCorrectionRate) || Config.PositionCorrectionRate < 0.0f
+		|| !FMath::IsFinite(Config.RotationInterpSpeed) || Config.RotationInterpSpeed < 0.0f)
+	{
+		Context.Error(FText::FromString(TEXT("Kinematic correction rates must be finite and non-negative.")), this);
+		SetValue(Context, InputCollection, &Collection);
+		return;
+	}
 	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		GetValue<FManagedArrayCollection>(Context, &Collection));
+		InputCollection);
 	FCollectionAircraftFacade Facade(AircraftCollection);
 	Facade.DefineSchema();
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);

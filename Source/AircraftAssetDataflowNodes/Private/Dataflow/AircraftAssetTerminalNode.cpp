@@ -91,9 +91,8 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetVelocitySolverIterationCount());
 	AccumulateArray(Facade.GetProjectionSolverIterationCount());
 
-	/* Frame：根骨骼 + 机架类型 + 质量惯性 + 气动是结构性的 */
+	/* Frame：根骨骼 + 质量惯性是结构性的 */
 	AccumulateArray(Facade.GetFrameRootBone());
-	AccumulateArray(Facade.GetFrameType());
 	AccumulateArray(Facade.GetFrameMassKg());
 	AccumulateArray(Facade.GetFrameCenterOfMassOffsetCm());
 	AccumulateArray(Facade.GetFrameInertiaDiagonalKgCmSq());
@@ -101,7 +100,6 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	/* Motors：电机数量 / 名字 / 一阶滞后参数都是结构性的 */
 	AccumulateArray(Facade.GetMotorName());
 	AccumulateBoolArray(Facade.GetMotorEnabled());
-	AccumulateArray(Facade.GetMotorMinRpm());
 	AccumulateArray(Facade.GetMotorIdleRpm());
 	AccumulateArray(Facade.GetMotorMaxRpm());
 	AccumulateArray(Facade.GetMotorSpinUpTimeSeconds());
@@ -115,10 +113,8 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetPropellerSocketName());
 	AccumulateBoolArray(Facade.GetPropellerUseSocketTransform());
 	AccumulateArray(Facade.GetPropellerPositionLocalCm());
-	AccumulateArray(Facade.GetPropellerRotationLocalEulerDeg());
 	AccumulateArray(Facade.GetPropellerThrustAxisLocal());
 	AccumulateArray(Facade.GetPropellerSpinDirection());
-	AccumulateArray(Facade.GetPropellerRadiusCm());
 	AccumulateArray(Facade.GetPropellerMaxThrustForce());
 	AccumulateArray(Facade.GetPropellerThrustCoefficient());
 	AccumulateArray(Facade.GetPropellerReactionTorqueCoefficient());
@@ -134,8 +130,6 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetFcVelocityKi());
 	AccumulateArray(Facade.GetFcVelocityKd());
 	AccumulateArray(Facade.GetFcAngleKp());
-	AccumulateArray(Facade.GetFcAngleKi());
-	AccumulateArray(Facade.GetFcAngleKd());
 	AccumulateArray(Facade.GetFcRateKp());
 	AccumulateArray(Facade.GetFcRateKi());
 	AccumulateArray(Facade.GetFcRateKd());
@@ -150,11 +144,7 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetFcMaxClimbRateCmPerSec());
 	AccumulateArray(Facade.GetFcMaxDescentRateCmPerSec());
 	AccumulateArray(Facade.GetFcMaxHorizontalSpeedCmPerSec());
-	AccumulateArray(Facade.GetFcDerivativeCutoffHz());
 	AccumulateArray(Facade.GetFcAllocationDamping());
-
-	/* 纯表现参数也进入校验和，修改后触发增量重建。 */
-	AccumulateArray(Facade.GetGameFeelCameraShakeScale());
 
 	// Chaos Cloth 把 Collection Property Facade 作为可扩展配置层。键、值、字符串和标记都必须
 	// 进入校验和，否则只修改扩展飞控参数时 Terminal 会错误地认为资产没有变化。

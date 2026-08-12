@@ -111,8 +111,6 @@ void UAircraftPidTuningTool::RefreshFromAsset()
 	Properties->VelocityKi = ReadVec3(ConstCol.GetFcVelocityKi());
 	Properties->VelocityKd = ReadVec3(ConstCol.GetFcVelocityKd());
 	Properties->AngleKp = ReadVec3(ConstCol.GetFcAngleKp());
-	Properties->AngleKi = ReadVec3(ConstCol.GetFcAngleKi());
-	Properties->AngleKd = ReadVec3(ConstCol.GetFcAngleKd());
 	Properties->RateKp = ReadVec3(ConstCol.GetFcRateKp());
 	Properties->RateKi = ReadVec3(ConstCol.GetFcRateKi());
 	Properties->RateKd = ReadVec3(ConstCol.GetFcRateKd());
@@ -129,7 +127,6 @@ void UAircraftPidTuningTool::RefreshFromAsset()
 	Properties->MaxClimbRateCmPerSec = ReadFloat(ConstCol.GetFcMaxClimbRateCmPerSec(), 300.f);
 	Properties->MaxDescentRateCmPerSec = ReadFloat(ConstCol.GetFcMaxDescentRateCmPerSec(), 200.f);
 	Properties->MaxHorizontalSpeedCmPerSec = ReadFloat(ConstCol.GetFcMaxHorizontalSpeedCmPerSec(), 800.f);
-	Properties->DerivativeCutoffHz = ReadFloat(ConstCol.GetFcDerivativeCutoffHz(), 15.f);
 	Properties->AllocationDamping = ReadFloat(ConstCol.GetFcAllocationDamping(), 0.05f);
 }
 
@@ -179,8 +176,6 @@ void UAircraftPidTuningTool::ApplyToAsset() const
 	WriteVec3(Facade.GetFcVelocityKi(), Properties->VelocityKi);
 	WriteVec3(Facade.GetFcVelocityKd(), Properties->VelocityKd);
 	WriteVec3(Facade.GetFcAngleKp(), Properties->AngleKp);
-	WriteVec3(Facade.GetFcAngleKi(), Properties->AngleKi);
-	WriteVec3(Facade.GetFcAngleKd(), Properties->AngleKd);
 	WriteVec3(Facade.GetFcRateKp(), Properties->RateKp);
 	WriteVec3(Facade.GetFcRateKi(), Properties->RateKi);
 	WriteVec3(Facade.GetFcRateKd(), Properties->RateKd);
@@ -197,7 +192,6 @@ void UAircraftPidTuningTool::ApplyToAsset() const
 	WriteFloat(Facade.GetFcMaxClimbRateCmPerSec(), Properties->MaxClimbRateCmPerSec);
 	WriteFloat(Facade.GetFcMaxDescentRateCmPerSec(), Properties->MaxDescentRateCmPerSec);
 	WriteFloat(Facade.GetFcMaxHorizontalSpeedCmPerSec(), Properties->MaxHorizontalSpeedCmPerSec);
-	WriteFloat(Facade.GetFcDerivativeCutoffHz(), Properties->DerivativeCutoffHz);
 	WriteFloat(Facade.GetFcAllocationDamping(), Properties->AllocationDamping);
 
 	TArray<TSharedRef<const FManagedArrayCollection>> NewCollections;

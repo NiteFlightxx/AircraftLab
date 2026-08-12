@@ -24,14 +24,30 @@ void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Co
 		return;
 	}
 
-	if (Config.MinCollectiveCommand > Config.HoverCollectiveCommand
-		|| Config.HoverCollectiveCommand > Config.MaxCollectiveCommand)
+	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
+	const float LimitValues[] = {
+		Config.MaxTiltAngleDegrees, Config.MaxYawRateDegreesPerSec, Config.MaxRollRateDegreesPerSec,
+		Config.MaxPitchRateDegreesPerSec, Config.MaxClimbRateCmPerSec, Config.MaxDescentRateCmPerSec,
+		Config.MaxHorizontalSpeedCmPerSec, Config.MaxHorizontalAccelerationCmPerSecSq,
+		Config.MaxVerticalAccelerationCmPerSecSq, Config.MinCollectiveCommand,
+		Config.HoverCollectiveCommand, Config.MaxCollectiveCommand };
+	bool bInvalid = false;
+	for (const float Value : LimitValues)
 	{
-		Context.Error(FText::FromString(TEXT("Flight-control collective limits must satisfy Min <= Hover <= Max.")), this);
+		bInvalid |= !FMath::IsFinite(Value) || Value < 0.0f;
+	}
+	bInvalid |= Config.MinCollectiveCommand > Config.HoverCollectiveCommand
+		|| Config.HoverCollectiveCommand > Config.MaxCollectiveCommand
+		|| Config.MaxCollectiveCommand > 1.0f;
+	if (bInvalid)
+	{
+		Context.Error(FText::FromString(TEXT("Flight-control limits must be finite, non-negative, and satisfy 0 <= Min <= Hover <= Max <= 1.")), this);
+		SetValue(Context, InputCollection, &Collection);
+		return;
 	}
 
 	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		GetValue<FManagedArrayCollection>(Context, &Collection));
+		InputCollection);
 	FCollectionAircraftFacade Facade(AircraftCollection);
 	Facade.DefineSchema();
 

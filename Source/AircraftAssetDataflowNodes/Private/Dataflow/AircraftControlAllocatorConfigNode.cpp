@@ -23,13 +23,17 @@ void FAircraftControlAllocatorConfigNode::Evaluate(UE::Dataflow::FContext& Conte
 	{
 		return;
 	}
-	if (Config.DampedPseudoInverseLambda < 0.0f || Config.MinimumCosTilt < 0.05f || Config.MinimumCosTilt > 1.0f)
+	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
+	if (!FMath::IsFinite(Config.DampedPseudoInverseLambda) || !FMath::IsFinite(Config.MinimumCosTilt)
+		|| Config.DampedPseudoInverseLambda < 0.0f || Config.MinimumCosTilt < 0.05f || Config.MinimumCosTilt > 1.0f)
 	{
 		Context.Error(FText::FromString(TEXT("Control-allocator values are outside their valid range.")), this);
+		SetValue(Context, InputCollection, &Collection);
+		return;
 	}
 
 	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		GetValue<FManagedArrayCollection>(Context, &Collection));
+		InputCollection);
 	FCollectionAircraftFacade Facade(AircraftCollection);
 	Facade.DefineSchema();
 	if (TArrayView<float> Values = Facade.GetFcAllocationDamping(); !Values.IsEmpty())

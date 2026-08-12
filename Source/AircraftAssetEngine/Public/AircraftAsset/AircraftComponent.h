@@ -89,14 +89,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Mode")
 	EAircraftArmState GetArmState() const;
 
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Mode")
+	void SetControllerEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Mode")
+	bool IsControllerEnabled() const;
+
 	/* ------- 估计状态读取（直接从 Chaos 刚体合成） ------- */
 
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Estimator")
 	void GetEstimatedState(FDroneEstimatedState& OutState) const;
-
-	/** Gameplay camera systems can consume this normalized motor-load signal; the plugin never drives a camera directly. */
-	UFUNCTION(BlueprintPure, Category = "AircraftComponent|GameFeel")
-	float GetCameraShakeIntensity() const;
 
 	/* ------- 仿真启停 ------- */
 

@@ -40,8 +40,6 @@ struct FAircraftAirscrewProfileData
 	UPROPERTY(EditAnywhere, Category = "Installation") FName SocketName = NAME_None;
 	UPROPERTY(EditAnywhere, Category = "Installation") bool bUseSocketTransform = true;
 	UPROPERTY(EditAnywhere, Category = "Installation") FVector3f PositionLocalCm = FVector3f::ZeroVector;
-	UPROPERTY(EditAnywhere, Category = "Installation") FVector3f RotationLocalEulerDeg = FVector3f::ZeroVector;
-	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ClampMin = "0.0")) float RadiusCm = 12.0f;
 	UPROPERTY(EditAnywhere, Category = "Profile") FVector3f ThrustAxisLocal = FVector3f(0.0f, 0.0f, 1.0f);
 	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ClampMin = "0.0", Units = "N")) float MaxThrustForce = 9.0f;
 	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ClampMin = "0.0")) float ThrustCoefficient = 1.0f;
