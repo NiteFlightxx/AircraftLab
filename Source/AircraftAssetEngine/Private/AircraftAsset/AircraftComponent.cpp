@@ -483,15 +483,21 @@ void UAircraftComponent::SetSimulationDriveMode(EAircraftSimulationDriveMode New
 
 void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics)
 {
-	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
+	const EAircraftSimulationDriveMode PreviousDriveMode = SimulationDriveMode;
+	if (PreviousDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
 		&& (NewDriveMode != EAircraftSimulationDriveMode::PhysicsConstraint || !bEnablePhysics))
 	{
 		DestroySimulationConstraint();
 	}
 
+	// SetSimulatePhysics() 可能同步触发 OnCreatePhysicsState()。必须先提交目标驱动状态，
+	// 让物理状态创建回调能按 Dataflow LOD 配置建立对应后端。
+	SimulationDriveMode = NewDriveMode;
+	bSimulationPhysicsEnabled = bEnablePhysics;
+
 	if (bEnablePhysics)
 	{
-		if (!IsSimulatingPhysics() && SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic)
+		if (!IsSimulatingPhysics() && PreviousDriveMode == EAircraftSimulationDriveMode::Kinematic)
 		{
 			// 离开运动学驱动：保存当前估计速度以便物理恢复时连续。
 			FDroneEstimatedState Estimated;
@@ -517,22 +523,28 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 		SetSimulatePhysics(false);
 	}
 
-	SimulationDriveMode = NewDriveMode;
-	bSimulationPhysicsEnabled = bEnablePhysics;
 	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
-		&& IsSimulatingPhysics()
+		&& bSimulationPhysicsEnabled
 		&& !CreateSimulationConstraint())
 	{
-		UE_LOG(LogAircraftComponent, Error,
-			TEXT("AircraftComponent failed to create its physics-constraint backend for %s."),
+		UE_LOG(LogAircraftComponent, Verbose,
+			TEXT("[AircraftDF.LOD] Physics constraint for '%s' is pending a valid chassis physics body."),
 			*GetNameSafe(GetOwner()));
-		SimulationDriveMode = EAircraftSimulationDriveMode::None;
 	}
 }
 
 bool UAircraftComponent::CreateSimulationConstraint()
 {
-	if (!IsSimulatingPhysics() || !GetOwner())
+	if (IsValid(SimulationConstraint)
+		&& SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
+		&& !SimulationConstraint->IsBroken())
+	{
+		return true;
+	}
+
+	FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+	if (!GetOwner() || !ChassisBody || !ChassisBody->IsValidBodyInstance()
+		|| !ChassisBody->IsInstanceSimulatingPhysics())
 	{
 		return false;
 	}
@@ -583,10 +595,23 @@ bool UAircraftComponent::CreateSimulationConstraint()
 		Config.ConstraintAngularTorqueLimit);
 	SimulationConstraint->SetProjectionEnabled(false);
 	SimulationConstraint->SetDisableCollision(true);
-	SimulationConstraint->SetConstrainedComponents(this, NAME_None, nullptr, NAME_None);
+	SimulationConstraint->SetConstrainedComponents(this, Model->RootBone, nullptr, NAME_None);
 	WakeAllRigidBodies();
-	return SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
+	const bool bCreated = SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
 		&& !SimulationConstraint->IsBroken();
+	if (bCreated)
+	{
+		UE_LOG(LogAircraftComponent, Log,
+			TEXT("[AircraftDF.LOD] Owner=%s LOD=%d Drive=PhysicsConstraint RootBone=%s Constraint=Active"),
+			*GetNameSafe(GetOwner()), CurrentSimulationLOD, *Model->RootBone.ToString());
+	}
+	else
+	{
+		UE_LOG(LogAircraftComponent, Error,
+			TEXT("[AircraftDF.LOD] Owner=%s LOD=%d Drive=PhysicsConstraint RootBone=%s Constraint=CreationFailed"),
+			*GetNameSafe(GetOwner()), CurrentSimulationLOD, *Model->RootBone.ToString());
+	}
+	return bCreated;
 }
 
 void UAircraftComponent::DestroySimulationConstraint()
@@ -1205,10 +1230,21 @@ void UAircraftComponent::OnCreatePhysicsState()
 	{
 		AircraftSimulationProxy->SetAircraftBodyInstance(ResolveChassisBodyInstance());
 	}
+
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
+		&& bSimulationPhysicsEnabled
+		&& !CreateSimulationConstraint())
+	{
+		UE_LOG(LogAircraftComponent, Error,
+			TEXT("[AircraftDF.LOD] Owner=%s LOD=%d could not create its PhysicsConstraint backend after physics-state creation."),
+			*GetNameSafe(GetOwner()), CurrentSimulationLOD);
+	}
 }
 
 void UAircraftComponent::OnDestroyPhysicsState()
 {
+	// 约束引用当前 Chaos 刚体，必须先销毁；下一次 OnCreatePhysicsState 会按当前 LOD 重建。
+	DestroySimulationConstraint();
 	UE::Dataflow::UnregisterSimulationInterface(this);
 
 	if (AircraftSimulationProxy.IsValid())
@@ -1249,6 +1285,10 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	switch (SimulationDriveMode)
 	{
 	case EAircraftSimulationDriveMode::PhysicsConstraint:
+		if (!CreateSimulationConstraint())
+		{
+			break;
+		}
 		UpdateConstraintSimulation(DeltaTime);
 		UpdateAlternativeDriveEstimatedState(DeltaTime);
 		break;

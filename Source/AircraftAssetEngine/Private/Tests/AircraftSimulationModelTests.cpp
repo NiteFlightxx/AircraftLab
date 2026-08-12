@@ -96,16 +96,16 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 		const int32 CollisionIndex = Properties.AddProperty(TEXT("SimulationLOD.CollisionMode"), EAircraftCollectionPropertyFlags::Enabled);
 		Properties.SetValue(CollisionIndex, 2);
 	};
-	SetLodSettings(Lod0Collection, TEXT("LOD0"), 1);
-	SetLodSettings(Lod1Collection, TEXT("LOD1"), 2);
+	SetLodSettings(Lod0Collection, TEXT("LOD0"), 2);
+	SetLodSettings(Lod1Collection, TEXT("LOD1"), 1);
 	const TArray<TSharedRef<const FManagedArrayCollection>> TwoLodCollections = { Lod0Collection, Lod1Collection };
 	const FAircraftSimulationModel TwoLodModel(TwoLodCollections, TEXT("TwoLOD"));
 	TestEqual(TEXT("Each terminal collection compiles to one runtime LOD"), TwoLodModel.GetNumLods(), 2);
 	TestTrue(TEXT("LOD 1 is addressable"), TwoLodModel.IsValidLodIndex(1));
-	TestEqual(TEXT("LOD 0 reads its own flight-controller profile"),
-		TwoLodModel.SimulationLOD.LODs[0].DriveMode, EAircraftSimulationDriveMode::FlightController);
-	TestEqual(TEXT("LOD 1 reads its own physics-constraint profile"),
-		TwoLodModel.SimulationLOD.LODs[1].DriveMode, EAircraftSimulationDriveMode::PhysicsConstraint);
+	TestEqual(TEXT("LOD 0 reads its own physics-constraint profile"),
+		TwoLodModel.SimulationLOD.LODs[0].DriveMode, EAircraftSimulationDriveMode::PhysicsConstraint);
+	TestEqual(TEXT("LOD 1 reads its own flight-controller profile"),
+		TwoLodModel.SimulationLOD.LODs[1].DriveMode, EAircraftSimulationDriveMode::FlightController);
 	return true;
 }
 
