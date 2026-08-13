@@ -345,7 +345,7 @@ private:
 	 * 默认填充（OnRegister 惰性进行）：DataflowAsset 为空时自动填入插件共享的程序化
 	 * Simulation 图（UE::AircraftLab::AircraftAsset::GetOrCreateAircraftSimulationGraph，
 	 * 纯代码、无二进制资产依赖，与布料 DF_ClothSolver.uasset 同构的三节点调度链）。
-	 * 填充后 OnCreatePhysicsState 显式 RegisterSimulationInterface 注册进管理器，
+	 * 填充后由 Dataflow 的 PhysicsState 全局委托注册进管理器，
 	 * 获得每帧 GT 输入桥接；预览组件/PIE/放置 Pawn 均自动生效，零手动步骤。
 	 *
 	 * 逐实例覆盖：在此指定自定义 Simulation 图资产即可（默认填充只在为空时发生）。
@@ -354,7 +354,7 @@ private:
 	 * 推进节奏：控制+力注入始终在 AsyncPhysicsTickComponent（Chaos 物理子步）执行，
 	 * 与碰撞解算同一 pass；图的 AdvancePhysicsSolvers 不承担控制计算。
 	 */
-	//UPROPERTY(EditAnywhere, Category = AircraftComponent, meta = (EditConditionHides), AdvancedDisplay)
+	UPROPERTY(EditAnywhere, Category = AircraftComponent, meta = (EditConditionHides), AdvancedDisplay)
 	FDataflowSimulationAsset SimulationAsset;
 
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;

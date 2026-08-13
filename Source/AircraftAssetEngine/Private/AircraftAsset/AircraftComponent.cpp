@@ -37,6 +37,8 @@ UAircraftComponent::UAircraftComponent(const FObjectInitializer& ObjectInitializ
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
+	bAllowConcurrentTick = false;
+	PrimaryComponentTick.bRunOnAnyThread = false;
 
 	// AsyncPhysicsTickComponent 在物理子步上调用，DeltaTime 即子步长（恒定高频，~60~120Hz）。
 	// 这是飞控所有 PID 与电机一阶滞后所需的恒定步长 Δt。
@@ -1275,9 +1277,13 @@ void UAircraftComponent::OnRegister()
 	// SkeletalMesh 才能正确初始化 BoneSpaceTransforms。
 	SyncSkeletalMeshComponentFromAsset();
 	Super::OnRegister();
+	// USkeletalMeshComponent 会在禁用动画时自动开启并行 Tick。Aircraft Tick 会创建约束组件、
+	// 切换 LOD 并调用 UObject 接口，必须固定在 GameThread；物理控制仍由 AsyncPhysicsTick 执行。
+	PrimaryComponentTick.bRunOnAnyThread = false;
+	bAllowConcurrentTick = false;
 
 	// BP_ClothPreview 类默认值的等价物）。仅当用户未逐实例指定自定义图时发生 ——
-	// 填充后 OnCreatePhysicsState 的 RegisterSimulationInterface 即生效，
+	// 填充后 PhysicsState 创建完成时的 Dataflow 全局委托即会注册，
 	// 预览组件/PIE/放置 Pawn 全部自动注册进管理器。
 	if (!SimulationAsset.DataflowAsset)
 	{
@@ -1302,8 +1308,6 @@ void UAircraftComponent::OnCreatePhysicsState()
 {
 	Super::OnCreatePhysicsState();
 
-	UE::Dataflow::RegisterSimulationInterface(this);
-
 	ApplyMassPropertiesToBodyInstance();
 	ApplySolverSettingsToBodyInstance();
 
@@ -1326,7 +1330,6 @@ void UAircraftComponent::OnDestroyPhysicsState()
 {
 	// 约束引用当前 Chaos 刚体，必须先销毁；下一次 OnCreatePhysicsState 会按当前 LOD 重建。
 	DestroySimulationConstraint();
-	UE::Dataflow::UnregisterSimulationInterface(this);
 
 	if (AircraftSimulationProxy.IsValid())
 	{
@@ -1338,6 +1341,7 @@ void UAircraftComponent::OnDestroyPhysicsState()
 
 void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
+	check(IsInGameThread());
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	UpdateSimulationLOD();
 	FAircraftVisualization::DrawRuntime(*this);
@@ -1428,11 +1432,31 @@ void UAircraftComponent::BuildSimulationProxy()
 		AircraftSimulationProxy = MakeShared<FAircraftSimulationProxy>(*this);
 		AircraftSimulationProxy->PostConstructor();
 		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
+		UE_LOG(LogAircraft, Display,
+			TEXT("[AircraftDF.Proxy.Build] Owner=%s Component=%s Proxy=%p Graph=%s"),
+			*GetNameSafe(GetOwner()), *GetName(), AircraftSimulationProxy.Get(),
+			*GetNameSafe(SimulationAsset.DataflowAsset));
 	}
 }
 
 void UAircraftComponent::ResetSimulationProxy()
 {
+	check(IsInGameThread());
+
+	// Dataflow context stores raw proxy pointers during graph evaluation. Destruction and physics-state
+	// recreation must not release the proxy while the world's asynchronous graph task is still using it.
+	if (UWorld* const World = GetWorld())
+	{
+		if (UDataflowSimulationManager* const SimulationManager = World->GetSubsystem<UDataflowSimulationManager>())
+		{
+			SimulationManager->CompleteSimulationTasks();
+		}
+	}
+
+	UE_LOG(LogAircraft, Display,
+		TEXT("[AircraftDF.Proxy.Reset] Owner=%s Component=%s Proxy=%p Graph=%s"),
+		*GetNameSafe(GetOwner()), *GetName(), AircraftSimulationProxy.Get(),
+		*GetNameSafe(SimulationAsset.DataflowAsset));
 	AircraftSimulationProxy.Reset();
 }
 

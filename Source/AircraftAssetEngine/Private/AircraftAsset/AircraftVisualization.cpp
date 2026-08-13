@@ -145,13 +145,13 @@ FAircraftVisualizationFlags FAircraftVisualization::GetRuntimeFlags()
 {
 	using namespace UE::AircraftLab::Visualization::Private;
 	FAircraftVisualizationFlags Flags;
-	Flags.bDrawBodyAxes = CVarDrawBodyAxes.GetValueOnGameThread();
-	Flags.bDrawCenterOfMass = CVarDrawCenterOfMass.GetValueOnGameThread();
-	Flags.bDrawBounds = CVarDrawBounds.GetValueOnGameThread();
-	Flags.bDrawVelocity = CVarDrawVelocity.GetValueOnGameThread();
-	Flags.bDrawMotionTarget = CVarDrawMotionTarget.GetValueOnGameThread();
-	Flags.bDrawRotors = CVarDrawRotors.GetValueOnGameThread();
-	Flags.bDrawConstraint = CVarDrawConstraint.GetValueOnGameThread();
+	Flags.bDrawBodyAxes = CVarDrawBodyAxes.GetValueOnAnyThread();
+	Flags.bDrawCenterOfMass = CVarDrawCenterOfMass.GetValueOnAnyThread();
+	Flags.bDrawBounds = CVarDrawBounds.GetValueOnAnyThread();
+	Flags.bDrawVelocity = CVarDrawVelocity.GetValueOnAnyThread();
+	Flags.bDrawMotionTarget = CVarDrawMotionTarget.GetValueOnAnyThread();
+	Flags.bDrawRotors = CVarDrawRotors.GetValueOnAnyThread();
+	Flags.bDrawConstraint = CVarDrawConstraint.GetValueOnAnyThread();
 	return Flags;
 }
 
@@ -174,9 +174,9 @@ void FAircraftVisualization::DrawRuntime(const UAircraftComponent& Component)
 	FAircraftVisualizationContext Context;
 	Context.World = Component.GetWorld();
 	Context.AircraftFilter =
-		UE::AircraftLab::Visualization::Private::CVarAircraftFilter.GetValueOnGameThread();
+		UE::AircraftLab::Visualization::Private::CVarAircraftFilter.GetValueOnAnyThread();
 	const FString RotorFilter =
-		UE::AircraftLab::Visualization::Private::CVarRotorFilter.GetValueOnGameThread();
+		UE::AircraftLab::Visualization::Private::CVarRotorFilter.GetValueOnAnyThread();
 	Context.RotorFilter = RotorFilter.IsEmpty() ? NAME_None : FName(*RotorFilter);
 	Draw(Component, Context, Flags);
 #endif
@@ -222,7 +222,7 @@ void FAircraftVisualization::DrawBodyAxes(
 {
 	UE::AircraftLab::Visualization::Private::DrawAxes(
 		Context, Component.GetComponentLocation(), Component.GetComponentRotation(),
-		FMath::Max(UE::AircraftLab::Visualization::Private::CVarAxisLength.GetValueOnGameThread(), 1.0f));
+		FMath::Max(UE::AircraftLab::Visualization::Private::CVarAxisLength.GetValueOnAnyThread(), 1.0f));
 }
 
 void FAircraftVisualization::DrawCenterOfMass(
@@ -258,7 +258,7 @@ void FAircraftVisualization::DrawVelocity(
 	const FAircraftVisualizationContext& Context)
 {
 	const float Scale = FMath::Max(
-		UE::AircraftLab::Visualization::Private::CVarVectorScale.GetValueOnGameThread(), 0.0f);
+		UE::AircraftLab::Visualization::Private::CVarVectorScale.GetValueOnAnyThread(), 0.0f);
 	const FVector Origin = Component.GetCenterOfMass();
 	UE::AircraftLab::Visualization::Private::DrawArrow(
 		Context, Origin, Component.GetPhysicsLinearVelocity() * Scale, FLinearColor::Green);
@@ -277,7 +277,7 @@ void FAircraftVisualization::DrawMotionTarget(
 		return;
 	}
 	const float Scale = FMath::Max(
-		UE::AircraftLab::Visualization::Private::CVarVectorScale.GetValueOnGameThread(), 0.0f);
+		UE::AircraftLab::Visualization::Private::CVarVectorScale.GetValueOnAnyThread(), 0.0f);
 	const FVector Origin = Component.GetCenterOfMass();
 	UE::AircraftLab::Visualization::Private::DrawPoint(
 		Context, Target.PositionCm, FLinearColor::Yellow, 10.0f);
@@ -291,7 +291,7 @@ void FAircraftVisualization::DrawMotionTarget(
 		FLinearColor(1.0f, 0.5f, 0.0f));
 	UE::AircraftLab::Visualization::Private::DrawAxes(
 		Context, Target.PositionCm, Target.RotationDegrees,
-		FMath::Max(UE::AircraftLab::Visualization::Private::CVarAxisLength.GetValueOnGameThread(), 1.0f));
+		FMath::Max(UE::AircraftLab::Visualization::Private::CVarAxisLength.GetValueOnAnyThread(), 1.0f));
 }
 
 void FAircraftVisualization::DrawRotors(
@@ -340,7 +340,7 @@ void FAircraftVisualization::DrawConstraint(
 	FVector Torque = FVector::ZeroVector;
 	Component.SimulationConstraint->GetConstraintForce(Force, Torque);
 	const float Scale = FMath::Max(
-		UE::AircraftLab::Visualization::Private::CVarVectorScale.GetValueOnGameThread(), 0.0f);
+		UE::AircraftLab::Visualization::Private::CVarVectorScale.GetValueOnAnyThread(), 0.0f);
 	const FVector Origin = Component.GetCenterOfMass();
 	UE::AircraftLab::Visualization::Private::DrawPoint(
 		Context, Component.SimulationConstraintReference.GetLocation(),

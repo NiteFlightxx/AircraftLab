@@ -5,4 +5,5 @@
 
 class FAircraftAssetEngineModule : public IModuleInterface
 {
+	virtual void ShutdownModule() override;
 };

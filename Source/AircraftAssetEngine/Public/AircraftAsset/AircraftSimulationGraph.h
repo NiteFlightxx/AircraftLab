@@ -9,7 +9,7 @@
 //   GetPhysicsSolvers ─┘   SimulationGroups = {"Aircraft"}
 //
 // 语义：该图是 UDataflowSimulationManager 的"注册/调度壳" —— 图存在 ⇒ 组件
-// SimulationAsset.DataflowAsset 非空 ⇒ OnCreatePhysicsState 的显式注册生效，
+// SimulationAsset.DataflowAsset 非空 ⇒ PhysicsState 创建后的 Dataflow 全局委托注册生效，
 // 管理器每帧回调 PreProcessSimulation/WriteToSimulation（GT 输入桥接）。
 // 控制+力注入仍在 AsyncPhysicsTickComponent（Chaos 物理子步）执行，与碰撞同一 pass；
 // 图的 AdvancePhysicsSolvers 调用代理 AdvanceSolverDatas（注释化空实现）。
@@ -27,7 +27,10 @@ namespace UE::AircraftLab::AircraftAsset
 
 	/**
 	 * 获取（或首次创建）插件共享的默认 Simulation 图。
-	 * 瞬态单例（GetTransientPackage / RF_Transient）：纯代码对象，不落地为资产文件。
+	 * 模块生命周期单例（GetTransientPackage / RF_Transient）：纯代码对象，不落地为资产文件。
 	 */
 	AIRCRAFTASSETENGINE_API UDataflow* GetOrCreateAircraftSimulationGraph();
+
+	/** 在 AircraftAssetEngine 模块卸载时释放默认 Simulation 图的 GC Root。 */
+	AIRCRAFTASSETENGINE_API void ReleaseAircraftSimulationGraph();
 }

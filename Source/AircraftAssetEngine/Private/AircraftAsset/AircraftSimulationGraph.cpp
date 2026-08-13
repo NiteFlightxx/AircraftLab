@@ -1,5 +1,6 @@
 #include "AircraftAsset/AircraftSimulationGraph.h"
 
+#include "AircraftAsset/AircraftDebug.h"
 #include "Dataflow/DataflowNodeFactory.h"
 #include "Dataflow/DataflowObject.h"
 #include "Dataflow/DataflowSimulationNodes.h"
@@ -8,12 +9,18 @@ namespace UE::AircraftLab::AircraftAsset
 {
 	const FString AircraftSimulationGroupName = TEXT("Aircraft");
 
+	namespace Private
+	{
+		UDataflow* AircraftSimulationGraph = nullptr;
+	}
+
 	UDataflow* GetOrCreateAircraftSimulationGraph()
 	{
-		static TWeakObjectPtr<UDataflow> CachedGraph;
-		if (CachedGraph.IsValid())
+		check(IsInGameThread());
+
+		if (Private::AircraftSimulationGraph)
 		{
-			return CachedGraph.Get();
+			return Private::AircraftSimulationGraph;
 		}
 
 		UDataflow* const SimulationGraph = NewObject<UDataflow>(
@@ -85,7 +92,28 @@ namespace UE::AircraftLab::AircraftAsset
 		ConnectPins(GetSolversNode, TEXT("PhysicsSolvers"), AdvanceNode, TEXT("PhysicsSolvers"));
 		ConnectPins(AdvanceNode, TEXT("PhysicsSolvers"), TerminalNode, TEXT("SimulationProxies"));
 
-		CachedGraph = SimulationGraph;
+		// UDataflowSimulationManager::SimulationData 不是 UPROPERTY，其 TObjectPtr key 不会为
+		// 程序化图提供 GC 强引用。图又会被异步 Dataflow 任务读取，因此必须
+		// 在模块生命周期内保持 Root，不能用弱指针缓存。
+		SimulationGraph->AddToRoot();
+		Private::AircraftSimulationGraph = SimulationGraph;
+		UE_LOG(LogAircraft, Display,
+			TEXT("[AircraftDF.Graph.Create] Graph=%s Rooted=1"),
+			*GetNameSafe(SimulationGraph));
 		return SimulationGraph;
+	}
+
+	void ReleaseAircraftSimulationGraph()
+	{
+		check(IsInGameThread());
+
+		if (Private::AircraftSimulationGraph)
+		{
+			UE_LOG(LogAircraft, Display,
+				TEXT("[AircraftDF.Graph.Release] Graph=%s Rooted=0"),
+				*GetNameSafe(Private::AircraftSimulationGraph));
+			Private::AircraftSimulationGraph->RemoveFromRoot();
+			Private::AircraftSimulationGraph = nullptr;
+		}
 	}
 }
