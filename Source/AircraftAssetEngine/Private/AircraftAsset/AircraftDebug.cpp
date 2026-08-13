@@ -12,6 +12,18 @@ DEFINE_LOG_CATEGORY(LogAircraft);
 
 namespace UE::AircraftLab::Debug::Private
 {
+	static TAutoConsoleVariable<int32> CVarAllLog(
+		TEXT("p.Aircraft.Debug.Log.All"), 0,
+		TEXT("Enable all rate-limited Aircraft input, drive, flight, rotor, and constraint diagnostics."));
+
+	static TAutoConsoleVariable<int32> CVarInputLog(
+		TEXT("p.Aircraft.Debug.Log.Input"), 0,
+		TEXT("Enable rate-limited Aircraft Enhanced Input and component input-bridge diagnostics."));
+
+	static TAutoConsoleVariable<int32> CVarDriveLog(
+		TEXT("p.Aircraft.Debug.Log.Drive"), 0,
+		TEXT("Enable rate-limited Aircraft LOD, proxy gate, motion-target, and drive-backend diagnostics."));
+
 	static TAutoConsoleVariable<int32> CVarFlightLog(
 		TEXT("p.Aircraft.Debug.Log.Flight"), 0,
 		TEXT("Enable rate-limited Aircraft flight-controller diagnostics."));
@@ -81,14 +93,28 @@ namespace UE::AircraftLab::Debug::Private
 #endif
 }
 
+bool FAircraftDebug::IsInputLogEnabled()
+{
+	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
+		|| UE::AircraftLab::Debug::Private::CVarInputLog.GetValueOnAnyThread() != 0;
+}
+
+bool FAircraftDebug::IsDriveLogEnabled()
+{
+	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
+		|| UE::AircraftLab::Debug::Private::CVarDriveLog.GetValueOnAnyThread() != 0;
+}
+
 bool FAircraftDebug::IsFlightLogEnabled()
 {
-	return UE::AircraftLab::Debug::Private::CVarFlightLog.GetValueOnAnyThread() != 0;
+	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
+		|| UE::AircraftLab::Debug::Private::CVarFlightLog.GetValueOnAnyThread() != 0;
 }
 
 bool FAircraftDebug::IsRotorLogEnabled()
 {
-	return UE::AircraftLab::Debug::Private::CVarRotorLog.GetValueOnAnyThread() != 0;
+	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
+		|| UE::AircraftLab::Debug::Private::CVarRotorLog.GetValueOnAnyThread() != 0;
 }
 
 bool FAircraftDebug::IsSignCheckEnabled()
@@ -98,7 +124,8 @@ bool FAircraftDebug::IsSignCheckEnabled()
 
 bool FAircraftDebug::IsConstraintLogEnabled()
 {
-	return UE::AircraftLab::Debug::Private::CVarConstraintLog.GetValueOnAnyThread() != 0;
+	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
+		|| UE::AircraftLab::Debug::Private::CVarConstraintLog.GetValueOnAnyThread() != 0;
 }
 
 float FAircraftDebug::GetLogIntervalSeconds()
@@ -276,4 +303,15 @@ void FAircraftDebug::TickConstraint(
 		}
 	}
 
+}
+
+const TCHAR* FAircraftDebug::GetArmStateLabel(const EAircraftArmState State)
+{
+	switch (State)
+	{
+	case EAircraftArmState::Disarmed: return TEXT("Disarmed");
+	case EAircraftArmState::Armed: return TEXT("Armed");
+	case EAircraftArmState::EmergencyStop: return TEXT("EmergencyStop");
+	default: return TEXT("Unknown");
+	}
 }

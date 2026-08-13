@@ -383,6 +383,9 @@ private:
 	FTransform SimulationConstraintReference = FTransform::Identity;
 	float ConstraintDebugLogAccumulatorSeconds = 0.0f;
 	float ConstraintDebugUnresponsiveSeconds = 0.0f;
+	float AlternativeDriveDebugLogAccumulatorSeconds = 0.0f;
+	float DriveHeartbeatDebugLogAccumulatorSeconds = 0.0f;
+	double InputDebugLastLogTimeSeconds = -DBL_MAX;
 
 	/** 运动目标显式覆盖（最高优先级）。 */
 	FAircraftMotionTarget MotionTargetOverride;

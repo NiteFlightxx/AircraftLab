@@ -213,4 +213,5 @@ private:
 	FRotator DebugPreviousAttitudeDegrees = FRotator::ZeroRotator;
 	bool bHasPreviousDebugSample = false;
 	bool bDebugConfigurationPending = true;
+	float DriveGateDebugLogAccumulatorSeconds = 0.0f;
 };

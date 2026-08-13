@@ -191,6 +191,19 @@ void UAircraftComponent::ApplySolverSettingsToBodyInstance()
 void UAircraftComponent::SetPilotInput(const FAircraftPilotInput& InPilotInput)
 {
 	PilotInput = InPilotInput;
+	const double NowSeconds = FPlatformTime::Seconds();
+	if (FAircraftDebug::IsInputLogEnabled()
+		&& (FAircraftDebug::GetLogIntervalSeconds() <= UE_SMALL_NUMBER
+			|| NowSeconds - InputDebugLastLogTimeSeconds >= FAircraftDebug::GetLogIntervalSeconds()))
+	{
+		InputDebugLastLogTimeSeconds = NowSeconds;
+		UE_LOG(LogAircraft, Log,
+			TEXT("[Aircraft.Input.Receive] Owner=%s Component=%s Axes(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) Proxy=%d Arm=%s Controller=%d LOD=%d Drive=%s"),
+			*GetNameSafe(GetOwner()), *GetName(), InPilotInput.Throttle, InPilotInput.Roll,
+			InPilotInput.Pitch, InPilotInput.Yaw, AircraftSimulationProxy.IsValid() ? 1 : 0,
+			FAircraftDebug::GetArmStateLabel(GetArmState()), IsControllerEnabled() ? 1 : 0,
+			CurrentSimulationLOD, FAircraftDebug::GetDriveModeLabel(SimulationDriveMode));
+	}
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->SetPilotInput_GameThread(InPilotInput);
@@ -449,6 +462,15 @@ void UAircraftComponent::ApplySimulationLOD(
 	}
 	CurrentSimulationLOD = LodIndex;
 	ApplySimulationDriveMode(DriveMode, bEnablePhysics);
+	if (FAircraftDebug::IsDriveLogEnabled())
+	{
+		UE_LOG(LogAircraft, Display,
+			TEXT("[Aircraft.Drive.LOD] Owner=%s PreviousLOD=%d LOD=%d Drive=%s PhysicsEnabled=%d Simulating=%d Proxy=%d"),
+			*GetNameSafe(GetOwner()), PreviousLOD, CurrentSimulationLOD,
+			FAircraftDebug::GetDriveModeLabel(SimulationDriveMode),
+			bSimulationPhysicsEnabled ? 1 : 0, IsSimulatingPhysics() ? 1 : 0,
+			AircraftSimulationProxy.IsValid() ? 1 : 0);
+	}
 
 	if (bLODChanged)
 	{
@@ -699,7 +721,8 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	}
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
-	const FVector PredictedLocation = GetComponentLocation()
+	const FVector CurrentLocation = GetComponentLocation();
+	const FVector PredictedLocation = CurrentLocation
 		+ Target.VelocityCmPerSec * DeltaSeconds;
 
 	const float CorrectionAlpha = 1.0f - FMath::Exp(
@@ -716,6 +739,22 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	SetWorldLocationAndRotation(NewLocation, NewRotation,
 		Config.bKinematicSweepMovement, &Hit, ETeleportType::None);
 	PreviousAlternativeVelocityCmPerSec = Target.VelocityCmPerSec;
+	if (FAircraftDebug::IsDriveLogEnabled())
+	{
+		AlternativeDriveDebugLogAccumulatorSeconds += DeltaSeconds;
+		const float IntervalSeconds = FAircraftDebug::GetLogIntervalSeconds();
+		if (IntervalSeconds <= UE_SMALL_NUMBER || AlternativeDriveDebugLogAccumulatorSeconds >= IntervalSeconds)
+		{
+			AlternativeDriveDebugLogAccumulatorSeconds = 0.0f;
+			UE_LOG(LogAircraft, Log,
+				TEXT("[Aircraft.Drive.Kinematic] Owner=%s Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) Current=(%.1f,%.1f,%.1f) Target=(%.1f,%.1f,%.1f) TargetVel=(%+.1f,%+.1f,%+.1f) New=(%.1f,%.1f,%.1f) Hit=%d"),
+				*GetNameSafe(GetOwner()), PilotInput.Throttle, PilotInput.Roll, PilotInput.Pitch, PilotInput.Yaw,
+				CurrentLocation.X, CurrentLocation.Y, CurrentLocation.Z,
+				Target.PositionCm.X, Target.PositionCm.Y, Target.PositionCm.Z,
+				Target.VelocityCmPerSec.X, Target.VelocityCmPerSec.Y, Target.VelocityCmPerSec.Z,
+				NewLocation.X, NewLocation.Y, NewLocation.Z, Hit.bBlockingHit ? 1 : 0);
+		}
+	}
 	UpdateAlternativeDriveEstimatedState(DeltaSeconds);
 }
 
@@ -1282,9 +1321,8 @@ void UAircraftComponent::OnRegister()
 	PrimaryComponentTick.bRunOnAnyThread = false;
 	bAllowConcurrentTick = false;
 
-	// BP_ClothPreview 类默认值的等价物）。仅当用户未逐实例指定自定义图时发生 ——
-	// 填充后 PhysicsState 创建完成时的 Dataflow 全局委托即会注册，
-	// 预览组件/PIE/放置 Pawn 全部自动注册进管理器。
+	// PhysicsState 在 OnRegister 返回后创建；在此提供默认图，使 Dataflow 全局委托
+	// 能在随后的 PhysicsState 创建通知中构建并注册 Proxy。
 	if (!SimulationAsset.DataflowAsset)
 	{
 		SimulationAsset.DataflowAsset = UE::AircraftLab::AircraftAsset::GetOrCreateAircraftSimulationGraph();
@@ -1294,6 +1332,18 @@ void UAircraftComponent::OnRegister()
 	CurrentSimulationLOD = INDEX_NONE;
 	RefreshMotionTargetSources();
 	UpdateSimulationLOD();
+	// 与 ChaosClothComponent 一致：组件注册时立即建立 Dataflow Proxy。
+	// PhysicsState 的全局通知稍后仍可到达，管理器的 TSet 注册是幂等的。
+	UE::Dataflow::RegisterSimulationInterface(this);
+	if (FAircraftDebug::IsDriveLogEnabled())
+	{
+		UE_LOG(LogAircraft, Display,
+			TEXT("[Aircraft.Drive.Register] Owner=%s Component=%s Graph=%s Proxy=%d PhysicsState=%d LOD=%d Drive=%s Arm=%s Controller=%d"),
+			*GetNameSafe(GetOwner()), *GetName(), *GetNameSafe(SimulationAsset.DataflowAsset),
+			AircraftSimulationProxy.IsValid() ? 1 : 0, HasValidPhysicsState() ? 1 : 0,
+			CurrentSimulationLOD, FAircraftDebug::GetDriveModeLabel(SimulationDriveMode),
+			FAircraftDebug::GetArmStateLabel(GetArmState()), IsControllerEnabled() ? 1 : 0);
+	}
 }
 
 void UAircraftComponent::OnUnregister()
@@ -1301,6 +1351,7 @@ void UAircraftComponent::OnUnregister()
 	DestroySimulationConstraint();
 	MotionTargetSources.Reset();
 	AutopilotProviderObject = nullptr;
+	UE::Dataflow::UnregisterSimulationInterface(this);
 	Super::OnUnregister();
 }
 
@@ -1345,6 +1396,33 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	UpdateSimulationLOD();
 	FAircraftVisualization::DrawRuntime(*this);
+	if (FAircraftDebug::IsDriveLogEnabled())
+	{
+		DriveHeartbeatDebugLogAccumulatorSeconds += DeltaTime;
+		const float IntervalSeconds = FAircraftDebug::GetLogIntervalSeconds();
+		if (IntervalSeconds <= UE_SMALL_NUMBER || DriveHeartbeatDebugLogAccumulatorSeconds >= IntervalSeconds)
+		{
+			DriveHeartbeatDebugLogAccumulatorSeconds = 0.0f;
+			const FBodyInstance* const Body = ResolveChassisBodyInstance();
+			const bool bConstraintValid = IsValid(SimulationConstraint)
+				&& SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
+				&& !SimulationConstraint->IsBroken();
+			UE_LOG(LogAircraft, Log,
+				TEXT("[Aircraft.Drive.Heartbeat] Owner=%s Component=%s LOD=%d Drive=%s Enabled=%d Suspended=%d PhysicsWanted=%d Simulating=%d PhysicsState=%d Proxy=%d Body=%d BodySimulating=%d Arm=%s Controller=%d Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) PilotTarget=%d TargetValid=%d TargetPos=(%.1f,%.1f,%.1f) TargetVel=(%+.1f,%+.1f,%+.1f) Constraint=%d"),
+				*GetNameSafe(GetOwner()), *GetName(), CurrentSimulationLOD,
+				FAircraftDebug::GetDriveModeLabel(SimulationDriveMode),
+				bEnableSimulation ? 1 : 0, bSuspendSimulation ? 1 : 0,
+				bSimulationPhysicsEnabled ? 1 : 0, IsSimulatingPhysics() ? 1 : 0,
+				HasValidPhysicsState() ? 1 : 0, AircraftSimulationProxy.IsValid() ? 1 : 0,
+				Body ? 1 : 0, Body && Body->IsInstanceSimulatingPhysics() ? 1 : 0,
+				FAircraftDebug::GetArmStateLabel(GetArmState()), IsControllerEnabled() ? 1 : 0,
+				PilotInput.Throttle, PilotInput.Roll, PilotInput.Pitch, PilotInput.Yaw,
+				bPilotMotionTargetInitialized ? 1 : 0, PilotMotionTarget.bValid ? 1 : 0,
+				PilotMotionTarget.PositionCm.X, PilotMotionTarget.PositionCm.Y, PilotMotionTarget.PositionCm.Z,
+				PilotMotionTarget.VelocityCmPerSec.X, PilotMotionTarget.VelocityCmPerSec.Y,
+				PilotMotionTarget.VelocityCmPerSec.Z, bConstraintValid ? 1 : 0);
+		}
+	}
 
 	// TG_PrePhysics：从 Autopilot 提供者拉取本周期的注入设定值（无锁交接依赖
 	if (AircraftSimulationProxy.IsValid() && bUseAutopilotSetpoint)

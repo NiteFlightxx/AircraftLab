@@ -93,6 +93,7 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	bFailureActionPending.store(false, std::memory_order_relaxed);
 	bPendingControllerReset.store(false, std::memory_order_relaxed);
 	DebugLogAccumulatorSeconds = 0.0f;
+	DriveGateDebugLogAccumulatorSeconds = 0.0f;
 	bHasPreviousDebugSample = false;
 	bDebugConfigurationPending = true;
 
@@ -661,10 +662,39 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_FlightControl);
 	SCOPE_CYCLE_COUNTER(STAT_AircraftFlightControl);
 	ApplyPendingConfiguration_PhysicsThread();
+	auto LogDriveGate = [this, DeltaTime, SimTime](const TCHAR* const Result)
+	{
+		if (!FAircraftDebug::IsDriveLogEnabled())
+		{
+			return;
+		}
+		DriveGateDebugLogAccumulatorSeconds += DeltaTime;
+		const float IntervalSeconds = FAircraftDebug::GetLogIntervalSeconds();
+		if (IntervalSeconds > UE_SMALL_NUMBER
+			&& DriveGateDebugLogAccumulatorSeconds + UE_SMALL_NUMBER < IntervalSeconds)
+		{
+			return;
+		}
+		DriveGateDebugLogAccumulatorSeconds = 0.0f;
+		const FBodyInstance* const Body = AircraftBodyInstance.load(std::memory_order_acquire);
+		UE_LOG(LogAircraft, Log,
+			TEXT("[Aircraft.Drive.Physics] t=%.3f Owner=%s LOD=%d Drive=%s Result=%s Enabled=%d Suspended=%d Model=%d Rotors=%d Body=%d BodySimulating=%d Arm=%s Controller=%d"),
+			SimTime, *AircraftOwnerName, ActiveLodIndex,
+			FAircraftDebug::GetDriveModeLabel(ActiveDriveMode), Result,
+			bSimulationEnabled.load(std::memory_order_relaxed) ? 1 : 0,
+			bSimulationSuspended.load(std::memory_order_relaxed) ? 1 : 0,
+			ActiveLodModel ? 1 : 0, ActiveLodModel ? ActiveLodModel->Rotors.Num() : 0,
+			Body ? 1 : 0, Body && Body->IsInstanceSimulatingPhysics() ? 1 : 0,
+			FAircraftDebug::GetArmStateLabel(static_cast<EAircraftArmState>(
+				CurrentArmState.load(std::memory_order_relaxed))),
+			bControllerEnabled.load(std::memory_order_relaxed) ? 1 : 0);
+	};
 
 	if (!bSimulationEnabled.load(std::memory_order_relaxed)
 		|| bSimulationSuspended.load(std::memory_order_relaxed))
 	{
+		LogDriveGate(bSimulationSuspended.load(std::memory_order_relaxed)
+			? TEXT("SimulationSuspended") : TEXT("SimulationDisabled"));
 		return;
 	}
 
@@ -685,10 +715,12 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	if (!ActiveLodModel
 		|| ActiveDriveMode != EAircraftSimulationDriveMode::FlightController)
 	{
+		LogDriveGate(!ActiveLodModel ? TEXT("NoLodModel") : TEXT("DelegatedToGameThreadBackend"));
 		return;
 	}
 	if (ActiveLodModel->Rotors.IsEmpty())
 	{
+		LogDriveGate(TEXT("NoRotors"));
 		return;
 	}
 	if (RotorStates.Num() != ActiveLodModel->Rotors.Num())
@@ -699,6 +731,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	FBodyInstance* Body = AircraftBodyInstance.load(std::memory_order_acquire);
 	if (!Body || !Body->IsInstanceSimulatingPhysics())
 	{
+		LogDriveGate(!Body ? TEXT("NoBodyInstance") : TEXT("BodyNotSimulating"));
 		return;
 	}
 
@@ -822,11 +855,13 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	const FPhysicsActorHandle ActorHandle = Body->GetPhysicsActorHandle();
 	if (!ActorHandle)
 	{
+		LogDriveGate(TEXT("NoPhysicsActorHandle"));
 		return;
 	}
 	Chaos::FRigidBodyHandle_Internal* const Handle = ActorHandle->GetPhysicsThreadAPI();
 	if (!Handle)
 	{
+		LogDriveGate(TEXT("NoPhysicsThreadHandle"));
 		return;
 	}
 	WorldXform = FTransform(Handle->R(), Handle->X());
@@ -881,6 +916,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	 * ---------------------------------------------------------------------- */
 	if (!bMotorsOn)
 	{
+		LogDriveGate(ArmState != EAircraftArmState::Armed
+			? TEXT("MotorsOffNotArmed") : TEXT("MotorsOffControllerDisabled"));
 		ControlSolver.Reset();
 		Runtime.HoldTargets.ResetHoldFlags();
 
@@ -1076,6 +1113,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		DeltaTime, Pilot, ManualCommand, CollectiveCommand,
 		DesiredVerticalVelocityCmPerSec, DesiredAttitude,
 		DesiredBodyRatesDegPerSec, AxisCommands);
+	LogDriveGate(TEXT("ForcesApplied"));
 
 	/* ----------------------------------------------------------------------
 	 * 11) 估计状态与诊断写回 GT

@@ -12,12 +12,14 @@ struct FAircraftFlightControllerRuntimeConfig;
 struct FAircraftManualCommand;
 struct FAircraftPilotInput;
 
-DECLARE_LOG_CATEGORY_EXTERN(LogAircraft, Log, All);
+AIRCRAFTASSETENGINE_API DECLARE_LOG_CATEGORY_EXTERN(LogAircraft, Log, All);
 DECLARE_STATS_GROUP(TEXT("Aircraft"), STATGROUP_Aircraft, STATCAT_Advanced);
 
 /** Runtime diagnostics shared by every Aircraft simulation backend. */
-struct FAircraftDebug
+struct AIRCRAFTASSETENGINE_API FAircraftDebug
 {
+	static bool IsInputLogEnabled();
+	static bool IsDriveLogEnabled();
 	static bool IsFlightLogEnabled();
 	static bool IsRotorLogEnabled();
 	static bool IsSignCheckEnabled();
@@ -26,6 +28,7 @@ struct FAircraftDebug
 
 	static const TCHAR* GetDriveModeLabel(EAircraftSimulationDriveMode Mode);
 	static const TCHAR* GetFlightModeLabel(EAircraftFlightMode Mode);
+	static const TCHAR* GetArmStateLabel(EAircraftArmState State);
 	static int32 GetSignBucket(float Value, float Deadband);
 	static const TCHAR* GetSignLabel(int32 Sign);
 
@@ -55,5 +58,4 @@ struct FAircraftDebug
 		float DeltaSeconds,
 		float& InOutLogAccumulatorSeconds,
 		float& InOutUnresponsiveSeconds);
-
 };

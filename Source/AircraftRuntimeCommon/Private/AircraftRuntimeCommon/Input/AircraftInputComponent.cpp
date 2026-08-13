@@ -8,6 +8,7 @@
 #include "InputMappingContext.h"
 
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
+#include "AircraftAsset/AircraftDebug.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftInputComponent)
 
@@ -20,6 +21,14 @@ void UAircraftInputComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	ResolveFlightController();
+	if (FAircraftDebug::IsInputLogEnabled())
+	{
+		UE_LOG(LogAircraft, Display,
+			TEXT("[Aircraft.Input.BeginPlay] Owner=%s Controller=%s Mapping=%s Move=%s Throttle=%s Turn=%s"),
+			*GetNameSafe(GetOwner()), *GetNameSafe(FlightControllerComponent.Get()),
+			*GetNameSafe(InputMapping), *GetNameSafe(IA_Move),
+			*GetNameSafe(IA_Throttle), *GetNameSafe(IA_Turn));
+	}
 }
 
 void UAircraftInputComponent::ResolveFlightController() const
@@ -37,6 +46,12 @@ void UAircraftInputComponent::ResolveFlightController() const
 			if (Component && Component->Implements<UAircraftFlightControllerInterface>())
 			{
 				FlightControllerComponent = Component;
+				if (FAircraftDebug::IsInputLogEnabled())
+				{
+					UE_LOG(LogAircraft, Display,
+						TEXT("[Aircraft.Input.Resolve] Owner=%s Controller=%s Result=Found"),
+						*GetNameSafe(OwnerActor), *GetNameSafe(Component));
+				}
 				break;
 			}
 		}
@@ -47,6 +62,12 @@ void UAircraftInputComponent::ApplyMappingContext() const
 {
 	if (!InputMapping)
 	{
+		if (FAircraftDebug::IsInputLogEnabled())
+		{
+			UE_LOG(LogAircraft, Warning,
+				TEXT("[Aircraft.Input.Mapping] Owner=%s Result=MissingInputMapping"),
+				*GetNameSafe(GetOwner()));
+		}
 		return;
 	}
 	const AActor* const OwnerActor = GetOwner();
@@ -58,7 +79,19 @@ void UAircraftInputComponent::ApplyMappingContext() const
 			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
 		{
 			Subsystem->AddMappingContext(InputMapping, 0);
+			if (FAircraftDebug::IsInputLogEnabled())
+			{
+				UE_LOG(LogAircraft, Display,
+					TEXT("[Aircraft.Input.Mapping] Owner=%s Mapping=%s Result=Applied"),
+					*GetNameSafe(GetOwner()), *GetNameSafe(InputMapping));
+			}
 		}
+	}
+	else if (FAircraftDebug::IsInputLogEnabled())
+	{
+		UE_LOG(LogAircraft, Warning,
+			TEXT("[Aircraft.Input.Mapping] Owner=%s Result=NoLocalPlayer"),
+			*GetNameSafe(GetOwner()));
 	}
 }
 
@@ -67,6 +100,12 @@ void UAircraftInputComponent::BindInput(UInputComponent* PlayerInputComponent)
 	UEnhancedInputComponent* const EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent);
 	if (!EnhancedInput)
 	{
+		if (FAircraftDebug::IsInputLogEnabled())
+		{
+			UE_LOG(LogAircraft, Warning,
+				TEXT("[Aircraft.Input.Bind] Owner=%s InputComponent=%s Result=NotEnhancedInput"),
+				*GetNameSafe(GetOwner()), *GetNameSafe(PlayerInputComponent));
+		}
 		return;
 	}
 
@@ -88,11 +127,22 @@ void UAircraftInputComponent::BindInput(UInputComponent* PlayerInputComponent)
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Completed, this, &UAircraftInputComponent::ResetTurn);
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Canceled, this, &UAircraftInputComponent::ResetTurn);
 	}
+	if (FAircraftDebug::IsInputLogEnabled())
+	{
+		UE_LOG(LogAircraft, Display,
+			TEXT("[Aircraft.Input.Bind] Owner=%s InputComponent=%s Move=%d Throttle=%d Turn=%d Result=Bound"),
+			*GetNameSafe(GetOwner()), *GetNameSafe(PlayerInputComponent),
+			IA_Move ? 1 : 0, IA_Throttle ? 1 : 0, IA_Turn ? 1 : 0);
+	}
 }
 
 void UAircraftInputComponent::PushPilotInput() const
 {
 	ResolveFlightController();
+	const double NowSeconds = FPlatformTime::Seconds();
+	const bool bShouldLog = FAircraftDebug::IsInputLogEnabled()
+		&& (FAircraftDebug::GetLogIntervalSeconds() <= UE_SMALL_NUMBER
+			|| NowSeconds - InputDebugLastLogTimeSeconds >= FAircraftDebug::GetLogIntervalSeconds());
 	if (IAircraftFlightControllerInterface* const FC =
 		Cast<IAircraftFlightControllerInterface>(FlightControllerComponent.Get()))
 	{
@@ -102,6 +152,22 @@ void UAircraftInputComponent::PushPilotInput() const
 			static_cast<float>(PilotInputAxes.Y),
 			static_cast<float>(PilotInputAxes.Z),
 			static_cast<float>(PilotInputAxes.W));
+		if (bShouldLog)
+		{
+			InputDebugLastLogTimeSeconds = NowSeconds;
+			UE_LOG(LogAircraft, Log,
+				TEXT("[Aircraft.Input.Push] Owner=%s Controller=%s Axes(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) Result=Delivered"),
+				*GetNameSafe(GetOwner()), *GetNameSafe(FlightControllerComponent.Get()),
+				PilotInputAxes.X, PilotInputAxes.Y, PilotInputAxes.Z, PilotInputAxes.W);
+		}
+	}
+	else if (bShouldLog)
+	{
+		InputDebugLastLogTimeSeconds = NowSeconds;
+		UE_LOG(LogAircraft, Warning,
+			TEXT("[Aircraft.Input.Push] Owner=%s Axes(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) Result=NoFlightController"),
+			*GetNameSafe(GetOwner()), PilotInputAxes.X, PilotInputAxes.Y,
+			PilotInputAxes.Z, PilotInputAxes.W);
 	}
 }
 
