@@ -109,7 +109,7 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 		return;
 	}
 
-	const FDroneMassProperties& Mass = Model->Mass;
+	const FAircraftMassProperties& Mass = Model->Mass;
 	if (!Body->IsValidBodyInstance()
 		|| Mass.MassKg <= KINDA_SMALL_NUMBER
 		|| Mass.InertiaTensorScale.GetMin() <= KINDA_SMALL_NUMBER)
@@ -186,7 +186,7 @@ void UAircraftComponent::ApplySolverSettingsToBodyInstance()
 
 /* ============================ Pilot / mode ============================ */
 
-void UAircraftComponent::SetPilotInput(const FDronePilotInput& InPilotInput)
+void UAircraftComponent::SetPilotInput(const FAircraftPilotInput& InPilotInput)
 {
 	PilotInput = InPilotInput;
 	if (AircraftSimulationProxy.IsValid())
@@ -195,7 +195,7 @@ void UAircraftComponent::SetPilotInput(const FDronePilotInput& InPilotInput)
 	}
 }
 
-void UAircraftComponent::SetControlTargets(const FDroneControlTargets& InTargets)
+void UAircraftComponent::SetControlTargets(const FAircraftControlTargets& InTargets)
 {
 	ControlTargets = InTargets;
 	if (AircraftSimulationProxy.IsValid())
@@ -265,7 +265,7 @@ bool UAircraftComponent::IsControllerEnabled() const
 		: false;
 }
 
-void UAircraftComponent::GetEstimatedState(FDroneEstimatedState& OutState) const
+void UAircraftComponent::GetEstimatedState(FAircraftEstimatedState& OutState) const
 {
 	if (AircraftSimulationProxy.IsValid())
 	{
@@ -273,7 +273,7 @@ void UAircraftComponent::GetEstimatedState(FDroneEstimatedState& OutState) const
 	}
 	else
 	{
-		OutState = FDroneEstimatedState();
+		OutState = FAircraftEstimatedState();
 	}
 }
 
@@ -515,7 +515,7 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 		if (!IsSimulatingPhysics() && PreviousDriveMode == EAircraftSimulationDriveMode::Kinematic)
 		{
 			// 离开运动学驱动：保存当前估计速度以便物理恢复时连续。
-			FDroneEstimatedState Estimated;
+			FAircraftEstimatedState Estimated;
 			GetEstimatedState(Estimated);
 			SavedSimulationLinearVelocityCmPerSec = Estimated.State.VelocityCmPerSec;
 			FAircraftMotionTarget Target;
@@ -717,7 +717,7 @@ void UAircraftComponent::UpdateAlternativeDriveEstimatedState(float DeltaSeconds
 	}
 
 	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-	FDroneEstimatedState Estimated;
+	FAircraftEstimatedState Estimated;
 	AircraftSimulationProxy->GetEstimatedState_GameThread(Estimated);
 
 	const FVector Velocity = IsSimulatingPhysics()
@@ -879,7 +879,7 @@ void UAircraftComponent::ResetPilotMotionTarget()
 
 bool UAircraftComponent::GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const
 {
-	FDroneEstimatedState Estimated;
+	FAircraftEstimatedState Estimated;
 	GetEstimatedState(Estimated);
 	OutState.PositionCm = Estimated.State.PositionCm;
 	OutState.VelocityCmPerSec = Estimated.State.VelocityCmPerSec;
@@ -952,7 +952,7 @@ void UAircraftComponent::GetAircraftAutopilotPhysicalState(
 	OutHoverCollectiveCommand = Model
 		? Model->FlightController.HoverCollectiveCommand : 0.5f;
 
-	FDroneEstimatedState Estimated;
+	FAircraftEstimatedState Estimated;
 	GetEstimatedState(Estimated);
 	OutVerticalAccelerationMpsSq = Estimated.State.AccelerationWorldCmPerSecSq.Z * 0.01f;
 	OutCollectiveThrustCommand = AircraftSimulationProxy.IsValid()
@@ -980,7 +980,7 @@ bool UAircraftComponent::GetAircraftAutopilotRuntimeConfig(FAircraftAutopilotRun
 
 void UAircraftComponent::SetAircraftPilotInputAxes(float Throttle, float Roll, float Pitch, float Yaw)
 {
-	FDronePilotInput Input;
+	FAircraftPilotInput Input;
 	Input.Throttle = FMath::Clamp(Throttle, -1.0f, 1.0f);
 	Input.Roll = FMath::Clamp(Roll, -1.0f, 1.0f);
 	Input.Pitch = FMath::Clamp(Pitch, -1.0f, 1.0f);

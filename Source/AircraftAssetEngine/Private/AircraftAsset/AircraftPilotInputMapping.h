@@ -26,7 +26,7 @@ namespace UE::AircraftLab::PilotInputMapping
 	}
 
 	inline FAircraftManualCommand BuildManualCommand(
-		const FDronePilotInput& Pilot,
+		const FAircraftPilotInput& Pilot,
 		const FQuat& BodyWorldRotation,
 		const FAircraftFlightControllerRuntimeConfig& Config)
 	{

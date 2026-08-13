@@ -75,21 +75,41 @@ enum class EAircraftAttitudeMode : uint8
 	Angle UMETA(DisplayName = "Angle")
 };
 
-/** 无人机运动学状态（位置、速度、姿态、角速度）。求解器内部纯 C++ 类型。 */
-struct FAircraftKinematicState
+/** Aircraft 运动学状态（位置、速度、姿态、角速度）。求解器、运行时与 Blueprint 共用。 */
+USTRUCT(BlueprintType)
+struct AIRCRAFT_API FAircraftKinematicState
 {
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Nav")
 	float TimeSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Nav")
 	FVector PositionCm = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Nav")
 	FVector VelocityCmPerSec = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Nav")
 	FVector AccelerationWorldCmPerSecSq = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Nav")
 	FRotator AttitudeDegrees = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Nav")
 	FVector AngularVelocityBodyDegreesPerSec = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Nav")
 	FVector AngularAccelerationBodyDegreesPerSecSq = FVector::ZeroVector;
 };
 
 /** 估计状态（当前直接读自 Chaos 刚体真值）。 */
-struct FAircraftEstimatedState
+USTRUCT(BlueprintType)
+struct AIRCRAFT_API FAircraftEstimatedState
 {
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Estimator")
 	FAircraftKinematicState State;
 };
 

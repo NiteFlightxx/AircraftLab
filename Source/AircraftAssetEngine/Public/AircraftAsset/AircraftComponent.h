@@ -66,10 +66,10 @@ public:
 	/* ------- 飞行员输入 / 飞行模式 / 解锁 ------- */
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Input")
-	void SetPilotInput(const FDronePilotInput& InPilotInput);
+	void SetPilotInput(const FAircraftPilotInput& InPilotInput);
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Input")
-	void SetControlTargets(const FDroneControlTargets& InTargets);
+	void SetControlTargets(const FAircraftControlTargets& InTargets);
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Mode")
 	void SetFlightMode(EAircraftFlightMode InMode);
@@ -98,7 +98,7 @@ public:
 	/* ------- 估计状态读取（直接从 Chaos 刚体合成） ------- */
 
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Estimator")
-	void GetEstimatedState(FDroneEstimatedState& OutState) const;
+	void GetEstimatedState(FAircraftEstimatedState& OutState) const;
 
 	/* ------- 仿真启停 ------- */
 
@@ -356,8 +356,8 @@ private:
 
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;
 	/** 所有驱动后端共享的最新飞行员输入。 */
-	FDronePilotInput PilotInput;
-	FDroneControlTargets ControlTargets;
+	FAircraftPilotInput PilotInput;
+	FAircraftControlTargets ControlTargets;
 
 	/* ------- Autopilot / 替代驱动后端状态 ------- */
 

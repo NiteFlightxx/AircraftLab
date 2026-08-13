@@ -178,7 +178,7 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 
 void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 	const float DeltaTime,
-	const FDronePilotInput& Pilot,
+	const FAircraftPilotInput& Pilot,
 	const FAircraftManualCommand& ManualCommand,
 	const float CollectiveCommand,
 	const float DesiredVerticalVelocityCmPerSec,
@@ -444,7 +444,7 @@ void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
 	{
 		const FVector ComOffsetCm = ActiveLodModel->Mass.CenterOfMassOffsetCm;
 		Infos.Reserve(ActiveLodModel->Rotors.Num());
-		for (const FDroneRotorDefinition& Rotor : ActiveLodModel->Rotors)
+		for (const FAircraftRotorDefinition& Rotor : ActiveLodModel->Rotors)
 		{
 			FAircraftRotorAllocationInfo Info;
 			Info.RotorName = Rotor.RotorName;
@@ -539,13 +539,13 @@ void FAircraftSimulationProxy::UpdateModeCapabilities(EAircraftFlightMode Mode)
  * GameThread API
  * ------------------------------------------------------------------------- */
 
-void FAircraftSimulationProxy::SetPilotInput_GameThread(const FDronePilotInput& InPilotInput)
+void FAircraftSimulationProxy::SetPilotInput_GameThread(const FAircraftPilotInput& InPilotInput)
 {
 	FScopeLock Lock(&InputCriticalSection);
 	PendingPilotInput = InPilotInput;
 }
 
-void FAircraftSimulationProxy::SetTargets_GameThread(const FDroneControlTargets& InTargets)
+void FAircraftSimulationProxy::SetTargets_GameThread(const FAircraftControlTargets& InTargets)
 {
 	FScopeLock Lock(&InputCriticalSection);
 	PendingTargets = InTargets;
@@ -656,13 +656,13 @@ void FAircraftSimulationProxy::RecoverAllRotors_GameThread()
 	bRecoverAllRotors = true;
 }
 
-void FAircraftSimulationProxy::GetEstimatedState_GameThread(FDroneEstimatedState& OutState) const
+void FAircraftSimulationProxy::GetEstimatedState_GameThread(FAircraftEstimatedState& OutState) const
 {
 	FScopeLock Lock(&OutputCriticalSection);
 	OutState = LatestEstimated;
 }
 
-void FAircraftSimulationProxy::SetEstimatedStateOverride_GameThread(const FDroneEstimatedState& InState)
+void FAircraftSimulationProxy::SetEstimatedStateOverride_GameThread(const FAircraftEstimatedState& InState)
 {
 	FScopeLock Lock(&OutputCriticalSection);
 	LatestEstimated = InState;
@@ -763,8 +763,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	/* ----------------------------------------------------------------------
 	 * 1) 取走 GT 输入快照（双缓冲）
 	 * ---------------------------------------------------------------------- */
-	FDronePilotInput Pilot;
-	FDroneControlTargets Targets;
+	FAircraftPilotInput Pilot;
+	FAircraftControlTargets Targets;
 	FAutopilotInjection AutopilotInjection;
 	TArray<FPendingRotorHealthOp> RotorHealthOps;
 	bool bArmRequested = false;
@@ -945,7 +945,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 			RotorStates[i].SetNormalizedCommand(0.0f);
 			if (ControlAllocator.RotorInfoBuffer.IsValidIndex(i))
 			{
-				const FDroneRotorDefinition& Rotor = ActiveLodModel->Rotors[i];
+				const FAircraftRotorDefinition& Rotor = ActiveLodModel->Rotors[i];
 				RotorStates[i].Update(DeltaTime, ControlAllocator.RotorInfoBuffer[i],
 					Rotor.CommandScale, Rotor.IsEnabled());
 			}
@@ -1088,7 +1088,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	Runtime.ControlOutput.RotorCommands.SetNum(RotorStates.Num());
 	for (int32 i = 0; i < RotorStates.Num(); ++i)
 	{
-		const FDroneRotorDefinition& Rotor = ActiveLodModel->Rotors[i];
+		const FAircraftRotorDefinition& Rotor = ActiveLodModel->Rotors[i];
 		const FAircraftRotorAllocationInfo& Info = ControlAllocator.RotorInfoBuffer[i];
 		FAircraftRotorRuntimeState& State = RotorStates[i];
 

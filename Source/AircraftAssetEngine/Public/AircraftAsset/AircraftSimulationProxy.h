@@ -57,8 +57,8 @@ public:
 	virtual void PostConstructor();
 
 	//~ Begin GameThread API
-	void SetPilotInput_GameThread(const FDronePilotInput& InPilotInput);
-	void SetTargets_GameThread(const FDroneControlTargets& InTargets);
+	void SetPilotInput_GameThread(const FAircraftPilotInput& InPilotInput);
+	void SetTargets_GameThread(const FAircraftControlTargets& InTargets);
 	void SetFlightMode_GameThread(EAircraftFlightMode InMode);
 	void SetArmRequest_GameThread(bool bArm);
 	void SetEmergencyStop_GameThread(bool bStop);
@@ -77,9 +77,9 @@ public:
 	void SetRotorEffectiveness_GameThread(FName RotorName, float Effectiveness);
 	void RecoverAllRotors_GameThread();
 
-	void GetEstimatedState_GameThread(FDroneEstimatedState& OutState) const;
+	void GetEstimatedState_GameThread(FAircraftEstimatedState& OutState) const;
 	/** 替代驱动后端（约束/运动学，GT 执行）写回估计状态，覆盖 PT 输出槽。 */
-	void SetEstimatedStateOverride_GameThread(const FDroneEstimatedState& InState);
+	void SetEstimatedStateOverride_GameThread(const FAircraftEstimatedState& InState);
 	EAircraftArmState GetArmState_GameThread() const;
 	EAircraftFlightMode GetFlightMode_GameThread() const;
 	float GetCollectiveThrustCommand_GameThread() const;
@@ -128,7 +128,7 @@ private:
 	/** 按控制台开关限频输出权威飞控同口径的运行诊断。 */
 	void MaybeEmitDebugLog_PhysicsThread(
 		float DeltaTime,
-		const FDronePilotInput& Pilot,
+		const FAircraftPilotInput& Pilot,
 		const FAircraftManualCommand& ManualCommand,
 		float CollectiveCommand,
 		float DesiredVerticalVelocityCmPerSec,
@@ -146,8 +146,8 @@ private:
 
 	/* GT → PT 双缓冲 */
 	mutable FCriticalSection InputCriticalSection;
-	FDronePilotInput PendingPilotInput;
-	FDroneControlTargets PendingTargets;
+	FAircraftPilotInput PendingPilotInput;
+	FAircraftControlTargets PendingTargets;
 	FAutopilotInjection PendingAutopilotInjection;
 	TSharedPtr<const FAircraftSimulationModel> PendingSimulationModel;
 	int32 PendingLodIndex = INDEX_NONE;
@@ -175,7 +175,7 @@ private:
 
 	/* PT → GT 输出缓冲 */
 	mutable FCriticalSection OutputCriticalSection;
-	FDroneEstimatedState LatestEstimated;
+	FAircraftEstimatedState LatestEstimated;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftFailurePolicyStatus LatestPolicyStatus;
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Armed) };

@@ -1,8 +1,8 @@
 //
 // 把 FAircraftCollection 的 schema 数据"编译"成运行时只读的 FAircraftSimulationModel：
-//   * Frame 单元素组    → FDroneMassProperties + RootBone
-//   * Motors 多元素组   → FDroneMotorModelConfig 数组
-//   * Propellers 多元素组 → FDroneRotorDefinition 数组（同时把 Motor 字段嵌入）
+//   * Frame 单元素组    → FAircraftMassProperties + RootBone
+//   * Motors 多元素组   → FAircraftMotorModelConfig 数组
+//   * Propellers 多元素组 → FAircraftRotorDefinition 数组（同时把 Motor 字段嵌入）
 //
 // 与 ChaosCloth 的 FChaosClothSimulationLodModel 同位：资产编译期产物，物理线程只读消费。
 
@@ -244,7 +244,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		}
 
 		/* Motors → 临时 map（按 Name 索引），供 Propeller 解析时关联 */
-		TMap<FName, FDroneMotorModelConfig> MotorByName;
+		TMap<FName, FAircraftMotorModelConfig> MotorByName;
 		const TManagedArray<FName>* MotorNames = ConstCollection.GetMotorName();
 		const TManagedArray<bool>* MotorEnabled = ConstCollection.GetMotorEnabled();
 		const TManagedArray<float>* MotorIdle = ConstCollection.GetMotorIdleRpm();
@@ -258,7 +258,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		for (int32 i = 0; i < MotorCount; ++i)
 		{
 			const FName Name = (*MotorNames)[i];
-			FDroneMotorModelConfig Motor;
+			FAircraftMotorModelConfig Motor;
 			Motor.IdleRpm = (MotorIdle && i < MotorIdle->Num()) ? (*MotorIdle)[i] : 1500.f;
 			Motor.MaxRpm = (MotorMax && i < MotorMax->Num()) ? (*MotorMax)[i] : 12000.f;
 			Motor.SpinUpTimeSeconds = (MotorSpinUp && i < MotorSpinUp->Num()) ? (*MotorSpinUp)[i] : 0.06f;
@@ -291,7 +291,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		OutModel.Rotors.Reserve(PropCount);
 		for (int32 i = 0; i < PropCount; ++i)
 		{
-			FDroneRotorDefinition Rotor;
+			FAircraftRotorDefinition Rotor;
 			Rotor.RotorName = (*PropNames)[i];
 			Rotor.SocketName = (PropSockets && i < PropSockets->Num()) ? (*PropSockets)[i] : NAME_None;
 			Rotor.bUseSocketTransform = (PropUseSockets && i < PropUseSockets->Num()) ? (*PropUseSockets)[i] : false;
@@ -299,7 +299,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				(PropPos && i < PropPos->Num()) ? (*PropPos)[i] : FVector3f::ZeroVector);
 			Rotor.ThrustAxisLocal = FVector3fToVector(
 				(PropAxes && i < PropAxes->Num()) ? (*PropAxes)[i] : FVector3f(0.f, 0.f, 1.f));
-			Rotor.SpinDirection = static_cast<EDroneRotorSpinDirection>(
+			Rotor.SpinDirection = static_cast<EAircraftRotorSpinDirection>(
 				(PropSpins && i < PropSpins->Num()) ? (*PropSpins)[i] : 0);
 			Rotor.MaxThrustForce = (PropMaxThr && i < PropMaxThr->Num()) ? (*PropMaxThr)[i] : 9.f;
 			Rotor.ThrustCoefficient = (PropKT && i < PropKT->Num()) ? (*PropKT)[i] : 1.f;
@@ -312,7 +312,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 
 			// 关联同名 Motor；若未指定或找不到，则用默认电机参数。
 			const FName MotorName = (PropMotorNames && i < PropMotorNames->Num()) ? (*PropMotorNames)[i] : NAME_None;
-			if (const FDroneMotorModelConfig* Motor = MotorByName.Find(MotorName))
+			if (const FAircraftMotorModelConfig* Motor = MotorByName.Find(MotorName))
 			{
 				Rotor.bEnabled = true;
 				Rotor.Motor = *Motor;

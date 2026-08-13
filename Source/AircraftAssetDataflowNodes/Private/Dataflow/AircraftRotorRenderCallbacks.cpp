@@ -85,7 +85,7 @@ namespace UE::AircraftLab::DataflowNodes
 				const FVector Axis = (Axes.IsValidIndex(RotorIndex) ? FVector(Axes[RotorIndex]) : FVector::UpVector)
 					.GetSafeNormal();
 				constexpr float Radius = 12.0f;
-				// 0 = Clockwise（EDroneRotorSpinDirection::Clockwise）
+				// 0 = Clockwise（EAircraftRotorSpinDirection::Clockwise）
 				const bool bClockwise = Spins.IsValidIndex(RotorIndex) && Spins[RotorIndex] == 0;
 				const FLinearColor Color = bClockwise ? FLinearColor(0.0f, 0.9f, 0.9f) : FLinearColor(0.9f, 0.1f, 0.9f);
 

@@ -50,7 +50,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODProfileRuntimeConfig
  * 多旋翼通过相邻旋翼"反向旋转"互相抵消反扭矩；混控分配公式中也以此符号决定偏航方向贡献。
  */
 UENUM(BlueprintType)
-enum class EDroneRotorSpinDirection : uint8
+enum class EAircraftRotorSpinDirection : uint8
 {
 	/** 顺时针（CW）：从机体上方俯视为顺时针。 */
 	Clockwise UMETA(DisplayName = "Clockwise"),
@@ -65,20 +65,20 @@ enum class EDroneRotorSpinDirection : uint8
  * 对应 ChaosCloth 中 FChaosClothSimulationLodModel 的"网格几何/物性"职责段。
  */
 USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneMassProperties
+struct AIRCRAFTASSETENGINE_API FAircraftMassProperties
 {
 	GENERATED_BODY()
 
 	/** 总质量（千克） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body", meta = (ClampMin = "0.01"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Body", meta = (ClampMin = "0.01"))
 	float MassKg = 1.2f;
 
 	/** 质心相对于骨骼原点的偏移（厘米） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Body")
 	FVector CenterOfMassOffsetCm = FVector::ZeroVector;
 
 	/** PhysicsAsset 计算出的惯性张量逐轴缩放；(1,1,1) 保持原始惯性。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Body", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Body", meta = (ClampMin = "0.0"))
 	FVector InertiaTensorScale = FVector::OneVector;
 };
 
@@ -93,32 +93,32 @@ struct AIRCRAFTASSETENGINE_API FDroneMassProperties
  * SpinUp/SpinDown 是不对称时间常数（加/减速过程不同）。
  */
 USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneMotorModelConfig
+struct AIRCRAFTASSETENGINE_API FAircraftMotorModelConfig
 {
 	GENERATED_BODY()
 
 	/** 怠速转速（RPM，解锁后低速旋转） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Motor", meta = (ClampMin = "0.0"))
 	float IdleRpm = 1500.0f;
 
 	/** 最大转速（RPM） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Motor", meta = (ClampMin = "0.0"))
 	float MaxRpm = 12000.0f;
 
 	/** 加速时间常数 τ_up（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.001"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Motor", meta = (ClampMin = "0.001"))
 	float SpinUpTimeSeconds = 0.06f;
 
 	/** 减速时间常数 τ_down（秒） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.001"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Motor", meta = (ClampMin = "0.001"))
 	float SpinDownTimeSeconds = 0.10f;
 
 	/** 指令到推力的指数（≈2.0 模拟推力∝转速²） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.1"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Motor", meta = (ClampMin = "0.1"))
 	float CommandExponent = 2.0f;
 
 	/** 指令变化率上限（每秒归一化指令变化量，用于平滑） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Motor", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Motor", meta = (ClampMin = "0.0"))
 	float MaxCommandSlewPerSecond = 8.0f;
 };
 
@@ -131,65 +131,65 @@ struct AIRCRAFTASSETENGINE_API FDroneMotorModelConfig
  * ThrustCoefficient 对应 kT；ReactionTorqueCoefficient 等价于 kQ/kT 比值（基于推力归一化）。
  */
 USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FDroneRotorDefinition
+struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
 {
 	GENERATED_BODY()
 
 	/** 旋翼名称（唯一标识） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FName RotorName = NAME_None;
 
 	/** 是否启用该旋翼 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	bool bEnabled = true;
 
 	/** 对应的骨骼插槽名称（用于获取位置和旋转） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FName SocketName = NAME_None;
 
 	/** 是否使用插槽变换（否则使用 PositionLocalCm） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	bool bUseSocketTransform = true;
 
 	/** 旋翼在机体坐标系中的位置（厘米，当 bUseSocketTransform 为 false 时） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FVector PositionLocalCm = FVector::ZeroVector;
 
 	/** 推力方向（机体坐标系，通常为向上） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FVector ThrustAxisLocal = FVector::UpVector;
 
 	/** 旋转方向 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	EDroneRotorSpinDirection SpinDirection = EDroneRotorSpinDirection::CounterClockwise;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
+	EAircraftRotorSpinDirection SpinDirection = EAircraftRotorSpinDirection::CounterClockwise;
 
 	/** 最大推力（牛顿） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
 	float MaxThrustForce = 900.0f;
 
 	/** 推力系数 kT */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
 	float ThrustCoefficient = 1.0f;
 
 	/** 反扭矩系数（τ_drag = 系数 · F_thrust，等价于 kQ/kT 比值） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
 	float ReactionTorqueCoefficient = 0.03f;
 
 	/** 效率（0~1，影响实际推力和扭矩） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
 	float Efficiency = 1.0f;
 
 	/** 控制分配可用推力缩放（0~1） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float ControlAuthorityScale = 1.0f;
 
 	/** 共享型号对最终电机指令的统一标定缩放。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
 	float CommandScale = 1.0f;
 
 	/** 电机动态模型参数 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drone|Rotor")
-	FDroneMotorModelConfig Motor;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
+	FAircraftMotorModelConfig Motor;
 
 	bool IsEnabled() const { return bEnabled; }
 	bool HasSocket() const { return !SocketName.IsNone(); }
@@ -201,7 +201,7 @@ struct AIRCRAFTASSETENGINE_API FDroneRotorDefinition
 
 	float GetSpinDirectionSign() const
 	{
-		return SpinDirection == EDroneRotorSpinDirection::Clockwise ? -1.0f : 1.0f;
+		return SpinDirection == EAircraftRotorSpinDirection::Clockwise ? -1.0f : 1.0f;
 	}
 
 	float GetEffectiveMaxThrust() const
@@ -237,7 +237,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	uint8 ProjectionSolverIterationCount = 1;
 
 	/** 质量与惯性 */
-	FDroneMassProperties Mass;
+	FAircraftMassProperties Mass;
 
 	/** 飞控运行时只读快照。 */
 	FAircraftFlightControllerRuntimeConfig FlightController;
@@ -246,7 +246,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	FAircraftAutopilotRuntimeConfig Autopilot;
 
 	/** 旋翼定义（按机架顺序） */
-	TArray<FDroneRotorDefinition> Rotors;
+	TArray<FAircraftRotorDefinition> Rotors;
 
 	/** 重置到默认空模型 */
 	void Reset()
@@ -258,7 +258,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 		PositionSolverIterationCount = 8;
 		VelocitySolverIterationCount = 2;
 		ProjectionSolverIterationCount = 1;
-		Mass = FDroneMassProperties();
+		Mass = FAircraftMassProperties();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
 		Autopilot = FAircraftAutopilotRuntimeConfig();
 		Rotors.Reset();
@@ -267,7 +267,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	/** 当前是否包含至少一个有效旋翼 */
 	bool HasValidRotors() const
 	{
-		for (const FDroneRotorDefinition& Rotor : Rotors)
+		for (const FAircraftRotorDefinition& Rotor : Rotors)
 		{
 			if (Rotor.IsEnabled())
 			{
@@ -280,7 +280,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	int32 GetNumEnabledRotors() const
 	{
 		int32 Count = 0;
-		for (const FDroneRotorDefinition& Rotor : Rotors)
+		for (const FAircraftRotorDefinition& Rotor : Rotors)
 		{
 			if (Rotor.IsEnabled())
 			{

@@ -134,7 +134,7 @@ namespace
 			: ReferenceSkeleton.FindBoneIndex(Model.RootBone);
 		const FTransform RootComponentTransform = GetReferencePoseComponentTransform(ReferenceSkeleton, RootBoneIndex);
 
-		for (FDroneRotorDefinition& Rotor : Model.Rotors)
+		for (FAircraftRotorDefinition& Rotor : Model.Rotors)
 		{
 			if (!Rotor.bUseSocketTransform || Rotor.SocketName.IsNone())
 			{

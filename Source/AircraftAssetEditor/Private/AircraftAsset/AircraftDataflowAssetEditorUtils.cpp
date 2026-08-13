@@ -221,8 +221,8 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			constexpr float DefaultArmLengthCm = 30.0f;
 
 			// 模板默认网格/物理资产（插件随包内容；缺失时保持空引用由用户在节点中指定）。
-			const FString DefaultSkeletalMeshPath = TEXT("/AircraftLab/Meshs/SK_Drone.SK_Drone");
-			const FString DefaultPhysicsAssetPath = TEXT("/AircraftLab/Meshs/SK_Drone_Physics2.SK_Drone_Physics2");
+			const FString DefaultSkeletalMeshPath = TEXT("/AircraftLab/Meshs/SK_Aircraft.SK_Aircraft");
+			const FString DefaultPhysicsAssetPath = TEXT("/AircraftLab/Meshs/SK_Aircraft_Physics2.SK_Aircraft_Physics2");
 
 			struct FQuadXEntry
 			{

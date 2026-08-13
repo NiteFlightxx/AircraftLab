@@ -19,7 +19,7 @@ bool FAircraftSharedPilotInputMappingTest::RunTest(const FString& Parameters)
 	Config.MaxDescentRateCmPerSec = 200.0f;
 	Config.MaxYawRateDegreesPerSec = 90.0f;
 
-	FDronePilotInput Pilot;
+	FAircraftPilotInput Pilot;
 	Pilot.Pitch = 1.0f;
 	FAircraftManualCommand Command = UE::AircraftLab::PilotInputMapping::BuildManualCommand(
 		Pilot, FQuat::Identity, Config);

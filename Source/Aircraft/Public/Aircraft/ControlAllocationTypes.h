@@ -1,6 +1,6 @@
 // FlightControllerAllocation.cpp 的每旋翼描述信息。
 //
-// 分配器不直接依赖资产模块的 FDroneRotorDefinition；代理（Proxy）在缓存重建边界
+// 分配器不直接依赖资产模块的 FAircraftRotorDefinition；代理（Proxy）在缓存重建边界
 // 把旋翼定义展开为本头的 FAircraftRotorAllocationInfo 纯值描述，保持 PT 零 UObject。
 
 #pragma once

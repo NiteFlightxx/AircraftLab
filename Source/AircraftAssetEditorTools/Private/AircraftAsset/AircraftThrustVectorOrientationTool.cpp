@@ -91,7 +91,7 @@ void UAircraftThrustVectorOrientationTool::Render(IToolsContextRenderAPI* Render
 		: FTransform::Identity;
 	for (int32 i = 0; i < LodModel->Rotors.Num(); ++i)
 	{
-		const FDroneRotorDefinition& Rotor = LodModel->Rotors[i];
+		const FAircraftRotorDefinition& Rotor = LodModel->Rotors[i];
 		const FVector LocalPos = Rotor.PositionLocalCm;
 		const FVector WorldPos = XformWorld.TransformPosition(LocalPos);
 		const FVector WorldAxis = XformWorld.GetRotation().RotateVector(Rotor.GetNormalizedThrustAxisLocal());
