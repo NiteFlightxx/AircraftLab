@@ -2,6 +2,7 @@
 // 多旋翼组件实现：组件生命周期 + 资产绑定 + GT API 转发到 Proxy + 物理子步入口。
 
 #include "AircraftAsset/AircraftComponent.h"
+#include "Aircraft/ConstraintDriveUtils.h"
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
@@ -623,15 +624,29 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	SimulationConstraint->SetAngularVelocityDriveSLERP(true);
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
+	float LinearStiffness = 0.0f;
+	float LinearDamping = 0.0f;
+	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
+		LinearStiffness, LinearDamping,
+		Config.ConstraintLinearStrength,
+		Config.ConstraintLinearDampingRatio,
+		Config.ConstraintLinearExtraDamping);
+	float AngularStiffness = 0.0f;
+	float AngularDamping = 0.0f;
+	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
+		AngularStiffness, AngularDamping,
+		Config.ConstraintAngularStrength,
+		Config.ConstraintAngularDampingRatio,
+		Config.ConstraintAngularExtraDamping);
 	SimulationConstraint->SetLinearDriveAccelerationMode(Config.bConstraintAccelerationMode);
 	SimulationConstraint->SetAngularDriveAccelerationMode(Config.bConstraintAccelerationMode);
 	SimulationConstraint->SetLinearDriveParams(
-		Config.ConstraintLinearPositionStrength,
-		Config.ConstraintLinearVelocityStrength,
+		LinearStiffness,
+		LinearDamping,
 		Config.ConstraintLinearForceLimit);
 	SimulationConstraint->SetAngularDriveParams(
-		Config.ConstraintAngularPositionStrength,
-		Config.ConstraintAngularVelocityStrength,
+		AngularStiffness,
+		AngularDamping,
 		Config.ConstraintAngularTorqueLimit);
 	SimulationConstraint->SetProjectionEnabled(false);
 	SimulationConstraint->SetDisableCollision(true);

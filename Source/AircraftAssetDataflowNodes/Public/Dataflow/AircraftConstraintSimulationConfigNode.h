@@ -12,11 +12,19 @@ struct FAircraftConstraintSimulationConfig
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category = "Constraint", meta = (ClampMin = "0.0")) float LinearPositionStrength = 100.0f;
-	UPROPERTY(EditAnywhere, Category = "Constraint", meta = (ClampMin = "0.0")) float LinearVelocityStrength = 20.0f;
+	/** 线性弹簧自然频率（Hz）。运行时转换为 Stiffness=(Strength*2π)^2。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (ClampMin = "0.0", Units = "Hz")) float LinearStrength = 1.59154943f;
+	/** 线性阻尼比；1 为临界阻尼。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (ClampMin = "0.0")) float LinearDampingRatio = 1.0f;
+	/** 不依赖 Strength 的附加线性阻尼。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (ClampMin = "0.0")) float LinearExtraDamping = 0.0f;
 	UPROPERTY(EditAnywhere, Category = "Constraint", meta = (ClampMin = "0.0")) float LinearForceLimit = 0.0f;
-	UPROPERTY(EditAnywhere, Category = "Constraint", meta = (ClampMin = "0.0")) float AngularPositionStrength = 100.0f;
-	UPROPERTY(EditAnywhere, Category = "Constraint", meta = (ClampMin = "0.0")) float AngularVelocityStrength = 20.0f;
+	/** 角度弹簧自然频率（Hz）。运行时转换为 Stiffness=(Strength*2π)^2。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Angular", meta = (ClampMin = "0.0", Units = "Hz")) float AngularStrength = 1.59154943f;
+	/** 角度阻尼比；1 为临界阻尼。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Angular", meta = (ClampMin = "0.0")) float AngularDampingRatio = 1.0f;
+	/** 不依赖 Strength 的附加角度阻尼。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Angular", meta = (ClampMin = "0.0")) float AngularExtraDamping = 0.0f;
 	UPROPERTY(EditAnywhere, Category = "Constraint", meta = (ClampMin = "0.0")) float AngularTorqueLimit = 0.0f;
 	UPROPERTY(EditAnywhere, Category = "Constraint") bool bAccelerationMode = true;
 };

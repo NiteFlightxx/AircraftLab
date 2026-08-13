@@ -1,5 +1,6 @@
 #include "AircraftAsset/AircraftDebug.h"
 
+#include "Aircraft/ConstraintDriveUtils.h"
 #include "Aircraft/FlightControllerRuntimeConfig.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
@@ -181,8 +182,22 @@ void FAircraftDebug::LogConstraintCreated(
 {
 	const FConstraintInstance& Instance = Constraint.ConstraintInstance;
 	const bool bBroken = const_cast<UPhysicsConstraintComponent*>(&Constraint)->IsBroken();
+	float LinearStiffness = 0.0f;
+	float LinearDamping = 0.0f;
+	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
+		LinearStiffness, LinearDamping,
+		Config.ConstraintLinearStrength,
+		Config.ConstraintLinearDampingRatio,
+		Config.ConstraintLinearExtraDamping);
+	float AngularStiffness = 0.0f;
+	float AngularDamping = 0.0f;
+	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
+		AngularStiffness, AngularDamping,
+		Config.ConstraintAngularStrength,
+		Config.ConstraintAngularDampingRatio,
+		Config.ConstraintAngularExtraDamping);
 	UE_LOG(LogAircraft, Log,
-		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Valid=%d Broken=%d Simulating=%d RefPos=(%.1f,%.1f,%.1f) MotionLimits(H/Up/Down/Yaw)=(%.1f,%.1f,%.1f,%.1f) Deadbands(H/V/Y)=(%.3f,%.3f,%.3f) LinearDrive(P/V)=(%d%d%d/%d%d%d) LinearParams=(%.3f,%.3f,%.3f) AngularParams=(%.3f,%.3f,%.3f) AccelerationMode=%d"),
+		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Valid=%d Broken=%d Simulating=%d RefPos=(%.1f,%.1f,%.1f) MotionLimits(H/Up/Down/Yaw)=(%.1f,%.1f,%.1f,%.1f) Deadbands(H/V/Y)=(%.3f,%.3f,%.3f) LinearDrive(P/V)=(%d%d%d/%d%d%d) LinearControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) LinearSpring(K/D/Limit)=(%.3f,%.3f,%.3f) AngularControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) AngularSpring(K/D/Limit)=(%.3f,%.3f,%.3f) AccelerationMode=%d"),
 		*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(), *RootBone.ToString(),
 		Instance.IsValidConstraintInstance() ? 1 : 0, bBroken ? 1 : 0,
 		Component.IsSimulatingPhysics() ? 1 : 0,
@@ -197,10 +212,12 @@ void FAircraftDebug::LogConstraintCreated(
 		Instance.IsLinearVelocityDriveXEnabled() ? 1 : 0,
 		Instance.IsLinearVelocityDriveYEnabled() ? 1 : 0,
 		Instance.IsLinearVelocityDriveZEnabled() ? 1 : 0,
-		Config.ConstraintLinearPositionStrength, Config.ConstraintLinearVelocityStrength,
-		Config.ConstraintLinearForceLimit,
-		Config.ConstraintAngularPositionStrength, Config.ConstraintAngularVelocityStrength,
-		Config.ConstraintAngularTorqueLimit,
+		Config.ConstraintLinearStrength, Config.ConstraintLinearDampingRatio,
+		Config.ConstraintLinearExtraDamping,
+		LinearStiffness, LinearDamping, Config.ConstraintLinearForceLimit,
+		Config.ConstraintAngularStrength, Config.ConstraintAngularDampingRatio,
+		Config.ConstraintAngularExtraDamping,
+		AngularStiffness, AngularDamping, Config.ConstraintAngularTorqueLimit,
 		Config.bConstraintAccelerationMode ? 1 : 0);
 }
 

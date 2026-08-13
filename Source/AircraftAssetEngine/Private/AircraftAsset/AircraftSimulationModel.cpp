@@ -193,11 +193,13 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.Input.HorizontalBrakeToHoldSpeedCmPerSec"), OutModel.FlightController.HorizontalBrakeToHoldSpeedCmPerSec);
 			OutModel.FlightController.bControllerEnabledByDefault = Properties.GetValue<bool>(
 				TEXT("FlightController.Execution.ControllerEnabledByDefault"), OutModel.FlightController.bControllerEnabledByDefault);
-			OutModel.FlightController.ConstraintLinearPositionStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearPositionStrength"), OutModel.FlightController.ConstraintLinearPositionStrength);
-			OutModel.FlightController.ConstraintLinearVelocityStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearVelocityStrength"), OutModel.FlightController.ConstraintLinearVelocityStrength);
+			OutModel.FlightController.ConstraintLinearStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearStrength"), OutModel.FlightController.ConstraintLinearStrength);
+			OutModel.FlightController.ConstraintLinearDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearDampingRatio"), OutModel.FlightController.ConstraintLinearDampingRatio);
+			OutModel.FlightController.ConstraintLinearExtraDamping = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearExtraDamping"), OutModel.FlightController.ConstraintLinearExtraDamping);
 			OutModel.FlightController.ConstraintLinearForceLimit = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearForceLimit"), OutModel.FlightController.ConstraintLinearForceLimit);
-			OutModel.FlightController.ConstraintAngularPositionStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularPositionStrength"), OutModel.FlightController.ConstraintAngularPositionStrength);
-			OutModel.FlightController.ConstraintAngularVelocityStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularVelocityStrength"), OutModel.FlightController.ConstraintAngularVelocityStrength);
+			OutModel.FlightController.ConstraintAngularStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularStrength"), OutModel.FlightController.ConstraintAngularStrength);
+			OutModel.FlightController.ConstraintAngularDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularDampingRatio"), OutModel.FlightController.ConstraintAngularDampingRatio);
+			OutModel.FlightController.ConstraintAngularExtraDamping = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularExtraDamping"), OutModel.FlightController.ConstraintAngularExtraDamping);
 			OutModel.FlightController.ConstraintAngularTorqueLimit = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularTorqueLimit"), OutModel.FlightController.ConstraintAngularTorqueLimit);
 			OutModel.FlightController.bConstraintAccelerationMode = Properties.GetValue<bool>(TEXT("FlightController.Constraint.AccelerationMode"), OutModel.FlightController.bConstraintAccelerationMode);
 			OutModel.FlightController.bKinematicSweepMovement = Properties.GetValue<bool>(TEXT("FlightController.Kinematic.SweepMovement"), OutModel.FlightController.bKinematicSweepMovement);

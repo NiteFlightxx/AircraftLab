@@ -24,14 +24,14 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 		return;
 	}
 	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
-	const float Values[] = { Config.LinearPositionStrength, Config.LinearVelocityStrength,
-		Config.LinearForceLimit, Config.AngularPositionStrength, Config.AngularVelocityStrength,
-		Config.AngularTorqueLimit };
+	const float Values[] = { Config.LinearStrength, Config.LinearDampingRatio,
+		Config.LinearExtraDamping, Config.LinearForceLimit, Config.AngularStrength,
+		Config.AngularDampingRatio, Config.AngularExtraDamping, Config.AngularTorqueLimit };
 	for (const float Value : Values)
 	{
 		if (!FMath::IsFinite(Value) || Value < 0.0f)
 		{
-			Context.Error(FText::FromString(TEXT("Constraint-simulation strengths and limits must be finite and non-negative.")), this);
+			Context.Error(FText::FromString(TEXT("Constraint strength, damping ratio, extra damping, and limits must be finite and non-negative.")), this);
 			SetValue(Context, InputCollection, &Collection);
 			return;
 		}
@@ -42,11 +42,13 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	Facade.DefineSchema();
 	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
 	Properties.DefineSchema();
-	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearPositionStrength"), Config.LinearPositionStrength);
-	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearVelocityStrength"), Config.LinearVelocityStrength);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearStrength"), Config.LinearStrength);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearDampingRatio"), Config.LinearDampingRatio);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearExtraDamping"), Config.LinearExtraDamping);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearForceLimit"), Config.LinearForceLimit);
-	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularPositionStrength"), Config.AngularPositionStrength);
-	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularVelocityStrength"), Config.AngularVelocityStrength);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularStrength"), Config.AngularStrength);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularDampingRatio"), Config.AngularDampingRatio);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularExtraDamping"), Config.AngularExtraDamping);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularTorqueLimit"), Config.AngularTorqueLimit);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AccelerationMode"), Config.bAccelerationMode);
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);

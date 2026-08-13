@@ -1,4 +1,5 @@
 #include "AircraftAsset/AircraftSimulationModel.h"
+#include "Aircraft/ConstraintDriveUtils.h"
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
@@ -50,6 +51,17 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	const FAircraftSimulationLodModel* const ProjectSettingsLOD = ProjectSettingsModel.GetLodModel(0);
 	TestNotNull(TEXT("A collection compiles one LOD model"), ProjectSettingsLOD);
 	const FAircraftFlightControllerRuntimeConfig RuntimeDefaults;
+	float ConstraintStiffness = 0.0f;
+	float ConstraintDamping = 0.0f;
+	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
+		ConstraintStiffness, ConstraintDamping,
+		RuntimeDefaults.ConstraintLinearStrength,
+		RuntimeDefaults.ConstraintLinearDampingRatio,
+		RuntimeDefaults.ConstraintLinearExtraDamping);
+	TestTrue(TEXT("Default constraint strength converts to the previous stiffness"),
+		FMath::IsNearlyEqual(ConstraintStiffness, 100.0f, 1.e-3f));
+	TestTrue(TEXT("Default constraint damping ratio converts to the previous damping"),
+		FMath::IsNearlyEqual(ConstraintDamping, 20.0f, 1.e-3f));
 	TestEqual(TEXT("Schema defaults preserve horizontal manual-flight speed"),
 		ProjectSettingsLOD->FlightController.MaxHorizontalSpeedCmPerSec,
 		RuntimeDefaults.MaxHorizontalSpeedCmPerSec);

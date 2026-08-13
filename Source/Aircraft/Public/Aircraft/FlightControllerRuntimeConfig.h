@@ -93,11 +93,13 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	float VerticalHoldStickDeadband = 0.08f;
 	float YawHoldStickDeadband = 0.05f;
 	float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
-	float ConstraintLinearPositionStrength = 100.0f;
-	float ConstraintLinearVelocityStrength = 20.0f;
+	float ConstraintLinearStrength = 1.59154943f;
+	float ConstraintLinearDampingRatio = 1.0f;
+	float ConstraintLinearExtraDamping = 0.0f;
 	float ConstraintLinearForceLimit = 0.0f;
-	float ConstraintAngularPositionStrength = 100.0f;
-	float ConstraintAngularVelocityStrength = 20.0f;
+	float ConstraintAngularStrength = 1.59154943f;
+	float ConstraintAngularDampingRatio = 1.0f;
+	float ConstraintAngularExtraDamping = 0.0f;
 	float ConstraintAngularTorqueLimit = 0.0f;
 	bool bConstraintAccelerationMode = true;
 	bool bKinematicSweepMovement = true;
