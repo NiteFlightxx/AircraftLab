@@ -4,6 +4,9 @@
 
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
+#include "Aircraft/FlightControllerRuntimeConfig.h"
+
+#include <type_traits>
 
 #define LOCTEXT_NAMESPACE "AircraftCollection"
 
@@ -192,12 +195,16 @@ namespace UE::AircraftLab::AircraftAsset
 			}
 		};
 
-		auto AddAttribute = [&Collection](const FName& Group, const FName& Attribute, auto Sample) -> void
+		auto AddAttribute = [&Collection](const FName& Group, const FName& Attribute, const auto& DefaultValue) -> void
 		{
-			using AttributeType = decltype(Sample);
+			using AttributeType = std::decay_t<decltype(DefaultValue)>;
 			if (!Collection.HasAttribute(Attribute, Group))
 			{
-				Collection.AddAttribute<AttributeType>(Attribute, Group);
+				TManagedArray<AttributeType>& Values = Collection.AddAttribute<AttributeType>(Attribute, Group);
+				for (int32 Index = 0; Index < Values.Num(); ++Index)
+				{
+					Values[Index] = DefaultValue;
+				}
 			}
 		};
 
@@ -211,9 +218,9 @@ namespace UE::AircraftLab::AircraftAsset
 
 		/* Import */
 		AddOrFindGroup(Private::ImportGroup);
+		EnsureSingleElement(Private::ImportGroup);
 		AddAttribute(Private::ImportGroup, Private::SkeletalMeshSoftObjectPathName, FSoftObjectPath());
 		AddAttribute(Private::ImportGroup, Private::PhysicsAssetSoftObjectPathName, FSoftObjectPath());
-		EnsureSingleElement(Private::ImportGroup);
 
 		/* Solver */
 		AddOrFindGroup(Private::SolverGroup);
@@ -225,11 +232,11 @@ namespace UE::AircraftLab::AircraftAsset
 
 		/* Frame */
 		AddOrFindGroup(Private::FrameGroup);
+		EnsureSingleElement(Private::FrameGroup);
 		AddAttribute(Private::FrameGroup, Private::FrameRootBone, FName());
 		AddAttribute(Private::FrameGroup, Private::FrameMassKg, float(0));
 		AddAttribute(Private::FrameGroup, Private::FrameCenterOfMassOffsetCm, FVector3f::ZeroVector);
 		AddAttribute(Private::FrameGroup, Private::FrameInertiaTensorScale, FVector3f::OneVector);
-		EnsureSingleElement(Private::FrameGroup);
 
 		/* Motors */
 		AddOrFindGroup(Private::MotorsGroup);
@@ -258,30 +265,31 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::PropellersGroup, Private::PropellerControlAuthorityScale, float(1));
 
 		/* FlightController */
+		const FAircraftFlightControllerRuntimeConfig FlightDefaults;
 		AddOrFindGroup(Private::FlightControllerGroup);
-		AddAttribute(Private::FlightControllerGroup, Private::FcPositionKp, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcPositionKi, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcPositionKd, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKp, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKi, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKd, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcAngleKp, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcRateKp, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcRateKi, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcRateKd, FVector3f::ZeroVector);
-		AddAttribute(Private::FlightControllerGroup, Private::FcAltitudeKp, float(0));
-		AddAttribute(Private::FlightControllerGroup, Private::FcAltitudeKi, float(0));
-		AddAttribute(Private::FlightControllerGroup, Private::FcAltitudeKd, float(0));
-		AddAttribute(Private::FlightControllerGroup, Private::FcVerticalVelocityKp, float(0));
-		AddAttribute(Private::FlightControllerGroup, Private::FcVerticalVelocityKi, float(0));
-		AddAttribute(Private::FlightControllerGroup, Private::FcVerticalVelocityKd, float(0));
-		AddAttribute(Private::FlightControllerGroup, Private::FcMaxTiltAngleDegrees, float(35));
-		AddAttribute(Private::FlightControllerGroup, Private::FcMaxYawRateDegreesPerSec, float(180));
-		AddAttribute(Private::FlightControllerGroup, Private::FcMaxClimbRateCmPerSec, float(400));
-		AddAttribute(Private::FlightControllerGroup, Private::FcMaxDescentRateCmPerSec, float(250));
-		AddAttribute(Private::FlightControllerGroup, Private::FcMaxHorizontalSpeedCmPerSec, float(1200));
-		AddAttribute(Private::FlightControllerGroup, Private::FcAllocationDamping, float(1e-3f));
 		EnsureSingleElement(Private::FlightControllerGroup);
+		AddAttribute(Private::FlightControllerGroup, Private::FcPositionKp, FlightDefaults.PositionKp);
+		AddAttribute(Private::FlightControllerGroup, Private::FcPositionKi, FlightDefaults.PositionKi);
+		AddAttribute(Private::FlightControllerGroup, Private::FcPositionKd, FlightDefaults.PositionKd);
+		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKp, FlightDefaults.VelocityKp);
+		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKi, FlightDefaults.VelocityKi);
+		AddAttribute(Private::FlightControllerGroup, Private::FcVelocityKd, FlightDefaults.VelocityKd);
+		AddAttribute(Private::FlightControllerGroup, Private::FcAngleKp, FlightDefaults.AttitudeGains);
+		AddAttribute(Private::FlightControllerGroup, Private::FcRateKp, FlightDefaults.RateKp);
+		AddAttribute(Private::FlightControllerGroup, Private::FcRateKi, FlightDefaults.RateKi);
+		AddAttribute(Private::FlightControllerGroup, Private::FcRateKd, FlightDefaults.RateKd);
+		AddAttribute(Private::FlightControllerGroup, Private::FcAltitudeKp, FlightDefaults.AltitudeKp);
+		AddAttribute(Private::FlightControllerGroup, Private::FcAltitudeKi, FlightDefaults.AltitudeKi);
+		AddAttribute(Private::FlightControllerGroup, Private::FcAltitudeKd, FlightDefaults.AltitudeKd);
+		AddAttribute(Private::FlightControllerGroup, Private::FcVerticalVelocityKp, FlightDefaults.VerticalVelocityKp);
+		AddAttribute(Private::FlightControllerGroup, Private::FcVerticalVelocityKi, FlightDefaults.VerticalVelocityKi);
+		AddAttribute(Private::FlightControllerGroup, Private::FcVerticalVelocityKd, FlightDefaults.VerticalVelocityKd);
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxTiltAngleDegrees, FlightDefaults.MaxTiltAngleDegrees);
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxYawRateDegreesPerSec, FlightDefaults.MaxYawRateDegreesPerSec);
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxClimbRateCmPerSec, FlightDefaults.MaxClimbRateCmPerSec);
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxDescentRateCmPerSec, FlightDefaults.MaxDescentRateCmPerSec);
+		AddAttribute(Private::FlightControllerGroup, Private::FcMaxHorizontalSpeedCmPerSec, FlightDefaults.MaxHorizontalSpeedCmPerSec);
+		AddAttribute(Private::FlightControllerGroup, Private::FcAllocationDamping, FlightDefaults.AllocationDamping);
 
 		EnsureImportSchema();
 		UpdateArrays();

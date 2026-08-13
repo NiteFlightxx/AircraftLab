@@ -14,5 +14,7 @@ public class AircraftAsset : ModuleRules
                 "Chaos"
             }
         );
+
+        PrivateDependencyModuleNames.Add("Aircraft");
     }
 }

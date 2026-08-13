@@ -2,6 +2,7 @@
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
+#include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -48,6 +49,26 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	const FAircraftSimulationModel ProjectSettingsModel(CollectionsWithoutOverride, TEXT("ProjectSettings"));
 	const FAircraftSimulationLodModel* const ProjectSettingsLOD = ProjectSettingsModel.GetLodModel(0);
 	TestNotNull(TEXT("A collection compiles one LOD model"), ProjectSettingsLOD);
+	const FAircraftFlightControllerRuntimeConfig RuntimeDefaults;
+	TestEqual(TEXT("Schema defaults preserve horizontal manual-flight speed"),
+		ProjectSettingsLOD->FlightController.MaxHorizontalSpeedCmPerSec,
+		RuntimeDefaults.MaxHorizontalSpeedCmPerSec);
+	TestEqual(TEXT("Schema defaults preserve climb speed"),
+		ProjectSettingsLOD->FlightController.MaxClimbRateCmPerSec,
+		RuntimeDefaults.MaxClimbRateCmPerSec);
+	TestEqual(TEXT("Schema defaults preserve yaw rate"),
+		ProjectSettingsLOD->FlightController.MaxYawRateDegreesPerSec,
+		RuntimeDefaults.MaxYawRateDegreesPerSec);
+	TestTrue(TEXT("Schema defaults preserve position gains"),
+		ProjectSettingsLOD->FlightController.PositionKp.Equals(RuntimeDefaults.PositionKp));
+	FAircraftPilotInput RollInput;
+	RollInput.Roll = 1.0f;
+	const FAircraftManualCommand ConstraintManualCommand =
+		UE::AircraftLab::PilotInputMapping::BuildManualCommand(
+			RollInput, FQuat::Identity, ProjectSettingsLOD->FlightController);
+	TestTrue(TEXT("A PhysicsConstraint manual roll input produces horizontal target velocity"),
+		FVector2D(ConstraintManualCommand.DesiredVelocityCmPerSec.X,
+			ConstraintManualCommand.DesiredVelocityCmPerSec.Y).Size() > 1.0f);
 	TestFalse(TEXT("An empty Solver group uses project physics settings"), ProjectSettingsLOD->bOverrideSolverAsyncDeltaTime);
 	TestFalse(TEXT("An empty Solver group uses project iteration settings"), ProjectSettingsLOD->bOverrideSolverIterationCounts);
 	TestEqual(TEXT("No override stores a zero solver delta"), ProjectSettingsLOD->SolverAsyncDeltaTime, 0.0f);
