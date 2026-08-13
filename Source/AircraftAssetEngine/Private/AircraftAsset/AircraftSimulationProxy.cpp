@@ -18,6 +18,7 @@
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
+#include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "Chaos/ChaosEngineInterface.h"
 #include "Chaos/Particle/ParticleUtilities.h"
 #include "Chaos/PhysicsObject.h"
@@ -53,32 +54,6 @@ namespace AircraftDebugCVars
 
 namespace AircraftProxyPrivate
 {
-	/** 从刚体四元数提取世界水平面中的机头方向（与求解器内同名helper语义一致）。 */
-	FVector GetPlanarHeadingDirection(const FQuat& BodyRotation, const FAircraftFlightControllerRuntimeConfig& Config)
-	{
-		FVector Forward = BodyRotation.RotateVector(Config.GetForwardAxisBody());
-		Forward.Z = 0.0f;
-		if (Forward.Normalize())
-		{
-			return Forward;
-		}
-
-		FVector Right = BodyRotation.RotateVector(Config.GetRightAxisBody());
-		Right.Z = 0.0f;
-		if (Right.Normalize())
-		{
-			return FVector(Right.Y, -Right.X, 0.0f);
-		}
-
-		return FVector::ForwardVector;
-	}
-
-	float GetPlanarHeadingDegrees(const FQuat& BodyRotation, const FAircraftFlightControllerRuntimeConfig& Config)
-	{
-		const FVector Forward = GetPlanarHeadingDirection(BodyRotation, Config);
-		return FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X));
-	}
-
 	const TCHAR* GetFlightModeLabel(const EAircraftFlightMode Mode)
 	{
 		switch (Mode)
@@ -600,6 +575,7 @@ void FAircraftSimulationProxy::SetSimulationState_GameThread(bool bEnabled, bool
 void FAircraftSimulationProxy::SetFlightMode_GameThread(EAircraftFlightMode InMode)
 {
 	const uint8 NewMode = static_cast<uint8>(InMode);
+	CurrentFlightMode.store(NewMode, std::memory_order_relaxed);
 	if (PendingFlightMode.exchange(NewMode, std::memory_order_relaxed) != NewMode)
 	{
 		bPendingControllerReset.store(true, std::memory_order_release);
@@ -610,12 +586,21 @@ void FAircraftSimulationProxy::SetArmRequest_GameThread(bool bArm)
 {
 	FScopeLock Lock(&InputCriticalSection);
 	bArmRequest = bArm;
+	CurrentArmState.store(static_cast<uint8>(
+		bArm ? EAircraftArmState::Armed : EAircraftArmState::Disarmed),
+		std::memory_order_relaxed);
 }
 
 void FAircraftSimulationProxy::SetEmergencyStop_GameThread(bool bStop)
 {
 	FScopeLock Lock(&InputCriticalSection);
 	bEmergencyStop = bStop;
+	if (bStop)
+	{
+		CurrentArmState.store(
+			static_cast<uint8>(EAircraftArmState::EmergencyStop),
+			std::memory_order_relaxed);
+	}
 }
 
 void FAircraftSimulationProxy::SetControllerEnabled_GameThread(bool bEnabled)
@@ -979,52 +964,9 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	/* ----------------------------------------------------------------------
 	 * 5) 摇杆 → FAircraftManualCommand（含航向系变换与保持死区）
 	 * ---------------------------------------------------------------------- */
-	FAircraftManualCommand ManualCommand;
+	FAircraftManualCommand ManualCommand = UE::AircraftLab::PilotInputMapping::BuildManualCommand(
+		Pilot, WorldQuat, Config);
 	{
-		const float CurrentHeadingDegrees = AircraftProxyPrivate::GetPlanarHeadingDegrees(WorldQuat, Config);
-		const FQuat HeadingRotation(FVector::UpVector, FMath::DegreesToRadians(CurrentHeadingDegrees));
-
-		// 水平：摇杆 → 机体系水平速度（Pitch=前，Roll=右）→ 旋转到世界系
-		FVector2D HorizontalStick(Pilot.Pitch, Pilot.Roll);
-		if (FMath::Max(FMath::Abs(HorizontalStick.X), FMath::Abs(HorizontalStick.Y)) < Config.HorizontalHoldStickDeadband)
-		{
-			HorizontalStick = FVector2D::ZeroVector;
-		}
-		const FVector ControlFrameVelocity(
-			HorizontalStick.X * Config.MaxHorizontalSpeedCmPerSec,
-			HorizontalStick.Y * Config.MaxHorizontalSpeedCmPerSec,
-			0.0f);
-		ManualCommand.DesiredVelocityCmPerSec = HeadingRotation.RotateVector(ControlFrameVelocity);
-
-		// 垂直：居中油门杆 → 爬升/下降率
-		if (FMath::Abs(Pilot.Throttle) > Config.VerticalHoldStickDeadband)
-		{
-			const float Magnitude = (FMath::Abs(Pilot.Throttle) - Config.VerticalHoldStickDeadband)
-				/ FMath::Max(1.0f - Config.VerticalHoldStickDeadband, UE_SMALL_NUMBER);
-			const float SignedInput = Magnitude * FMath::Sign(Pilot.Throttle);
-			ManualCommand.DesiredVelocityCmPerSec.Z = SignedInput >= 0.0f
-				? SignedInput * Config.MaxClimbRateCmPerSec
-				: SignedInput * Config.MaxDescentRateCmPerSec;
-		}
-
-		// 偏航角速率
-		if (FMath::Abs(Pilot.Yaw) >= Config.YawHoldStickDeadband)
-		{
-			ManualCommand.DesiredYawRateDegPerSec = Pilot.Yaw * Config.MaxYawRateDegreesPerSec;
-		}
-
-		// 姿态直通（Angle 模式摇杆直接映射倾角目标）
-		ManualCommand.DesiredAttitudeDegrees = FRotator(
-			-Pilot.Pitch * Config.MaxTiltAngleDegrees,
-			CurrentHeadingDegrees,
-			Pilot.Roll * Config.MaxTiltAngleDegrees);
-
-		// 角速率直通（Acro/Manual）
-		ManualCommand.DesiredBodyRatesDegPerSec = FVector(
-			Pilot.Roll * Config.MaxRollRateDegreesPerSec,
-			-Pilot.Pitch * Config.MaxPitchRateDegreesPerSec,
-			Pilot.Yaw * Config.MaxYawRateDegreesPerSec);
-
 		// BP 直接设定值覆盖（SetControlTargets 的 Attitude/Rate 通道）
 		if (Targets.Attitude.bEnabled)
 		{

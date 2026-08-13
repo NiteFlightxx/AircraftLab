@@ -277,8 +277,11 @@ private:
 	/** 替代驱动下由组件合成估计状态并回写代理输出槽。 */
 	void UpdateAlternativeDriveEstimatedState(float DeltaSeconds);
 
-	/** 汇总运动目标：显式覆盖 > Owner 上 LOD 消费者发布 > ControlTargets 合成。 */
+	/** 汇总运动目标：显式覆盖 > Owner 上 LOD 消费者发布 > ControlTargets > 飞行员输入。 */
 	bool BuildMotionTarget(FAircraftMotionTarget& OutTarget) const;
+	/** 把共享飞行员输入转换为替代后端消费的连续运动目标。 */
+	void UpdatePilotMotionTarget(float DeltaSeconds);
+	void ResetPilotMotionTarget();
 	void RefreshMotionTargetSources();
 
 	/** GT 消费代理回传的失效策略动作。 */
@@ -352,6 +355,8 @@ private:
 	FDataflowSimulationAsset SimulationAsset;
 
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;
+	/** 所有驱动后端共享的最新飞行员输入。 */
+	FDronePilotInput PilotInput;
 	FDroneControlTargets ControlTargets;
 
 	/* ------- Autopilot / 替代驱动后端状态 ------- */
@@ -376,6 +381,9 @@ private:
 
 	/** 运动目标显式覆盖（最高优先级）。 */
 	FAircraftMotionTarget MotionTargetOverride;
+	/** Constraint/Kinematic 后端由飞行员输入持续积分出的目标。 */
+	FAircraftMotionTarget PilotMotionTarget;
+	bool bPilotMotionTargetInitialized = false;
 	/** 精确临时驱动覆盖。 */
 	FAircraftSimulationDriveOverride DriveOverride;
 	/** Owner 上实现 IAircraftSimulationLODConsumer 的其他组件（运动目标来源缓存）。 */

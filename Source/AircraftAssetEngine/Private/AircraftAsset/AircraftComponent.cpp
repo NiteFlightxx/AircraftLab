@@ -21,6 +21,7 @@
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftSimulationGraph.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
+#include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "AircraftAsset/AircraftSimulationProxy.h"
 #include "AircraftRuntimeInterface/AutopilotProvider.h"
 #include "Dataflow/DataflowSimulationManager.h"
@@ -187,6 +188,7 @@ void UAircraftComponent::ApplySolverSettingsToBodyInstance()
 
 void UAircraftComponent::SetPilotInput(const FDronePilotInput& InPilotInput)
 {
+	PilotInput = InPilotInput;
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->SetPilotInput_GameThread(InPilotInput);
@@ -434,6 +436,15 @@ void UAircraftComponent::ApplySimulationLOD(
 	}
 
 	const int32 PreviousLOD = CurrentSimulationLOD;
+	if (bLODChanged && SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint)
+	{
+		// Constraint LOD 之间也必须重建，新的 RootBone、驱动参数和参考变换才会生效。
+		DestroySimulationConstraint();
+	}
+	if (bLODChanged)
+	{
+		ResetPilotMotionTarget();
+	}
 	CurrentSimulationLOD = LodIndex;
 	ApplySimulationDriveMode(DriveMode, bEnablePhysics);
 
@@ -494,6 +505,10 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 	// 让物理状态创建回调能按 Dataflow LOD 配置建立对应后端。
 	SimulationDriveMode = NewDriveMode;
 	bSimulationPhysicsEnabled = bEnablePhysics;
+	if (PreviousDriveMode != NewDriveMode)
+	{
+		ResetPilotMotionTarget();
+	}
 
 	if (bEnablePhysics)
 	{
@@ -799,7 +814,65 @@ bool UAircraftComponent::BuildMotionTarget(FAircraftMotionTarget& OutTarget) con
 		return true;
 	}
 
+	// 4) 所有可飞行 LOD 后端共享飞行员输入语义。
+	if (bPilotMotionTargetInitialized && PilotMotionTarget.bValid)
+	{
+		OutTarget = PilotMotionTarget;
+		return true;
+	}
+
 	return false;
+}
+
+void UAircraftComponent::UpdatePilotMotionTarget(float DeltaSeconds)
+{
+	if (DeltaSeconds <= UE_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
+	if (!Model)
+	{
+		ResetPilotMotionTarget();
+		return;
+	}
+
+	if (GetArmState() != EAircraftArmState::Armed || !IsControllerEnabled())
+	{
+		PilotMotionTarget.VelocityCmPerSec = FVector::ZeroVector;
+		PilotMotionTarget.AngularVelocityWorldDegPerSec = FVector::ZeroVector;
+		return;
+	}
+
+	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
+	if (!bPilotMotionTargetInitialized)
+	{
+		PilotMotionTarget = FAircraftMotionTarget();
+		PilotMotionTarget.PositionCm = GetComponentLocation();
+		PilotMotionTarget.RotationDegrees = GetComponentRotation();
+		PilotMotionTarget.Priority = 0;
+		PilotMotionTarget.bValid = true;
+		bPilotMotionTargetInitialized = true;
+	}
+
+	const FAircraftManualCommand ManualCommand =
+		UE::AircraftLab::PilotInputMapping::BuildManualCommand(PilotInput, GetComponentQuat(), Config);
+
+	PilotMotionTarget.VelocityCmPerSec = ManualCommand.DesiredVelocityCmPerSec;
+	PilotMotionTarget.PositionCm += ManualCommand.DesiredVelocityCmPerSec * DeltaSeconds;
+	PilotMotionTarget.AngularVelocityWorldDegPerSec = FVector(
+		0.0, 0.0, ManualCommand.DesiredYawRateDegPerSec);
+	PilotMotionTarget.RotationDegrees.Yaw = FRotator::NormalizeAxis(
+		PilotMotionTarget.RotationDegrees.Yaw
+		+ ManualCommand.DesiredYawRateDegPerSec * DeltaSeconds);
+	PilotMotionTarget.bValid = true;
+}
+
+void UAircraftComponent::ResetPilotMotionTarget()
+{
+	PilotMotionTarget = FAircraftMotionTarget();
+	bPilotMotionTargetInitialized = false;
 }
 
 /* ==================== IAircraftFlightControllerInterface（Autopilot 窄契约） ==================== */
@@ -1285,6 +1358,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	switch (SimulationDriveMode)
 	{
 	case EAircraftSimulationDriveMode::PhysicsConstraint:
+		UpdatePilotMotionTarget(DeltaTime);
 		if (!CreateSimulationConstraint())
 		{
 			break;
@@ -1293,6 +1367,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		UpdateAlternativeDriveEstimatedState(DeltaTime);
 		break;
 	case EAircraftSimulationDriveMode::Kinematic:
+		UpdatePilotMotionTarget(DeltaTime);
 		UpdateKinematicSimulation(DeltaTime);
 		break;
 	default:
