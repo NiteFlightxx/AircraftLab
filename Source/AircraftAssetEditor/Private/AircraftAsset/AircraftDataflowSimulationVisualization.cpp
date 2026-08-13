@@ -1,6 +1,6 @@
 // 组件获取路径：FDataflowSimulationScene::GetPreviewActor()->GetComponentByClass<UAircraftComponent>()。
-// 旧调试绘制菜单（CenterOfMass/Rotors/ThrustVectors/Torque/Velocity 开关）已随组件侧
-// DrawDebug 代码一并移除 —— 后续重新规划调试绘制功能后再恢复菜单。
+// 与 ChaosCloth 的 Dataflow Simulation Visualization 一致：菜单只保存视口开关，
+// 具体绘制由独立 FAircraftVisualization 完成，不进入飞控求解流程。
 
 #include "AircraftAsset/AircraftDataflowSimulationVisualization.h"
 
@@ -36,10 +36,75 @@ UAircraftComponent* FAircraftDataflowSimulationVisualization::GetAircraftCompone
 }
 
 void FAircraftDataflowSimulationVisualization::ExtendSimulationVisualizationMenu(
-	const TSharedPtr<FDataflowSimulationViewportClient>& /*ViewportClient*/,
-	FMenuBuilder& /*MenuBuilder*/)
+	const TSharedPtr<FDataflowSimulationViewportClient>& ViewportClient,
+	FMenuBuilder& MenuBuilder)
 {
-	// 调试绘制功能待重新规划（旧 UAircraftComponent::DrawSimulationDebug + 调试开关已删除）。
+	if (!ViewportClient)
+	{
+		return;
+	}
+
+	TWeakPtr<FDataflowSimulationViewportClient> WeakViewportClient = ViewportClient;
+	MenuBuilder.BeginSection(TEXT("AircraftSimulation_Visualizations"),
+		LOCTEXT("AircraftVisualizationSection", "Aircraft Visualization"));
+	auto AddToggle = [this, &MenuBuilder, WeakViewportClient](
+		const FText& Label,
+		const FText& ToolTip,
+		bool FAircraftVisualizationFlags::* Flag)
+	{
+		const FExecuteAction Execute = FExecuteAction::CreateLambda([this, WeakViewportClient, Flag]()
+		{
+			Flags.*Flag = !(Flags.*Flag);
+			if (const TSharedPtr<FDataflowSimulationViewportClient> Pinned = WeakViewportClient.Pin())
+			{
+				Pinned->Invalidate();
+			}
+		});
+		const FIsActionChecked IsChecked = FIsActionChecked::CreateLambda([this, Flag]()
+		{
+			return Flags.*Flag;
+		});
+		MenuBuilder.AddMenuEntry(Label, ToolTip, FSlateIcon(),
+			FUIAction(Execute, FCanExecuteAction(), IsChecked), NAME_None,
+			EUserInterfaceActionType::ToggleButton);
+	};
+
+	AddToggle(LOCTEXT("AircraftVisBodyAxes", "Body Axes"),
+		LOCTEXT("AircraftVisBodyAxesTip", "Draw the rigid-body coordinate system."),
+		&FAircraftVisualizationFlags::bDrawBodyAxes);
+	AddToggle(LOCTEXT("AircraftVisCenterOfMass", "Center of Mass"),
+		LOCTEXT("AircraftVisCenterOfMassTip", "Draw the Chaos center of mass."),
+		&FAircraftVisualizationFlags::bDrawCenterOfMass);
+	AddToggle(LOCTEXT("AircraftVisBounds", "Bounds"),
+		LOCTEXT("AircraftVisBoundsTip", "Draw the component bounds."),
+		&FAircraftVisualizationFlags::bDrawBounds);
+	AddToggle(LOCTEXT("AircraftVisVelocity", "Velocity"),
+		LOCTEXT("AircraftVisVelocityTip", "Draw actual linear and angular velocity."),
+		&FAircraftVisualizationFlags::bDrawVelocity);
+	AddToggle(LOCTEXT("AircraftVisTarget", "Motion Target"),
+		LOCTEXT("AircraftVisTargetTip", "Draw target position, rotation, linear velocity, and angular velocity."),
+		&FAircraftVisualizationFlags::bDrawMotionTarget);
+	AddToggle(LOCTEXT("AircraftVisRotors", "Rotors and Thrust"),
+		LOCTEXT("AircraftVisRotorsTip", "Draw rotor locations, thrust axes, and current thrust."),
+		&FAircraftVisualizationFlags::bDrawRotors);
+	AddToggle(LOCTEXT("AircraftVisConstraint", "Physics Constraint"),
+		LOCTEXT("AircraftVisConstraintTip", "Draw constraint reference, output force, and output torque."),
+		&FAircraftVisualizationFlags::bDrawConstraint);
+	MenuBuilder.EndSection();
+}
+
+void FAircraftDataflowSimulationVisualization::Draw(
+	const FDataflowSimulationScene* SimulationScene,
+	FPrimitiveDrawInterface* PDI)
+{
+	const UAircraftComponent* const Component = GetAircraftComponent(SimulationScene);
+	if (!Component || !PDI)
+	{
+		return;
+	}
+	FAircraftVisualizationContext Context;
+	Context.PDI = PDI;
+	FAircraftVisualization::Draw(*Component, Context, Flags);
 }
 
 FText FAircraftDataflowSimulationVisualization::GetDisplayString(const FDataflowSimulationScene* SimulationScene) const
@@ -86,6 +151,23 @@ FText FAircraftDataflowSimulationVisualization::GetDisplayString(const FDataflow
 	Lines.Add(FText::Format(LOCTEXT("AircraftDisplayMode", "Mode: {0} | Arm: {1}"),
 		UEnum::GetDisplayValueAsText(Component->GetFlightMode()),
 		UEnum::GetDisplayValueAsText(Component->GetArmState())));
+	Lines.Add(FText::Format(
+		LOCTEXT("AircraftDisplayBackend", "Controller: {0} | Chaos Body: {1}"),
+		Component->IsControllerEnabled()
+			? LOCTEXT("AircraftDisplayControllerEnabled", "Enabled")
+			: LOCTEXT("AircraftDisplayControllerDisabled", "Disabled"),
+		Component->IsSimulatingPhysics()
+			? LOCTEXT("AircraftDisplayPhysicsActive", "Simulating")
+			: LOCTEXT("AircraftDisplayPhysicsInactive", "Inactive")));
+
+	FAircraftEstimatedState EstimatedState;
+	Component->GetEstimatedState(EstimatedState);
+	const FVector& Velocity = EstimatedState.State.VelocityCmPerSec;
+	const FRotator& Attitude = EstimatedState.State.AttitudeDegrees;
+	Lines.Add(FText::Format(
+		LOCTEXT("AircraftDisplayState", "Velocity: ({0}, {1}, {2}) cm/s | Attitude R/P/Y: ({3}, {4}, {5}) deg"),
+		FText::AsNumber(Velocity.X), FText::AsNumber(Velocity.Y), FText::AsNumber(Velocity.Z),
+		FText::AsNumber(Attitude.Roll), FText::AsNumber(Attitude.Pitch), FText::AsNumber(Attitude.Yaw)));
 
 	FText DisplayString;
 	for (const FText& Line : Lines)

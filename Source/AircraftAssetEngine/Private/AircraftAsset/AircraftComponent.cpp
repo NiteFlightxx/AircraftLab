@@ -19,16 +19,16 @@
 
 #include "Aircraft/FlightControlSolver.h"
 #include "AircraftAsset/AircraftAssetBase.h"
+#include "AircraftAsset/AircraftDebug.h"
 #include "AircraftAsset/AircraftSimulationGraph.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "AircraftAsset/AircraftSimulationProxy.h"
+#include "AircraftAsset/AircraftVisualization.h"
 #include "AircraftRuntimeInterface/AutopilotProvider.h"
 #include "Dataflow/DataflowSimulationManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftComponent)
-
-DEFINE_LOG_CATEGORY_STATIC(LogAircraftComponent, Log, All);
 
 UAircraftComponent::UAircraftComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -123,7 +123,7 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 	Body->InertiaTensorScale = Mass.InertiaTensorScale;
 	Body->UpdateMassProperties();
 
-	UE_LOG(LogAircraftComponent, Log,
+	UE_LOG(LogAircraft, Log,
 		TEXT("[AircraftDF.MassApply] Owner=%s LOD=%d ConfigMass=%.3fkg ActualMass=%.3fkg COMNudge=(%+.2f,%+.2f,%+.2f)cm InertiaScale=(%.3f,%.3f,%.3f) ActualInertia=(%.1f,%.1f,%.1f)kgcm2"),
 		*GetNameSafe(GetOwner()), CurrentSimulationLOD,
 		Mass.MassKg, Body->GetBodyMass(),
@@ -542,7 +542,7 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 		&& bSimulationPhysicsEnabled
 		&& !CreateSimulationConstraint())
 	{
-		UE_LOG(LogAircraftComponent, Verbose,
+		UE_LOG(LogAircraft, Verbose,
 			TEXT("[AircraftDF.LOD] Physics constraint for '%s' is pending a valid chassis physics body."),
 			*GetNameSafe(GetOwner()));
 	}
@@ -578,6 +578,7 @@ bool UAircraftComponent::CreateSimulationConstraint()
 		GetOwner(), ConstraintName, RF_Transient);
 	if (!SimulationConstraint)
 	{
+		FAircraftDebug::LogConstraintCreationFailure(*this, Model->RootBone, TEXT("AllocationFailed"));
 		return false;
 	}
 
@@ -616,21 +617,22 @@ bool UAircraftComponent::CreateSimulationConstraint()
 		&& !SimulationConstraint->IsBroken();
 	if (bCreated)
 	{
-		UE_LOG(LogAircraftComponent, Log,
-			TEXT("[AircraftDF.LOD] Owner=%s LOD=%d Drive=PhysicsConstraint RootBone=%s Constraint=Active"),
-			*GetNameSafe(GetOwner()), CurrentSimulationLOD, *Model->RootBone.ToString());
+		ConstraintDebugLogAccumulatorSeconds = 0.0f;
+		ConstraintDebugUnresponsiveSeconds = 0.0f;
+		FAircraftDebug::LogConstraintCreated(
+			*this, *SimulationConstraint, Model->RootBone, Config, SimulationConstraintReference);
 	}
 	else
 	{
-		UE_LOG(LogAircraftComponent, Error,
-			TEXT("[AircraftDF.LOD] Owner=%s LOD=%d Drive=PhysicsConstraint RootBone=%s Constraint=CreationFailed"),
-			*GetNameSafe(GetOwner()), CurrentSimulationLOD, *Model->RootBone.ToString());
+		FAircraftDebug::LogConstraintCreationFailure(*this, Model->RootBone, TEXT("InvalidOrBroken"));
 	}
 	return bCreated;
 }
 
 void UAircraftComponent::DestroySimulationConstraint()
 {
+	ConstraintDebugLogAccumulatorSeconds = 0.0f;
+	ConstraintDebugUnresponsiveSeconds = 0.0f;
 	if (!IsValid(SimulationConstraint))
 	{
 		return;
@@ -642,10 +644,14 @@ void UAircraftComponent::DestroySimulationConstraint()
 
 void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 {
-	(void)DeltaSeconds;
 	if (!IsValid(SimulationConstraint)
 		|| !SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
 		|| SimulationConstraint->IsBroken())
+	{
+		return;
+	}
+	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
+	if (!Model)
 	{
 		return;
 	}
@@ -656,21 +662,23 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		return;
 	}
 
-	const FVector PositionTarget =
-		SimulationConstraintReference.InverseTransformPosition(Target.PositionCm);
-	const FVector VelocityTarget =
-		SimulationConstraintReference.InverseTransformVectorNoScale(Target.VelocityCmPerSec);
-	const FQuat OrientationTarget = (
-		SimulationConstraintReference.GetRotation().Inverse()
-		* Target.RotationDegrees.Quaternion()).GetNormalized();
-	const FVector AngularVelocityTargetRevPerSec =
-		SimulationConstraintReference.InverseTransformVectorNoScale(
-			Target.AngularVelocityWorldDegPerSec) / 360.0f;
+	const FVector PositionTarget =SimulationConstraintReference.InverseTransformPosition(Target.PositionCm);
+	const FVector VelocityTarget =SimulationConstraintReference.InverseTransformVectorNoScale(Target.VelocityCmPerSec);
+	const FQuat OrientationTarget = (SimulationConstraintReference.GetRotation().Inverse()* Target.RotationDegrees.Quaternion()).GetNormalized();
+	const FVector AngularVelocityTargetRevPerSec =SimulationConstraintReference.InverseTransformVectorNoScale(Target.AngularVelocityWorldDegPerSec) / 360.0f;
 	SimulationConstraint->SetLinearPositionTarget(PositionTarget);
 	SimulationConstraint->SetLinearVelocityTarget(VelocityTarget);
 	SimulationConstraint->SetAngularOrientationTarget(OrientationTarget.Rotator());
 	SimulationConstraint->SetAngularVelocityTarget(AngularVelocityTargetRevPerSec);
 	WakeAllRigidBodies();
+	const FAircraftManualCommand ManualCommand =
+		UE::AircraftLab::PilotInputMapping::BuildManualCommand(
+			PilotInput, GetComponentQuat(), Model->FlightController);
+	FAircraftDebug::TickConstraint(
+		*this, *SimulationConstraint, PilotInput, ManualCommand, Target,
+		SimulationConstraintReference, PositionTarget, VelocityTarget,
+		OrientationTarget, AngularVelocityTargetRevPerSec, DeltaSeconds,
+		ConstraintDebugLogAccumulatorSeconds, ConstraintDebugUnresponsiveSeconds);
 }
 
 void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
@@ -1138,7 +1146,7 @@ void UAircraftComponent::ApplyFailurePolicyActions()
 			break;
 		case EAircraftFailurePolicyAction::WarningOnly:
 		default:
-			UE_LOG(LogAircraftComponent, Warning,
+			UE_LOG(LogAircraft, Warning,
 				TEXT("Aircraft failure policy warning on '%s'."), *GetNameSafe(GetOwner()));
 			break;
 		}
@@ -1308,7 +1316,7 @@ void UAircraftComponent::OnCreatePhysicsState()
 		&& bSimulationPhysicsEnabled
 		&& !CreateSimulationConstraint())
 	{
-		UE_LOG(LogAircraftComponent, Error,
+		UE_LOG(LogAircraft, Error,
 			TEXT("[AircraftDF.LOD] Owner=%s LOD=%d could not create its PhysicsConstraint backend after physics-state creation."),
 			*GetNameSafe(GetOwner()), CurrentSimulationLOD);
 	}
@@ -1332,6 +1340,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	UpdateSimulationLOD();
+	FAircraftVisualization::DrawRuntime(*this);
 
 	// TG_PrePhysics：从 Autopilot 提供者拉取本周期的注入设定值（无锁交接依赖
 	if (AircraftSimulationProxy.IsValid() && bUseAutopilotSetpoint)

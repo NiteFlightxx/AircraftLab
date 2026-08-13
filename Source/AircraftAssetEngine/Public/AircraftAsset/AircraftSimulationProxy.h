@@ -78,6 +78,7 @@ public:
 	void RecoverAllRotors_GameThread();
 
 	void GetEstimatedState_GameThread(FAircraftEstimatedState& OutState) const;
+	void GetControlOutput_GameThread(FAircraftFlightControlOutput& OutOutput) const;
 	/** 替代驱动后端（约束/运动学，GT 执行）写回估计状态，覆盖 PT 输出槽。 */
 	void SetEstimatedStateOverride_GameThread(const FAircraftEstimatedState& InState);
 	EAircraftArmState GetArmState_GameThread() const;
@@ -176,6 +177,7 @@ private:
 	/* PT → GT 输出缓冲 */
 	mutable FCriticalSection OutputCriticalSection;
 	FAircraftEstimatedState LatestEstimated;
+	FAircraftFlightControlOutput LatestControlOutput;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftFailurePolicyStatus LatestPolicyStatus;
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Armed) };

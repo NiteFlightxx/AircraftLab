@@ -22,6 +22,7 @@ class UAircraftAssetBase;
 class UThumbnailInfo;
 class UPhysicsConstraintComponent;
 class FAircraftSimulationProxy;
+class FAircraftVisualization;
 struct FAircraftSimulationModel;
 struct FAircraftSimulationLodModel;
 
@@ -265,6 +266,8 @@ protected:
 	//~ End IAircraftSimulationLODConsumer Interface
 
 private:
+	friend class FAircraftVisualization;
+
 	void SyncSkeletalMeshComponentFromAsset();
 	FBodyInstance* ResolveChassisBodyInstance() const;
 
@@ -351,7 +354,7 @@ private:
 	 * 推进节奏：控制+力注入始终在 AsyncPhysicsTickComponent（Chaos 物理子步）执行，
 	 * 与碰撞解算同一 pass；图的 AdvancePhysicsSolvers 不承担控制计算。
 	 */
-	UPROPERTY(EditAnywhere, Category = AircraftComponent, meta = (EditConditionHides), AdvancedDisplay)
+	//UPROPERTY(EditAnywhere, Category = AircraftComponent, meta = (EditConditionHides), AdvancedDisplay)
 	FDataflowSimulationAsset SimulationAsset;
 
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;
@@ -378,6 +381,8 @@ private:
 	TObjectPtr<UPhysicsConstraintComponent> SimulationConstraint;
 	/** 约束创建时的组件世界变换（约束空间原点）。 */
 	FTransform SimulationConstraintReference = FTransform::Identity;
+	float ConstraintDebugLogAccumulatorSeconds = 0.0f;
+	float ConstraintDebugUnresponsiveSeconds = 0.0f;
 
 	/** 运动目标显式覆盖（最高优先级）。 */
 	FAircraftMotionTarget MotionTargetOverride;
