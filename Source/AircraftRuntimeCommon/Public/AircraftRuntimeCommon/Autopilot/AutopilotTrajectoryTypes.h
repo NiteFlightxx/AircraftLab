@@ -1,7 +1,8 @@
 //
 // Trajectory Generator 核心数据类型。坐标系双轨制：内部 Frenet 路径坐标系
 // （弧长/切向/法向）供路径跟踪算法；对外 FTrajectoryPoint 输出世界系设定值。
-// 输出为"名义设定值"（不保证物理可达）；物理可达性由 Motion Profile 限幅保证。
+// 有限轨迹的平移输出由 Trajectory Generator 完成 V/A/J 规划；其他连续意图
+// 由 Motion Profile 负责整形。
 
 #pragma once
 

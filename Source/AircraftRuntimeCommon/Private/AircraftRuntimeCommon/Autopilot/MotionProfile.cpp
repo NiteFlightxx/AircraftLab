@@ -13,12 +13,8 @@ void FAircraftMotionProfile::Initialize(
 	PrevProfiledVelocity = CurrentVelocityCmPerSec;
 	ProfiledAcceleration = CurrentAccelerationCmPerSecSq;
 
-	VelocitySlew.Reset(CurrentVelocityCmPerSec);
-	VelocitySlew.X.bInitialized = true;
-	VelocitySlew.Y.bInitialized = true;
-	VelocitySlew.Z.bInitialized = true;
-	YawRateSlew.Reset(CurrentYawRateDegreesPerSec);
-	YawRateSlew.bInitialized = true;
+	VelocitySlew.Synchronize(CurrentVelocityCmPerSec, CurrentAccelerationCmPerSecSq);
+	YawRateSlew.Synchronize(CurrentYawRateDegreesPerSec);
 
 	bInitialized = true;
 
@@ -87,16 +83,8 @@ FProfiledSetpoint FAircraftMotionProfile::Update(const FTrajectoryPoint& Nominal
 	// 4) 位置积分（运动学自洽）
 	ProfiledPosition += ProfiledVel * DeltaSeconds;
 
-	// 5) Yaw：透传名义航向（航向闭合是飞控四元数姿态误差控制器的职责），
-	//    角速度前馈仅用几何角速度，经 Slew 做 Jerk 限幅。
-	const float TargetYawRate = Nominal.bValid
-		? FMath::Clamp(Nominal.YawRateDegreesPerSec,
-			-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec)
-		: 0.0f;
-	const float ProfiledYawRate = YawRateSlew.Update(
-		TargetYawRate, DeltaSeconds,
-		Limits.MaxYawAccelDegPerSecSq, Limits.MaxYawJerkDegPerSecCubed);
-	ProfiledYaw = Nominal.bValid ? FMath::UnwindDegrees(Nominal.YawDegrees) : 0.0f;
+	float ProfiledYawRate = 0.0f;
+	UpdateYaw(Nominal, DeltaSeconds, ProfiledYaw, ProfiledYawRate);
 
 	CurrentSetpoint.PositionCm = ProfiledPosition;
 	CurrentSetpoint.VelocityCmPerSec = ProfiledVel;
@@ -105,6 +93,50 @@ FProfiledSetpoint FAircraftMotionProfile::Update(const FTrajectoryPoint& Nominal
 	CurrentSetpoint.YawRateDegreesPerSec = ProfiledYawRate;
 	CurrentSetpoint.bValid = true;
 	return CurrentSetpoint;
+}
+
+FProfiledSetpoint FAircraftMotionProfile::FollowPlannedTrajectory(
+	const FTrajectoryPoint& Planned,
+	float DeltaSeconds)
+{
+	if (!bInitialized || !Planned.bValid || DeltaSeconds <= UE_SMALL_NUMBER)
+	{
+		return CurrentSetpoint;
+	}
+
+	ProfiledPosition = Planned.PositionCm;
+	PrevProfiledVelocity = Planned.VelocityCmPerSec;
+	ProfiledAcceleration = Planned.AccelerationCmPerSecSq;
+	VelocitySlew.Synchronize(PrevProfiledVelocity, ProfiledAcceleration);
+
+	float ProfiledYawRate = 0.0f;
+	UpdateYaw(Planned, DeltaSeconds, ProfiledYaw, ProfiledYawRate);
+
+	CurrentSetpoint.PositionCm = ProfiledPosition;
+	CurrentSetpoint.VelocityCmPerSec = PrevProfiledVelocity;
+	CurrentSetpoint.AccelerationCmPerSecSq = ProfiledAcceleration;
+	CurrentSetpoint.YawDegrees = ProfiledYaw;
+	CurrentSetpoint.YawRateDegreesPerSec = ProfiledYawRate;
+	CurrentSetpoint.bValid = true;
+	return CurrentSetpoint;
+}
+
+void FAircraftMotionProfile::UpdateYaw(
+	const FTrajectoryPoint& Nominal,
+	float DeltaSeconds,
+	float& OutYawDegrees,
+	float& OutYawRateDegreesPerSec)
+{
+	const float TargetYawRate = Nominal.bValid
+		? FMath::Clamp(Nominal.YawRateDegreesPerSec,
+			-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec)
+		: 0.0f;
+	OutYawRateDegreesPerSec = YawRateSlew.Update(
+		TargetYawRate,
+		DeltaSeconds,
+		Limits.MaxYawAccelDegPerSecSq,
+		Limits.MaxYawJerkDegPerSecCubed);
+	OutYawDegrees = Nominal.bValid ? FMath::UnwindDegrees(Nominal.YawDegrees) : 0.0f;
 }
 
 void FAircraftMotionProfile::ClampAcceleration(FVector& InOutAccel) const

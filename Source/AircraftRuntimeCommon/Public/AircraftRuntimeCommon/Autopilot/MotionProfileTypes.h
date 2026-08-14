@@ -72,6 +72,13 @@ struct AIRCRAFTRUNTIMECOMMON_API FSlewLimiter
 		bInitialized = false;
 	}
 
+	void Synchronize(float InValue, float InRate = 0.0f)
+	{
+		Value = InValue;
+		Rate = InRate;
+		bInitialized = true;
+	}
+
 	float Update(float Target, float DeltaSeconds, float MaxRate, float MaxJerk = 0.0f)
 	{
 		if (DeltaSeconds <= UE_SMALL_NUMBER) return Value;
@@ -133,6 +140,13 @@ struct AIRCRAFTRUNTIMECOMMON_API FVecSlewLimiter
 		X.Reset(InValue.X);
 		Y.Reset(InValue.Y);
 		Z.Reset(InValue.Z);
+	}
+
+	void Synchronize(const FVector& InValue, const FVector& InRate = FVector::ZeroVector)
+	{
+		X.Synchronize(InValue.X, InRate.X);
+		Y.Synchronize(InValue.Y, InRate.Y);
+		Z.Synchronize(InValue.Z, InRate.Z);
 	}
 
 	FVector GetValue() const { return FVector(X.Value, Y.Value, Z.Value); }

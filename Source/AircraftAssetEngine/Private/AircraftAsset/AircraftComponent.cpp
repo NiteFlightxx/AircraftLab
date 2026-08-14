@@ -785,23 +785,28 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
 	const FVector CurrentLocation = GetComponentLocation();
-	const FVector PredictedLocation = CurrentLocation
-		+ Target.VelocityCmPerSec * DeltaSeconds;
-
-	const float CorrectionAlpha = 1.0f - FMath::Exp(
-		-FMath::Max(Config.KinematicPositionCorrectionRate, 0.0f) * DeltaSeconds);
-	const FVector NewLocation = FMath::Lerp(PredictedLocation, Target.PositionCm, CorrectionAlpha);
-
-	const FRotator NewRotation = FMath::RInterpTo(
-		GetComponentRotation(),
-		Target.RotationDegrees,
-		DeltaSeconds,
-		Config.KinematicRotationInterpSpeed);
+	FVector NewLocation = Target.PositionCm;
+	FRotator NewRotation = Target.RotationDegrees;
+	if (Target.Mode == EAircraftMotionTargetMode::Tracked)
+	{
+		const FVector PredictedLocation = CurrentLocation
+			+ Target.VelocityCmPerSec * DeltaSeconds;
+		const float CorrectionAlpha = 1.0f - FMath::Exp(
+			-FMath::Max(Config.KinematicPositionCorrectionRate, 0.0f) * DeltaSeconds);
+		NewLocation = FMath::Lerp(PredictedLocation, Target.PositionCm, CorrectionAlpha);
+		NewRotation = FMath::RInterpTo(
+			GetComponentRotation(),
+			Target.RotationDegrees,
+			DeltaSeconds,
+			Config.KinematicRotationInterpSpeed);
+	}
 
 	FHitResult Hit;
 	SetWorldLocationAndRotation(NewLocation, NewRotation,
 		Config.bKinematicSweepMovement, &Hit, ETeleportType::None);
-	PreviousAlternativeVelocityCmPerSec = Target.VelocityCmPerSec;
+	PreviousAlternativeVelocityCmPerSec = DeltaSeconds > UE_SMALL_NUMBER
+		? (GetComponentLocation() - CurrentLocation) / DeltaSeconds
+		: FVector::ZeroVector;
 	if (FAircraftDebug::IsDriveLogEnabled())
 	{
 		AlternativeDriveDebugLogAccumulatorSeconds += DeltaSeconds;

@@ -1,7 +1,7 @@
 //
 // 轨迹生成器：把 FTrajectoryRequest 转成时间参数化设定值序列。
-// 梯形速度剖面：加速段/巡航段/减速段，减速段从"距终点 s_dec"处开始 → 天然提前减速；
-// L < s_acc + s_dec 时退化为三角形剖面。
+// 有限轨迹使用唯一的 S 曲线 V/A/J 规划器；进入制动段后直接执行到终端速度，
+// 不再通过逐帧收缩速度上限制造末端爬行。
 
 #pragma once
 
@@ -53,6 +53,8 @@ private:
 
 	float CurrentArcLength = 0.0f;
 	float CurrentSpeedCmPerSec = 0.0f;
+	float CurrentPathAccelerationCmPerSecSq = 0.0f;
+	bool bBraking = false;
 	float CurrentTimeSeconds = 0.0f;
 	float TotalDurationSeconds = 0.0f;
 	bool bUsesNativeTimeParameterization = false;
@@ -66,7 +68,6 @@ private:
 	float InitialSpeedCmPerSec = 0.0f;
 	float TargetEndSpeedCmPerSec = 0.0f;
 	float AcceptanceRadiusCm = 50.0f;
-	float DecelTriggerDistanceCm = 0.0f;
 
 	bool bUseLookAhead = false;
 	float LookAheadDistanceCm = 200.0f;
@@ -75,10 +76,12 @@ private:
 	bool BuildFollowPathSegments(const FTrajectoryRequest& Request, FString& OutError);
 	bool BuildWaypointSegment(const FTrajectoryRequest& Request, FString& OutError);
 	void RecomputeArcLengths();
-	float ComputeTrapezoidalSpeed(float CurrentS, float TotalS, float DeltaSeconds) const;
+	float ComputeConstrainedSpeed(float CurrentS, float TotalS, float DeltaSeconds);
 	float ComputeBrakingDistance(float StartSpeedCmPerSec, float EndSpeedCmPerSec) const;
-	float ComputeBrakingSpeedLimit(float RemainingDistanceCm) const;
 	bool IsCurrentSegmentInfiniteLoop() const;
 	void LocateSegment(float GlobalArc, int32& OutSegIndex, float& OutLocalArc) const;
-	FTrajectoryPoint SampleGlobalArcLength(float GlobalArc, float Speed) const;
+	FTrajectoryPoint SampleGlobalArcLength(
+		float GlobalArc,
+		float Speed,
+		float TangentialAccelerationCmPerSecSq = 0.0f) const;
 };

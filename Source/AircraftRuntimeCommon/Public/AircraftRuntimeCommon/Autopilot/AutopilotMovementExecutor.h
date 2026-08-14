@@ -69,6 +69,7 @@ public:
 	FAutopilotIntentResult GetResult(FAutopilotIntentHandle Handle) const;
 	const FAutopilotIntentResult& GetCurrentResult() const { return ActiveResult; }
 	const FAutopilotMovementIntent& GetActiveIntent() const { return ActiveIntent; }
+	FVector GetActiveTargetPosition() const { return ResolveTargetPosition(ActiveIntent); }
 	FAircraftTrajectoryGenerator* GetTrajectoryGenerator() { return &TrajectoryGenerator; }
 	const FAircraftTrajectoryGenerator* GetTrajectoryGenerator() const { return &TrajectoryGenerator; }
 	float GetTrajectoryProgress() const;

@@ -334,7 +334,9 @@ void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 			DeltaTime);
 	}
 
-	CachedProfiledSetpoint = MotionProfile.Update(NominalSetpoint, DeltaTime);
+	CachedProfiledSetpoint = IntentType == EAutopilotMovementIntentType::MoveToPosition
+		? MotionProfile.FollowPlannedTrajectory(NominalSetpoint, DeltaTime)
+		: MotionProfile.Update(NominalSetpoint, DeltaTime);
 	UpdateHoverThrustEstimate(DeltaTime);
 	CachedFeedForward = FFeedForward();
 	if (CachedProfiledSetpoint.bValid)
@@ -1413,9 +1415,21 @@ bool UAutopilotComponent::GetAircraftMotionTarget_Implementation(FAircraftMotion
 		return true;
 	}
 	if (!CachedProfiledSetpoint.bValid) return false;
-	OutTarget.PositionCm = CachedProfiledSetpoint.PositionCm;
-	OutTarget.VelocityCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec;
-	OutTarget.AccelerationCmPerSecSq = CachedProfiledSetpoint.AccelerationCmPerSecSq;
+	const FAutopilotMovementIntent& Intent = MovementExecutor.GetActiveIntent();
+	const bool bDirectPositionDrive =
+		SimulationBudget.DriveMode != EAircraftSimulationDriveMode::FlightController
+		&& Intent.Type == EAutopilotMovementIntentType::MoveToPosition;
+	if (bDirectPositionDrive)
+	{
+		OutTarget.PositionCm = MovementExecutor.GetActiveTargetPosition();
+		OutTarget.Mode = EAircraftMotionTargetMode::DirectPose;
+	}
+	else
+	{
+		OutTarget.PositionCm = CachedProfiledSetpoint.PositionCm;
+		OutTarget.VelocityCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec;
+		OutTarget.AccelerationCmPerSecSq = CachedProfiledSetpoint.AccelerationCmPerSecSq;
+	}
 	const FQuat DesiredControlWorld =
 		FRotator(0.0f, CachedProfiledSetpoint.YawDegrees, 0.0f).Quaternion();
 	const FQuat ControlToBody = FlightController.GetInterface()

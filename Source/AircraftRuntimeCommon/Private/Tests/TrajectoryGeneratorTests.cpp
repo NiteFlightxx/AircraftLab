@@ -2,6 +2,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/AutomationTest.h"
+#include "AircraftRuntimeCommon/Autopilot/MotionProfile.h"
 #include "AircraftRuntimeCommon/Autopilot/TrajectoryGenerator.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -169,6 +170,80 @@ bool FAircraftAutopilotTerminalSpeedTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Fly-through profile reaches target"), Generator.IsComplete());
 	TestTrue(TEXT("Configured terminal speed is preserved"),
 		FMath::IsNearlyEqual(Setpoint.VelocityCmPerSec.Size(), 200.0f, 1.0f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAutopilotJerkLimitedMoveToTest,
+	"AircraftAutopilot.Trajectory.MoveToPublishesJerkLimitedAcceleration",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAutopilotJerkLimitedMoveToTest::RunTest(const FString& Parameters)
+{
+	FAircraftTrajectoryGenerator Generator;
+	FTrajectoryRequest Request;
+	Request.Type = ETrajectoryType::Waypoint;
+	Request.TargetPositionCm = FVector(6000.0f, 0.0f, 0.0f);
+	Request.CruiseSpeedCmPerSec = 800.0f;
+	Request.PlanningAccelerationCmPerSecSq = 400.0f;
+	Request.PlanningDecelerationCmPerSecSq = 500.0f;
+	Request.PlanningJerkCmPerSecCubed = 1000.0f;
+	Request.AcceptanceRadiusCm = 1.0f;
+
+	TestTrue(TEXT("Jerk-limited MoveTo request builds"), Generator.SetRequest(Request));
+	constexpr float DeltaSeconds = 0.01f;
+	float PreviousAcceleration = 0.0f;
+	float MaxAccelerationChange = 0.0f;
+	bool bSawAccelerationFeedForward = false;
+	FTrajectoryPoint Setpoint;
+	for (int32 Step = 0; Step < 4000 && !Generator.IsComplete(); ++Step)
+	{
+		Generator.UpdateSetpoint(
+			DeltaSeconds, FVector::ZeroVector, FVector::ZeroVector, Setpoint);
+		const float Acceleration = Setpoint.AccelerationCmPerSecSq.X;
+		MaxAccelerationChange = FMath::Max(
+			MaxAccelerationChange, FMath::Abs(Acceleration - PreviousAcceleration));
+		bSawAccelerationFeedForward |= FMath::Abs(Acceleration) > 1.0f;
+		PreviousAcceleration = Acceleration;
+	}
+
+	TestTrue(TEXT("MoveTo publishes non-zero acceleration feed-forward"),
+		bSawAccelerationFeedForward);
+	TestTrue(TEXT("MoveTo acceleration changes respect the jerk limit"),
+		MaxAccelerationChange <= Request.PlanningJerkCmPerSecCubed * DeltaSeconds + 0.1f);
+	TestTrue(TEXT("Jerk-limited MoveTo reaches the target"), Generator.IsComplete());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAutopilotPlannedTrajectoryOwnershipTest,
+	"AircraftAutopilot.MotionProfile.MoveToIsNotProfiledTwice",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAutopilotPlannedTrajectoryOwnershipTest::RunTest(const FString& Parameters)
+{
+	FAircraftMotionProfile Profile;
+	Profile.Initialize(
+		FVector::ZeroVector,
+		FVector::ZeroVector,
+		FVector::ZeroVector,
+		0.0f,
+		0.0f);
+
+	FTrajectoryPoint Planned;
+	Planned.PositionCm = FVector(123.0f, 45.0f, 67.0f);
+	Planned.VelocityCmPerSec = FVector(500.0f, 25.0f, -10.0f);
+	Planned.AccelerationCmPerSecSq = FVector(-200.0f, 10.0f, 5.0f);
+	Planned.YawDegrees = 30.0f;
+	Planned.bValid = true;
+
+	const FProfiledSetpoint Result = Profile.FollowPlannedTrajectory(Planned, 0.02f);
+	TestTrue(TEXT("Planned position is accepted without reintegration"),
+		Result.PositionCm.Equals(Planned.PositionCm));
+	TestTrue(TEXT("Planned velocity is accepted without a second brake"),
+		Result.VelocityCmPerSec.Equals(Planned.VelocityCmPerSec));
+	TestTrue(TEXT("Planned acceleration remains the feed-forward acceleration"),
+		Result.AccelerationCmPerSecSq.Equals(Planned.AccelerationCmPerSecSq));
 	return true;
 }
 

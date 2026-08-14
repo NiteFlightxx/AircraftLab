@@ -48,9 +48,10 @@ bool FAircraftTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 		InitialSpeedCmPerSec = 0.0f;
 		TargetEndSpeedCmPerSec = 0.0f;
 		AcceptanceRadiusCm = FMath::Max(Request.AcceptanceRadiusCm, 1.0f);
-		DecelTriggerDistanceCm = 0.0f;
 		CurrentArcLength = 0.0f;
 		CurrentSpeedCmPerSec = 0.0f;
+		CurrentPathAccelerationCmPerSecSq = 0.0f;
+		bBraking = false;
 		bIsValid = true;
 		CurrentSetpoint.PositionCm = Request.TargetPositionCm;
 		CurrentSetpoint.VelocityCmPerSec = FVector::ZeroVector;
@@ -90,12 +91,17 @@ bool FAircraftTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 	InitialSpeedCmPerSec = StartTangent.IsNearlyZero()
 		? 0.0f
 		: FMath::Clamp(FVector::DotProduct(Request.StartVelocityCmPerSec, StartTangent), 0.0f, CruiseSpeedCmPerSec);
-
-	DecelTriggerDistanceCm = ComputeBrakingDistance(CruiseSpeedCmPerSec, TargetEndSpeedCmPerSec);
+	CurrentPathAccelerationCmPerSecSq = StartTangent.IsNearlyZero()
+		? 0.0f
+		: FMath::Clamp(
+			FVector::DotProduct(Request.StartAccelerationCmPerSecSq, StartTangent),
+			-PlanningDecelCmPerSecSq,
+			PlanningAccelCmPerSecSq);
 
 	CurrentArcLength = 0.0f;
 	CurrentTimeSeconds = 0.0f;
 	CurrentSpeedCmPerSec = InitialSpeedCmPerSec;
+	bBraking = false;
 	bIsValid = true;
 	return true;
 }
@@ -107,6 +113,8 @@ void FAircraftTrajectoryGenerator::Clear()
 	TotalArcLengthCm = 0.0f;
 	CurrentArcLength = 0.0f;
 	CurrentSpeedCmPerSec = 0.0f;
+	CurrentPathAccelerationCmPerSecSq = 0.0f;
+	bBraking = false;
 	CurrentTimeSeconds = 0.0f;
 	TotalDurationSeconds = 0.0f;
 	bUsesNativeTimeParameterization = false;
@@ -129,7 +137,8 @@ bool FAircraftTrajectoryGenerator::IsComplete() const
 		return false;
 	}
 	return CurrentArcLength + UE_SMALL_NUMBER >= TotalArcLengthCm
-		&& FMath::Abs(CurrentSpeedCmPerSec - TargetEndSpeedCmPerSec) <= 1.0f;
+		&& FMath::Abs(CurrentSpeedCmPerSec - TargetEndSpeedCmPerSec) <= 1.0f
+		&& FMath::Abs(CurrentPathAccelerationCmPerSecSq) <= 1.0f;
 }
 
 bool FAircraftTrajectoryGenerator::IsCurrentSegmentInfiniteLoop() const
@@ -184,6 +193,7 @@ bool FAircraftTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVec
 		CurrentSetpoint = OutSetpoint;
 		CurrentArcLength = Segments[0]->GetArcLengthAtTime(CurrentTimeSeconds);
 		CurrentSpeedCmPerSec = OutSetpoint.VelocityCmPerSec.Size();
+		CurrentPathAccelerationCmPerSecSq = 0.0f;
 		return OutSetpoint.bValid;
 	}
 
@@ -197,6 +207,7 @@ bool FAircraftTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVec
 	{
 		// --- 无限循环段（Orbit）：恒定巡航速，游标不 clamp、不触发完成 ---
 		CurrentSpeedCmPerSec = CruiseSpeedCmPerSec;
+		CurrentPathAccelerationCmPerSecSq = 0.0f;
 		CurrentArcLength += CurrentSpeedCmPerSec * DeltaSeconds;
 
 		const float SampleArc = bUseLookAhead
@@ -207,19 +218,25 @@ bool FAircraftTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVec
 		return true;
 	}
 
-	// --- 2. 梯形速度剖面 ---
+	// --- 2. 单一 S 曲线速度剖面：轨迹生成器独占 MoveTo 的平移 V/A/J 规划。 ---
 	const float PreviousSpeedCmPerSec = CurrentSpeedCmPerSec;
-	CurrentSpeedCmPerSec = ComputeTrapezoidalSpeed(CurrentArcLength, TotalArcLengthCm, DeltaSeconds);
+	CurrentSpeedCmPerSec = ComputeConstrainedSpeed(CurrentArcLength, TotalArcLengthCm, DeltaSeconds);
 
 	// --- 3. 推进游标：s += v·Δt（梯形积分）---
 	const float IntegratedDistance = 0.5f * (PreviousSpeedCmPerSec + CurrentSpeedCmPerSec) * DeltaSeconds;
 	CurrentArcLength = FMath::Clamp(CurrentArcLength + IntegratedDistance, 0.0f, TotalArcLengthCm);
+	if (CurrentSpeedCmPerSec <= TargetEndSpeedCmPerSec + 1.0f
+		&& TotalArcLengthCm - CurrentArcLength <= AcceptanceRadiusCm)
+	{
+		CurrentArcLength = TotalArcLengthCm;
+	}
 
 	// --- 4. 终点：保留减速段速度，不突跳到终点速度 ---
 	const float RemainingDistance = FMath::Max(TotalArcLengthCm - CurrentArcLength, 0.0f);
 	if (RemainingDistance <= UE_SMALL_NUMBER)
 	{
-		OutSetpoint = SampleGlobalArcLength(TotalArcLengthCm, CurrentSpeedCmPerSec);
+		OutSetpoint = SampleGlobalArcLength(
+			TotalArcLengthCm, CurrentSpeedCmPerSec, CurrentPathAccelerationCmPerSecSq);
 		CurrentSetpoint = OutSetpoint;
 		return true;
 	}
@@ -228,7 +245,8 @@ bool FAircraftTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVec
 	const float SampleArc = bUseLookAhead
 		? FMath::Clamp(CurrentArcLength + LookAheadDistanceCm, 0.0f, TotalArcLengthCm)
 		: CurrentArcLength;
-	OutSetpoint = SampleGlobalArcLength(SampleArc, CurrentSpeedCmPerSec);
+	OutSetpoint = SampleGlobalArcLength(
+		SampleArc, CurrentSpeedCmPerSec, CurrentPathAccelerationCmPerSecSq);
 	CurrentSetpoint = OutSetpoint;
 	return true;
 }
@@ -336,9 +354,10 @@ void FAircraftTrajectoryGenerator::RecomputeArcLengths()
 	TotalArcLengthCm = Cum;
 }
 
-// 冷启动死锁说明：纯公式 v=sqrt(2·a·s) 在 s=0 处 v=0 → 游标不推进 → deadlock。
-// 修复语义由 ComputeTrapezoidalSpeed 的"初速 + 每步 a·dt 累进"保证（起步即有可观测位移）。
-float FAircraftTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, float TotalS, float DeltaSeconds) const
+float FAircraftTrajectoryGenerator::ComputeConstrainedSpeed(
+	float CurrentS,
+	float TotalS,
+	float DeltaSeconds)
 {
 	const float Vc = CruiseSpeedCmPerSec;
 	const float A = PlanningAccelCmPerSecSq;
@@ -346,17 +365,59 @@ float FAircraftTrajectoryGenerator::ComputeTrapezoidalSpeed(float CurrentS, floa
 	const float D = PlanningDecelCmPerSecSq;
 	if (DeltaSeconds <= UE_SMALL_NUMBER || TotalS <= UE_SMALL_NUMBER)
 	{
+		CurrentPathAccelerationCmPerSecSq = 0.0f;
 		return VEnd;
 	}
 
 	const float RemainingForBraking = FMath::Max(TotalS - CurrentS, 0.0f);
-	const float BrakingSpeedLimit = ComputeBrakingSpeedLimit(RemainingForBraking);
-	const float TargetSpeed = FMath::Min(Vc, BrakingSpeedLimit);
-	if (TargetSpeed >= CurrentSpeedCmPerSec)
+	if (!bBraking)
 	{
-		return FMath::Min(CurrentSpeedCmPerSec + A * DeltaSeconds, TargetSpeed);
+		bBraking = ComputeBrakingDistance(CurrentSpeedCmPerSec, VEnd)
+			>= RemainingForBraking;
 	}
-	return FMath::Max(CurrentSpeedCmPerSec - D * DeltaSeconds, TargetSpeed);
+	const float TargetSpeed = bBraking ? VEnd : Vc;
+	const float SpeedError = TargetSpeed - CurrentSpeedCmPerSec;
+	const float AccelerationLimit = SpeedError >= 0.0f ? A : D;
+	float DesiredAcceleration = 0.0f;
+	if (PlanningJerkCmPerSecCubed > UE_SMALL_NUMBER)
+	{
+		const float ErrorDirection = FMath::Sign(SpeedError);
+		const bool bAcceleratingTowardTarget =
+			CurrentPathAccelerationCmPerSecSq * ErrorDirection > 0.0f;
+		const float SpeedNeededToReleaseAcceleration =
+			FMath::Square(CurrentPathAccelerationCmPerSecSq)
+			/ (2.0f * PlanningJerkCmPerSecCubed);
+		const bool bReleaseAcceleration = bAcceleratingTowardTarget
+			&& SpeedNeededToReleaseAcceleration >= FMath::Abs(SpeedError);
+		DesiredAcceleration = bReleaseAcceleration
+			? 0.0f
+			: ErrorDirection * AccelerationLimit;
+		const float MaxAccelerationChange = PlanningJerkCmPerSecCubed * DeltaSeconds;
+		CurrentPathAccelerationCmPerSecSq += FMath::Clamp(
+			DesiredAcceleration - CurrentPathAccelerationCmPerSecSq,
+			-MaxAccelerationChange,
+			MaxAccelerationChange);
+	}
+	else
+	{
+		CurrentPathAccelerationCmPerSecSq = FMath::Clamp(
+			SpeedError / DeltaSeconds, -D, A);
+	}
+
+	float NewSpeed = FMath::Clamp(
+		CurrentSpeedCmPerSec + CurrentPathAccelerationCmPerSecSq * DeltaSeconds,
+		0.0f,
+		Vc);
+	if (!FMath::IsNearlyZero(SpeedError)
+		&& SpeedError * (TargetSpeed - NewSpeed) <= 0.0f)
+	{
+		NewSpeed = TargetSpeed;
+		if (PlanningJerkCmPerSecCubed <= UE_SMALL_NUMBER)
+		{
+			CurrentPathAccelerationCmPerSecSq = 0.0f;
+		}
+	}
+	return NewSpeed;
 }
 
 float FAircraftTrajectoryGenerator::ComputeBrakingDistance(float StartSpeedCmPerSec, float EndSpeedCmPerSec) const
@@ -365,7 +426,8 @@ float FAircraftTrajectoryGenerator::ComputeBrakingDistance(float StartSpeedCmPer
 	const float EndSpeed = FMath::Clamp(EndSpeedCmPerSec, 0.0f, StartSpeed);
 	const float DeltaSpeed = StartSpeed - EndSpeed;
 	const float Deceleration = FMath::Max(PlanningDecelCmPerSecSq, UE_SMALL_NUMBER);
-	if (DeltaSpeed <= UE_SMALL_NUMBER)
+	if (DeltaSpeed <= UE_SMALL_NUMBER
+		&& CurrentPathAccelerationCmPerSecSq <= UE_SMALL_NUMBER)
 	{
 		return 0.0f;
 	}
@@ -376,38 +438,33 @@ float FAircraftTrajectoryGenerator::ComputeBrakingDistance(float StartSpeedCmPer
 	}
 
 	const float Jerk = PlanningJerkCmPerSecCubed;
+	float EffectiveStartSpeed = StartSpeed;
+	float AccelerationReleaseDistance = 0.0f;
+	if (CurrentPathAccelerationCmPerSecSq > UE_SMALL_NUMBER)
+	{
+		const float InitialAcceleration = FMath::Min(
+			CurrentPathAccelerationCmPerSecSq, PlanningAccelCmPerSecSq);
+		const float ReleaseTime = InitialAcceleration / Jerk;
+		AccelerationReleaseDistance = StartSpeed * ReleaseTime
+			+ 0.5f * InitialAcceleration * FMath::Square(ReleaseTime)
+			- Jerk * ReleaseTime * ReleaseTime * ReleaseTime / 6.0f;
+		EffectiveStartSpeed += 0.5f * FMath::Square(InitialAcceleration) / Jerk;
+	}
+
+	const float EffectiveDeltaSpeed = FMath::Max(EffectiveStartSpeed - EndSpeed, 0.0f);
 	const float SpeedChangeInRamps = Deceleration * Deceleration / Jerk;
 	float TotalBrakingTime = 0.0f;
-	if (DeltaSpeed >= SpeedChangeInRamps)
+	if (EffectiveDeltaSpeed >= SpeedChangeInRamps)
 	{
 		TotalBrakingTime = 2.0f * Deceleration / Jerk
-			+ (DeltaSpeed - SpeedChangeInRamps) / Deceleration;
+			+ (EffectiveDeltaSpeed - SpeedChangeInRamps) / Deceleration;
 	}
 	else
 	{
-		TotalBrakingTime = 2.0f * FMath::Sqrt(DeltaSpeed / Jerk);
+		TotalBrakingTime = 2.0f * FMath::Sqrt(EffectiveDeltaSpeed / Jerk);
 	}
-	return 0.5f * (StartSpeed + EndSpeed) * TotalBrakingTime;
-}
-
-float FAircraftTrajectoryGenerator::ComputeBrakingSpeedLimit(float RemainingDistanceCm) const
-{
-	const float Remaining = FMath::Max(RemainingDistanceCm, 0.0f);
-	float Low = TargetEndSpeedCmPerSec;
-	float High = CruiseSpeedCmPerSec;
-	for (int32 Iteration = 0; Iteration < 20; ++Iteration)
-	{
-		const float Candidate = 0.5f * (Low + High);
-		if (ComputeBrakingDistance(Candidate, TargetEndSpeedCmPerSec) <= Remaining)
-		{
-			Low = Candidate;
-		}
-		else
-		{
-			High = Candidate;
-		}
-	}
-	return Low;
+	return AccelerationReleaseDistance
+		+ 0.5f * (EffectiveStartSpeed + EndSpeed) * TotalBrakingTime;
 }
 
 void FAircraftTrajectoryGenerator::LocateSegment(float GlobalArc, int32& OutSegIndex, float& OutLocalArc) const
@@ -448,7 +505,10 @@ void FAircraftTrajectoryGenerator::LocateSegment(float GlobalArc, int32& OutSegI
 	OutLocalArc = FMath::Clamp(GlobalArc - CumStartArc[OutSegIndex], 0.0f, Segments[OutSegIndex]->GetTotalArcLengthCm());
 }
 
-FTrajectoryPoint FAircraftTrajectoryGenerator::SampleGlobalArcLength(float GlobalArc, float Speed) const
+FTrajectoryPoint FAircraftTrajectoryGenerator::SampleGlobalArcLength(
+	float GlobalArc,
+	float Speed,
+	float TangentialAccelerationCmPerSecSq) const
 {
 	FTrajectoryPoint Point;
 	if (!bIsValid || Segments.Num() == 0)
@@ -467,6 +527,8 @@ FTrajectoryPoint FAircraftTrajectoryGenerator::SampleGlobalArcLength(float Globa
 	}
 
 	Point = Segments[SegIndex]->SampleAtArcLength(LocalArc, Speed);
+	const FVector Tangent = Segments[SegIndex]->GetFrenetAtArcLength(LocalArc).Tangent.GetSafeNormal();
+	Point.AccelerationCmPerSecSq += Tangent * TangentialAccelerationCmPerSecSq;
 	Point.ArcLengthCm = GlobalArc;
 	return Point;
 }

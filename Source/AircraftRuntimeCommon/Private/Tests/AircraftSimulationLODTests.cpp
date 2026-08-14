@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "AircraftRuntimeCommon/LOD/AircraftSimulationLODComponent.h"
+#include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftRecentDamageWindowTest,
@@ -36,6 +37,22 @@ bool FAircraftSimulationEvaluationScheduleTest::RunTest(const FString& Parameter
 	Component->MarkEvaluated(10.0f);
 	TestFalse(TEXT("The component is not due before its interval"), Component->IsEvaluationDue(10.24f));
 	TestTrue(TEXT("The component is due at its interval"), Component->IsEvaluationDue(10.25f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMotionTargetModeTest,
+	"AircraftLab.SimulationLOD.MotionTargetModeIsExplicit",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMotionTargetModeTest::RunTest(const FString& Parameters)
+{
+	FAircraftMotionTarget Target;
+	TestEqual(TEXT("Streamed targets track their moving setpoint by default"),
+		Target.Mode, EAircraftMotionTargetMode::Tracked);
+	Target.Mode = EAircraftMotionTargetMode::DirectPose;
+	TestEqual(TEXT("Direct position drivers have a distinct target semantic"),
+		Target.Mode, EAircraftMotionTargetMode::DirectPose);
 	return true;
 }
 
