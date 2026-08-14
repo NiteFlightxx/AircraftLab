@@ -183,8 +183,8 @@ enum class EAircraftMotionTargetMode : uint8
 {
 	/** 按目标速度预测，并用位置/旋转误差连续校正。 */
 	Tracked UMETA(DisplayName = "Tracked"),
-	/** 直接应用目标世界位置和旋转，不引入运动学插值或减速。 */
-	DirectPose UMETA(DisplayName = "Direct Pose")
+	/** 已执行 FTrajectoryMotionConstraints 全部平移、升降与偏航约束的世界空间轨迹点。 */
+	ConstrainedTrajectory UMETA(DisplayName = "Constrained Trajectory")
 };
 
 /** 由制导、Root Motion、动画或 Gameplay 发布的共享运动目标。 */

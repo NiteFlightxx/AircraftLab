@@ -50,9 +50,9 @@ bool FAircraftMotionTargetModeTest::RunTest(const FString& Parameters)
 	FAircraftMotionTarget Target;
 	TestEqual(TEXT("Streamed targets track their moving setpoint by default"),
 		Target.Mode, EAircraftMotionTargetMode::Tracked);
-	Target.Mode = EAircraftMotionTargetMode::DirectPose;
-	TestEqual(TEXT("Direct position drivers have a distinct target semantic"),
-		Target.Mode, EAircraftMotionTargetMode::DirectPose);
+	Target.Mode = EAircraftMotionTargetMode::ConstrainedTrajectory;
+	TestEqual(TEXT("Fully constrained trajectories have a distinct target semantic"),
+		Target.Mode, EAircraftMotionTargetMode::ConstrainedTrajectory);
 	return true;
 }
 

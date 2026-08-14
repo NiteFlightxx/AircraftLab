@@ -27,7 +27,7 @@ bool FAircraftAutopilotOrbitWrapTest::RunTest(const FString& Parameters)
 	const float DeltaSeconds = ArcAfterOneAndQuarterLaps / Request.CruiseSpeedCmPerSec;
 	FTrajectoryPoint Setpoint;
 	TestTrue(TEXT("Orbit produces a setpoint"), Generator.UpdateSetpoint(
-		DeltaSeconds, Request.StartPositionCm, FVector::ZeroVector, Setpoint));
+		DeltaSeconds, Request.StartPositionCm, Setpoint));
 
 	TestTrue(TEXT("Setpoint remains valid after one lap"), Setpoint.bValid);
 	TestTrue(TEXT("Arc length is not clamped to one lap"),
@@ -56,9 +56,9 @@ bool FAircraftAutopilotFiniteTrajectoryCompletionTest::RunTest(const FString& Pa
 	TestTrue(TEXT("Line request builds"), Generator.SetRequest(Request));
 	FTrajectoryPoint Setpoint;
 	TestTrue(TEXT("Line produces a setpoint"), Generator.UpdateSetpoint(
-		10.0f, FVector::ZeroVector, FVector::ZeroVector, Setpoint));
+		10.0f, FVector::ZeroVector, Setpoint));
 	TestTrue(TEXT("Line produces the terminal braking setpoint"), Generator.UpdateSetpoint(
-		10.0f, FVector::ZeroVector, FVector::ZeroVector, Setpoint));
+		10.0f, FVector::ZeroVector, Setpoint));
 	TestTrue(TEXT("Trajectory completes in the frame that reaches its end"), Generator.IsComplete());
 	TestTrue(TEXT("Completion frame outputs the endpoint"),
 		Setpoint.PositionCm.Equals(Request.TargetPositionCm, 0.1f));
@@ -92,7 +92,7 @@ bool FAircraftAutopilotAsymmetricCruiseProfileTest::RunTest(const FString& Param
 	FTrajectoryPoint Setpoint;
 	for (int32 Step = 0; Step < 2000 && !Generator.IsComplete(); ++Step)
 	{
-		Generator.UpdateSetpoint(Dt, FVector::ZeroVector, FVector::ZeroVector, Setpoint);
+		Generator.UpdateSetpoint(Dt, FVector::ZeroVector, Setpoint);
 		const float Speed = Setpoint.VelocityCmPerSec.Size();
 		const float Rate = (Speed - PreviousSpeed) / Dt;
 		MaxObservedAcceleration = FMath::Max(MaxObservedAcceleration, Rate);
@@ -131,7 +131,7 @@ bool FAircraftAutopilotShortPathPeakSpeedTest::RunTest(const FString& Parameters
 	FTrajectoryPoint Setpoint;
 	for (int32 Step = 0; Step < 2000 && !Generator.IsComplete(); ++Step)
 	{
-		Generator.UpdateSetpoint(Dt, FVector::ZeroVector, FVector::ZeroVector, Setpoint);
+		Generator.UpdateSetpoint(Dt, FVector::ZeroVector, Setpoint);
 		MaxSpeed = FMath::Max(MaxSpeed, Setpoint.VelocityCmPerSec.Size());
 	}
 
@@ -164,7 +164,7 @@ bool FAircraftAutopilotTerminalSpeedTest::RunTest(const FString& Parameters)
 	FTrajectoryPoint Setpoint;
 	for (int32 Step = 0; Step < 3000 && !Generator.IsComplete(); ++Step)
 	{
-		Generator.UpdateSetpoint(0.005f, FVector::ZeroVector, FVector::ZeroVector, Setpoint);
+		Generator.UpdateSetpoint(0.005f, FVector::ZeroVector, Setpoint);
 	}
 
 	TestTrue(TEXT("Fly-through profile reaches target"), Generator.IsComplete());
@@ -195,16 +195,17 @@ bool FAircraftAutopilotJerkLimitedMoveToTest::RunTest(const FString& Parameters)
 	float PreviousAcceleration = 0.0f;
 	float MaxAccelerationChange = 0.0f;
 	bool bSawAccelerationFeedForward = false;
+	FVector SimulatedPosition = FVector::ZeroVector;
 	FTrajectoryPoint Setpoint;
 	for (int32 Step = 0; Step < 4000 && !Generator.IsComplete(); ++Step)
 	{
-		Generator.UpdateSetpoint(
-			DeltaSeconds, FVector::ZeroVector, FVector::ZeroVector, Setpoint);
+		Generator.UpdateSetpoint(DeltaSeconds, SimulatedPosition, Setpoint);
 		const float Acceleration = Setpoint.AccelerationCmPerSecSq.X;
 		MaxAccelerationChange = FMath::Max(
 			MaxAccelerationChange, FMath::Abs(Acceleration - PreviousAcceleration));
 		bSawAccelerationFeedForward |= FMath::Abs(Acceleration) > 1.0f;
 		PreviousAcceleration = Acceleration;
+		SimulatedPosition = Setpoint.PositionCm;
 	}
 
 	TestTrue(TEXT("MoveTo publishes non-zero acceleration feed-forward"),
@@ -216,11 +217,41 @@ bool FAircraftAutopilotJerkLimitedMoveToTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftAutopilotPlannedTrajectoryOwnershipTest,
+	FAircraftAutopilotMoveToVehicleProgressTest,
+	"AircraftAutopilot.Trajectory.MoveToReferenceFollowsVehicleProgress",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAutopilotMoveToVehicleProgressTest::RunTest(const FString& Parameters)
+{
+	FAircraftTrajectoryGenerator Generator;
+	FTrajectoryRequest Request;
+	Request.Type = ETrajectoryType::Waypoint;
+	Request.TargetPositionCm = FVector(5000.0f, 0.0f, 0.0f);
+	Request.CruiseSpeedCmPerSec = 800.0f;
+	Request.PlanningAccelerationCmPerSecSq = 400.0f;
+	Request.PlanningDecelerationCmPerSecSq = 400.0f;
+	Request.PlanningJerkCmPerSecCubed = 2000.0f;
+	Request.AcceptanceRadiusCm = 1.0f;
+	TestTrue(TEXT("Vehicle-synchronized MoveTo request builds"), Generator.SetRequest(Request));
+
+	FTrajectoryPoint Setpoint;
+	for (int32 Step = 0; Step < 200; ++Step)
+	{
+		Generator.UpdateSetpoint(0.01f, FVector::ZeroVector, Setpoint);
+	}
+	TestTrue(TEXT("A stalled vehicle cannot leave an unbounded position reference ahead"),
+		Setpoint.PositionCm.X <= Request.CruiseSpeedCmPerSec * 0.01f + 0.1f);
+	TestFalse(TEXT("A stalled vehicle does not complete its reference trajectory"),
+		Generator.IsComplete());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAutopilotConstrainedTrajectoryOwnershipTest,
 	"AircraftAutopilot.MotionProfile.MoveToIsNotProfiledTwice",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FAircraftAutopilotPlannedTrajectoryOwnershipTest::RunTest(const FString& Parameters)
+bool FAircraftAutopilotConstrainedTrajectoryOwnershipTest::RunTest(const FString& Parameters)
 {
 	FAircraftMotionProfile Profile;
 	Profile.Initialize(
@@ -230,20 +261,72 @@ bool FAircraftAutopilotPlannedTrajectoryOwnershipTest::RunTest(const FString& Pa
 		0.0f,
 		0.0f);
 
-	FTrajectoryPoint Planned;
-	Planned.PositionCm = FVector(123.0f, 45.0f, 67.0f);
-	Planned.VelocityCmPerSec = FVector(500.0f, 25.0f, -10.0f);
-	Planned.AccelerationCmPerSecSq = FVector(-200.0f, 10.0f, 5.0f);
-	Planned.YawDegrees = 30.0f;
-	Planned.bValid = true;
+	FTrajectoryPoint Constrained;
+	Constrained.PositionCm = FVector(123.0f, 45.0f, 67.0f);
+	Constrained.VelocityCmPerSec = FVector(500.0f, 25.0f, -10.0f);
+	Constrained.AccelerationCmPerSecSq = FVector(-200.0f, 10.0f, 5.0f);
+	Constrained.YawDegrees = 30.0f;
+	Constrained.bValid = true;
 
-	const FProfiledSetpoint Result = Profile.FollowPlannedTrajectory(Planned, 0.02f);
-	TestTrue(TEXT("Planned position is accepted without reintegration"),
-		Result.PositionCm.Equals(Planned.PositionCm));
-	TestTrue(TEXT("Planned velocity is accepted without a second brake"),
-		Result.VelocityCmPerSec.Equals(Planned.VelocityCmPerSec));
-	TestTrue(TEXT("Planned acceleration remains the feed-forward acceleration"),
-		Result.AccelerationCmPerSecSq.Equals(Planned.AccelerationCmPerSecSq));
+	const FProfiledSetpoint Result = Profile.FollowConstrainedTrajectory(Constrained, 0.02f);
+	TestTrue(TEXT("Constrained position is accepted without reintegration"),
+		Result.PositionCm.Equals(Constrained.PositionCm));
+	TestTrue(TEXT("Constrained velocity is accepted without a second brake"),
+		Result.VelocityCmPerSec.Equals(Constrained.VelocityCmPerSec));
+	TestTrue(TEXT("Constrained acceleration remains the feed-forward acceleration"),
+		Result.AccelerationCmPerSecSq.Equals(Constrained.AccelerationCmPerSecSq));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAutopilotYawConstraintTest,
+	"AircraftAutopilot.MotionProfile.YawUsesFullMotionConstraints",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAutopilotYawConstraintTest::RunTest(const FString& Parameters)
+{
+	FAircraftMotionProfile Profile;
+	FMotionProfileLimits Limits = Profile.GetLimits();
+	Limits.MaxYawRateDegPerSec = 30.0f;
+	Limits.MaxYawAccelDegPerSecSq = 40.0f;
+	Limits.MaxYawJerkDegPerSecCubed = 200.0f;
+	Profile.SetLimits(Limits);
+	Profile.Initialize(
+		FVector::ZeroVector,
+		FVector::ZeroVector,
+		FVector::ZeroVector,
+		0.0f,
+		0.0f);
+
+	FTrajectoryPoint Constrained;
+	Constrained.YawDegrees = 90.0f;
+	Constrained.bValid = true;
+	constexpr float DeltaSeconds = 0.01f;
+	float PreviousYawRate = 0.0f;
+	float PreviousYawAcceleration = 0.0f;
+	float MaxYawRate = 0.0f;
+	float MaxYawAcceleration = 0.0f;
+	float MaxYawJerk = 0.0f;
+	FProfiledSetpoint Result;
+	for (int32 Step = 0; Step < 1000; ++Step)
+	{
+		Result = Profile.FollowConstrainedTrajectory(Constrained, DeltaSeconds);
+		const float YawAcceleration =
+			(Result.YawRateDegreesPerSec - PreviousYawRate) / DeltaSeconds;
+		const float YawJerk =
+			(YawAcceleration - PreviousYawAcceleration) / DeltaSeconds;
+		MaxYawRate = FMath::Max(MaxYawRate, FMath::Abs(Result.YawRateDegreesPerSec));
+		MaxYawAcceleration = FMath::Max(MaxYawAcceleration, FMath::Abs(YawAcceleration));
+		MaxYawJerk = FMath::Max(MaxYawJerk, FMath::Abs(YawJerk));
+		PreviousYawRate = Result.YawRateDegreesPerSec;
+		PreviousYawAcceleration = YawAcceleration;
+	}
+
+	TestTrue(TEXT("Yaw reaches the constrained target"),
+		FMath::Abs(FMath::FindDeltaAngleDegrees(Result.YawDegrees, Constrained.YawDegrees)) <= 1.0f);
+	TestTrue(TEXT("Yaw rate respects its limit"), MaxYawRate <= 30.1f);
+	TestTrue(TEXT("Yaw acceleration respects its limit"), MaxYawAcceleration <= 40.1f);
+	TestTrue(TEXT("Yaw jerk respects its limit"), MaxYawJerk <= 200.1f);
 	return true;
 }
 

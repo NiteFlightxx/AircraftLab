@@ -95,22 +95,22 @@ FProfiledSetpoint FAircraftMotionProfile::Update(const FTrajectoryPoint& Nominal
 	return CurrentSetpoint;
 }
 
-FProfiledSetpoint FAircraftMotionProfile::FollowPlannedTrajectory(
-	const FTrajectoryPoint& Planned,
+FProfiledSetpoint FAircraftMotionProfile::FollowConstrainedTrajectory(
+	const FTrajectoryPoint& Constrained,
 	float DeltaSeconds)
 {
-	if (!bInitialized || !Planned.bValid || DeltaSeconds <= UE_SMALL_NUMBER)
+	if (!bInitialized || !Constrained.bValid || DeltaSeconds <= UE_SMALL_NUMBER)
 	{
 		return CurrentSetpoint;
 	}
 
-	ProfiledPosition = Planned.PositionCm;
-	PrevProfiledVelocity = Planned.VelocityCmPerSec;
-	ProfiledAcceleration = Planned.AccelerationCmPerSecSq;
+	ProfiledPosition = Constrained.PositionCm;
+	PrevProfiledVelocity = Constrained.VelocityCmPerSec;
+	ProfiledAcceleration = Constrained.AccelerationCmPerSecSq;
 	VelocitySlew.Synchronize(PrevProfiledVelocity, ProfiledAcceleration);
 
 	float ProfiledYawRate = 0.0f;
-	UpdateYaw(Planned, DeltaSeconds, ProfiledYaw, ProfiledYawRate);
+	UpdateYaw(Constrained, DeltaSeconds, ProfiledYaw, ProfiledYawRate);
 
 	CurrentSetpoint.PositionCm = ProfiledPosition;
 	CurrentSetpoint.VelocityCmPerSec = PrevProfiledVelocity;
@@ -127,16 +127,61 @@ void FAircraftMotionProfile::UpdateYaw(
 	float& OutYawDegrees,
 	float& OutYawRateDegreesPerSec)
 {
-	const float TargetYawRate = Nominal.bValid
-		? FMath::Clamp(Nominal.YawRateDegreesPerSec,
-			-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec)
+	const float YawErrorDegrees = Nominal.bValid
+		? FMath::FindDeltaAngleDegrees(ProfiledYaw, Nominal.YawDegrees)
 		: 0.0f;
-	OutYawRateDegreesPerSec = YawRateSlew.Update(
-		TargetYawRate,
-		DeltaSeconds,
-		Limits.MaxYawAccelDegPerSecSq,
-		Limits.MaxYawJerkDegPerSecCubed);
-	OutYawDegrees = Nominal.bValid ? FMath::UnwindDegrees(Nominal.YawDegrees) : 0.0f;
+	const float MaxYawRate = FMath::Max(Limits.MaxYawRateDegPerSec, 0.0f);
+	const float MaxYawAcceleration = FMath::Max(Limits.MaxYawAccelDegPerSecSq, 0.0f);
+	const float MaxYawJerk = FMath::Max(Limits.MaxYawJerkDegPerSecCubed, 0.0f);
+	const float TargetYawRate = Nominal.bValid
+		? FMath::Clamp(Nominal.YawRateDegreesPerSec, -MaxYawRate, MaxYawRate)
+		: 0.0f;
+
+	float DesiredYawAcceleration = 0.0f;
+	if (MaxYawRate > UE_SMALL_NUMBER && MaxYawAcceleration > UE_SMALL_NUMBER)
+	{
+		const float NaturalFrequency = MaxYawAcceleration / MaxYawRate;
+		DesiredYawAcceleration = FMath::Clamp(
+			FMath::Square(NaturalFrequency) * YawErrorDegrees
+			+ 2.0f * NaturalFrequency * (TargetYawRate - YawRateSlew.Value),
+			-MaxYawAcceleration,
+			MaxYawAcceleration);
+	}
+
+	if (MaxYawJerk > UE_SMALL_NUMBER)
+	{
+		const float OutwardDirection = !FMath::IsNearlyZero(YawRateSlew.Value)
+			? FMath::Sign(YawRateSlew.Value)
+			: FMath::Sign(DesiredYawAcceleration);
+		const float RateMargin = FMath::Max(
+			MaxYawRate - FMath::Abs(YawRateSlew.Value), 0.0f);
+		const bool bAccelerationPointsOutward =
+			YawRateSlew.Rate * OutwardDirection > 0.0f;
+		const float RateNeededToReleaseAcceleration =
+			FMath::Square(YawRateSlew.Rate) / (2.0f * MaxYawJerk);
+		const float DiscreteRateMargin = MaxYawJerk * FMath::Square(DeltaSeconds);
+		if (DesiredYawAcceleration * OutwardDirection > 0.0f
+			&& ((bAccelerationPointsOutward
+				&& RateNeededToReleaseAcceleration >= RateMargin)
+				|| RateMargin <= DiscreteRateMargin))
+		{
+			DesiredYawAcceleration = 0.0f;
+		}
+		const float MaxAccelerationChange = MaxYawJerk * DeltaSeconds;
+		YawRateSlew.Rate += FMath::Clamp(
+			DesiredYawAcceleration - YawRateSlew.Rate,
+			-MaxAccelerationChange,
+			MaxAccelerationChange);
+	}
+	else
+	{
+		YawRateSlew.Rate = DesiredYawAcceleration;
+	}
+	YawRateSlew.Value += YawRateSlew.Rate * DeltaSeconds;
+	OutYawRateDegreesPerSec = YawRateSlew.Value;
+	ProfiledYaw = FMath::UnwindDegrees(
+		ProfiledYaw + OutYawRateDegreesPerSec * DeltaSeconds);
+	OutYawDegrees = ProfiledYaw;
 }
 
 void FAircraftMotionProfile::ClampAcceleration(FVector& InOutAccel) const

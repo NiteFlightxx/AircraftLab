@@ -32,8 +32,8 @@ public:
 	/** 推进并整形一个周期；返回最新的物理可达设定值。 */
 	FProfiledSetpoint Update(const FTrajectoryPoint& Nominal, float DeltaSeconds);
 
-	/** 接受已经完成 V/A/J 规划的轨迹点，仅整形航向并同步内部连续状态。 */
-	FProfiledSetpoint FollowPlannedTrajectory(const FTrajectoryPoint& Planned, float DeltaSeconds);
+	/** 接受已完成全部平移约束规划的轨迹点，执行偏航约束并同步内部连续状态。 */
+	FProfiledSetpoint FollowConstrainedTrajectory(const FTrajectoryPoint& Constrained, float DeltaSeconds);
 
 	const FProfiledSetpoint& GetCurrentSetpoint() const { return CurrentSetpoint; }
 

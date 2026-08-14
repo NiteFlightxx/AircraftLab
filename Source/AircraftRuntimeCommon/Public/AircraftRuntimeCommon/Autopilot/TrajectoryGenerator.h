@@ -1,7 +1,7 @@
 //
 // 轨迹生成器：把 FTrajectoryRequest 转成时间参数化设定值序列。
-// 有限轨迹使用唯一的 S 曲线 V/A/J 规划器；进入制动段后直接执行到终端速度，
-// 不再通过逐帧收缩速度上限制造末端爬行。
+// 有限轨迹使用唯一的 S 曲线 V/A/J 规划器。MoveTo 按飞机实际路径进度计算
+// 制动速度包络，位置参考只领先一个更新步，保证参考终点就是实际停车目标。
 
 #pragma once
 
@@ -30,7 +30,7 @@ public:
 	float GetProgress() const;
 
 	/** 推进轨迹并产出本周期设定值；false 表示无轨迹或已完成。 */
-	bool UpdateSetpoint(float DeltaSeconds, const FVector& CurrentPosition, const FVector& CurrentVelocity, FTrajectoryPoint& OutSetpoint);
+	bool UpdateSetpoint(float DeltaSeconds, const FVector& CurrentPosition, FTrajectoryPoint& OutSetpoint);
 
 	FTrajectoryPoint GetCurrentSetpoint() const { return CurrentSetpoint; }
 	float GetCurrentArcLength() const { return CurrentArcLength; }
@@ -54,7 +54,7 @@ private:
 	float CurrentArcLength = 0.0f;
 	float CurrentSpeedCmPerSec = 0.0f;
 	float CurrentPathAccelerationCmPerSecSq = 0.0f;
-	bool bBraking = false;
+	bool bFollowVehicleProgress = false;
 	float CurrentTimeSeconds = 0.0f;
 	float TotalDurationSeconds = 0.0f;
 	bool bUsesNativeTimeParameterization = false;
@@ -78,6 +78,7 @@ private:
 	void RecomputeArcLengths();
 	float ComputeConstrainedSpeed(float CurrentS, float TotalS, float DeltaSeconds);
 	float ComputeBrakingDistance(float StartSpeedCmPerSec, float EndSpeedCmPerSec) const;
+	float ComputeBrakingSpeedLimit(float RemainingDistanceCm) const;
 	bool IsCurrentSegmentInfiniteLoop() const;
 	void LocateSegment(float GlobalArc, int32& OutSegIndex, float& OutLocalArc) const;
 	FTrajectoryPoint SampleGlobalArcLength(

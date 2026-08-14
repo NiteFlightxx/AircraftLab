@@ -787,7 +787,7 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	const FVector CurrentLocation = GetComponentLocation();
 	FVector NewLocation = Target.PositionCm;
 	FRotator NewRotation = Target.RotationDegrees;
-	if (Target.Mode == EAircraftMotionTargetMode::Tracked)
+	if (Target.Mode != EAircraftMotionTargetMode::ConstrainedTrajectory)
 	{
 		const FVector PredictedLocation = CurrentLocation
 			+ Target.VelocityCmPerSec * DeltaSeconds;

@@ -7,6 +7,110 @@
 namespace
 {
 	constexpr int32 MaxStoredResults = 64;
+
+	bool AreTrajectoryMotionConstraintsValid(const FTrajectoryMotionConstraints& Constraints)
+	{
+		return FMath::IsFinite(Constraints.CruiseSpeedCmPerSec)
+			&& FMath::IsFinite(Constraints.MaxAccelerationCmPerSecSq)
+			&& FMath::IsFinite(Constraints.MaxDecelerationCmPerSecSq)
+			&& FMath::IsFinite(Constraints.MaxJerkCmPerSecCubed)
+			&& FMath::IsFinite(Constraints.MaxClimbRateCmPerSec)
+			&& FMath::IsFinite(Constraints.MaxDescentRateCmPerSec)
+			&& FMath::IsFinite(Constraints.MaxVerticalAccelerationCmPerSecSq)
+			&& FMath::IsFinite(Constraints.MaxVerticalJerkCmPerSecCubed)
+			&& FMath::IsFinite(Constraints.MaxYawRateDegPerSec)
+			&& FMath::IsFinite(Constraints.MaxYawAccelerationDegPerSecSq)
+			&& FMath::IsFinite(Constraints.MaxYawJerkDegPerSecCubed)
+			&& Constraints.CruiseSpeedCmPerSec >= 0.0f
+			&& Constraints.MaxAccelerationCmPerSecSq > 0.0f
+			&& Constraints.MaxDecelerationCmPerSecSq > 0.0f
+			&& Constraints.MaxJerkCmPerSecCubed >= 0.0f
+			&& Constraints.MaxClimbRateCmPerSec >= 0.0f
+			&& Constraints.MaxDescentRateCmPerSec >= 0.0f
+			&& Constraints.MaxVerticalAccelerationCmPerSecSq >= 0.0f
+			&& Constraints.MaxVerticalJerkCmPerSecCubed >= 0.0f
+			&& Constraints.MaxYawRateDegPerSec >= 0.0f
+			&& Constraints.MaxYawAccelerationDegPerSecSq >= 0.0f
+			&& Constraints.MaxYawJerkDegPerSecCubed >= 0.0f;
+	}
+
+	bool AreTranslationMotionConstraintsEqual(
+		const FTrajectoryMotionConstraints& A,
+		const FTrajectoryMotionConstraints& B)
+	{
+		return FMath::IsNearlyEqual(A.CruiseSpeedCmPerSec, B.CruiseSpeedCmPerSec)
+			&& FMath::IsNearlyEqual(A.MaxAccelerationCmPerSecSq, B.MaxAccelerationCmPerSecSq)
+			&& FMath::IsNearlyEqual(A.MaxDecelerationCmPerSecSq, B.MaxDecelerationCmPerSecSq)
+			&& FMath::IsNearlyEqual(A.MaxJerkCmPerSecCubed, B.MaxJerkCmPerSecCubed)
+			&& FMath::IsNearlyEqual(A.MaxClimbRateCmPerSec, B.MaxClimbRateCmPerSec)
+			&& FMath::IsNearlyEqual(A.MaxDescentRateCmPerSec, B.MaxDescentRateCmPerSec)
+			&& FMath::IsNearlyEqual(A.MaxVerticalAccelerationCmPerSecSq, B.MaxVerticalAccelerationCmPerSecSq)
+			&& FMath::IsNearlyEqual(A.MaxVerticalJerkCmPerSecCubed, B.MaxVerticalJerkCmPerSecCubed);
+	}
+
+	bool AreYawMotionConstraintsEqual(
+		const FTrajectoryMotionConstraints& A,
+		const FTrajectoryMotionConstraints& B)
+	{
+		return FMath::IsNearlyEqual(A.MaxYawRateDegPerSec, B.MaxYawRateDegPerSec)
+			&& FMath::IsNearlyEqual(A.MaxYawAccelerationDegPerSecSq, B.MaxYawAccelerationDegPerSecSq)
+			&& FMath::IsNearlyEqual(A.MaxYawJerkDegPerSecCubed, B.MaxYawJerkDegPerSecCubed);
+	}
+
+	void ApplyMoveToDirectionalLimits(
+		FTrajectoryRequest& Request,
+		const FTrajectoryMotionConstraints& Constraints,
+		const FAutopilotArrivalCriteria& ArrivalCriteria,
+		float PhysicalMaxHorizontalSpeedCmPerSec,
+		float PhysicalMaxHorizontalAccelerationCmPerSecSq)
+	{
+		const FVector Direction =
+			(Request.TargetPositionCm - Request.StartPositionCm).GetSafeNormal();
+		const float HorizontalFraction = FVector2D(Direction.X, Direction.Y).Size();
+		const float VerticalFraction = FMath::Abs(Direction.Z);
+
+		Request.CruiseSpeedCmPerSec = Constraints.CruiseSpeedCmPerSec;
+		Request.PlanningAccelerationCmPerSecSq = Constraints.MaxAccelerationCmPerSecSq;
+		Request.PlanningDecelerationCmPerSecSq = Constraints.MaxDecelerationCmPerSecSq;
+		Request.PlanningJerkCmPerSecCubed = Constraints.MaxJerkCmPerSecCubed;
+		if (HorizontalFraction > UE_SMALL_NUMBER)
+		{
+			Request.AcceptanceRadiusCm = ArrivalCriteria.HorizontalToleranceCm
+				/ HorizontalFraction;
+			Request.CruiseSpeedCmPerSec = FMath::Min(
+				Request.CruiseSpeedCmPerSec,
+				PhysicalMaxHorizontalSpeedCmPerSec / HorizontalFraction);
+			Request.PlanningAccelerationCmPerSecSq = FMath::Min(
+				Request.PlanningAccelerationCmPerSecSq,
+				PhysicalMaxHorizontalAccelerationCmPerSecSq / HorizontalFraction);
+			Request.PlanningDecelerationCmPerSecSq = FMath::Min(
+				Request.PlanningDecelerationCmPerSecSq,
+				PhysicalMaxHorizontalAccelerationCmPerSecSq / HorizontalFraction);
+		}
+		if (VerticalFraction > UE_SMALL_NUMBER)
+		{
+			const float VerticalAcceptanceRadiusCm = ArrivalCriteria.VerticalToleranceCm
+				/ VerticalFraction;
+			Request.AcceptanceRadiusCm = HorizontalFraction > UE_SMALL_NUMBER
+				? FMath::Min(Request.AcceptanceRadiusCm, VerticalAcceptanceRadiusCm)
+				: VerticalAcceptanceRadiusCm;
+			const float VerticalSpeedLimit = Direction.Z >= 0.0f
+				? Constraints.MaxClimbRateCmPerSec
+				: Constraints.MaxDescentRateCmPerSec;
+			Request.CruiseSpeedCmPerSec = FMath::Min(
+				Request.CruiseSpeedCmPerSec,
+				VerticalSpeedLimit / VerticalFraction);
+			Request.PlanningAccelerationCmPerSecSq = FMath::Min(
+				Request.PlanningAccelerationCmPerSecSq,
+				Constraints.MaxVerticalAccelerationCmPerSecSq / VerticalFraction);
+			Request.PlanningDecelerationCmPerSecSq = FMath::Min(
+				Request.PlanningDecelerationCmPerSecSq,
+				Constraints.MaxVerticalAccelerationCmPerSecSq / VerticalFraction);
+			Request.PlanningJerkCmPerSecCubed = FMath::Min(
+				Request.PlanningJerkCmPerSecCubed,
+				Constraints.MaxVerticalJerkCmPerSecCubed / VerticalFraction);
+		}
+	}
 }
 
 void FAircraftAutopilotMovementExecutor::SetPhysicalMotionLimits(float MaxHorizontalSpeedCmPerSec, float MaxHorizontalAccelerationCmPerSecSq)
@@ -24,16 +128,20 @@ bool FAircraftAutopilotMovementExecutor::ValidateIntent(const FAutopilotMovement
 		|| Intent.TargetPositionCm.ContainsNaN()
 		|| Intent.HeadingTargetPositionCm.ContainsNaN()
 		|| Intent.DesiredVelocityCmPerSec.ContainsNaN()
-		|| Intent.MotionConstraints.CruiseSpeedCmPerSec < 0.0f
-		|| Intent.MotionConstraints.MaxAccelerationCmPerSecSq <= 0.0f
-		|| Intent.MotionConstraints.MaxDecelerationCmPerSecSq <= 0.0f
+		|| !AreTrajectoryMotionConstraintsValid(Intent.MotionConstraints)
+		|| !FMath::IsFinite(Intent.PassThroughSpeedCmPerSec)
 		|| Intent.PassThroughSpeedCmPerSec < 0.0f
-		|| Intent.MotionConstraints.MaxJerkCmPerSecCubed < 0.0f
+		|| !FMath::IsFinite(Intent.ArrivalCriteria.HorizontalToleranceCm)
 		|| Intent.ArrivalCriteria.HorizontalToleranceCm < 0.0f
+		|| !FMath::IsFinite(Intent.ArrivalCriteria.VerticalToleranceCm)
 		|| Intent.ArrivalCriteria.VerticalToleranceCm < 0.0f
+		|| !FMath::IsFinite(Intent.ArrivalCriteria.SpeedToleranceCmPerSec)
 		|| Intent.ArrivalCriteria.SpeedToleranceCmPerSec < 0.0f
+		|| !FMath::IsFinite(Intent.ArrivalCriteria.YawToleranceDegrees)
 		|| Intent.ArrivalCriteria.YawToleranceDegrees < 0.0f
+		|| !FMath::IsFinite(Intent.ArrivalCriteria.StableTimeSeconds)
 		|| Intent.ArrivalCriteria.StableTimeSeconds < 0.0f
+		|| !FMath::IsFinite(Intent.TimeoutSeconds)
 		|| Intent.TimeoutSeconds < 0.0f
 		|| !FMath::IsFinite(Intent.FixedYawDegrees)
 		|| !FMath::IsFinite(Intent.DesiredYawRateDegPerSec)
@@ -174,12 +282,12 @@ bool FAircraftAutopilotMovementExecutor::Update(FAutopilotIntentHandle Handle, c
 		|| ActiveIntent.OrbitAngularRateDegPerSec != Intent.OrbitAngularRateDegPerSec
 		|| ActiveIntent.ArcStartAngleDegrees != Intent.ArcStartAngleDegrees
 		|| ActiveIntent.ArcEndAngleDegrees != Intent.ArcEndAngleDegrees
-		|| ActiveIntent.MotionConstraints.CruiseSpeedCmPerSec != Intent.MotionConstraints.CruiseSpeedCmPerSec
-		|| ActiveIntent.MotionConstraints.MaxAccelerationCmPerSecSq != Intent.MotionConstraints.MaxAccelerationCmPerSecSq
-		|| ActiveIntent.MotionConstraints.MaxDecelerationCmPerSecSq != Intent.MotionConstraints.MaxDecelerationCmPerSecSq
-		|| ActiveIntent.PassThroughSpeedCmPerSec != Intent.PassThroughSpeedCmPerSec
-		|| ActiveIntent.MotionConstraints.MaxJerkCmPerSecCubed != Intent.MotionConstraints.MaxJerkCmPerSecCubed;
+		|| !AreTranslationMotionConstraintsEqual(
+			ActiveIntent.MotionConstraints, Intent.MotionConstraints)
+		|| ActiveIntent.PassThroughSpeedCmPerSec != Intent.PassThroughSpeedCmPerSec;
 	const bool bHeadingCompletionChanged = ActiveIntent.HeadingMode != Intent.HeadingMode
+		|| !AreYawMotionConstraintsEqual(
+			ActiveIntent.MotionConstraints, Intent.MotionConstraints)
 		|| (Intent.HeadingMode == EAutopilotHeadingMode::FixedYaw
 			&& !FMath::IsNearlyEqual(ActiveIntent.FixedYawDegrees, Intent.FixedYawDegrees))
 		|| (Intent.HeadingMode == EAutopilotHeadingMode::FaceTarget
@@ -265,10 +373,18 @@ bool FAircraftAutopilotMovementExecutor::RebuildTrajectory(const FAircraftAutopi
 	case EAutopilotMovementIntentType::MoveToPosition:
 		Request.Type = ETrajectoryType::Waypoint;
 		Request.TargetPositionCm = ResolveTargetPosition(ActiveIntent);
+		ApplyMoveToDirectionalLimits(
+			Request,
+			ActiveIntent.MotionConstraints,
+			ActiveIntent.ArrivalCriteria,
+			PhysicalMaxHorizontalSpeedCmPerSec,
+			PhysicalMaxHorizontalAccelerationCmPerSecSq);
 		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
 		{
+			const float MoveToPassThroughSpeedCmPerSec = FMath::Min(
+				ActiveIntent.PassThroughSpeedCmPerSec, Request.CruiseSpeedCmPerSec);
 			Request.TargetVelocityCmPerSec = (Request.TargetPositionCm - Snapshot.PositionCm).GetSafeNormal()
-				* EffectivePassThroughSpeedCmPerSec;
+				* MoveToPassThroughSpeedCmPerSec;
 		}
 		break;
 	case EAutopilotMovementIntentType::FollowPath:
@@ -413,7 +529,7 @@ bool FAircraftAutopilotMovementExecutor::BuildSetpoint(
 		return false;
 	}
 	if (TrajectoryGenerator.UpdateSetpoint(
-		DeltaSeconds, Snapshot.PositionCm, Snapshot.VelocityCmPerSec, OutSetpoint))
+		DeltaSeconds, Snapshot.PositionCm, OutSetpoint))
 	{
 		return true;
 	}

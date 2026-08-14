@@ -13,33 +13,6 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogAircraftAutopilot, Log, All);
 
-namespace
-{
-bool AreRootMotionConstraintsFinite(const FTrajectoryMotionConstraints& Constraints)
-{
-	return FMath::IsFinite(Constraints.CruiseSpeedCmPerSec)
-		&& FMath::IsFinite(Constraints.MaxAccelerationCmPerSecSq)
-		&& FMath::IsFinite(Constraints.MaxDecelerationCmPerSecSq)
-		&& FMath::IsFinite(Constraints.MaxJerkCmPerSecCubed)
-		&& FMath::IsFinite(Constraints.MaxClimbRateCmPerSec)
-		&& FMath::IsFinite(Constraints.MaxDescentRateCmPerSec)
-		&& FMath::IsFinite(Constraints.MaxVerticalAccelerationCmPerSecSq)
-		&& FMath::IsFinite(Constraints.MaxVerticalJerkCmPerSecCubed)
-		&& FMath::IsFinite(Constraints.MaxYawRateDegPerSec)
-		&& FMath::IsFinite(Constraints.MaxYawAccelerationDegPerSecSq)
-		&& FMath::IsFinite(Constraints.MaxYawJerkDegPerSecCubed);
-}
-
-bool IsRootMotionArrivalFinite(const FAutopilotArrivalCriteria& Arrival)
-{
-	return FMath::IsFinite(Arrival.HorizontalToleranceCm)
-		&& FMath::IsFinite(Arrival.VerticalToleranceCm)
-		&& FMath::IsFinite(Arrival.SpeedToleranceCmPerSec)
-		&& FMath::IsFinite(Arrival.YawToleranceDegrees)
-		&& FMath::IsFinite(Arrival.StableTimeSeconds);
-}
-}
-
 UAutopilotComponent::UAutopilotComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -335,7 +308,7 @@ void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	}
 
 	CachedProfiledSetpoint = IntentType == EAutopilotMovementIntentType::MoveToPosition
-		? MotionProfile.FollowPlannedTrajectory(NominalSetpoint, DeltaTime)
+		? MotionProfile.FollowConstrainedTrajectory(NominalSetpoint, DeltaTime)
 		: MotionProfile.Update(NominalSetpoint, DeltaTime);
 	UpdateHoverThrustEstimate(DeltaTime);
 	CachedFeedForward = FFeedForward();
@@ -841,15 +814,6 @@ FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionRequest(
 		|| !FMath::IsFinite(Playback.StartPositionSeconds)
 		|| Playback.StartPositionSeconds < 0.0f
 		|| Playback.StartPositionSeconds >= Playback.Montage->GetPlayLength())
-	{
-		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
-	}
-	else if (!IsRootMotionArrivalFinite(Intent.ArrivalCriteria))
-	{
-		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
-	}
-	else if (DriveMode == EAircraftSimulationDriveMode::FlightController
-		&& !AreRootMotionConstraintsFinite(Intent.MotionConstraints))
 	{
 		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
 	}
@@ -1416,20 +1380,12 @@ bool UAutopilotComponent::GetAircraftMotionTarget_Implementation(FAircraftMotion
 	}
 	if (!CachedProfiledSetpoint.bValid) return false;
 	const FAutopilotMovementIntent& Intent = MovementExecutor.GetActiveIntent();
-	const bool bDirectPositionDrive =
-		SimulationBudget.DriveMode != EAircraftSimulationDriveMode::FlightController
-		&& Intent.Type == EAutopilotMovementIntentType::MoveToPosition;
-	if (bDirectPositionDrive)
-	{
-		OutTarget.PositionCm = MovementExecutor.GetActiveTargetPosition();
-		OutTarget.Mode = EAircraftMotionTargetMode::DirectPose;
-	}
-	else
-	{
-		OutTarget.PositionCm = CachedProfiledSetpoint.PositionCm;
-		OutTarget.VelocityCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec;
-		OutTarget.AccelerationCmPerSecSq = CachedProfiledSetpoint.AccelerationCmPerSecSq;
-	}
+	OutTarget.PositionCm = CachedProfiledSetpoint.PositionCm;
+	OutTarget.VelocityCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec;
+	OutTarget.AccelerationCmPerSecSq = CachedProfiledSetpoint.AccelerationCmPerSecSq;
+	OutTarget.Mode = Intent.Type == EAutopilotMovementIntentType::MoveToPosition
+		? EAircraftMotionTargetMode::ConstrainedTrajectory
+		: EAircraftMotionTargetMode::Tracked;
 	const FQuat DesiredControlWorld =
 		FRotator(0.0f, CachedProfiledSetpoint.YawDegrees, 0.0f).Quaternion();
 	const FQuat ControlToBody = FlightController.GetInterface()

@@ -115,7 +115,7 @@ bool FAircraftMinimumSnapGeneratorIntegrationTest::RunTest(const FString& Parame
 	while (!Generator.IsComplete() && Elapsed < 60.0f)
 	{
 		TestTrue(TEXT("Native-time trajectory produces valid samples"),
-			Generator.UpdateSetpoint(0.02f, Setpoint.PositionCm, Setpoint.VelocityCmPerSec, Setpoint));
+			Generator.UpdateSetpoint(0.02f, Setpoint.PositionCm, Setpoint));
 		Elapsed += 0.02f;
 	}
 	TestTrue(TEXT("MinimumSnap completes on its native clock"), Generator.IsComplete());

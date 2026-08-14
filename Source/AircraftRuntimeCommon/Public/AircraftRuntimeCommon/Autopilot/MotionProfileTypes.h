@@ -94,9 +94,16 @@ struct AIRCRAFTRUNTIMECOMMON_API FSlewLimiter
 		float DesiredRate = 0.0f;
 		if (MaxJerk > UE_SMALL_NUMBER)
 		{
-			// 选一个能在 Value 越过 Target 前回到零的速率
-			const float StoppingRate = FMath::Sqrt(2.0f * MaxJerk * FMath::Abs(Error));
-			DesiredRate = FMath::Sign(Error) * FMath::Min(MaxRate, StoppingRate);
+			if (!FMath::IsNearlyZero(Error))
+			{
+				const float ErrorDirection = FMath::Sign(Error);
+				const bool bMovingTowardTarget = Rate * ErrorDirection > 0.0f;
+				const float ErrorNeededToReleaseRate = FMath::Square(Rate) / (2.0f * MaxJerk);
+				DesiredRate = bMovingTowardTarget
+					&& ErrorNeededToReleaseRate >= FMath::Abs(Error)
+					? 0.0f
+					: ErrorDirection * MaxRate;
+			}
 		}
 		else
 		{
@@ -111,7 +118,9 @@ struct AIRCRAFTRUNTIMECOMMON_API FSlewLimiter
 
 		Rate = DesiredRate;
 		Value += Rate * DeltaSeconds;
-		if (!FMath::IsNearlyZero(Error) && Error * (Target - Value) <= 0.0f)
+		if (MaxJerk <= UE_SMALL_NUMBER
+			&& !FMath::IsNearlyZero(Error)
+			&& Error * (Target - Value) <= 0.0f)
 		{
 			Value = Target;
 			Rate = 0.0f;

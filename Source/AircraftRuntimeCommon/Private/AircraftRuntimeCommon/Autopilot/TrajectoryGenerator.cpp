@@ -13,15 +13,15 @@ bool FAircraftTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 	const bool bHoverRequest = (Request.Type == ETrajectoryType::Waypoint || Request.Type == ETrajectoryType::Line)
 		&& StartToTargetDist <= 1.0f;
 
-	if (!bHoverRequest && (Request.PlanningAccelerationCmPerSecSq <= UE_SMALL_NUMBER
+	if (!bHoverRequest && (Request.CruiseSpeedCmPerSec <= UE_SMALL_NUMBER
+		|| Request.PlanningAccelerationCmPerSecSq <= UE_SMALL_NUMBER
 		|| Request.PlanningDecelerationCmPerSecSq <= UE_SMALL_NUMBER))
 	{
 		UE_LOG(LogAircraftTrajectoryGen, Warning,
-			TEXT("TrajectoryGenerator: acceleration and deceleration must both be positive."));
+			TEXT("TrajectoryGenerator: cruise speed, acceleration, and deceleration must be positive."));
 		return false;
 	}
-	const float RequestedTerminalSpeed = FVector2D(
-		Request.TargetVelocityCmPerSec.X, Request.TargetVelocityCmPerSec.Y).Size();
+	const float RequestedTerminalSpeed = Request.TargetVelocityCmPerSec.Size();
 	if (!bHoverRequest && RequestedTerminalSpeed > Request.CruiseSpeedCmPerSec + UE_SMALL_NUMBER)
 	{
 		UE_LOG(LogAircraftTrajectoryGen, Warning,
@@ -51,7 +51,7 @@ bool FAircraftTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 		CurrentArcLength = 0.0f;
 		CurrentSpeedCmPerSec = 0.0f;
 		CurrentPathAccelerationCmPerSecSq = 0.0f;
-		bBraking = false;
+		bFollowVehicleProgress = false;
 		bIsValid = true;
 		CurrentSetpoint.PositionCm = Request.TargetPositionCm;
 		CurrentSetpoint.VelocityCmPerSec = FVector::ZeroVector;
@@ -81,7 +81,7 @@ bool FAircraftTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 	PlanningDecelCmPerSecSq = FMath::Max(Request.PlanningDecelerationCmPerSecSq, UE_SMALL_NUMBER);
 	PlanningJerkCmPerSecCubed = FMath::Max(Request.PlanningJerkCmPerSecCubed, 0.0f);
 	TargetEndSpeedCmPerSec = FMath::Clamp(
-		FVector2D(Request.TargetVelocityCmPerSec.X, Request.TargetVelocityCmPerSec.Y).Size(),
+		Request.TargetVelocityCmPerSec.Size(),
 		0.0f, CruiseSpeedCmPerSec);
 	AcceptanceRadiusCm = FMath::Max(Request.AcceptanceRadiusCm, 1.0f);
 
@@ -101,7 +101,7 @@ bool FAircraftTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 	CurrentArcLength = 0.0f;
 	CurrentTimeSeconds = 0.0f;
 	CurrentSpeedCmPerSec = InitialSpeedCmPerSec;
-	bBraking = false;
+	bFollowVehicleProgress = Request.Type == ETrajectoryType::Waypoint;
 	bIsValid = true;
 	return true;
 }
@@ -114,7 +114,7 @@ void FAircraftTrajectoryGenerator::Clear()
 	CurrentArcLength = 0.0f;
 	CurrentSpeedCmPerSec = 0.0f;
 	CurrentPathAccelerationCmPerSecSq = 0.0f;
-	bBraking = false;
+	bFollowVehicleProgress = false;
 	CurrentTimeSeconds = 0.0f;
 	TotalDurationSeconds = 0.0f;
 	bUsesNativeTimeParameterization = false;
@@ -170,7 +170,10 @@ float FAircraftTrajectoryGenerator::GetProgress() const
 	return FMath::Clamp(CurrentArcLength / TotalArcLengthCm, 0.0f, 1.0f);
 }
 
-bool FAircraftTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVector& CurrentPosition, const FVector& CurrentVelocity, FTrajectoryPoint& OutSetpoint)
+bool FAircraftTrajectoryGenerator::UpdateSetpoint(
+	float DeltaSeconds,
+	const FVector& CurrentPosition,
+	FTrajectoryPoint& OutSetpoint)
 {
 	OutSetpoint.Reset();
 	if (!bIsValid || DeltaSeconds <= UE_SMALL_NUMBER)
@@ -199,9 +202,13 @@ bool FAircraftTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVec
 
 	const bool bInfinite = IsCurrentSegmentInfiniteLoop();
 
-	// --- 1. 用当前位置投影到轨迹，校正游标（防漂移；只前进不后退）---
+	// MoveTo 的参考点必须跟随飞机实际进度，只领先一个更新步；否则参考轨迹会先到终点，
+	// 真实飞机只能在零速目标下依靠位置误差缓慢补齐剩余距离。
 	const float ProjectedS = ProjectToArcLength(CurrentPosition);
-	CurrentArcLength = FMath::Max(CurrentArcLength, ProjectedS);
+	const float ProgressArc = bFollowVehicleProgress
+		? FMath::Clamp(ProjectedS, 0.0f, TotalArcLengthCm)
+		: FMath::Max(CurrentArcLength, ProjectedS);
+	CurrentArcLength = ProgressArc;
 
 	if (bInfinite)
 	{
@@ -220,7 +227,7 @@ bool FAircraftTrajectoryGenerator::UpdateSetpoint(float DeltaSeconds, const FVec
 
 	// --- 2. 单一 S 曲线速度剖面：轨迹生成器独占 MoveTo 的平移 V/A/J 规划。 ---
 	const float PreviousSpeedCmPerSec = CurrentSpeedCmPerSec;
-	CurrentSpeedCmPerSec = ComputeConstrainedSpeed(CurrentArcLength, TotalArcLengthCm, DeltaSeconds);
+	CurrentSpeedCmPerSec = ComputeConstrainedSpeed(ProgressArc, TotalArcLengthCm, DeltaSeconds);
 
 	// --- 3. 推进游标：s += v·Δt（梯形积分）---
 	const float IntegratedDistance = 0.5f * (PreviousSpeedCmPerSec + CurrentSpeedCmPerSec) * DeltaSeconds;
@@ -370,12 +377,8 @@ float FAircraftTrajectoryGenerator::ComputeConstrainedSpeed(
 	}
 
 	const float RemainingForBraking = FMath::Max(TotalS - CurrentS, 0.0f);
-	if (!bBraking)
-	{
-		bBraking = ComputeBrakingDistance(CurrentSpeedCmPerSec, VEnd)
-			>= RemainingForBraking;
-	}
-	const float TargetSpeed = bBraking ? VEnd : Vc;
+	const float TargetSpeed = FMath::Min(
+		Vc, ComputeBrakingSpeedLimit(RemainingForBraking));
 	const float SpeedError = TargetSpeed - CurrentSpeedCmPerSec;
 	const float AccelerationLimit = SpeedError >= 0.0f ? A : D;
 	float DesiredAcceleration = 0.0f;
@@ -465,6 +468,26 @@ float FAircraftTrajectoryGenerator::ComputeBrakingDistance(float StartSpeedCmPer
 	}
 	return AccelerationReleaseDistance
 		+ 0.5f * (EffectiveStartSpeed + EndSpeed) * TotalBrakingTime;
+}
+
+float FAircraftTrajectoryGenerator::ComputeBrakingSpeedLimit(float RemainingDistanceCm) const
+{
+	const float Remaining = FMath::Max(RemainingDistanceCm, 0.0f);
+	float Low = TargetEndSpeedCmPerSec;
+	float High = CruiseSpeedCmPerSec;
+	for (int32 Iteration = 0; Iteration < 20; ++Iteration)
+	{
+		const float Candidate = 0.5f * (Low + High);
+		if (ComputeBrakingDistance(Candidate, TargetEndSpeedCmPerSec) <= Remaining)
+		{
+			Low = Candidate;
+		}
+		else
+		{
+			High = Candidate;
+		}
+	}
+	return Low;
 }
 
 void FAircraftTrajectoryGenerator::LocateSegment(float GlobalArc, int32& OutSegIndex, float& OutLocalArc) const
@@ -575,8 +598,10 @@ float FAircraftTrajectoryGenerator::ProjectToArcLength(const FVector& WorldPosit
 			continue;
 		}
 
-		const int32 ProjectionSamples = Seg->UsesNativeTimeParameterization() ? 128 : 8;
+		const int32 ProjectionSamples = Seg->UsesNativeTimeParameterization() ? 128 : 16;
 		const float Step = FMath::Max(SegLen / ProjectionSamples, 1.0f);
+		float BestLocalS = 0.0f;
+		float BestSegmentDistSq = TNumericLimits<float>::Max();
 		for (float LocalS = 0.0f; LocalS <= SegLen; LocalS += Step)
 		{
 			float GlobalS = SegStart + LocalS;
@@ -593,11 +618,53 @@ float FAircraftTrajectoryGenerator::ProjectToArcLength(const FVector& WorldPosit
 
 			const FFrenetFrame Frame = Seg->GetFrenetAtArcLength(LocalS);
 			const float DistSq = FVector::DistSquared(Frame.OriginCm, WorldPosition);
+			if (DistSq < BestSegmentDistSq)
+			{
+				BestSegmentDistSq = DistSq;
+				BestLocalS = LocalS;
+			}
 			if (DistSq < BestDistSq)
 			{
 				BestDistSq = DistSq;
 				BestS = GlobalS;
 			}
+		}
+
+		float RefineMin = FMath::Max(BestLocalS - Step, 0.0f);
+		float RefineMax = FMath::Min(BestLocalS + Step, SegLen);
+		for (int32 Iteration = 0; Iteration < 12; ++Iteration)
+		{
+			const float Third = (RefineMax - RefineMin) / 3.0f;
+			const float Left = RefineMin + Third;
+			const float Right = RefineMax - Third;
+			const float LeftDistSq = FVector::DistSquared(
+				Seg->GetFrenetAtArcLength(Left).OriginCm, WorldPosition);
+			const float RightDistSq = FVector::DistSquared(
+				Seg->GetFrenetAtArcLength(Right).OriginCm, WorldPosition);
+			if (LeftDistSq <= RightDistSq)
+			{
+				RefineMax = Right;
+			}
+			else
+			{
+				RefineMin = Left;
+			}
+		}
+		const float RefinedLocalS = 0.5f * (RefineMin + RefineMax);
+		float RefinedGlobalS = SegStart + RefinedLocalS;
+		if (bInfinite && SegLen > UE_SMALL_NUMBER)
+		{
+			const float NearestLap = FMath::Max(
+				FMath::RoundToFloat((CurrentArcLength - RefinedGlobalS) / SegLen), 0.0f);
+			RefinedGlobalS += NearestLap * SegLen;
+		}
+		const float RefinedDistSq = FVector::DistSquared(
+			Seg->GetFrenetAtArcLength(RefinedLocalS).OriginCm, WorldPosition);
+		if ((!bInfinite || (RefinedGlobalS >= SearchWindowMin && RefinedGlobalS <= SearchWindowMax))
+			&& RefinedDistSq < BestDistSq)
+		{
+			BestDistSq = RefinedDistSq;
+			BestS = RefinedGlobalS;
 		}
 	}
 

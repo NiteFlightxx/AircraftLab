@@ -209,6 +209,52 @@ bool FAircraftExecutorVelocityContinuityTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftExecutorVerticalMoveToLimitsTest,
+	"AircraftAutopilot.Movement.MoveToRespectsDirectionalLimits",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftExecutorVerticalMoveToLimitsTest::RunTest(const FString& Parameters)
+{
+	FAircraftAutopilotMovementExecutor Executor;
+	FAutopilotMovementIntent Intent = MakeMoveToIntent(FVector(0.0f, 0.0f, 3000.0f));
+	Intent.MotionConstraints.CruiseSpeedCmPerSec = 800.0f;
+	Intent.MotionConstraints.MaxAccelerationCmPerSecSq = 400.0f;
+	Intent.MotionConstraints.MaxDecelerationCmPerSecSq = 400.0f;
+	Intent.MotionConstraints.MaxClimbRateCmPerSec = 120.0f;
+	Intent.MotionConstraints.MaxVerticalAccelerationCmPerSecSq = 60.0f;
+	Intent.MotionConstraints.MaxVerticalJerkCmPerSecCubed = 300.0f;
+	Executor.Submit(Intent, MakeSnapshot(FVector::ZeroVector), EAutopilotIntentFailureReason::None);
+
+	FAircraftAutopilotVehicleSnapshot Snapshot = MakeSnapshot(FVector::ZeroVector);
+	FProfiledSetpoint Previous;
+	FTrajectoryPoint Setpoint;
+	float MaxVerticalSpeed = 0.0f;
+	float MaxVerticalAcceleration = 0.0f;
+	for (int32 Step = 0; Step < 4000
+		&& !Executor.GetTrajectoryGenerator()->IsComplete(); ++Step)
+	{
+		Executor.BuildSetpoint(Snapshot, 0.01f, Previous, Setpoint);
+		MaxVerticalSpeed = FMath::Max(MaxVerticalSpeed, FMath::Abs(Setpoint.VelocityCmPerSec.Z));
+		MaxVerticalAcceleration = FMath::Max(
+			MaxVerticalAcceleration, FMath::Abs(Setpoint.AccelerationCmPerSecSq.Z));
+		Snapshot.PositionCm = Setpoint.PositionCm;
+		Snapshot.VelocityCmPerSec = Setpoint.VelocityCmPerSec;
+		Snapshot.AccelerationCmPerSecSq = Setpoint.AccelerationCmPerSecSq;
+		Previous.PositionCm = Setpoint.PositionCm;
+		Previous.VelocityCmPerSec = Setpoint.VelocityCmPerSec;
+		Previous.AccelerationCmPerSecSq = Setpoint.AccelerationCmPerSecSq;
+		Previous.bValid = true;
+	}
+
+	TestTrue(TEXT("Vertical MoveTo reaches its target"),
+		Executor.GetTrajectoryGenerator()->IsComplete());
+	TestTrue(TEXT("Vertical MoveTo respects climb speed"), MaxVerticalSpeed <= 120.1f);
+	TestTrue(TEXT("Vertical MoveTo respects vertical acceleration"),
+		MaxVerticalAcceleration <= 60.1f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftExecutorHeadingSemanticsTest,
 	"AircraftAutopilot.Movement.HeadingUsesHeldYawAndBrakingRate",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
