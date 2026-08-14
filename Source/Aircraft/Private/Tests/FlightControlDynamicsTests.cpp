@@ -20,18 +20,24 @@ bool FAircraftConstraintDynamicsFeedForwardTest::RunTest(const FString& Paramete
 	const FVector HoverOffset =
 		UE::AircraftLab::ConstraintDrive::ComputeDynamicsFeedForwardPositionOffset(
 			FVector(0.0, 0.0, -980.0), FVector::ZeroVector,
-			0.3, 1.0, StrengthHz, true, 100.0);
+			0.3, 1.0, 1.0, StrengthHz, true, 100.0);
 	TestEqual(TEXT("Acceleration drive offsets its target upward to cancel gravity"),
 		HoverOffset.Z, 980.0 / Stiffness, 1.e-5);
+	const FVector DisabledGravityOffset =
+		UE::AircraftLab::ConstraintDrive::ComputeDynamicsFeedForwardPositionOffset(
+			FVector(0.0, 0.0, -980.0), FVector::ZeroVector,
+			0.3, 0.0, 1.0, StrengthHz, true, 100.0);
+	TestTrue(TEXT("Zero gravity feed-forward scale disables gravity compensation"),
+		DisabledGravityOffset.IsNearlyZero());
 
 	const FVector ClimbOffset =
 		UE::AircraftLab::ConstraintDrive::ComputeDynamicsFeedForwardPositionOffset(
 			FVector(0.0, 0.0, -980.0), FVector(0.0, 0.0, 100.0),
-			0.3, 1.0, StrengthHz, true, 100.0);
+			0.3, 1.0, 1.0, StrengthHz, true, 100.0);
 	const FVector DescentOffset =
 		UE::AircraftLab::ConstraintDrive::ComputeDynamicsFeedForwardPositionOffset(
 			FVector(0.0, 0.0, -980.0), FVector(0.0, 0.0, -100.0),
-			0.3, 1.0, StrengthHz, true, 100.0);
+			0.3, 1.0, 1.0, StrengthHz, true, 100.0);
 	TestTrue(TEXT("Climb feed-forward also overcomes linear damping"), ClimbOffset.Z > HoverOffset.Z);
 	TestTrue(TEXT("Descent feed-forward removes the gravity asymmetry without opposing descent damping"),
 		DescentOffset.Z < HoverOffset.Z && DescentOffset.Z > 0.0);
@@ -39,7 +45,7 @@ bool FAircraftConstraintDynamicsFeedForwardTest::RunTest(const FString& Paramete
 	const FVector ForceModeOffset =
 		UE::AircraftLab::ConstraintDrive::ComputeDynamicsFeedForwardPositionOffset(
 			FVector(0.0, 0.0, -980.0), FVector::ZeroVector,
-			0.3, 1.0, StrengthHz, false, 100.0);
+			0.3, 1.0, 1.0, StrengthHz, false, 100.0);
 	TestEqual(TEXT("Force drive converts acceleration feed-forward using body mass"),
 		ForceModeOffset.Z, HoverOffset.Z * 100.0, 1.e-4);
 	return true;

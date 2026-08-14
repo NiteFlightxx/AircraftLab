@@ -25,13 +25,14 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	}
 	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	const float Values[] = { Config.LinearStrength, Config.LinearDampingRatio,
-		Config.LinearExtraDamping, Config.LinearForceLimit, Config.AngularStrength,
+		Config.LinearExtraDamping, Config.LinearForceLimit,
+		Config.GravityFeedForwardScale, Config.LinearDampingFeedForwardScale, Config.AngularStrength,
 		Config.AngularDampingRatio, Config.AngularExtraDamping, Config.AngularTorqueLimit };
 	for (const float Value : Values)
 	{
 		if (!FMath::IsFinite(Value) || Value < 0.0f)
 		{
-			Context.Error(FText::FromString(TEXT("Constraint strength, damping ratio, extra damping, and limits must be finite and non-negative.")), this);
+			Context.Error(FText::FromString(TEXT("Constraint strength, damping, limits, and feed-forward scales must be finite and non-negative.")), this);
 			SetValue(Context, InputCollection, &Collection);
 			return;
 		}
@@ -46,6 +47,8 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearDampingRatio"), Config.LinearDampingRatio);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearExtraDamping"), Config.LinearExtraDamping);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearForceLimit"), Config.LinearForceLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.GravityFeedForwardScale"), Config.GravityFeedForwardScale);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearDampingFeedForwardScale"), Config.LinearDampingFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularStrength"), Config.AngularStrength);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularDampingRatio"), Config.AngularDampingRatio);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularExtraDamping"), Config.AngularExtraDamping);

@@ -98,6 +98,8 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	float ConstraintLinearDampingRatio = 1.0f;
 	float ConstraintLinearExtraDamping = 0.0f;
 	float ConstraintLinearForceLimit = 0.0f;
+	float ConstraintGravityFeedForwardScale = 1.0f;
+	float ConstraintLinearDampingFeedForwardScale = 1.0f;
 	float ConstraintAngularStrength = 1.59154943f;
 	float ConstraintAngularDampingRatio = 1.0f;
 	float ConstraintAngularExtraDamping = 0.0f;

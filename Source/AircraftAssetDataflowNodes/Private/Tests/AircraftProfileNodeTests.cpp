@@ -4,6 +4,7 @@
 #include "Dataflow/AircraftAttitudeControllerConfigNode.h"
 #include "Dataflow/AircraftAltitudeControllerConfigNode.h"
 #include "Dataflow/AircraftControlAllocatorConfigNode.h"
+#include "Dataflow/AircraftConstraintSimulationConfigNode.h"
 #include "Dataflow/AircraftControllerInputConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
@@ -69,6 +70,11 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 		Altitude.VerticalVelocity.OutputLimit, 0.30f);
 	TestTrue(TEXT("Control allocator has non-negative damping"),
 		FAircraftControlAllocatorConfig().DampedPseudoInverseLambda >= 0.0f);
+	const FAircraftConstraintSimulationConfig Constraint;
+	TestEqual(TEXT("Constraint simulation fully compensates gravity by default"),
+		Constraint.GravityFeedForwardScale, 1.0f);
+	TestEqual(TEXT("Constraint simulation fully compensates rigid-body linear damping by default"),
+		Constraint.LinearDampingFeedForwardScale, 1.0f);
 
 	const FAircraftAirscrewProfileData Airscrew;
 	TestFalse(TEXT("A single airscrew profile has an identity"), Airscrew.Name.IsNone());

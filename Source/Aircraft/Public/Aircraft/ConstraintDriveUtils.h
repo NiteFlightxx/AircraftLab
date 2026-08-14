@@ -58,6 +58,7 @@ namespace UE::AircraftLab::ConstraintDrive
 		const FVector& GravityAccelerationCmPerSecSq,
 		const FVector& DesiredVelocityCmPerSec,
 		const double LinearDampingPerSecond,
+		const double GravityFeedForwardScale,
 		const double LinearDampingFeedForwardScale,
 		const double Strength,
 		const bool bAccelerationMode,
@@ -70,6 +71,7 @@ namespace UE::AircraftLab::ConstraintDrive
 		}
 
 		const FVector RequiredAcceleration = -GravityAccelerationCmPerSecSq
+			* FMath::Max(GravityFeedForwardScale, 0.0)
 			+ DesiredVelocityCmPerSec
 				* FMath::Max(LinearDampingPerSecond, 0.0)
 				* FMath::Max(LinearDampingFeedForwardScale, 0.0);

@@ -729,7 +729,8 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 			GravityAccelerationCmPerSecSq,
 			TargetCenterOfMassVelocity,
 			ChassisBody->LinearDamping,
-			Model->FlightController.LinearDampingFeedForwardScale,
+			Model->FlightController.ConstraintGravityFeedForwardScale,
+			Model->FlightController.ConstraintLinearDampingFeedForwardScale,
 			Model->FlightController.ConstraintLinearStrength,
 			Model->FlightController.bConstraintAccelerationMode,
 			ChassisBody->GetBodyMass());
