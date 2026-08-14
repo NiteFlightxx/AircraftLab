@@ -151,6 +151,7 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 	{
 		// ---- 路径 A：无高度保持 ----
 		Context.Runtime.HoldTargets.bAltitudeHoldInitialized = false;
+		Context.Runtime.HoldTargets.bVerticalBrakeBeforeHold = false;
 		PidStates.Altitude.Reset();
 		PidStates.VerticalVelocity.Reset();
 		bVerticalVelocitySetpointInitialized = false;
@@ -169,6 +170,7 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 	{
 		Context.Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
 		Context.Runtime.HoldTargets.bAltitudeHoldInitialized = true;
+		Context.Runtime.HoldTargets.bVerticalBrakeBeforeHold = false;
 		PidStates.Altitude.Reset();
 		PidStates.VerticalVelocity.Reset();
 	}
@@ -176,6 +178,7 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 	// ---- 路径 C：Autopilot 注入 ----
 	if (Context.bUseAutopilotSetpoint && Context.AutopilotInjection.bValid)
 	{
+		Context.Runtime.HoldTargets.bVerticalBrakeBeforeHold = false;
 		const FAutopilotInjection& AI = Context.AutopilotInjection;
 		// 高度外环：设定值=AltitudeSetpointCm，前馈=垂直速度设定值（Kff 通道）
 		OutDesiredVerticalVelocity = PidStates.Altitude.UpdateFromMeasurement(
@@ -206,9 +209,25 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 		if (FMath::Abs(RequestedVerticalVelocity) > UE_SMALL_NUMBER)
 		{
 			OutDesiredVerticalVelocity = RequestedVerticalVelocity;
-			// 重新锚定高度到当前位置（松手后将保持新高度）
+			// 手动爬升期间锚点跟随当前位置；松杆后先制动，再锁定最终高度。
+			Context.Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
+			Context.Runtime.HoldTargets.bVerticalBrakeBeforeHold = true;
+			PidStates.Altitude.Reset();
+		}
+		else if (Context.Runtime.HoldTargets.bVerticalBrakeBeforeHold)
+		{
+			// 不在松杆瞬间冻结高度锚点。垂直速度设定值按最大加速度自然减到零，
+			// 制动期间锚点持续跟随机体，避免越过松杆点后被高度环拉回。
 			Context.Runtime.HoldTargets.HeldAltitudeCm = CurrentAltitude;
 			PidStates.Altitude.Reset();
+			OutDesiredVerticalVelocity = 0.0f;
+			const float HoldSpeed = FMath::Max(Config.VerticalBrakeToHoldSpeedCmPerSec, 0.0f);
+			const bool bSetpointStopped = !bVerticalVelocitySetpointInitialized
+				|| FMath::Abs(LastDesiredVerticalVelocityCmPerSec) <= HoldSpeed;
+			if (FMath::Abs(CurrentVerticalVelocity) <= HoldSpeed && bSetpointStopped)
+			{
+				Context.Runtime.HoldTargets.bVerticalBrakeBeforeHold = false;
+			}
 		}
 		else
 		{

@@ -132,6 +132,8 @@ struct FAircraftHoldTargets
 	/** 水平摇杆刚释放：先以零速度制动，速度足够低后再锁定位置。 */
 	bool bHorizontalBrakeBeforeHold = false;
 	bool bAltitudeHoldInitialized = false;
+	/** 垂直摇杆刚释放：先以零速度制动，速度足够低后再锁定高度。 */
+	bool bVerticalBrakeBeforeHold = false;
 	bool bYawHoldInitialized = false;
 
 	void ResetHoldFlags()
@@ -139,6 +141,7 @@ struct FAircraftHoldTargets
 		bPositionHoldInitialized = false;
 		bHorizontalBrakeBeforeHold = false;
 		bAltitudeHoldInitialized = false;
+		bVerticalBrakeBeforeHold = false;
 		bYawHoldInitialized = false;
 	}
 };

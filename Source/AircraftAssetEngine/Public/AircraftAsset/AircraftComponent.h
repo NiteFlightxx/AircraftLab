@@ -26,7 +26,7 @@ struct FConstraintInstance;
 struct FAircraftSimulationModel;
 struct FAircraftSimulationLodModel;
 
-enum class EAircraftPilotHorizontalMotionPhase : uint8
+enum class EAircraftPilotMotionPhase : uint8
 {
 	Hold,
 	Manual,
@@ -396,13 +396,12 @@ private:
 	/** Constraint/Kinematic 后端由飞行员输入持续积分出的目标。 */
 	FAircraftMotionTarget PilotMotionTarget;
 	bool bPilotMotionTargetInitialized = false;
-	/** PhysicsConstraint 的 X/Y 轴独立运动阶段；松杆后先制动，再捕获位置保持。 */
-	EAircraftPilotHorizontalMotionPhase PilotHorizontalMotionPhaseX =
-		EAircraftPilotHorizontalMotionPhase::Hold;
-	EAircraftPilotHorizontalMotionPhase PilotHorizontalMotionPhaseY =
-		EAircraftPilotHorizontalMotionPhase::Hold;
-	/** PhysicsConstraint 松杆制动轨迹的 X/Y 目标速度。 */
-	FVector2D PilotHorizontalBrakeVelocityCmPerSec = FVector2D::ZeroVector;
+	/** PhysicsConstraint 各轴独立运动阶段；松杆后先制动，再捕获最终保持位置。 */
+	EAircraftPilotMotionPhase PilotMotionPhaseX = EAircraftPilotMotionPhase::Hold;
+	EAircraftPilotMotionPhase PilotMotionPhaseY = EAircraftPilotMotionPhase::Hold;
+	EAircraftPilotMotionPhase PilotMotionPhaseZ = EAircraftPilotMotionPhase::Hold;
+	/** PhysicsConstraint 松杆制动阶段的三轴目标速度。 */
+	FVector PilotBrakeVelocityCmPerSec = FVector::ZeroVector;
 	/** 精确临时驱动覆盖。 */
 	FAircraftSimulationDriveOverride DriveOverride;
 	/** Owner 上实现 IAircraftSimulationLODConsumer 的其他组件（运动目标来源缓存）。 */

@@ -54,9 +54,10 @@ struct AIRCRAFTASSETENGINE_API FAircraftDebug
 		const FVector& WorldCenterOfMassVelocityTarget,
 		const FQuat& WorldOrientationTarget,
 		const FVector& WorldAngularVelocityTargetRevPerSec,
-		const TCHAR* HorizontalMotionPhaseX,
-		const TCHAR* HorizontalMotionPhaseY,
-		const FVector2D& HorizontalBrakeVelocityCmPerSec,
+		const TCHAR* MotionPhaseX,
+		const TCHAR* MotionPhaseY,
+		const TCHAR* MotionPhaseZ,
+		const FVector& BrakeVelocityCmPerSec,
 		float DeltaSeconds,
 		float& InOutLogAccumulatorSeconds,
 		float& InOutUnresponsiveSeconds);

@@ -152,6 +152,57 @@ bool FAircraftVerticalVelocitySetpointSlewTest::RunTest(const FString& Parameter
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftVerticalReleaseBrakesBeforeHoldingTest,
+	"AircraftLab.Control.Altitude.VerticalReleaseBrakesBeforeHolding",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftVerticalReleaseBrakesBeforeHoldingTest::RunTest(const FString& Parameters)
+{
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.EstimatedState.State.PositionCm.Z = 100.0f;
+	Runtime.EstimatedState.State.VelocityCmPerSec.Z = 200.0f;
+	Runtime.HoldTargets.HeldAltitudeCm = 0.0f;
+	Runtime.HoldTargets.bAltitudeHoldInitialized = true;
+	Runtime.HoldTargets.bVerticalBrakeBeforeHold = true;
+	FAircraftPhysicsCache PhysicsCache;
+	PhysicsCache.GravityMagnitudeCmPerSecSq = 980.0f;
+	FAircraftModeCapabilities Capabilities;
+	Capabilities.CanHoldAltitude = true;
+	FAircraftFlightControllerRuntimeConfig Config;
+	Config.MaxVerticalAccelerationCmPerSecSq = 0.0f;
+	Config.VerticalBrakeToHoldSpeedCmPerSec = 20.0f;
+	FAircraftManualCommand ManualCommand;
+	FAutopilotInjection Injection;
+	FAircraftControlAllocator Allocator;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Injection, Allocator, false };
+	FAircraftFlightControlSolver Solver;
+
+	float DesiredVelocity = 0.0f;
+	Solver.ComputeVerticalControl(Context, 0.004f, DesiredVelocity);
+	TestEqual(TEXT("Release braking commands zero vertical velocity"), DesiredVelocity, 0.0f);
+	TestEqual(TEXT("Release braking moves the altitude anchor with the aircraft"),
+		Runtime.HoldTargets.HeldAltitudeCm, 100.0f);
+	TestTrue(TEXT("Altitude hold remains deferred while vertical speed is high"),
+		Runtime.HoldTargets.bVerticalBrakeBeforeHold);
+
+	Runtime.EstimatedState.State.PositionCm.Z = 180.0f;
+	Runtime.EstimatedState.State.VelocityCmPerSec.Z = 10.0f;
+	Solver.ComputeVerticalControl(Context, 0.004f, DesiredVelocity);
+	TestFalse(TEXT("Low vertical speed latches the final altitude"),
+		Runtime.HoldTargets.bVerticalBrakeBeforeHold);
+	TestEqual(TEXT("Final altitude is where vertical braking actually finished"),
+		Runtime.HoldTargets.HeldAltitudeCm, 180.0f);
+
+	Runtime.EstimatedState.State.PositionCm.Z = 230.0f;
+	Runtime.EstimatedState.State.VelocityCmPerSec.Z = 0.0f;
+	Solver.ComputeVerticalControl(Context, 0.004f, DesiredVelocity);
+	TestTrue(TEXT("After latching, external altitude drift is corrected toward the stop altitude"),
+		DesiredVelocity < 0.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftAngularDampingFeedForwardTest,
 	"AircraftLab.Control.Damping.AngularTorqueFeedForward",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

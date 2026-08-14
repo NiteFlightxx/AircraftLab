@@ -16,6 +16,7 @@ struct FAircraftControllerInputConfig
 	UPROPERTY(EditAnywhere, Category = "Hold", meta = (ClampMin = "0.0", ClampMax = "1.0")) float VerticalHoldStickDeadband = 0.08f;
 	UPROPERTY(EditAnywhere, Category = "Hold", meta = (ClampMin = "0.0", ClampMax = "1.0")) float YawHoldStickDeadband = 0.05f;
 	UPROPERTY(EditAnywhere, Category = "Hold", meta = (ClampMin = "0.0")) float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
+	UPROPERTY(EditAnywhere, Category = "Hold", meta = (ClampMin = "0.0")) float VerticalBrakeToHoldSpeedCmPerSec = 20.0f;
 	UPROPERTY(EditAnywhere, Category = "Execution") bool bControllerEnabledByDefault = true;
 };
 

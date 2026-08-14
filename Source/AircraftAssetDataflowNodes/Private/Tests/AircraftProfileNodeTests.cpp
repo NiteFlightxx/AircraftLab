@@ -34,6 +34,8 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 		Input.YawHoldStickDeadband, 0.05f);
 	TestEqual(TEXT("Controller input preserves authoritative brake-to-hold speed"),
 		Input.HorizontalBrakeToHoldSpeedCmPerSec, 20.0f);
+	TestEqual(TEXT("Controller input preserves vertical brake-to-hold speed"),
+		Input.VerticalBrakeToHoldSpeedCmPerSec, 20.0f);
 	TestTrue(TEXT("Controller is enabled by default"), Input.bControllerEnabledByDefault);
 	const FAircraftSolverConfigNode Solver(UE::Dataflow::FNodeParameters{});
 	TestEqual(TEXT("Solver config exposes only its Collection input"), Solver.GetNumInputs(), 1);

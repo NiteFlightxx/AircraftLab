@@ -730,13 +730,13 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	const FAircraftManualCommand ManualCommand =
 		UE::AircraftLab::PilotInputMapping::BuildManualCommand(
 			PilotInput, GetComponentQuat(), Model->FlightController);
-	auto MotionPhaseName = [](const EAircraftPilotHorizontalMotionPhase Phase)
+	auto MotionPhaseName = [](const EAircraftPilotMotionPhase Phase)
 	{
 		switch (Phase)
 		{
-		case EAircraftPilotHorizontalMotionPhase::Manual:
+		case EAircraftPilotMotionPhase::Manual:
 			return TEXT("Manual");
-		case EAircraftPilotHorizontalMotionPhase::Brake:
+		case EAircraftPilotMotionPhase::Brake:
 			return TEXT("Brake");
 		default:
 			return TEXT("Hold");
@@ -746,9 +746,10 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		*this, *SimulationConstraint, Model->RootBone, PilotInput, ManualCommand, Target,
 		TargetCenterOfMass, TargetCenterOfMassVelocity,
 		TargetRotation, WorldAngularVelocityTargetRevPerSec,
-		MotionPhaseName(PilotHorizontalMotionPhaseX),
-		MotionPhaseName(PilotHorizontalMotionPhaseY),
-		PilotHorizontalBrakeVelocityCmPerSec, DeltaSeconds,
+		MotionPhaseName(PilotMotionPhaseX),
+		MotionPhaseName(PilotMotionPhaseY),
+		MotionPhaseName(PilotMotionPhaseZ),
+		PilotBrakeVelocityCmPerSec, DeltaSeconds,
 		ConstraintDebugLogAccumulatorSeconds, ConstraintDebugUnresponsiveSeconds);
 }
 
@@ -938,9 +939,10 @@ void UAircraftComponent::UpdatePilotMotionTarget(float DeltaSeconds)
 	{
 		PilotMotionTarget.VelocityCmPerSec = FVector::ZeroVector;
 		PilotMotionTarget.AngularVelocityWorldDegPerSec = FVector::ZeroVector;
-		PilotHorizontalMotionPhaseX = EAircraftPilotHorizontalMotionPhase::Hold;
-		PilotHorizontalMotionPhaseY = EAircraftPilotHorizontalMotionPhase::Hold;
-		PilotHorizontalBrakeVelocityCmPerSec = FVector2D::ZeroVector;
+		PilotMotionPhaseX = EAircraftPilotMotionPhase::Hold;
+		PilotMotionPhaseY = EAircraftPilotMotionPhase::Hold;
+		PilotMotionPhaseZ = EAircraftPilotMotionPhase::Hold;
+		PilotBrakeVelocityCmPerSec = FVector::ZeroVector;
 		return;
 	}
 
@@ -962,22 +964,25 @@ void UAircraftComponent::UpdatePilotMotionTarget(float DeltaSeconds)
 	{
 		const FVector CurrentPosition = GetComponentLocation();
 		const FVector CurrentVelocity = GetPhysicsLinearVelocity();
-		const double HoldSpeed = FMath::Max(
+		const double HorizontalHoldSpeed = FMath::Max(
 			static_cast<double>(Config.HorizontalBrakeToHoldSpeedCmPerSec), 0.0);
+		const double VerticalHoldSpeed = FMath::Max(
+			static_cast<double>(Config.VerticalBrakeToHoldSpeedCmPerSec), 0.0);
 		const double BrakeDecayRate =
 			UE::AircraftLab::ConstraintDrive::StrengthToAngularFrequency(
 				Config.ConstraintLinearStrength);
 		// 位置驱动只补助当前速度误差，不积分一条与刚体脱节的世界空间轨迹。
 		// 这样持续输入会持续移动，达到目标速度后位置前置量归零；
 		// 松杆时速度目标指数衰减，不会留下将飞机拉回起点的远端锚点。
-		auto UpdateHorizontalAxis = [DeltaSeconds, HoldSpeed, BrakeDecayRate,
+		auto UpdateAxis = [DeltaSeconds, BrakeDecayRate,
 			Strength = static_cast<double>(Config.ConstraintLinearStrength)](
 			const double DesiredVelocity,
 			const double CurrentAxisPosition,
 			const double CurrentAxisVelocity,
+			const double HoldSpeed,
 			double& InOutTargetPosition,
 			double& OutTargetVelocity,
-			EAircraftPilotHorizontalMotionPhase& InOutPhase,
+			EAircraftPilotMotionPhase& InOutPhase,
 			double& InOutBrakeVelocity)
 		{
 			if (!FMath::IsNearlyZero(DesiredVelocity))
@@ -987,17 +992,17 @@ void UAircraftComponent::UpdatePilotMotionTarget(float DeltaSeconds)
 						CurrentAxisPosition, CurrentAxisVelocity, DesiredVelocity, Strength);
 				OutTargetVelocity = DesiredVelocity;
 				InOutBrakeVelocity = 0.0;
-				InOutPhase = EAircraftPilotHorizontalMotionPhase::Manual;
+				InOutPhase = EAircraftPilotMotionPhase::Manual;
 				return;
 			}
 
-			if (InOutPhase == EAircraftPilotHorizontalMotionPhase::Manual)
+			if (InOutPhase == EAircraftPilotMotionPhase::Manual)
 			{
 				InOutTargetPosition = CurrentAxisPosition;
 				InOutBrakeVelocity = CurrentAxisVelocity;
-				InOutPhase = EAircraftPilotHorizontalMotionPhase::Brake;
+				InOutPhase = EAircraftPilotMotionPhase::Brake;
 			}
-			if (InOutPhase == EAircraftPilotHorizontalMotionPhase::Brake)
+			if (InOutPhase == EAircraftPilotMotionPhase::Brake)
 			{
 				if (BrakeDecayRate > UE_SMALL_NUMBER)
 				{
@@ -1017,7 +1022,7 @@ void UAircraftComponent::UpdatePilotMotionTarget(float DeltaSeconds)
 					InOutTargetPosition = CurrentAxisPosition;
 					OutTargetVelocity = 0.0;
 					InOutBrakeVelocity = 0.0;
-					InOutPhase = EAircraftPilotHorizontalMotionPhase::Hold;
+					InOutPhase = EAircraftPilotMotionPhase::Hold;
 				}
 				return;
 			}
@@ -1025,30 +1030,40 @@ void UAircraftComponent::UpdatePilotMotionTarget(float DeltaSeconds)
 			OutTargetVelocity = 0.0;
 		};
 
-		UpdateHorizontalAxis(
+		UpdateAxis(
 			ManualCommand.DesiredVelocityCmPerSec.X,
 			CurrentPosition.X,
 			CurrentVelocity.X,
+			HorizontalHoldSpeed,
 			PilotMotionTarget.PositionCm.X,
 			PilotMotionTarget.VelocityCmPerSec.X,
-			PilotHorizontalMotionPhaseX,
-			PilotHorizontalBrakeVelocityCmPerSec.X);
-		UpdateHorizontalAxis(
+			PilotMotionPhaseX,
+			PilotBrakeVelocityCmPerSec.X);
+		UpdateAxis(
 			ManualCommand.DesiredVelocityCmPerSec.Y,
 			CurrentPosition.Y,
 			CurrentVelocity.Y,
+			HorizontalHoldSpeed,
 			PilotMotionTarget.PositionCm.Y,
 			PilotMotionTarget.VelocityCmPerSec.Y,
-			PilotHorizontalMotionPhaseY,
-			PilotHorizontalBrakeVelocityCmPerSec.Y);
-		PilotMotionTarget.VelocityCmPerSec.Z = ManualCommand.DesiredVelocityCmPerSec.Z;
-		PilotMotionTarget.PositionCm.Z += ManualCommand.DesiredVelocityCmPerSec.Z * DeltaSeconds;
+			PilotMotionPhaseY,
+			PilotBrakeVelocityCmPerSec.Y);
+		UpdateAxis(
+			ManualCommand.DesiredVelocityCmPerSec.Z,
+			CurrentPosition.Z,
+			CurrentVelocity.Z,
+			VerticalHoldSpeed,
+			PilotMotionTarget.PositionCm.Z,
+			PilotMotionTarget.VelocityCmPerSec.Z,
+			PilotMotionPhaseZ,
+			PilotBrakeVelocityCmPerSec.Z);
 	}
 	else
 	{
-		PilotHorizontalMotionPhaseX = EAircraftPilotHorizontalMotionPhase::Hold;
-		PilotHorizontalMotionPhaseY = EAircraftPilotHorizontalMotionPhase::Hold;
-		PilotHorizontalBrakeVelocityCmPerSec = FVector2D::ZeroVector;
+		PilotMotionPhaseX = EAircraftPilotMotionPhase::Hold;
+		PilotMotionPhaseY = EAircraftPilotMotionPhase::Hold;
+		PilotMotionPhaseZ = EAircraftPilotMotionPhase::Hold;
+		PilotBrakeVelocityCmPerSec = FVector::ZeroVector;
 		PilotMotionTarget.VelocityCmPerSec = ManualCommand.DesiredVelocityCmPerSec;
 		PilotMotionTarget.PositionCm += ManualCommand.DesiredVelocityCmPerSec * DeltaSeconds;
 	}
@@ -1064,9 +1079,10 @@ void UAircraftComponent::ResetPilotMotionTarget()
 {
 	PilotMotionTarget = FAircraftMotionTarget();
 	bPilotMotionTargetInitialized = false;
-	PilotHorizontalMotionPhaseX = EAircraftPilotHorizontalMotionPhase::Hold;
-	PilotHorizontalMotionPhaseY = EAircraftPilotHorizontalMotionPhase::Hold;
-	PilotHorizontalBrakeVelocityCmPerSec = FVector2D::ZeroVector;
+	PilotMotionPhaseX = EAircraftPilotMotionPhase::Hold;
+	PilotMotionPhaseY = EAircraftPilotMotionPhase::Hold;
+	PilotMotionPhaseZ = EAircraftPilotMotionPhase::Hold;
+	PilotBrakeVelocityCmPerSec = FVector::ZeroVector;
 }
 
 /* ==================== IAircraftFlightControllerInterface（Autopilot 窄契约） ==================== */

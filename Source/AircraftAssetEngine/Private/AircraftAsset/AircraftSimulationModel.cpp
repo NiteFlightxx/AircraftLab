@@ -191,6 +191,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.Input.YawHoldStickDeadband"), OutModel.FlightController.YawHoldStickDeadband);
 			OutModel.FlightController.HorizontalBrakeToHoldSpeedCmPerSec = Properties.GetValue<float>(
 				TEXT("FlightController.Input.HorizontalBrakeToHoldSpeedCmPerSec"), OutModel.FlightController.HorizontalBrakeToHoldSpeedCmPerSec);
+			OutModel.FlightController.VerticalBrakeToHoldSpeedCmPerSec = Properties.GetValue<float>(
+				TEXT("FlightController.Input.VerticalBrakeToHoldSpeedCmPerSec"), OutModel.FlightController.VerticalBrakeToHoldSpeedCmPerSec);
 			OutModel.FlightController.bControllerEnabledByDefault = Properties.GetValue<bool>(
 				TEXT("FlightController.Execution.ControllerEnabledByDefault"), OutModel.FlightController.bControllerEnabledByDefault);
 			OutModel.FlightController.ConstraintLinearStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearStrength"), OutModel.FlightController.ConstraintLinearStrength);

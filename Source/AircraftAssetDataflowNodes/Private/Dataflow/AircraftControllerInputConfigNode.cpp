@@ -28,7 +28,9 @@ void FAircraftControllerInputConfigNode::Evaluate(UE::Dataflow::FContext& Contex
 		|| !FMath::IsFinite(Config.VerticalHoldStickDeadband)
 		|| !FMath::IsFinite(Config.YawHoldStickDeadband)
 		|| !FMath::IsFinite(Config.HorizontalBrakeToHoldSpeedCmPerSec)
+		|| !FMath::IsFinite(Config.VerticalBrakeToHoldSpeedCmPerSec)
 		|| Config.HorizontalBrakeToHoldSpeedCmPerSec < 0.0f
+		|| Config.VerticalBrakeToHoldSpeedCmPerSec < 0.0f
 		|| Config.HorizontalHoldStickDeadband < 0.0f || Config.HorizontalHoldStickDeadband > 1.0f
 		|| Config.VerticalHoldStickDeadband < 0.0f || Config.VerticalHoldStickDeadband > 1.0f
 		|| Config.YawHoldStickDeadband < 0.0f || Config.YawHoldStickDeadband > 1.0f)
@@ -49,6 +51,7 @@ void FAircraftControllerInputConfigNode::Evaluate(UE::Dataflow::FContext& Contex
 	SetConfigProperty(Properties, TEXT("FlightController.Input.VerticalHoldStickDeadband"), Config.VerticalHoldStickDeadband);
 	SetConfigProperty(Properties, TEXT("FlightController.Input.YawHoldStickDeadband"), Config.YawHoldStickDeadband);
 	SetConfigProperty(Properties, TEXT("FlightController.Input.HorizontalBrakeToHoldSpeedCmPerSec"), Config.HorizontalBrakeToHoldSpeedCmPerSec);
+	SetConfigProperty(Properties, TEXT("FlightController.Input.VerticalBrakeToHoldSpeedCmPerSec"), Config.VerticalBrakeToHoldSpeedCmPerSec);
 	SetConfigProperty(Properties, TEXT("FlightController.Execution.ControllerEnabledByDefault"), Config.bControllerEnabledByDefault);
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }
