@@ -12,7 +12,7 @@ public:
 	void SetPhysicalReference(float InGravityCmPerSecSq, float InHoverThrustBaseline)
 	{
 		GravityCmPerSecSq = FMath::Max(InGravityCmPerSecSq, UE_SMALL_NUMBER);
-		HoverThrustBaseline = InHoverThrustBaseline;
+		HoverThrustBaseline = FMath::Clamp(InHoverThrustBaseline, 0.0f, 1.0f);
 	}
 
 	void Compute(const FProfiledSetpoint& Setpoint, FFeedForward& OutFF) const

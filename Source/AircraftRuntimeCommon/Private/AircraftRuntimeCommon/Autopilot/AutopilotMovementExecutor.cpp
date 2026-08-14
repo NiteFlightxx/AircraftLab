@@ -4,111 +4,116 @@
 
 #include "GameFramework/Actor.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogAircraftMovementExecutor, Log, All);
-
 namespace
 {
-	constexpr int32 MaxTerminalResultsKept = 16;
-
-	bool IsTerminalStatus(EAutopilotIntentStatus Status)
-	{
-		return Status == EAutopilotIntentStatus::Succeeded
-			|| Status == EAutopilotIntentStatus::Failed
-			|| Status == EAutopilotIntentStatus::Cancelled
-			|| Status == EAutopilotIntentStatus::Interrupted
-			|| Status == EAutopilotIntentStatus::Rejected;
-	}
-}
-
-void FAircraftAutopilotMovementExecutor::Initialize()
-{
-	TrajectoryGenerator.Clear();
-	ActiveIntent = FAutopilotMovementIntent();
-	ActiveResult = FAutopilotIntentResult();
-	TerminalResults.Reset();
-	TerminalResultOrder.Reset();
-	StartedEvents.Reset();
-	FinishedEvents.Reset();
-	bHasExternalIntent = false;
-	bTrajectoryDirty = false;
-	StableTimeSeconds = 0.0f;
+	constexpr int32 MaxStoredResults = 64;
 }
 
 void FAircraftAutopilotMovementExecutor::SetPhysicalMotionLimits(float MaxHorizontalSpeedCmPerSec, float MaxHorizontalAccelerationCmPerSecSq)
 {
-	PhysicalMaxHorizontalSpeedCmPerSec = FMath::Max(MaxHorizontalSpeedCmPerSec, 0.0f);
-	PhysicalMaxHorizontalAccelerationCmPerSecSq = FMath::Max(MaxHorizontalAccelerationCmPerSecSq, 0.0f);
+	PhysicalMaxHorizontalSpeedCmPerSec = FMath::Max(MaxHorizontalSpeedCmPerSec, UE_SMALL_NUMBER);
+	PhysicalMaxHorizontalAccelerationCmPerSecSq = FMath::Max(
+		MaxHorizontalAccelerationCmPerSecSq, UE_SMALL_NUMBER);
 }
 
 bool FAircraftAutopilotMovementExecutor::ValidateIntent(const FAutopilotMovementIntent& Intent) const
 {
-	switch (Intent.Type)
+	if ((Intent.TargetActor && !IsValid(Intent.TargetActor))
+		|| (Intent.bUseIndependentHeadingTarget
+			&& Intent.HeadingTargetActor && !IsValid(Intent.HeadingTargetActor))
+		|| Intent.TargetPositionCm.ContainsNaN()
+		|| Intent.HeadingTargetPositionCm.ContainsNaN()
+		|| Intent.DesiredVelocityCmPerSec.ContainsNaN()
+		|| Intent.MotionConstraints.CruiseSpeedCmPerSec < 0.0f
+		|| Intent.MotionConstraints.MaxAccelerationCmPerSecSq <= 0.0f
+		|| Intent.MotionConstraints.MaxDecelerationCmPerSecSq <= 0.0f
+		|| Intent.PassThroughSpeedCmPerSec < 0.0f
+		|| Intent.MotionConstraints.MaxJerkCmPerSecCubed < 0.0f
+		|| Intent.ArrivalCriteria.HorizontalToleranceCm < 0.0f
+		|| Intent.ArrivalCriteria.VerticalToleranceCm < 0.0f
+		|| Intent.ArrivalCriteria.SpeedToleranceCmPerSec < 0.0f
+		|| Intent.ArrivalCriteria.YawToleranceDegrees < 0.0f
+		|| Intent.ArrivalCriteria.StableTimeSeconds < 0.0f
+		|| Intent.TimeoutSeconds < 0.0f
+		|| !FMath::IsFinite(Intent.FixedYawDegrees)
+		|| !FMath::IsFinite(Intent.DesiredYawRateDegPerSec)
+		|| (Intent.HeadingMode == EAutopilotHeadingMode::FixedYaw
+			&& Intent.DesiredYawRateDegPerSec < 0.0f))
 	{
-	case EAutopilotMovementIntentType::Hold:
-		return true;
-	case EAutopilotMovementIntentType::MoveToPosition:
-		return Intent.TargetActor != nullptr || !Intent.TargetPositionCm.IsNearlyZero();
-	case EAutopilotMovementIntentType::MoveWithVelocity:
-		return !Intent.DesiredVelocityCmPerSec.IsNearlyZero();
-	case EAutopilotMovementIntentType::FollowPath:
-		return Intent.PathPointsCm.Num() >= 2;
-	case EAutopilotMovementIntentType::Orbit:
-		return Intent.OrbitRadiusCm > UE_SMALL_NUMBER
-			&& !FMath::IsNearlyZero(Intent.OrbitAngularRateDegPerSec);
-	case EAutopilotMovementIntentType::CircleArc:
-		return Intent.OrbitRadiusCm > UE_SMALL_NUMBER
-			&& !FMath::IsNearlyEqual(Intent.ArcStartAngleDegrees, Intent.ArcEndAngleDegrees);
-	case EAutopilotMovementIntentType::RootMotion:
-		return true;
-	default:
 		return false;
 	}
+	if (Intent.Type == EAutopilotMovementIntentType::FollowPath)
+	{
+		if (Intent.PathPointsCm.Num() < 2) return false;
+		for (const FVector& Point : Intent.PathPointsCm)
+		{
+			if (Point.ContainsNaN()) return false;
+		}
+	}
+	if (Intent.Type == EAutopilotMovementIntentType::Orbit)
+	{
+		return Intent.OrbitRadiusCm > UE_SMALL_NUMBER
+			&& !FMath::IsNearlyZero(Intent.OrbitAngularRateDegPerSec);
+	}
+	if (Intent.Type == EAutopilotMovementIntentType::CircleArc)
+	{
+		return Intent.OrbitRadiusCm > UE_SMALL_NUMBER
+			&& FMath::IsFinite(Intent.ArcStartAngleDegrees)
+			&& FMath::IsFinite(Intent.ArcEndAngleDegrees)
+			&& !FMath::IsNearlyZero(Intent.ArcEndAngleDegrees - Intent.ArcStartAngleDegrees);
+	}
+	return true;
 }
 
 FVector FAircraftAutopilotMovementExecutor::ResolveTargetPosition(const FAutopilotMovementIntent& Intent) const
 {
-	if (Intent.TargetActor)
-	{
-		return Intent.TargetActor->GetActorLocation() + Intent.TargetPositionCm;
-	}
-	return Intent.TargetPositionCm;
+	return IsValid(Intent.TargetActor)
+		? Intent.TargetActor->GetActorLocation() + Intent.TargetPositionCm
+		: Intent.TargetPositionCm;
 }
 
 bool FAircraftAutopilotMovementExecutor::ResolveHeadingTarget(const FAutopilotMovementIntent& Intent, FVector& OutTargetPosition) const
 {
-	if (Intent.HeadingTargetActor)
-	{
-		OutTargetPosition = Intent.HeadingTargetActor->GetActorLocation() + Intent.HeadingTargetPositionCm;
-		return true;
-	}
 	if (Intent.bUseIndependentHeadingTarget)
 	{
-		OutTargetPosition = Intent.HeadingTargetPositionCm;
+		if (Intent.HeadingTargetActor)
+		{
+			if (!IsValid(Intent.HeadingTargetActor)) return false;
+			OutTargetPosition = Intent.HeadingTargetActor->GetActorLocation()
+				+ Intent.HeadingTargetPositionCm;
+		}
+		else
+		{
+			OutTargetPosition = Intent.HeadingTargetPositionCm;
+		}
 		return true;
 	}
-	if (Intent.Type == EAutopilotMovementIntentType::Orbit || Intent.Type == EAutopilotMovementIntentType::CircleArc)
+	if (Intent.Type == EAutopilotMovementIntentType::FollowPath)
 	{
-		OutTargetPosition = ResolveTargetPosition(Intent);
+		if (Intent.PathPointsCm.IsEmpty()) return false;
+		OutTargetPosition = Intent.PathPointsCm.Last();
 		return true;
 	}
-	return false;
+	OutTargetPosition = ResolveTargetPosition(Intent);
+	return true;
 }
 
 FVector FAircraftAutopilotMovementExecutor::ResolveCompletionTarget(const FAutopilotMovementIntent& Intent) const
 {
-	switch (Intent.Type)
+	if (Intent.Type == EAutopilotMovementIntentType::FollowPath)
 	{
-	case EAutopilotMovementIntentType::FollowPath:
-		return Intent.PathPointsCm.Num() > 0 ? Intent.PathPointsCm.Last() : ResolveTargetPosition(Intent);
-	case EAutopilotMovementIntentType::CircleArc:
+		return Intent.PathPointsCm.Last();
+	}
+	if (Intent.Type == EAutopilotMovementIntentType::CircleArc)
 	{
 		const FVector Center = ResolveTargetPosition(Intent);
-		const float EndRad = FMath::DegreesToRadians(Intent.ArcEndAngleDegrees);
-		return Center + FVector(FMath::Cos(EndRad), FMath::Sin(EndRad), 0.0f) * Intent.OrbitRadiusCm;
+		const float EndAngleRadians = FMath::DegreesToRadians(Intent.ArcEndAngleDegrees);
+		return Center + FVector(
+			Intent.OrbitRadiusCm * FMath::Cos(EndAngleRadians),
+			Intent.OrbitRadiusCm * FMath::Sin(EndAngleRadians),
+			0.0f);
 	}
-	default:
-		return ResolveTargetPosition(Intent);
-	}
+	return ResolveTargetPosition(Intent);
 }
 
 FAutopilotIntentHandle FAircraftAutopilotMovementExecutor::Submit(
@@ -116,77 +121,97 @@ FAutopilotIntentHandle FAircraftAutopilotMovementExecutor::Submit(
 	const FAircraftAutopilotVehicleSnapshot& Snapshot,
 	EAutopilotIntentFailureReason RejectionReason)
 {
-	if (RejectionReason != EAutopilotIntentFailureReason::None)
+	FAutopilotIntentHandle Handle;
+	Handle.Id = NextIntentId++;
+	if (RejectionReason != EAutopilotIntentFailureReason::None || !ValidateIntent(Intent))
 	{
 		FAutopilotIntentResult Rejected;
+		Rejected.Handle = Handle;
 		Rejected.Status = EAutopilotIntentStatus::Rejected;
-		Rejected.FailureReason = RejectionReason;
+		Rejected.FailureReason = RejectionReason != EAutopilotIntentFailureReason::None
+			? RejectionReason : EAutopilotIntentFailureReason::InvalidIntent;
 		StoreTerminalResult(Rejected);
 		FinishedEvents.Add(Rejected);
-		return FAutopilotIntentHandle();
+		return Handle;
 	}
 
-	if (!ValidateIntent(Intent))
-	{
-		FAutopilotIntentResult Rejected;
-		Rejected.Status = EAutopilotIntentStatus::Rejected;
-		Rejected.FailureReason = EAutopilotIntentFailureReason::InvalidIntent;
-		StoreTerminalResult(Rejected);
-		FinishedEvents.Add(Rejected);
-		return FAutopilotIntentHandle();
-	}
-
-	if (ActiveResult.Handle.IsValid() && !IsTerminalStatus(ActiveResult.Status))
+	if (bHasExternalIntent)
 	{
 		FinishActive(EAutopilotIntentStatus::Interrupted, EAutopilotIntentFailureReason::Replaced);
 	}
 
 	ActiveIntent = Intent;
 	ActiveResult = FAutopilotIntentResult();
-	ActiveResult.Handle.Id = NextIntentId++;
+	ActiveResult.Handle = Handle;
 	ActiveResult.Status = EAutopilotIntentStatus::Accepted;
-	ActiveResult.Progress = 0.0f;
-	ActiveResult.ElapsedSeconds = 0.0f;
+	bHasExternalIntent = true;
 	StableTimeSeconds = 0.0f;
-	bHasExternalIntent = (Intent.Type == EAutopilotMovementIntentType::RootMotion);
-	bTrajectoryDirty = true;
-
-	if (!bHasExternalIntent && !RebuildTrajectory(Snapshot))
-	{
-		FinishActive(EAutopilotIntentStatus::Failed, EAutopilotIntentFailureReason::TrajectoryGenerationFailed);
-		return ActiveResult.Handle;
-	}
-
+	HoldPositionCm = Intent.Type == EAutopilotMovementIntentType::Hold
+		? Snapshot.PositionCm : Intent.TargetPositionCm;
+	HoldYawDegrees = Snapshot.YawDegrees;
+	LastResolvedTargetCm = ResolveTargetPosition(Intent);
+	bTrajectoryDirty = Intent.Type == EAutopilotMovementIntentType::MoveToPosition
+		|| Intent.Type == EAutopilotMovementIntentType::FollowPath
+		|| Intent.Type == EAutopilotMovementIntentType::Orbit
+		|| Intent.Type == EAutopilotMovementIntentType::CircleArc;
 	StartedEvents.Add(ActiveResult);
-	return ActiveResult.Handle;
+	return Handle;
 }
 
 bool FAircraftAutopilotMovementExecutor::Update(FAutopilotIntentHandle Handle, const FAutopilotMovementIntent& Intent)
 {
-	if (!Handle.IsValid() || Handle != ActiveResult.Handle || IsTerminalStatus(ActiveResult.Status))
+	if (!bHasExternalIntent || Handle != ActiveResult.Handle || Intent.Type != ActiveIntent.Type
+		|| !ValidateIntent(Intent))
 	{
 		return false;
 	}
-	if (!ValidateIntent(Intent))
-	{
-		return false;
-	}
-	// 原地更新：保留句柄与 MotionProfile 状态；轨迹定义变化时标记重建。
-	if (ActiveIntent.Type != Intent.Type)
-	{
-		bTrajectoryDirty = true;
-	}
-	else
-	{
-		bTrajectoryDirty = true; //  conservative：由 RebuildTrajectory 内的 IsSameTrajectoryAs 去抖
-	}
+
+	const bool bTrajectoryChanged = ActiveIntent.TargetActor != Intent.TargetActor
+		|| !ActiveIntent.TargetPositionCm.Equals(Intent.TargetPositionCm, 0.1f)
+		|| ActiveIntent.PathPointsCm != Intent.PathPointsCm
+		|| ActiveIntent.PathTrajectoryMode != Intent.PathTrajectoryMode
+		|| ActiveIntent.OrbitRadiusCm != Intent.OrbitRadiusCm
+		|| ActiveIntent.OrbitAngularRateDegPerSec != Intent.OrbitAngularRateDegPerSec
+		|| ActiveIntent.ArcStartAngleDegrees != Intent.ArcStartAngleDegrees
+		|| ActiveIntent.ArcEndAngleDegrees != Intent.ArcEndAngleDegrees
+		|| ActiveIntent.MotionConstraints.CruiseSpeedCmPerSec != Intent.MotionConstraints.CruiseSpeedCmPerSec
+		|| ActiveIntent.MotionConstraints.MaxAccelerationCmPerSecSq != Intent.MotionConstraints.MaxAccelerationCmPerSecSq
+		|| ActiveIntent.MotionConstraints.MaxDecelerationCmPerSecSq != Intent.MotionConstraints.MaxDecelerationCmPerSecSq
+		|| ActiveIntent.PassThroughSpeedCmPerSec != Intent.PassThroughSpeedCmPerSec
+		|| ActiveIntent.MotionConstraints.MaxJerkCmPerSecCubed != Intent.MotionConstraints.MaxJerkCmPerSecCubed;
+	const bool bHeadingCompletionChanged = ActiveIntent.HeadingMode != Intent.HeadingMode
+		|| (Intent.HeadingMode == EAutopilotHeadingMode::FixedYaw
+			&& !FMath::IsNearlyEqual(ActiveIntent.FixedYawDegrees, Intent.FixedYawDegrees))
+		|| (Intent.HeadingMode == EAutopilotHeadingMode::FaceTarget
+			&& (ActiveIntent.bUseIndependentHeadingTarget != Intent.bUseIndependentHeadingTarget
+				|| ActiveIntent.HeadingTargetActor != Intent.HeadingTargetActor
+				|| !ActiveIntent.HeadingTargetPositionCm.Equals(Intent.HeadingTargetPositionCm, 0.1f)));
+	const bool bArrivalCriteriaChanged = ActiveIntent.ArrivalMode != Intent.ArrivalMode
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.HorizontalToleranceCm,
+			Intent.ArrivalCriteria.HorizontalToleranceCm)
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.VerticalToleranceCm,
+			Intent.ArrivalCriteria.VerticalToleranceCm)
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.SpeedToleranceCmPerSec,
+			Intent.ArrivalCriteria.SpeedToleranceCmPerSec)
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.YawToleranceDegrees,
+			Intent.ArrivalCriteria.YawToleranceDegrees)
+		|| !FMath::IsNearlyEqual(ActiveIntent.ArrivalCriteria.StableTimeSeconds,
+			Intent.ArrivalCriteria.StableTimeSeconds);
+
 	ActiveIntent = Intent;
+	LastResolvedTargetCm = ResolveTargetPosition(Intent);
+	bTrajectoryDirty |= bTrajectoryChanged && Intent.Type != EAutopilotMovementIntentType::Hold
+		&& Intent.Type != EAutopilotMovementIntentType::MoveWithVelocity;
+	if (bTrajectoryChanged || bHeadingCompletionChanged || bArrivalCriteriaChanged)
+	{
+		StableTimeSeconds = 0.0f;
+	}
 	return true;
 }
 
 bool FAircraftAutopilotMovementExecutor::Cancel(FAutopilotIntentHandle Handle, const FAircraftAutopilotVehicleSnapshot& Snapshot)
 {
-	if (!Handle.IsValid() || Handle != ActiveResult.Handle || IsTerminalStatus(ActiveResult.Status))
+	if (!bHasExternalIntent || Handle != ActiveResult.Handle)
 	{
 		return false;
 	}
@@ -197,7 +222,7 @@ bool FAircraftAutopilotMovementExecutor::Cancel(FAutopilotIntentHandle Handle, c
 
 void FAircraftAutopilotMovementExecutor::CancelActive(EAutopilotIntentFailureReason Reason)
 {
-	if (ActiveResult.Handle.IsValid() && !IsTerminalStatus(ActiveResult.Status))
+	if (bHasExternalIntent)
 	{
 		FinishActive(EAutopilotIntentStatus::Cancelled, Reason);
 	}
@@ -205,60 +230,48 @@ void FAircraftAutopilotMovementExecutor::CancelActive(EAutopilotIntentFailureRea
 
 void FAircraftAutopilotMovementExecutor::EnterHold(const FAircraftAutopilotVehicleSnapshot& Snapshot, const FVector* PositionOverride)
 {
+	ActiveIntent = FAutopilotMovementIntent();
+	ActiveIntent.Type = EAutopilotMovementIntentType::Hold;
+	ActiveIntent.HeadingMode = EAutopilotHeadingMode::KeepCurrent;
 	HoldPositionCm = PositionOverride ? *PositionOverride : Snapshot.PositionCm;
 	HoldYawDegrees = Snapshot.YawDegrees;
-
-	FAutopilotMovementIntent HoldIntent;
-	HoldIntent.Type = EAutopilotMovementIntentType::Hold;
-	HoldIntent.TargetPositionCm = HoldPositionCm;
-	HoldIntent.FixedYawDegrees = HoldYawDegrees;
-	HoldIntent.HeadingMode = EAutopilotHeadingMode::FixedYaw;
-	ActiveIntent = HoldIntent;
-	ActiveResult = FAutopilotIntentResult();
-	ActiveResult.Handle.Id = NextIntentId++;
-	ActiveResult.Status = EAutopilotIntentStatus::Executing;
-	bHasExternalIntent = false;
-	bTrajectoryDirty = true;
-	StableTimeSeconds = 0.0f;
-	RebuildTrajectory(Snapshot);
+	bTrajectoryDirty = false;
+	TrajectoryGenerator.Clear();
 }
 
 bool FAircraftAutopilotMovementExecutor::RebuildTrajectory(const FAircraftAutopilotVehicleSnapshot& Snapshot)
 {
 	bTrajectoryDirty = false;
-
+	TrajectoryGenerator.Clear();
 	FTrajectoryRequest Request;
 	Request.StartPositionCm = Snapshot.PositionCm;
 	Request.StartVelocityCmPerSec = Snapshot.VelocityCmPerSec;
 	Request.StartAccelerationCmPerSecSq = Snapshot.AccelerationCmPerSecSq;
-
-	const FTrajectoryMotionConstraints& Constraints = ActiveIntent.MotionConstraints;
-	Request.CruiseSpeedCmPerSec = FMath::Min(Constraints.CruiseSpeedCmPerSec, PhysicalMaxHorizontalSpeedCmPerSec);
-	Request.PlanningAccelerationCmPerSecSq = FMath::Min(Constraints.MaxAccelerationCmPerSecSq, PhysicalMaxHorizontalAccelerationCmPerSecSq);
-	Request.PlanningDecelerationCmPerSecSq = Constraints.MaxDecelerationCmPerSecSq;
-	Request.PlanningJerkCmPerSecCubed = Constraints.MaxJerkCmPerSecCubed;
-	Request.AcceptanceRadiusCm = FMath::Max(ActiveIntent.ArrivalCriteria.HorizontalToleranceCm, 1.0f);
-	Request.TargetYawDegrees = ActiveIntent.FixedYawDegrees;
+	Request.CruiseSpeedCmPerSec = FMath::Min(
+		ActiveIntent.MotionConstraints.CruiseSpeedCmPerSec, PhysicalMaxHorizontalSpeedCmPerSec);
+	Request.PlanningAccelerationCmPerSecSq = FMath::Min(
+		ActiveIntent.MotionConstraints.MaxAccelerationCmPerSecSq,
+		PhysicalMaxHorizontalAccelerationCmPerSecSq);
+	Request.PlanningDecelerationCmPerSecSq = FMath::Min(
+		ActiveIntent.MotionConstraints.MaxDecelerationCmPerSecSq,
+		PhysicalMaxHorizontalAccelerationCmPerSecSq);
+	Request.PlanningJerkCmPerSecCubed = ActiveIntent.MotionConstraints.MaxJerkCmPerSecCubed;
+	Request.AcceptanceRadiusCm = ActiveIntent.ArrivalCriteria.HorizontalToleranceCm;
+	const float EffectivePassThroughSpeedCmPerSec = FMath::Min(
+		ActiveIntent.PassThroughSpeedCmPerSec, Request.CruiseSpeedCmPerSec);
 
 	switch (ActiveIntent.Type)
 	{
-	case EAutopilotMovementIntentType::Hold:
-		Request.Type = ETrajectoryType::Waypoint;
-		Request.TargetPositionCm = HoldPositionCm.IsNearlyZero()
-			? Snapshot.PositionCm : HoldPositionCm;
-		Request.TargetYawDegrees = HoldYawDegrees;
-		break;
 	case EAutopilotMovementIntentType::MoveToPosition:
 		Request.Type = ETrajectoryType::Waypoint;
 		Request.TargetPositionCm = ResolveTargetPosition(ActiveIntent);
 		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
 		{
-			const FVector Direction = (Request.TargetPositionCm - Snapshot.PositionCm).GetSafeNormal();
-			Request.TargetVelocityCmPerSec = Direction * ActiveIntent.PassThroughSpeedCmPerSec;
+			Request.TargetVelocityCmPerSec = (Request.TargetPositionCm - Snapshot.PositionCm).GetSafeNormal()
+				* EffectivePassThroughSpeedCmPerSec;
 		}
 		break;
 	case EAutopilotMovementIntentType::FollowPath:
-		Request.PathPointsCm = ActiveIntent.PathPointsCm;
 		switch (ActiveIntent.PathTrajectoryMode)
 		{
 		case EAutopilotPathTrajectoryMode::MinimumSnap:
@@ -266,20 +279,20 @@ bool FAircraftAutopilotMovementExecutor::RebuildTrajectory(const FAircraftAutopi
 			break;
 		case EAutopilotPathTrajectoryMode::Bezier:
 			Request.Type = ETrajectoryType::Bezier;
-			Request.BezierDegree = FMath::Max(ActiveIntent.PathPointsCm.Num() - 1, 1);
+			Request.BezierDegree = ActiveIntent.PathPointsCm.Num() - 1;
 			break;
+		case EAutopilotPathTrajectoryMode::PiecewiseLinear:
 		default:
 			Request.Type = ETrajectoryType::FollowPath;
 			break;
 		}
-		if (Request.PathPointsCm.Num() > 0)
+		Request.PathPointsCm = ActiveIntent.PathPointsCm;
+		Request.TargetPositionCm = ActiveIntent.PathPointsCm.Last();
+		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
 		{
-			Request.TargetPositionCm = Request.PathPointsCm.Last();
-		}
-		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough && Request.PathPointsCm.Num() >= 2)
-		{
-			const FVector Direction = (Request.PathPointsCm.Last() - Request.PathPointsCm[Request.PathPointsCm.Num() - 2]).GetSafeNormal();
-			Request.TargetVelocityCmPerSec = Direction * ActiveIntent.PassThroughSpeedCmPerSec;
+			Request.TargetVelocityCmPerSec = (ActiveIntent.PathPointsCm.Last()
+				- ActiveIntent.PathPointsCm[ActiveIntent.PathPointsCm.Num() - 2]).GetSafeNormal()
+				* EffectivePassThroughSpeedCmPerSec;
 		}
 		break;
 	case EAutopilotMovementIntentType::Orbit:
@@ -287,8 +300,8 @@ bool FAircraftAutopilotMovementExecutor::RebuildTrajectory(const FAircraftAutopi
 		Request.OrbitCenterCm = ResolveTargetPosition(ActiveIntent);
 		Request.OrbitRadiusCm = ActiveIntent.OrbitRadiusCm;
 		Request.OrbitAngularRateDegPerSec = ActiveIntent.OrbitAngularRateDegPerSec;
-		Request.CruiseSpeedCmPerSec = FMath::Min(
-			FMath::Abs(ActiveIntent.OrbitAngularRateDegPerSec) * (PI / 180.0f) * ActiveIntent.OrbitRadiusCm,
+		Request.CruiseSpeedCmPerSec = FMath::Min(FMath::Abs(
+			FMath::DegreesToRadians(ActiveIntent.OrbitAngularRateDegPerSec) * ActiveIntent.OrbitRadiusCm),
 			PhysicalMaxHorizontalSpeedCmPerSec);
 		break;
 	case EAutopilotMovementIntentType::CircleArc:
@@ -297,24 +310,23 @@ bool FAircraftAutopilotMovementExecutor::RebuildTrajectory(const FAircraftAutopi
 		Request.OrbitRadiusCm = ActiveIntent.OrbitRadiusCm;
 		Request.ArcStartAngleDegrees = ActiveIntent.ArcStartAngleDegrees;
 		Request.ArcEndAngleDegrees = ActiveIntent.ArcEndAngleDegrees;
+		Request.TargetPositionCm = ResolveCompletionTarget(ActiveIntent);
+		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
+		{
+			const float EndAngleRadians = FMath::DegreesToRadians(ActiveIntent.ArcEndAngleDegrees);
+			const float SpinSign = FMath::Sign(
+				ActiveIntent.ArcEndAngleDegrees - ActiveIntent.ArcStartAngleDegrees);
+			Request.TargetVelocityCmPerSec = FVector(
+				-FMath::Sin(EndAngleRadians) * SpinSign,
+				FMath::Cos(EndAngleRadians) * SpinSign,
+				0.0f) * EffectivePassThroughSpeedCmPerSec;
+		}
 		break;
 	default:
-		// MoveWithVelocity / RootMotion 不走轨迹
 		return true;
 	}
-
-	// 语义去抖：等价请求不重建轨迹（保护 MotionProfile 连续性）
-	if (bHasLastTrajectoryRequest && Request.IsSameTrajectoryAs(LastTrajectoryRequest))
-	{
-		return TrajectoryGenerator.IsValid();
-	}
-	const bool bBuilt = TrajectoryGenerator.SetRequest(Request);
-	if (bBuilt)
-	{
-		LastTrajectoryRequest = Request;
-		bHasLastTrajectoryRequest = true;
-	}
-	return bBuilt;
+	LastResolvedTargetCm = ResolveTargetPosition(ActiveIntent);
+	return TrajectoryGenerator.SetRequest(Request);
 }
 
 bool FAircraftAutopilotMovementExecutor::BuildSetpoint(
@@ -323,85 +335,89 @@ bool FAircraftAutopilotMovementExecutor::BuildSetpoint(
 	const FProfiledSetpoint& PreviousProfiledSetpoint,
 	FTrajectoryPoint& OutSetpoint)
 {
-	OutSetpoint.Reset();
-	if (!ActiveResult.Handle.IsValid() || IsTerminalStatus(ActiveResult.Status))
-	{
-		return false;
-	}
-
-	if (ActiveResult.Status == EAutopilotIntentStatus::Accepted)
-	{
-		ActiveResult.Status = EAutopilotIntentStatus::Executing;
-	}
-
-	ActiveResult.ElapsedSeconds += FMath::Max(DeltaSeconds, 0.0f);
-
-	// 超时判定
-	if (ActiveIntent.TimeoutSeconds > UE_SMALL_NUMBER
-		&& ActiveResult.ElapsedSeconds >= ActiveIntent.TimeoutSeconds)
-	{
-		FinishActive(EAutopilotIntentStatus::Failed, EAutopilotIntentFailureReason::Timeout);
-		return false;
-	}
-
-	// RootMotion 由组件经 TickExternalIntent 驱动
 	if (bHasExternalIntent)
 	{
-		return false;
+		ActiveResult.ElapsedSeconds += DeltaSeconds;
+		if (ActiveIntent.TimeoutSeconds > 0.0f
+			&& ActiveResult.ElapsedSeconds >= ActiveIntent.TimeoutSeconds)
+		{
+			FinishActive(EAutopilotIntentStatus::Failed, EAutopilotIntentFailureReason::Timeout);
+			EnterHold(Snapshot);
+		}
+		else if (ActiveResult.Status == EAutopilotIntentStatus::Accepted)
+		{
+			ActiveResult.Status = EAutopilotIntentStatus::Executing;
+		}
 	}
 
-	// 持续速度移动：无轨迹，直接产出速度设定值
-	if (ActiveIntent.Type == EAutopilotMovementIntentType::MoveWithVelocity)
-	{
-		OutSetpoint.PositionCm = Snapshot.PositionCm
-			+ ActiveIntent.DesiredVelocityCmPerSec * DeltaSeconds;
-		OutSetpoint.VelocityCmPerSec = ActiveIntent.DesiredVelocityCmPerSec;
-		OutSetpoint.AccelerationCmPerSecSq = FVector::ZeroVector;
-		OutSetpoint.YawDegrees = Snapshot.YawDegrees;
-		OutSetpoint.YawRateDegreesPerSec = 0.0f;
-		OutSetpoint.bValid = true;
-		ActiveResult.Progress = 0.0f;
-		return true;
-	}
-
-	if (bTrajectoryDirty)
-	{
-		// 轨迹去抖在 RebuildTrajectory 内完成：等价请求（IsSameTrajectoryAs）不重建，
-		// Hover 微动不会重置 MotionProfile。
-		RebuildTrajectory(Snapshot);
-	}
-
-	// 移动目标 Actor 时轨迹跟随重锚（目标 Actor 移动超过阈值才重建）
 	if (ActiveIntent.TargetActor)
 	{
-		const FVector ResolvedTarget = ResolveTargetPosition(ActiveIntent);
-		FTrajectoryRequest CurrentDef;
-		// 仅 MoveToPosition 需要跟随重锚
-		if (ActiveIntent.Type == EAutopilotMovementIntentType::MoveToPosition
-			&& TrajectoryGenerator.IsValid())
+		if (!IsValid(ActiveIntent.TargetActor))
 		{
-			const float DriftCm = FVector::Dist(ResolvedTarget, TrajectoryGenerator.GetCurrentSetpoint().PositionCm);
-			if (DriftCm > FMath::Max(ActiveIntent.ArrivalCriteria.HorizontalToleranceCm, 50.0f))
+			if (bHasExternalIntent)
 			{
-				RebuildTrajectory(Snapshot);
+				FinishActive(EAutopilotIntentStatus::Failed,
+					EAutopilotIntentFailureReason::InvalidIntent);
+			}
+			EnterHold(Snapshot);
+		}
+		else
+		{
+			const FVector ResolvedTarget = ResolveTargetPosition(ActiveIntent);
+			if (!ResolvedTarget.Equals(LastResolvedTargetCm, 1.0f))
+			{
+				bTrajectoryDirty = ActiveIntent.Type == EAutopilotMovementIntentType::MoveToPosition
+					|| ActiveIntent.Type == EAutopilotMovementIntentType::Orbit
+					|| ActiveIntent.Type == EAutopilotMovementIntentType::CircleArc;
+				LastResolvedTargetCm = ResolvedTarget;
 			}
 		}
 	}
 
-	const bool bProduced = TrajectoryGenerator.UpdateSetpoint(
-		DeltaSeconds, Snapshot.PositionCm, Snapshot.VelocityCmPerSec, OutSetpoint);
-	if (!bProduced)
+	if (bTrajectoryDirty && !RebuildTrajectory(Snapshot))
 	{
-		// 轨迹完成但尚未判定到达：输出驻留设定值
-		OutSetpoint = TrajectoryGenerator.GetCurrentSetpoint();
-		if (!OutSetpoint.bValid)
+		if (bHasExternalIntent)
 		{
-			OutSetpoint.PositionCm = Snapshot.PositionCm;
-			OutSetpoint.YawDegrees = Snapshot.YawDegrees;
-			OutSetpoint.bValid = true;
+			FinishActive(EAutopilotIntentStatus::Failed,
+				EAutopilotIntentFailureReason::TrajectoryGenerationFailed);
 		}
+		EnterHold(Snapshot);
 	}
-	ActiveResult.Progress = GetTrajectoryProgress();
+
+	OutSetpoint = FTrajectoryPoint();
+	if (ActiveIntent.Type == EAutopilotMovementIntentType::Hold)
+	{
+		OutSetpoint.PositionCm = HoldPositionCm;
+		OutSetpoint.YawDegrees = HoldYawDegrees;
+		OutSetpoint.bValid = true;
+		return true;
+	}
+	if (ActiveIntent.Type == EAutopilotMovementIntentType::MoveWithVelocity)
+	{
+		OutSetpoint.PositionCm = PreviousProfiledSetpoint.bValid
+			? PreviousProfiledSetpoint.PositionCm : Snapshot.PositionCm;
+		OutSetpoint.VelocityCmPerSec = ActiveIntent.DesiredVelocityCmPerSec;
+		OutSetpoint.YawDegrees = HoldYawDegrees;
+		OutSetpoint.bValid = true;
+		return true;
+	}
+	if (ActiveIntent.Type == EAutopilotMovementIntentType::RootMotion)
+	{
+		OutSetpoint.PositionCm = Snapshot.PositionCm;
+		OutSetpoint.YawDegrees = Snapshot.YawDegrees;
+		OutSetpoint.bValid = true;
+		return true;
+	}
+	if (!TrajectoryGenerator.IsValid())
+	{
+		return false;
+	}
+	if (TrajectoryGenerator.UpdateSetpoint(
+		DeltaSeconds, Snapshot.PositionCm, Snapshot.VelocityCmPerSec, OutSetpoint))
+	{
+		return true;
+	}
+	OutSetpoint = TrajectoryGenerator.GetCurrentSetpoint();
 	return OutSetpoint.bValid;
 }
 
@@ -410,39 +426,51 @@ void FAircraftAutopilotMovementExecutor::ApplyHeading(const FAircraftAutopilotVe
 	switch (ActiveIntent.HeadingMode)
 	{
 	case EAutopilotHeadingMode::KeepCurrent:
-		InOutSetpoint.YawDegrees = Snapshot.YawDegrees;
+		InOutSetpoint.YawDegrees = HoldYawDegrees;
 		InOutSetpoint.YawRateDegreesPerSec = 0.0f;
 		break;
 	case EAutopilotHeadingMode::FixedYaw:
-	{
-		// 以 DesiredYawRateDegPerSec 限速转向固定航向；0 表示不限速（直接给目标）
-		InOutSetpoint.YawDegrees = FRotator::NormalizeAxis(ActiveIntent.FixedYawDegrees);
-		if (ActiveIntent.DesiredYawRateDegPerSec > UE_SMALL_NUMBER)
 		{
-			InOutSetpoint.YawRateDegreesPerSec = FMath::Clamp(
-				FMath::FindDeltaAngleDegrees(Snapshot.YawDegrees, InOutSetpoint.YawDegrees) > 0.0f
-					? ActiveIntent.DesiredYawRateDegPerSec : -ActiveIntent.DesiredYawRateDegPerSec,
-				-ActiveIntent.DesiredYawRateDegPerSec, ActiveIntent.DesiredYawRateDegPerSec);
+			InOutSetpoint.YawDegrees = ActiveIntent.FixedYawDegrees;
+			const float YawErrorDegrees = FMath::FindDeltaAngleDegrees(
+				Snapshot.YawDegrees, ActiveIntent.FixedYawDegrees);
+			const float ConstraintRate = FMath::Max(
+				ActiveIntent.MotionConstraints.MaxYawRateDegPerSec, 0.0f);
+			const float RequestedRate = ActiveIntent.DesiredYawRateDegPerSec > UE_SMALL_NUMBER
+				? FMath::Min(ActiveIntent.DesiredYawRateDegPerSec, ConstraintRate)
+				: ConstraintRate;
+			const float MaxYawAcceleration = FMath::Max(
+				ActiveIntent.MotionConstraints.MaxYawAccelerationDegPerSecSq, 0.0f);
+			const float BrakingLimitedRate = MaxYawAcceleration > UE_SMALL_NUMBER
+				? FMath::Sqrt(2.0f * MaxYawAcceleration * FMath::Abs(YawErrorDegrees))
+				: RequestedRate;
+			InOutSetpoint.YawRateDegreesPerSec = FMath::Sign(YawErrorDegrees)
+				* FMath::Min(RequestedRate, BrakingLimitedRate);
 		}
 		break;
-	}
 	case EAutopilotHeadingMode::FaceTarget:
-	{
-		FVector TargetPosition;
-		if (ResolveHeadingTarget(ActiveIntent, TargetPosition))
 		{
-			const FVector ToTarget = TargetPosition - Snapshot.PositionCm;
-			if (!FVector2D(ToTarget.X, ToTarget.Y).IsNearlyZero())
+			FVector HeadingTarget;
+			if (!ResolveHeadingTarget(ActiveIntent, HeadingTarget))
+			{
+				InOutSetpoint.YawRateDegreesPerSec = 0.0f;
+				break;
+			}
+			const FVector ToTarget = HeadingTarget - Snapshot.PositionCm;
+			if (!ToTarget.IsNearlyZero())
 			{
 				InOutSetpoint.YawDegrees = FMath::RadiansToDegrees(FMath::Atan2(ToTarget.Y, ToTarget.X));
-				InOutSetpoint.YawRateDegreesPerSec = 0.0f;
 			}
+			InOutSetpoint.YawRateDegreesPerSec = 0.0f;
+			break;
 		}
-		break;
-	}
 	case EAutopilotHeadingMode::FaceVelocity:
 	default:
-		// 保留轨迹几何航向（Sample 已给出）
+		if (!InOutSetpoint.VelocityCmPerSec.IsNearlyZero())
+		{
+			InOutSetpoint.YawDegrees = FMath::RadiansToDegrees(
+				FMath::Atan2(InOutSetpoint.VelocityCmPerSec.Y, InOutSetpoint.VelocityCmPerSec.X));
+		}
 		break;
 	}
 }
@@ -452,45 +480,54 @@ void FAircraftAutopilotMovementExecutor::UpdateCompletion(
 	float DeltaSeconds,
 	const FProfiledSetpoint& ProfiledSetpoint)
 {
-	if (!ActiveResult.Handle.IsValid() || IsTerminalStatus(ActiveResult.Status) || bHasExternalIntent)
+	if (!bHasExternalIntent)
+	{
+		return;
+	}
+	ActiveResult.Progress = GetTrajectoryProgress();
+	if (ActiveIntent.Type == EAutopilotMovementIntentType::Hold
+		|| ActiveIntent.Type == EAutopilotMovementIntentType::MoveWithVelocity
+		|| ActiveIntent.Type == EAutopilotMovementIntentType::Orbit
+		|| ActiveIntent.Type == EAutopilotMovementIntentType::RootMotion)
 	{
 		return;
 	}
 
-	// 持续类意图（速度/环绕）不自动完成
-	if (ActiveIntent.Type == EAutopilotMovementIntentType::MoveWithVelocity
-		|| ActiveIntent.Type == EAutopilotMovementIntentType::Orbit)
-	{
-		return;
-	}
-
+	const FVector Target = ResolveCompletionTarget(ActiveIntent);
+	const FVector Error = Target - Snapshot.PositionCm;
 	const FAutopilotArrivalCriteria& Criteria = ActiveIntent.ArrivalCriteria;
-	const FVector CompletionTarget = ResolveCompletionTarget(ActiveIntent);
-	const float HorizontalError = FVector2D(
-		Snapshot.PositionCm.X - CompletionTarget.X,
-		Snapshot.PositionCm.Y - CompletionTarget.Y).Size();
-	const float VerticalError = FMath::Abs(Snapshot.PositionCm.Z - CompletionTarget.Z);
-	const float Speed = Snapshot.VelocityCmPerSec.Size();
-	const float YawError = FMath::Abs(FMath::FindDeltaAngleDegrees(
-		Snapshot.YawDegrees, ProfiledSetpoint.YawDegrees));
-
-	const bool bWithinTolerance =
-		HorizontalError <= Criteria.HorizontalToleranceCm
-		&& VerticalError <= Criteria.VerticalToleranceCm
-		&& Speed <= Criteria.SpeedToleranceCmPerSec
-		&& YawError <= Criteria.YawToleranceDegrees;
-
-	if (bWithinTolerance)
+	const bool bPositionReached = FVector2D(Error.X, Error.Y).Size() <= Criteria.HorizontalToleranceCm
+		&& FMath::Abs(Error.Z) <= Criteria.VerticalToleranceCm;
+	const bool bTrajectoryReached = TrajectoryGenerator.IsComplete();
+	const bool bCircleArc = ActiveIntent.Type == EAutopilotMovementIntentType::CircleArc;
+	if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
 	{
-		StableTimeSeconds += FMath::Max(DeltaSeconds, 0.0f);
-		if (StableTimeSeconds >= Criteria.StableTimeSeconds)
+		if (bTrajectoryReached || (!bCircleArc && bPositionReached))
 		{
+			const FVector ExitVelocity = ProfiledSetpoint.VelocityCmPerSec;
 			FinishActive(EAutopilotIntentStatus::Succeeded, EAutopilotIntentFailureReason::None);
+			ActiveIntent = FAutopilotMovementIntent();
+			ActiveIntent.Type = EAutopilotMovementIntentType::MoveWithVelocity;
+			ActiveIntent.DesiredVelocityCmPerSec = ExitVelocity;
+			ActiveIntent.HeadingMode = EAutopilotHeadingMode::FaceVelocity;
 		}
+		return;
 	}
-	else
+
+	FTrajectoryPoint HeadingProbe;
+	HeadingProbe.YawDegrees = Snapshot.YawDegrees;
+	HeadingProbe.VelocityCmPerSec = ProfiledSetpoint.VelocityCmPerSec;
+	ApplyHeading(Snapshot, HeadingProbe);
+	const bool bYawReached = FMath::Abs(FMath::FindDeltaAngleDegrees(
+			Snapshot.YawDegrees, HeadingProbe.YawDegrees)) <= Criteria.YawToleranceDegrees;
+	const bool bSpeedReached = Snapshot.VelocityCmPerSec.Size() <= Criteria.SpeedToleranceCmPerSec;
+	StableTimeSeconds = bPositionReached && (!bCircleArc || bTrajectoryReached)
+		&& bSpeedReached && bYawReached
+		? StableTimeSeconds + DeltaSeconds : 0.0f;
+	if (StableTimeSeconds >= Criteria.StableTimeSeconds)
 	{
-		StableTimeSeconds = 0.0f;
+		FinishActive(EAutopilotIntentStatus::Succeeded, EAutopilotIntentFailureReason::None);
+		EnterHold(Snapshot, &Target);
 	}
 }
 
@@ -500,17 +537,24 @@ bool FAircraftAutopilotMovementExecutor::TickExternalIntent(
 	float DeltaSeconds,
 	float Progress)
 {
-	(void)Snapshot;
-	if (!Handle.IsValid() || Handle != ActiveResult.Handle || IsTerminalStatus(ActiveResult.Status))
+	if (!bHasExternalIntent
+		|| Handle != ActiveResult.Handle
+		|| ActiveIntent.Type != EAutopilotMovementIntentType::RootMotion)
 	{
 		return false;
 	}
+
 	ActiveResult.ElapsedSeconds += FMath::Max(DeltaSeconds, 0.0f);
 	ActiveResult.Progress = FMath::Clamp(Progress, 0.0f, 1.0f);
-	if (ActiveIntent.TimeoutSeconds > UE_SMALL_NUMBER
+	if (ActiveResult.Status == EAutopilotIntentStatus::Accepted)
+	{
+		ActiveResult.Status = EAutopilotIntentStatus::Executing;
+	}
+	if (ActiveIntent.TimeoutSeconds > 0.0f
 		&& ActiveResult.ElapsedSeconds >= ActiveIntent.TimeoutSeconds)
 	{
 		FinishActive(EAutopilotIntentStatus::Failed, EAutopilotIntentFailureReason::Timeout);
+		EnterHold(Snapshot);
 		return false;
 	}
 	return true;
@@ -522,21 +566,21 @@ bool FAircraftAutopilotMovementExecutor::FinishExternalIntent(
 	EAutopilotIntentStatus Status,
 	EAutopilotIntentFailureReason Reason)
 {
-	(void)Snapshot;
-	if (!Handle.IsValid() || Handle != ActiveResult.Handle || IsTerminalStatus(ActiveResult.Status))
+	if (!bHasExternalIntent
+		|| Handle != ActiveResult.Handle
+		|| ActiveIntent.Type != EAutopilotMovementIntentType::RootMotion)
 	{
 		return false;
 	}
+	ActiveResult.Progress = Status == EAutopilotIntentStatus::Succeeded
+		? 1.0f : ActiveResult.Progress;
 	FinishActive(Status, Reason);
+	EnterHold(Snapshot);
 	return true;
 }
 
 FAutopilotIntentResult FAircraftAutopilotMovementExecutor::GetResult(FAutopilotIntentHandle Handle) const
 {
-	if (!Handle.IsValid())
-	{
-		return FAutopilotIntentResult();
-	}
 	if (Handle == ActiveResult.Handle)
 	{
 		return ActiveResult;
@@ -565,25 +609,25 @@ void FAircraftAutopilotMovementExecutor::DrainEvents(
 
 void FAircraftAutopilotMovementExecutor::FinishActive(EAutopilotIntentStatus Status, EAutopilotIntentFailureReason Reason)
 {
+	if (!bHasExternalIntent) return;
 	ActiveResult.Status = Status;
 	ActiveResult.FailureReason = Reason;
 	StoreTerminalResult(ActiveResult);
-	FinishedEvents.Add(ActiveResult);
 	bHasExternalIntent = false;
+	FinishedEvents.Add(ActiveResult);
 }
 
 void FAircraftAutopilotMovementExecutor::StoreTerminalResult(const FAutopilotIntentResult& Result)
 {
-	if (!Result.Handle.IsValid())
+	if (!Result.Handle.IsValid()) return;
+	if (!TerminalResults.Contains(Result.Handle.Id))
 	{
-		return;
+		TerminalResultOrder.Add(Result.Handle.Id);
 	}
 	TerminalResults.Add(Result.Handle.Id, Result);
-	TerminalResultOrder.Add(Result.Handle.Id);
-	while (TerminalResultOrder.Num() > MaxTerminalResultsKept)
+	while (TerminalResultOrder.Num() > MaxStoredResults)
 	{
-		const int64 Oldest = TerminalResultOrder[0];
-		TerminalResultOrder.RemoveAt(0);
-		TerminalResults.Remove(Oldest);
+		TerminalResults.Remove(TerminalResultOrder[0]);
+		TerminalResultOrder.RemoveAt(0, 1, EAllowShrinking::No);
 	}
 }

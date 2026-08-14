@@ -32,7 +32,6 @@ public:
 	FAircraftAutopilotMovementExecutor(FAircraftAutopilotMovementExecutor&&) = default;
 	FAircraftAutopilotMovementExecutor& operator=(FAircraftAutopilotMovementExecutor&&) = default;
 
-	void Initialize();
 	void SetPhysicalMotionLimits(float MaxHorizontalSpeedCmPerSec, float MaxHorizontalAccelerationCmPerSecSq);
 
 	FAutopilotIntentHandle Submit(
@@ -90,10 +89,9 @@ private:
 	TArray<FAutopilotIntentResult> FinishedEvents;
 	bool bHasExternalIntent = false;
 	bool bTrajectoryDirty = false;
-	bool bHasLastTrajectoryRequest = false;
-	FTrajectoryRequest LastTrajectoryRequest;
 	FVector HoldPositionCm = FVector::ZeroVector;
 	float HoldYawDegrees = 0.0f;
+	FVector LastResolvedTargetCm = FVector::ZeroVector;
 	float StableTimeSeconds = 0.0f;
 	float PhysicalMaxHorizontalSpeedCmPerSec = TNumericLimits<float>::Max();
 	float PhysicalMaxHorizontalAccelerationCmPerSecSq = TNumericLimits<float>::Max();

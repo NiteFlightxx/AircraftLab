@@ -1,6 +1,7 @@
 // （经 IAircraftSimulationLODConsumer）+ 按命令类型发布驱动覆盖。
 
 #include "AircraftRuntimeCommon/Autopilot/AutopilotComponent.h"
+#include "AircraftRuntimeCommon/Autopilot/AircraftAutopilotDebugDraw.h"
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -12,18 +13,37 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogAircraftAutopilot, Log, All);
 
+namespace
+{
+bool AreRootMotionConstraintsFinite(const FTrajectoryMotionConstraints& Constraints)
+{
+	return FMath::IsFinite(Constraints.CruiseSpeedCmPerSec)
+		&& FMath::IsFinite(Constraints.MaxAccelerationCmPerSecSq)
+		&& FMath::IsFinite(Constraints.MaxDecelerationCmPerSecSq)
+		&& FMath::IsFinite(Constraints.MaxJerkCmPerSecCubed)
+		&& FMath::IsFinite(Constraints.MaxClimbRateCmPerSec)
+		&& FMath::IsFinite(Constraints.MaxDescentRateCmPerSec)
+		&& FMath::IsFinite(Constraints.MaxVerticalAccelerationCmPerSecSq)
+		&& FMath::IsFinite(Constraints.MaxVerticalJerkCmPerSecCubed)
+		&& FMath::IsFinite(Constraints.MaxYawRateDegPerSec)
+		&& FMath::IsFinite(Constraints.MaxYawAccelerationDegPerSecSq)
+		&& FMath::IsFinite(Constraints.MaxYawJerkDegPerSecCubed);
+}
+
+bool IsRootMotionArrivalFinite(const FAutopilotArrivalCriteria& Arrival)
+{
+	return FMath::IsFinite(Arrival.HorizontalToleranceCm)
+		&& FMath::IsFinite(Arrival.VerticalToleranceCm)
+		&& FMath::IsFinite(Arrival.SpeedToleranceCmPerSec)
+		&& FMath::IsFinite(Arrival.YawToleranceDegrees)
+		&& FMath::IsFinite(Arrival.StableTimeSeconds);
+}
+}
+
 UAutopilotComponent::UAutopilotComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
-	PrimaryComponentTick.bStartWithTickEnabled = false;
-}
-
-void UAutopilotComponent::OnRegister()
-{
-	Super::OnRegister();
-	CreateRuntimeObjects();
-	ResolveFlightController();
 }
 
 void UAutopilotComponent::BeginPlay()
@@ -31,21 +51,27 @@ void UAutopilotComponent::BeginPlay()
 	Super::BeginPlay();
 	ResolveFlightController();
 	ResolveAutopilotConfig(/*bForceRefresh=*/true);
+	if (FlightController.GetInterface() && FlightControllerComponent)
+	{
+		FlightControllerComponent->AddTickPrerequisiteComponent(this);
+		FAircraftFlightKinematicState State;
+		if (FlightController->GetAircraftFlightKinematicState(State))
+		{
+			MotionProfile.Initialize(
+				State.PositionCm,
+				State.VelocityCmPerSec,
+				State.AccelerationWorldCmPerSecSq,
+				State.AttitudeDegrees.Yaw,
+				State.AngularVelocityBodyDegreesPerSec.Z);
+		}
+	}
+	RefreshSimulationTickEnabled();
 }
 
 void UAutopilotComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	CleanupRootMotionIntent(/*bStopMontage=*/true);
-	if (bAutopilotActive)
-	{
-		SetAutopilotActive(false);
-	}
 	Super::EndPlay(EndPlayReason);
-}
-
-void UAutopilotComponent::CreateRuntimeObjects()
-{
-	MovementExecutor.Initialize();
 }
 
 void UAutopilotComponent::ResolveFlightController()
@@ -104,7 +130,6 @@ void UAutopilotComponent::ApplyAutopilotConfig()
 		FlightController->GetAircraftAutopilotPhysicalState(
 			GravityCmPerSecSq, HoverCollective, VerticalAccelMpsSq, CollectiveCommand);
 	}
-	TurnBehavior.SetGravity(GravityCmPerSecSq);
 	HoverThrustEstimator.Configure(AutopilotConfig, HoverCollective);
 	FeedForwardCalculator.SetPhysicalReference(GravityCmPerSecSq, HoverCollective);
 }
@@ -174,27 +199,29 @@ void UAutopilotComponent::ApplyIntentMotionLimits()
 
 void UAutopilotComponent::SetAutopilotActive(bool bActive)
 {
-	if (bAutopilotActive == bActive)
+	if (bActive == bAutopilotActive && bActivationInitialized == bActive)
 	{
 		return;
 	}
+	if (!FlightController.GetInterface()) ResolveFlightController();
+	if (!FlightController.GetInterface())
+	{
+		UE_LOG(LogAircraftAutopilot, Error,
+			TEXT("Cannot change Autopilot state on '%s' without a FlightController."),
+			*GetNameSafe(GetOwner()));
+		return;
+	}
 
+	bAutopilotActive = bActive;
 	if (bActive)
 	{
-		ResolveFlightController();
-		if (!FlightController.GetInterface())
-		{
-			UE_LOG(LogAircraftAutopilot, Warning,
-				TEXT("Autopilot on '%s' cannot activate: no flight controller interface found."),
-				*GetNameSafe(GetOwner()));
-			return;
-		}
 		ResolveAutopilotConfig(/*bForceRefresh=*/true);
-		FlightModeBeforeActivation = FlightController->ActivateAircraftAutopilotControl();
-		bFlightModeBeforeActivationCaptured = true;
-		bAutopilotActive = true;
-		UpdateTickEnabled();
-
+		if (!bFlightModeBeforeActivationCaptured)
+		{
+			FlightModeBeforeActivation = FlightController->ActivateAircraftAutopilotControl();
+			bFlightModeBeforeActivationCaptured = true;
+		}
+		bActivationInitialized = true;
 		FAircraftAutopilotVehicleSnapshot Snapshot;
 		if (CaptureSnapshot(Snapshot))
 		{
@@ -202,22 +229,23 @@ void UAutopilotComponent::SetAutopilotActive(bool bActive)
 				Snapshot.PositionCm, Snapshot.VelocityCmPerSec, Snapshot.AccelerationCmPerSecSq,
 				Snapshot.YawDegrees, 0.0f);
 			MovementExecutor.EnterHold(Snapshot);
-			ApplyIntentMotionLimits();
 		}
 	}
 	else
 	{
-		bAutopilotActive = false;
 		CleanupRootMotionIntent(/*bStopMontage=*/true);
-		if (FlightController.GetInterface() && bFlightModeBeforeActivationCaptured)
+		MovementExecutor.CancelActive(EAutopilotIntentFailureReason::CancelledByCaller);
+		BroadcastIntentEvents();
+		if (bFlightModeBeforeActivationCaptured)
 		{
 			FlightController->DeactivateAircraftAutopilotControl(FlightModeBeforeActivation);
 		}
 		bFlightModeBeforeActivationCaptured = false;
-		MovementExecutor.CancelActive(EAutopilotIntentFailureReason::AutopilotInactive);
+		bActivationInitialized = false;
+		MovementExecutor.GetTrajectoryGenerator()->Clear();
 		InvalidateOutputs();
-		UpdateTickEnabled();
 	}
+	RefreshSimulationTickEnabled();
 }
 
 bool UAutopilotComponent::CaptureSnapshot(FAircraftAutopilotVehicleSnapshot& OutSnapshot) const
@@ -244,122 +272,85 @@ void UAutopilotComponent::InvalidateOutputs()
 	CachedFeedForward = FFeedForward();
 	CachedGuidanceCommand = FGuidanceCommand();
 	CachedTurnCommand = FTurnCommand();
-	CachedInjection = FAutopilotInjection();
 }
 
 void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// Root Motion 意图有独立的驱动路径（不依赖激活状态外的轨迹管线）
-	TickRootMotionIntent(DeltaTime);
-
-	if (!bAutopilotActive)
+	if (!bAutopilotActive || DeltaTime <= UE_SMALL_NUMBER)
 	{
 		return;
 	}
-
-	if (!FlightController.GetInterface())
+	if (ActiveRootMotionHandle.IsValid())
 	{
-		ResolveFlightController();
-		if (!FlightController.GetInterface())
-		{
-			SetAutopilotActive(false);
-			return;
-		}
+		TickRootMotionIntent(DeltaTime);
+		return;
 	}
-	// 资产热重载后配置可能失效
-	ResolveAutopilotConfig(/*bForceRefresh=*/false);
 
 	FAircraftAutopilotVehicleSnapshot Snapshot;
 	if (!CaptureSnapshot(Snapshot))
 	{
+		InvalidateOutputs();
 		return;
 	}
 
-	/* 1. 名义设定值（轨迹生成） */
+	ApplyIntentMotionLimits();
 	FTrajectoryPoint NominalSetpoint;
 	if (!MovementExecutor.BuildSetpoint(Snapshot, DeltaTime, CachedProfiledSetpoint, NominalSetpoint))
 	{
-		BuildInjection();
+		InvalidateOutputs();
 		BroadcastIntentEvents();
 		return;
 	}
 
-	/* 2. 路径制导（仅路径类轨迹；策略=Direct 或无轨迹时跳过） */
-	CachedGuidanceCommand = FGuidanceCommand();
-	if (PathFollowing.IsValid()
-		&& MovementExecutor.GetTrajectoryGenerator()->IsValid()
-		&& (MovementExecutor.GetActiveIntent().Type == EAutopilotMovementIntentType::FollowPath
-			|| MovementExecutor.GetActiveIntent().Type == EAutopilotMovementIntentType::Orbit
-			|| MovementExecutor.GetActiveIntent().Type == EAutopilotMovementIntentType::CircleArc))
+	const EAutopilotMovementIntentType IntentType = MovementExecutor.GetActiveIntent().Type;
+	const bool bPathIntent = IntentType == EAutopilotMovementIntentType::FollowPath
+		|| IntentType == EAutopilotMovementIntentType::Orbit
+		|| IntentType == EAutopilotMovementIntentType::CircleArc;
+	FGuidanceCommand Guidance;
+	if (static_cast<EAircraftGuidanceStrategy>(AutopilotConfig.GuidanceStrategy)
+			!= EAircraftGuidanceStrategy::Direct
+		&& bPathIntent && PathFollowing.IsValid()
+		&& MovementExecutor.GetTrajectoryGenerator()->IsValid())
 	{
-		FGuidanceCommand Guidance;
 		if (PathFollowing->Update(Snapshot.PositionCm, Snapshot.VelocityCmPerSec, DeltaTime, Guidance)
 			&& Guidance.bValid)
 		{
-			CachedGuidanceCommand = Guidance;
-			// 制导律改写水平速度方向（幅值与垂直分量保留名义剖面）
-			NominalSetpoint.VelocityCmPerSec = Guidance.DesiredVelocityCmPerSec;
-			NominalSetpoint.YawDegrees = Guidance.DesiredYawDegrees;
-			NominalSetpoint.YawRateDegreesPerSec = Guidance.DesiredYawRateDegPerSec;
+			NominalSetpoint.VelocityCmPerSec.X = Guidance.DesiredVelocityCmPerSec.X;
+			NominalSetpoint.VelocityCmPerSec.Y = Guidance.DesiredVelocityCmPerSec.Y;
 		}
 	}
+	CachedGuidanceCommand = Guidance;
 
-	/* 3. 航向应用（意图的 HeadingMode 覆盖几何航向） */
 	MovementExecutor.ApplyHeading(Snapshot, NominalSetpoint);
 
-	/* 4. 协调转弯（滚转 + 偏航角速度前馈） */
 	CachedTurnCommand = FTurnCommand();
 	if (AutopilotConfig.bEnableCoordinatedTurns)
 	{
-		float GravityCmPerSecSq = 980.0f;
-		float HoverCollective = 0.5f;
-		float VerticalAccelMpsSq = 0.0f;
-		float CollectiveCommand = 0.0f;
-		FlightController->GetAircraftAutopilotPhysicalState(
-			GravityCmPerSecSq, HoverCollective, VerticalAccelMpsSq, CollectiveCommand);
-		TurnBehavior.SetGravity(GravityCmPerSecSq);
 		CachedTurnCommand = TurnBehavior.Compute(
 			NominalSetpoint.VelocityCmPerSec, Snapshot.VelocityCmPerSec,
 			Snapshot.YawDegrees, MovementExecutor.GetActiveIntent().MotionConstraints.MaxYawRateDegPerSec,
 			DeltaTime);
 	}
 
-	/* 5. Motion Profile 整形（物理可达） */
 	CachedProfiledSetpoint = MotionProfile.Update(NominalSetpoint, DeltaTime);
-
-	/* 6. 悬停油门 EKF + 前馈 */
 	UpdateHoverThrustEstimate(DeltaTime);
-	FeedForwardCalculator.SetPhysicalReference(
-		GetWorld() ? -GetWorld()->GetGravityZ() : 980.0f,
-		AutopilotConfig.bEnableHoverThrustEstimator && HoverThrustEstimator.IsInitialized()
-			? HoverThrustEstimator.GetHoverThrust()
-			: 0.5f);
+	CachedFeedForward = FFeedForward();
+	if (CachedProfiledSetpoint.bValid)
 	{
-		float GravityCmPerSecSq = 980.0f;
-		float HoverCollective = 0.5f;
-		float VerticalAccelMpsSq = 0.0f;
-		float CollectiveCommand = 0.0f;
-		FlightController->GetAircraftAutopilotPhysicalState(
-			GravityCmPerSecSq, HoverCollective, VerticalAccelMpsSq, CollectiveCommand);
-		FeedForwardCalculator.SetPhysicalReference(
-			GravityCmPerSecSq,
-			AutopilotConfig.bEnableHoverThrustEstimator && HoverThrustEstimator.IsInitialized()
-				? HoverThrustEstimator.GetHoverThrust()
-				: HoverCollective);
+		FeedForwardCalculator.Compute(CachedProfiledSetpoint, CachedFeedForward);
 	}
-	FeedForwardCalculator.Compute(CachedProfiledSetpoint, CachedFeedForward);
-
-	/* 7. 完成判定 + 事件 + 注入缓存 */
 	MovementExecutor.UpdateCompletion(Snapshot, DeltaTime, CachedProfiledSetpoint);
-	BuildInjection();
 	BroadcastIntentEvents();
+	FAircraftAutopilotDebugDraw::Draw(
+		GetWorld(), MovementExecutor.GetTrajectoryGenerator(), NominalSetpoint,
+		Guidance, Snapshot.PositionCm);
 }
 
 void UAutopilotComponent::UpdateHoverThrustEstimate(float DeltaSeconds)
 {
-	if (!AutopilotConfig.bEnableHoverThrustEstimator || !FlightController.GetInterface())
+	if (!FlightController.GetInterface())
 	{
 		return;
 	}
@@ -369,42 +360,46 @@ void UAutopilotComponent::UpdateHoverThrustEstimate(float DeltaSeconds)
 	float CollectiveCommand = 0.0f;
 	FlightController->GetAircraftAutopilotPhysicalState(
 		GravityCmPerSecSq, HoverCollective, VerticalAccelMpsSq, CollectiveCommand);
-	HoverThrustEstimator.Update(
-		DeltaSeconds, VerticalAccelMpsSq, CollectiveCommand, GravityCmPerSecSq * 0.01f);
-}
-
-void UAutopilotComponent::BuildInjection()
-{
-	CachedInjection = FAutopilotInjection();
-	if (!CachedProfiledSetpoint.bValid)
+	if (!AutopilotConfig.bEnableHoverThrustEstimator)
 	{
+		FeedForwardCalculator.SetPhysicalReference(GravityCmPerSecSq, HoverCollective);
 		return;
 	}
+	HoverThrustEstimator.Update(
+		DeltaSeconds, VerticalAccelMpsSq, CollectiveCommand, GravityCmPerSecSq * 0.01f);
+	FeedForwardCalculator.SetPhysicalReference(
+		GravityCmPerSecSq, HoverThrustEstimator.GetHoverThrust());
+}
 
-	CachedInjection.PositionSetpointCm = CachedProfiledSetpoint.PositionCm;
-	CachedInjection.VelocitySetpointCmPerSec = CachedFeedForward.VelocityFFCmPerSec;
-	CachedInjection.AccelerationSetpointCmPerSecSq = CachedFeedForward.AccelFFCmPerSecSq;
-	CachedInjection.AltitudeSetpointCm = static_cast<float>(CachedProfiledSetpoint.PositionCm.Z);
-	CachedInjection.VerticalVelocitySetpointCmPerSec = static_cast<float>(CachedProfiledSetpoint.VelocityCmPerSec.Z);
-	CachedInjection.ThrustFeedForward = CachedFeedForward.ThrustFF;
-	CachedInjection.YawSetpointDegrees = CachedProfiledSetpoint.YawDegrees;
-	CachedInjection.YawRateSetpointDegPerSec = CachedFeedForward.YawRateFFDegPerSec;
-	CachedInjection.YawRateLimitDegPerSec =
+void UAutopilotComponent::BuildInjection(FAutopilotInjection& OutInjection) const
+{
+	OutInjection.PositionSetpointCm = CachedProfiledSetpoint.PositionCm;
+	OutInjection.VelocitySetpointCmPerSec = CachedFeedForward.VelocityFFCmPerSec;
+	OutInjection.AccelerationSetpointCmPerSecSq = CachedFeedForward.AccelFFCmPerSecSq;
+	OutInjection.AltitudeSetpointCm = CachedProfiledSetpoint.PositionCm.Z;
+	OutInjection.VerticalVelocitySetpointCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec.Z;
+	OutInjection.ThrustFeedForward = CachedFeedForward.ThrustFF;
+	OutInjection.YawSetpointDegrees = CachedProfiledSetpoint.YawDegrees;
+	OutInjection.YawRateSetpointDegPerSec = CachedFeedForward.YawRateFFDegPerSec
+		+ CachedTurnCommand.DesiredYawRateDegPerSec;
+	OutInjection.YawRateLimitDegPerSec =
 		MovementExecutor.GetActiveIntent().MotionConstraints.MaxYawRateDegPerSec;
-	CachedInjection.TurnRollDegrees = CachedTurnCommand.bValid && CachedTurnCommand.bCoordinatedTurn
-		? CachedTurnCommand.DesiredRollDegrees : 0.0f;
-	CachedInjection.bValid = true;
+	OutInjection.TurnRollDegrees = CachedTurnCommand.DesiredRollDegrees;
+	OutInjection.bValid = true;
 }
 
 bool UAutopilotComponent::GetAutopilotInjection(FAutopilotInjection& OutInjection) const
 {
-	if (!bAutopilotActive || !CachedInjection.bValid)
+	const bool bRootMotionBypassesFlightController = ActiveRootMotionHandle.IsValid()
+		&& ActiveRootMotionDriveMode != EAircraftSimulationDriveMode::FlightController;
+	if (!bAutopilotActive || bRootMotionBypassesFlightController
+		|| !CachedProfiledSetpoint.bValid)
 	{
 		OutInjection = FAutopilotInjection();
 		return false;
 	}
-	OutInjection = CachedInjection;
-	return true;
+	BuildInjection(OutInjection);
+	return OutInjection.bValid;
 }
 
 void UAutopilotComponent::BroadcastIntentEvents()
@@ -429,8 +424,17 @@ void UAutopilotComponent::BroadcastIntentEvents()
 void UAutopilotComponent::ApplyHeadingOptions(FAutopilotMovementIntent& Intent, const FAutopilotHeadingOptions& Heading)
 {
 	Intent.HeadingMode = Heading.Mode;
-	Intent.FixedYawDegrees = Heading.FixedYawDegrees;
-	Intent.DesiredYawRateDegPerSec = Heading.YawRateDegreesPerSec;
+	Intent.FixedYawDegrees = FRotator::NormalizeAxis(Heading.FixedYawDegrees);
+	Intent.DesiredYawRateDegPerSec = Heading.Mode == EAutopilotHeadingMode::FixedYaw
+		? FMath::Max(Heading.YawRateDegreesPerSec, 0.0f)
+		: 0.0f;
+	if (Heading.Mode == EAutopilotHeadingMode::FixedYaw
+		&& Intent.DesiredYawRateDegPerSec > UE_SMALL_NUMBER)
+	{
+		Intent.MotionConstraints.MaxYawRateDegPerSec = FMath::Min(
+			Intent.MotionConstraints.MaxYawRateDegPerSec,
+			Intent.DesiredYawRateDegPerSec);
+	}
 	Intent.bUseIndependentHeadingTarget = Heading.bUseLookAtTarget;
 	Intent.HeadingTargetPositionCm = Heading.LookAtPositionCm;
 	Intent.HeadingTargetActor = Heading.LookAtActor;
@@ -451,36 +455,53 @@ void UAutopilotComponent::ApplyContinuousConstraints(
 	const FContinuousMotionConstraints& Constraints,
 	float CommandedHorizontalSpeedCmPerSec)
 {
-	// 持续命令没有"终点制动"，巡航速度由期望速度/半径×角速度唯一决定
-	Intent.MotionConstraints.CruiseSpeedCmPerSec = CommandedHorizontalSpeedCmPerSec;
-	Intent.MotionConstraints.MaxAccelerationCmPerSecSq = Constraints.MaxAccelerationCmPerSecSq;
-	Intent.MotionConstraints.MaxJerkCmPerSecCubed = Constraints.MaxJerkCmPerSecCubed;
-	Intent.MotionConstraints.MaxClimbRateCmPerSec = Constraints.MaxClimbRateCmPerSec;
-	Intent.MotionConstraints.MaxDescentRateCmPerSec = Constraints.MaxDescentRateCmPerSec;
-	Intent.MotionConstraints.MaxVerticalAccelerationCmPerSecSq = Constraints.MaxVerticalAccelerationCmPerSecSq;
-	Intent.MotionConstraints.MaxVerticalJerkCmPerSecCubed = Constraints.MaxVerticalJerkCmPerSecCubed;
-	Intent.MotionConstraints.MaxYawRateDegPerSec = Constraints.MaxYawRateDegPerSec;
-	Intent.MotionConstraints.MaxYawAccelerationDegPerSecSq = Constraints.MaxYawAccelerationDegPerSecSq;
-	Intent.MotionConstraints.MaxYawJerkDegPerSecCubed = Constraints.MaxYawJerkDegPerSecCubed;
+	FTrajectoryMotionConstraints& Out = Intent.MotionConstraints;
+	Out.CruiseSpeedCmPerSec = FMath::Max(CommandedHorizontalSpeedCmPerSec, 0.0f);
+	Out.MaxAccelerationCmPerSecSq = Constraints.MaxAccelerationCmPerSecSq;
+	Out.MaxDecelerationCmPerSecSq = Constraints.MaxAccelerationCmPerSecSq;
+	Out.MaxJerkCmPerSecCubed = Constraints.MaxJerkCmPerSecCubed;
+	Out.MaxClimbRateCmPerSec = Constraints.MaxClimbRateCmPerSec;
+	Out.MaxDescentRateCmPerSec = Constraints.MaxDescentRateCmPerSec;
+	Out.MaxVerticalAccelerationCmPerSecSq = Constraints.MaxVerticalAccelerationCmPerSecSq;
+	Out.MaxVerticalJerkCmPerSecCubed = Constraints.MaxVerticalJerkCmPerSecCubed;
+	Out.MaxYawRateDegPerSec = Constraints.MaxYawRateDegPerSec;
+	Out.MaxYawAccelerationDegPerSecSq = Constraints.MaxYawAccelerationDegPerSecSq;
+	Out.MaxYawJerkDegPerSecCubed = Constraints.MaxYawJerkDegPerSecCubed;
 }
 
 FAutopilotIntentHandle UAutopilotComponent::SubmitMovementIntent(const FAutopilotMovementIntent& Intent)
 {
+	if (ActiveRootMotionHandle.IsValid())
+	{
+		const FVector CurrentLocation = GetOwner()
+			? GetOwner()->GetActorLocation() : FVector::ZeroVector;
+		FAircraftAutopilotVehicleSnapshot RootMotionSnapshot;
+		CaptureActiveRootMotionSnapshot(RootMotionSnapshot, 0.0f, CurrentLocation);
+		MovementExecutor.FinishExternalIntent(
+			ActiveRootMotionHandle,
+			RootMotionSnapshot,
+			EAutopilotIntentStatus::Interrupted,
+			EAutopilotIntentFailureReason::Replaced);
+		CleanupRootMotionIntent(true);
+	}
 	FAircraftAutopilotVehicleSnapshot Snapshot;
-	EAutopilotIntentFailureReason Rejection = EAutopilotIntentFailureReason::None;
-	if (!bAutopilotActive)
+	const bool bHasControllerState = CaptureSnapshot(Snapshot);
+	EAutopilotIntentFailureReason RejectionReason = EAutopilotIntentFailureReason::None;
+	if (!FlightController.GetInterface() || !bHasControllerState)
 	{
-		Rejection = EAutopilotIntentFailureReason::AutopilotInactive;
+		RejectionReason = EAutopilotIntentFailureReason::FlightControllerUnavailable;
 	}
-	else if (!CaptureSnapshot(Snapshot))
+	else if (!bAutopilotActive)
 	{
-		Rejection = EAutopilotIntentFailureReason::FlightControllerUnavailable;
+		RejectionReason = EAutopilotIntentFailureReason::AutopilotInactive;
 	}
-	const FAutopilotIntentHandle Handle = MovementExecutor.Submit(Intent, Snapshot, Rejection);
-	if (Handle.IsValid())
+	else if (Intent.Type == EAutopilotMovementIntentType::RootMotion)
 	{
-		ApplyIntentMotionLimits();
+		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
 	}
+	const FAutopilotIntentHandle Handle = MovementExecutor.Submit(Intent, Snapshot, RejectionReason);
+	ApplyIntentMotionLimits();
+	BroadcastIntentEvents();
 	return Handle;
 }
 
@@ -667,172 +688,690 @@ float UAutopilotComponent::GetEstimatedHoverThrust() const
 bool UAutopilotComponent::PlayMontage(const FAutopilotMontagePlayback& Playback, FAutopilotIntentHandle& OutRootMotionHandle)
 {
 	OutRootMotionHandle = FAutopilotIntentHandle();
-	if (!Playback.Montage)
+	AActor* Owner = GetOwner();
+	USkeletalMeshComponent* SkeletalMesh = Owner
+		? Cast<USkeletalMeshComponent>(Owner->GetRootComponent()) : nullptr;
+	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
+	if (!SkeletalMesh
+		|| !AnimInstance
+		|| !Playback.Montage
+		|| !FMath::IsFinite(Playback.PlayRate)
+		|| Playback.PlayRate <= UE_SMALL_NUMBER
+		|| !FMath::IsFinite(Playback.StartPositionSeconds)
+		|| Playback.StartPositionSeconds < 0.0f
+		|| Playback.StartPositionSeconds >= Playback.Montage->GetPlayLength())
 	{
 		return false;
 	}
 
-	AActor* const OwnerActor = GetOwner();
-	USkeletalMeshComponent* Mesh = OwnerActor ? OwnerActor->FindComponentByClass<USkeletalMeshComponent>() : nullptr;
-	if (!Mesh)
-	{
-		return false;
-	}
-	UAnimInstance* AnimInstance = Mesh->GetAnimInstance();
-	if (!AnimInstance)
-	{
-		return false;
-	}
-
-	// bStopAllMontages 由 Montage_Play 的末参直接承担
-	const float Duration = AnimInstance->Montage_Play(
-		Playback.Montage, Playback.PlayRate, EMontagePlayReturnType::MontageLength,
-		Playback.StartPositionSeconds, Playback.bStopAllMontages);
-	if (Duration <= 0.0f)
-	{
-		return false;
-	}
-
-	// 无 Root Motion 的普通 Montage 仅播放动画
 	if (!Playback.Montage->HasRootMotion())
 	{
-		return true;
+		if (ActiveRootMotionHandle.IsValid())
+		{
+			return false;
+		}
+		return AnimInstance->Montage_Play(
+			Playback.Montage,
+			Playback.PlayRate,
+			EMontagePlayReturnType::MontageLength,
+			Playback.StartPositionSeconds,
+			Playback.bStopAllMontages) > 0.0f;
 	}
 
-	// 带 Root Motion：按当前驱动模式创建对应 Intent
 	FAutopilotMovementIntent Intent;
 	Intent.Type = EAutopilotMovementIntentType::RootMotion;
-	Intent.TimeoutSeconds = Duration / FMath::Max(Playback.PlayRate, UE_SMALL_NUMBER) + 2.0f;
-	OutRootMotionHandle = SubmitMovementIntent(Intent);
-	if (OutRootMotionHandle.IsValid())
+	if (SimulationBudget.DriveMode == EAircraftSimulationDriveMode::None)
 	{
-		ActiveRootMotionMesh = Mesh;
-		ActiveRootMotionAnimInstance = AnimInstance;
-		ActiveRootMotionMontage = Playback.Montage;
-		ActiveRootMotionHandle = OutRootMotionHandle;
-		ActiveRootMotionStartPositionSeconds = Playback.StartPositionSeconds;
-		bRootMotionMontageEnded = false;
-		AnimInstance->OnMontageEnded.AddUniqueDynamic(this, &UAutopilotComponent::HandleRootMotionMontageEnded);
-		UpdateTickEnabled();
-	}
-	else
-	{
-		AnimInstance->Montage_Stop(0.0f, Playback.Montage);
 		return false;
 	}
-	return true;
+	if (SimulationBudget.DriveMode == EAircraftSimulationDriveMode::FlightController)
+	{
+		Intent.MotionConstraints = FTrajectoryMotionConstraints();
+		Intent.HeadingMode = EAutopilotHeadingMode::KeepCurrent;
+	}
+	OutRootMotionHandle = SubmitRootMotionRequest(
+		Playback, Intent, SimulationBudget.DriveMode, true);
+	return MovementExecutor.GetResult(OutRootMotionHandle).Status
+		== EAutopilotIntentStatus::Accepted;
 }
 
 FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionKinematic(const FAutopilotKinematicRootMotionCommand& Command)
 {
-	FAutopilotIntentHandle Handle;
-	if (PlayMontage(Command.Playback, Handle) && Handle.IsValid())
-	{
-		ActiveRootMotionDriveOverride.DriveMode = EAircraftSimulationDriveMode::Kinematic;
-		ActiveRootMotionDriveOverride.Priority = 100;
-		ActiveRootMotionDriveOverride.bValid = true;
-	}
-	return Handle;
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::RootMotion;
+	Intent.ArrivalCriteria = Command.ArrivalCriteria;
+	Intent.TimeoutSeconds = Command.TimeoutSeconds;
+	return SubmitRootMotionRequest(
+		Command.Playback, Intent, EAircraftSimulationDriveMode::Kinematic,
+		Command.bApplyRootMotionRotation);
 }
 
 FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionFlightController(const FAutopilotFlightControllerRootMotionCommand& Command)
 {
-	FAutopilotIntentHandle Handle;
-	if (PlayMontage(Command.Playback, Handle) && Handle.IsValid())
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::RootMotion;
+	Intent.MotionConstraints = Command.MotionConstraints;
+	Intent.ArrivalCriteria = Command.ArrivalCriteria;
+	Intent.TimeoutSeconds = Command.TimeoutSeconds;
+	if (Command.bApplyRootMotionRotation)
 	{
-		ActiveRootMotionDriveOverride.DriveMode = EAircraftSimulationDriveMode::FlightController;
-		ActiveRootMotionDriveOverride.Priority = 100;
-		ActiveRootMotionDriveOverride.bValid = true;
+		Intent.HeadingMode = EAutopilotHeadingMode::KeepCurrent;
 	}
-	return Handle;
+	else
+	{
+		ApplyHeadingOptions(Intent, Command.Heading);
+	}
+	return SubmitRootMotionRequest(
+		Command.Playback, Intent, EAircraftSimulationDriveMode::FlightController,
+		Command.bApplyRootMotionRotation);
 }
 
 FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionPhysicsConstraint(const FAutopilotPhysicsConstraintRootMotionCommand& Command)
 {
-	FAutopilotIntentHandle Handle;
-	if (PlayMontage(Command.Playback, Handle) && Handle.IsValid())
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::RootMotion;
+	Intent.ArrivalCriteria = Command.ArrivalCriteria;
+	Intent.TimeoutSeconds = Command.TimeoutSeconds;
+	if (Command.bApplyRootMotionRotation)
 	{
-		ActiveRootMotionDriveOverride.DriveMode = EAircraftSimulationDriveMode::PhysicsConstraint;
-		ActiveRootMotionDriveOverride.Priority = 100;
-		ActiveRootMotionDriveOverride.bValid = true;
+		Intent.HeadingMode = EAutopilotHeadingMode::KeepCurrent;
 	}
+	else
+	{
+		ApplyHeadingOptions(Intent, Command.Heading);
+	}
+	return SubmitRootMotionRequest(
+		Command.Playback, Intent, EAircraftSimulationDriveMode::PhysicsConstraint,
+		Command.bApplyRootMotionRotation);
+}
+
+FAutopilotIntentHandle UAutopilotComponent::SubmitRootMotionRequest(
+	const FAutopilotMontagePlayback& Playback,
+	const FAutopilotMovementIntent& Intent,
+	EAircraftSimulationDriveMode DriveMode,
+	bool bApplyRootMotionRotation)
+{
+	if (ActiveRootMotionHandle.IsValid())
+	{
+		const FVector CurrentLocation = GetOwner()
+			? GetOwner()->GetActorLocation() : FVector::ZeroVector;
+		FAircraftAutopilotVehicleSnapshot RootMotionSnapshot;
+		CaptureActiveRootMotionSnapshot(RootMotionSnapshot, 0.0f, CurrentLocation);
+		MovementExecutor.FinishExternalIntent(
+			ActiveRootMotionHandle,
+			RootMotionSnapshot,
+			EAutopilotIntentStatus::Interrupted,
+			EAutopilotIntentFailureReason::Replaced);
+		CleanupRootMotionIntent(true);
+	}
+
+	USkeletalMeshComponent* SkeletalMesh = GetOwner()
+		? Cast<USkeletalMeshComponent>(GetOwner()->GetRootComponent()) : nullptr;
+	UAnimInstance* AnimInstance = SkeletalMesh ? SkeletalMesh->GetAnimInstance() : nullptr;
+	FAircraftAutopilotVehicleSnapshot Snapshot;
+	bool bHasControllerState = false;
+	if (DriveMode == EAircraftSimulationDriveMode::Kinematic && GetOwner())
+	{
+		Snapshot = MakeRootMotionSnapshot(0.0f, GetOwner()->GetActorLocation());
+		bHasControllerState = true;
+	}
+	else
+	{
+		bHasControllerState = CaptureSnapshot(Snapshot);
+	}
+	EAutopilotIntentFailureReason RejectionReason = EAutopilotIntentFailureReason::None;
+	if (!FlightController.GetInterface() || !bHasControllerState)
+	{
+		RejectionReason = EAutopilotIntentFailureReason::FlightControllerUnavailable;
+	}
+	else if (!bAutopilotActive)
+	{
+		RejectionReason = EAutopilotIntentFailureReason::AutopilotInactive;
+	}
+	else if (!SkeletalMesh
+		|| !GetOwner()
+		|| !Playback.Montage
+		|| !AnimInstance
+		|| !Playback.Montage->HasRootMotion()
+		|| !FMath::IsFinite(Intent.TimeoutSeconds)
+		|| !FMath::IsFinite(Playback.PlayRate)
+		|| Playback.PlayRate <= UE_SMALL_NUMBER
+		|| !FMath::IsFinite(Playback.StartPositionSeconds)
+		|| Playback.StartPositionSeconds < 0.0f
+		|| Playback.StartPositionSeconds >= Playback.Montage->GetPlayLength())
+	{
+		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
+	}
+	else if (!IsRootMotionArrivalFinite(Intent.ArrivalCriteria))
+	{
+		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
+	}
+	else if (DriveMode == EAircraftSimulationDriveMode::FlightController
+		&& !AreRootMotionConstraintsFinite(Intent.MotionConstraints))
+	{
+		RejectionReason = EAutopilotIntentFailureReason::InvalidIntent;
+	}
+	const FAutopilotIntentHandle Handle =
+		MovementExecutor.Submit(Intent, Snapshot, RejectionReason);
+	if (MovementExecutor.GetResult(Handle).Status != EAutopilotIntentStatus::Accepted)
+	{
+		BroadcastIntentEvents();
+		return Handle;
+	}
+
+	ActiveRootMotionMesh = SkeletalMesh;
+	ActiveRootMotionAnimInstance = AnimInstance;
+	ActiveRootMotionMontage = Playback.Montage;
+	ActiveRootMotionHandle = Handle;
+	ActiveRootMotionDriveMode = DriveMode;
+	bActiveRootMotionApplyRotation = bApplyRootMotionRotation;
+	bRootMotionMontageEnded = false;
+	bRootMotionMontageInterrupted = false;
+	ActiveRootMotionStartPositionSeconds = Playback.StartPositionSeconds;
+	ActiveRootMotionTargetPositionCm = Snapshot.PositionCm;
+	PreviousRootMotionTargetPositionCm = Snapshot.PositionCm;
+	ActiveRootMotionTrajectoryActorRotation = SkeletalMesh->GetComponentQuat();
+	ActiveRootMotionDesiredActorRotation = ActiveRootMotionTrajectoryActorRotation;
+	PreviousRootMotionDesiredActorRotation = ActiveRootMotionTrajectoryActorRotation;
+	PreviousRootMotionTargetVelocityCmPerSec = Snapshot.VelocityCmPerSec;
+	ActiveRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	ActiveRootMotionTargetAccelerationCmPerSecSq = FVector::ZeroVector;
+	ActiveRootMotionTargetAngularVelocityWorldDegPerSec = FVector::ZeroVector;
+	PreviousRootMotionTargetYawDegrees = Snapshot.YawDegrees;
+	RootMotionArrivalStableTimeSeconds = 0.0f;
+	if (ActiveRootMotionDriveMode == EAircraftSimulationDriveMode::FlightController)
+	{
+		MotionProfile.Initialize(
+			Snapshot.PositionCm,
+			Snapshot.VelocityCmPerSec,
+			Snapshot.AccelerationCmPerSecSq,
+			Snapshot.YawDegrees,
+			0.0f);
+		ApplyIntentMotionLimits();
+	}
+	RefreshSimulationDriveSelection();
+	if (SimulationBudget.DriveMode != ActiveRootMotionDriveMode)
+	{
+		MovementExecutor.FinishExternalIntent(
+			Handle,
+			Snapshot,
+			EAutopilotIntentStatus::Failed,
+			EAutopilotIntentFailureReason::InvalidIntent);
+		CleanupRootMotionIntent(false);
+		InvalidateOutputs();
+		BroadcastIntentEvents();
+		return Handle;
+	}
+	AddTickPrerequisiteComponent(ActiveRootMotionMesh);
+	PrimaryComponentTick.TickInterval = 0.0f;
+	SetComponentTickEnabled(true);
+	InvalidateOutputs();
+
+	const float MontageDuration = ActiveRootMotionAnimInstance->Montage_Play(
+		ActiveRootMotionMontage,
+		Playback.PlayRate,
+		EMontagePlayReturnType::MontageLength,
+		Playback.StartPositionSeconds,
+		Playback.bStopAllMontages);
+	if (MontageDuration <= 0.0f)
+	{
+		MovementExecutor.FinishExternalIntent(
+			Handle,
+			Snapshot,
+			EAutopilotIntentStatus::Failed,
+			EAutopilotIntentFailureReason::InvalidIntent);
+		CleanupRootMotionIntent(false);
+	}
+	else
+	{
+		FOnMontageEnded EndDelegate;
+		EndDelegate.BindUObject(this, &UAutopilotComponent::HandleRootMotionMontageEnded);
+		ActiveRootMotionAnimInstance->Montage_SetEndDelegate(EndDelegate, ActiveRootMotionMontage);
+		bRootMotionMontageEnded = false;
+		bRootMotionMontageInterrupted = false;
+	}
+	BroadcastIntentEvents();
 	return Handle;
 }
 
 void UAutopilotComponent::TickRootMotionIntent(float DeltaSeconds)
 {
-	if (!ActiveRootMotionHandle.IsValid())
+	if (!ActiveRootMotionMesh
+		|| !ActiveRootMotionAnimInstance
+		|| !ActiveRootMotionMontage
+		|| !ActiveRootMotionHandle.IsValid()
+		|| !GetOwner())
 	{
+		FAircraftAutopilotVehicleSnapshot Snapshot;
+		if (GetOwner())
+		{
+			CaptureActiveRootMotionSnapshot(
+				Snapshot, DeltaSeconds, GetOwner()->GetActorLocation());
+		}
+		MovementExecutor.FinishExternalIntent(
+			ActiveRootMotionHandle,
+			Snapshot,
+			EAutopilotIntentStatus::Failed,
+			EAutopilotIntentFailureReason::InvalidIntent);
+		CleanupRootMotionIntent(true);
+		InvalidateOutputs();
+		BroadcastIntentEvents();
 		return;
+	}
+	if (SimulationBudget.DriveMode != ActiveRootMotionDriveMode)
+	{
+		FAircraftAutopilotVehicleSnapshot Snapshot;
+		CaptureActiveRootMotionSnapshot(
+			Snapshot, DeltaSeconds, GetOwner()->GetActorLocation());
+		MovementExecutor.FinishExternalIntent(
+			ActiveRootMotionHandle,
+			Snapshot,
+			EAutopilotIntentStatus::Failed,
+			EAutopilotIntentFailureReason::InvalidIntent);
+		CleanupRootMotionIntent(true);
+		InvalidateOutputs();
+		BroadcastIntentEvents();
+		return;
+	}
+
+	const FVector PreviousLocation = GetOwner()->GetActorLocation();
+	FTransform WorldRootMotion = FTransform::Identity;
+	const bool bConsumedRootMotion =
+		ConsumeRootMotionDelta(ActiveRootMotionMesh, WorldRootMotion);
+	if (bConsumedRootMotion)
+	{
+		AccumulateRootMotionTarget(WorldRootMotion);
 	}
 
 	FAircraftAutopilotVehicleSnapshot Snapshot;
-	if (!CaptureSnapshot(Snapshot))
+	if (!CaptureActiveRootMotionSnapshot(Snapshot, DeltaSeconds, PreviousLocation))
+	{
+		MovementExecutor.FinishExternalIntent(
+			ActiveRootMotionHandle,
+			Snapshot,
+			EAutopilotIntentStatus::Failed,
+			EAutopilotIntentFailureReason::FlightControllerUnavailable);
+		CleanupRootMotionIntent(true);
+		InvalidateOutputs();
+		BroadcastIntentEvents();
+		return;
+	}
+	UpdateRootMotionTarget(Snapshot, bConsumedRootMotion, DeltaSeconds);
+
+	const float MontageLength = ActiveRootMotionMontage->GetPlayLength();
+	const float MontagePosition = ActiveRootMotionAnimInstance->Montage_GetPosition(
+		ActiveRootMotionMontage);
+	const float RemainingMontageLength = MontageLength - ActiveRootMotionStartPositionSeconds;
+	const float Progress = bRootMotionMontageEnded
+		? 1.0f
+		: (RemainingMontageLength > UE_SMALL_NUMBER
+			? FMath::Clamp(
+				(MontagePosition - ActiveRootMotionStartPositionSeconds) / RemainingMontageLength,
+				0.0f,
+				1.0f)
+			: 0.0f);
+	if (!MovementExecutor.TickExternalIntent(
+		ActiveRootMotionHandle, Snapshot, DeltaSeconds, Progress))
+	{
+		MotionProfile.Initialize(
+			Snapshot.PositionCm,
+			Snapshot.VelocityCmPerSec,
+			Snapshot.AccelerationCmPerSecSq,
+			Snapshot.YawDegrees,
+			0.0f);
+		CleanupRootMotionIntent(true);
+		InvalidateOutputs();
+		BroadcastIntentEvents();
+		return;
+	}
+
+	if (!bRootMotionMontageEnded
+		&& ActiveRootMotionAnimInstance->Montage_GetIsStopped(ActiveRootMotionMontage))
+	{
+		bRootMotionMontageEnded = true;
+		bRootMotionMontageInterrupted = true;
+	}
+	if (!bRootMotionMontageEnded)
 	{
 		return;
 	}
 
-	// 消费 Montage 根位移增量（组件空间 → 世界系）→ 累积运动目标：
-	// 目标位置 = 当前位置 + 本帧根位移增量；速度 = 增量 / Δt。
-	bool bConsumed = false;
-	if (IsValid(ActiveRootMotionMesh) && IsValid(ActiveRootMotionAnimInstance) && !bRootMotionMontageEnded)
+	const FAutopilotIntentHandle CompletedHandle = ActiveRootMotionHandle;
+	const bool bInterrupted = bRootMotionMontageInterrupted;
+	if (!bInterrupted && !HasReachedRootMotionTarget(Snapshot, DeltaSeconds))
 	{
-		const FRootMotionMovementParams RootMotionParams =
-			ActiveRootMotionAnimInstance->ConsumeExtractedRootMotion(1.0f);
-		const FVector LocalDelta = RootMotionParams.GetRootMotionTransform().GetTranslation();
-		if (!LocalDelta.IsNearlyZero())
+		return;
+	}
+
+	const bool bFlightControllerDriven =
+		ActiveRootMotionDriveMode == EAircraftSimulationDriveMode::FlightController;
+	const FVector FinalTargetPositionCm = ActiveRootMotionTargetPositionCm;
+	MovementExecutor.FinishExternalIntent(
+		CompletedHandle,
+		Snapshot,
+		bInterrupted ? EAutopilotIntentStatus::Interrupted : EAutopilotIntentStatus::Succeeded,
+		bInterrupted
+			? EAutopilotIntentFailureReason::AnimationInterrupted
+			: EAutopilotIntentFailureReason::None);
+	if (!bInterrupted)
+	{
+		MovementExecutor.EnterHold(Snapshot, &FinalTargetPositionCm);
+	}
+	if (!bFlightControllerDriven || bInterrupted)
+	{
+		MotionProfile.Initialize(
+			Snapshot.PositionCm,
+			Snapshot.VelocityCmPerSec,
+			Snapshot.AccelerationCmPerSecSq,
+			Snapshot.YawDegrees,
+			0.0f);
+		if (!bInterrupted)
 		{
-			const FVector WorldDelta =
-				ActiveRootMotionMesh->GetComponentQuat().RotateVector(LocalDelta);
-			ActiveRootMotionTarget.PositionCm = Snapshot.PositionCm + WorldDelta;
-			ActiveRootMotionTarget.VelocityCmPerSec = WorldDelta / FMath::Max(DeltaSeconds, UE_SMALL_NUMBER);
-			ActiveRootMotionTarget.RotationDegrees = FRotator(0.0f, Snapshot.YawDegrees, 0.0f);
-			ActiveRootMotionTarget.Priority = 100;
-			ActiveRootMotionTarget.bValid = true;
-			bConsumed = true;
+			CachedProfiledSetpoint = MotionProfile.GetCurrentSetpoint();
+			CachedGuidanceCommand = FGuidanceCommand();
+			CachedTurnCommand = FTurnCommand();
+			CachedFeedForward = FFeedForward();
+			if (CachedProfiledSetpoint.bValid)
+			{
+				FeedForwardCalculator.Compute(CachedProfiledSetpoint, CachedFeedForward);
+			}
 		}
 	}
-
-	// 完成判定：Montage 结束且已到位
-	const float Progress = IsValid(ActiveRootMotionMontage) && IsValid(ActiveRootMotionAnimInstance)
-		? FMath::Clamp(ActiveRootMotionAnimInstance->Montage_GetPosition(ActiveRootMotionMontage)
-			/ FMath::Max(ActiveRootMotionMontage->GetPlayLength(), UE_SMALL_NUMBER), 0.0f, 1.0f)
-		: 1.0f;
-	MovementExecutor.TickExternalIntent(ActiveRootMotionHandle, Snapshot, DeltaSeconds, bConsumed ? Progress : 1.0f);
-
-	if (bRootMotionMontageEnded)
+	CleanupRootMotionIntent(false);
+	if (bInterrupted)
 	{
-		MovementExecutor.FinishExternalIntent(ActiveRootMotionHandle, Snapshot,
-			EAutopilotIntentStatus::Succeeded, EAutopilotIntentFailureReason::None);
-		CleanupRootMotionIntent(/*bStopMontage=*/false);
+		InvalidateOutputs();
 	}
+	BroadcastIntentEvents();
+}
+
+bool UAutopilotComponent::ConsumeRootMotionDelta(
+	USkeletalMeshComponent* SkeletalMesh,
+	FTransform& OutWorldRootMotion) const
+{
+	OutWorldRootMotion = FTransform::Identity;
+	const AActor* Owner = GetOwner();
+	if (!SkeletalMesh || !Owner || SkeletalMesh->GetOwner() != Owner)
+	{
+		return false;
+	}
+	const FRootMotionMovementParams RootMotion = SkeletalMesh->ConsumeRootMotion();
+	if (!RootMotion.bHasRootMotion)
+	{
+		return false;
+	}
+	OutWorldRootMotion = SkeletalMesh->ConvertLocalRootMotionToWorld(
+		RootMotion.GetRootMotionTransform());
+	return !OutWorldRootMotion.ContainsNaN();
+}
+
+void UAutopilotComponent::AccumulateRootMotionTarget(const FTransform& WorldRootMotion)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return;
+	}
+
+	const FQuat ActualActorRotation = Owner->GetActorQuat();
+	const FVector ActorLocalTranslation = ActualActorRotation.UnrotateVector(
+		WorldRootMotion.GetTranslation());
+	ActiveRootMotionTargetPositionCm +=
+		ActiveRootMotionTrajectoryActorRotation.RotateVector(ActorLocalTranslation);
+
+	const FQuat ActorLocalRotation = (
+		ActualActorRotation.Inverse()
+		* WorldRootMotion.GetRotation()
+		* ActualActorRotation).GetNormalized();
+	ActiveRootMotionTrajectoryActorRotation = (
+		ActiveRootMotionTrajectoryActorRotation * ActorLocalRotation).GetNormalized();
+}
+
+void UAutopilotComponent::UpdateRootMotionTarget(
+	const FAircraftAutopilotVehicleSnapshot& Snapshot,
+	bool bConsumedRootMotion,
+	float DeltaSeconds)
+{
+	if (DeltaSeconds <= UE_SMALL_NUMBER)
+	{
+		InvalidateOutputs();
+		return;
+	}
+
+	FTrajectoryPoint NominalSetpoint;
+	NominalSetpoint.PositionCm = ActiveRootMotionTargetPositionCm;
+	ActiveRootMotionTargetVelocityCmPerSec = bConsumedRootMotion
+		? (ActiveRootMotionTargetPositionCm - PreviousRootMotionTargetPositionCm) / DeltaSeconds
+		: FVector::ZeroVector;
+	ActiveRootMotionTargetAccelerationCmPerSecSq =
+		(ActiveRootMotionTargetVelocityCmPerSec
+			- PreviousRootMotionTargetVelocityCmPerSec) / DeltaSeconds;
+	NominalSetpoint.VelocityCmPerSec = ActiveRootMotionTargetVelocityCmPerSec;
+	NominalSetpoint.AccelerationCmPerSecSq = ActiveRootMotionTargetAccelerationCmPerSecSq;
+
+	const FQuat ControlToBody = FlightController.GetInterface()
+		? FlightController->GetAircraftControlToBodyRotation()
+		: FQuat::Identity;
+	const float RootMotionYawDegrees = (
+		ActiveRootMotionTrajectoryActorRotation * ControlToBody).Rotator().Yaw;
+	NominalSetpoint.YawDegrees = PreviousRootMotionTargetYawDegrees;
+	if (bActiveRootMotionApplyRotation)
+	{
+		NominalSetpoint.YawDegrees = RootMotionYawDegrees;
+		ActiveRootMotionDesiredActorRotation = ActiveRootMotionTrajectoryActorRotation;
+		NominalSetpoint.YawRateDegreesPerSec = bConsumedRootMotion
+			? FMath::FindDeltaAngleDegrees(
+				PreviousRootMotionTargetYawDegrees, RootMotionYawDegrees) / DeltaSeconds
+			: 0.0f;
+	}
+	else
+	{
+		MovementExecutor.ApplyHeading(Snapshot, NominalSetpoint);
+		const FQuat DesiredControlWorld =
+			FRotator(0.0f, NominalSetpoint.YawDegrees, 0.0f).Quaternion();
+		ActiveRootMotionDesiredActorRotation = (
+			DesiredControlWorld * ControlToBody.Inverse()).GetNormalized();
+	}
+	NominalSetpoint.bValid = true;
+
+	FQuat DeltaRotation = (
+		ActiveRootMotionDesiredActorRotation
+		* PreviousRootMotionDesiredActorRotation.Inverse()).GetNormalized();
+	if (DeltaRotation.W < 0.0f)
+	{
+		DeltaRotation.X *= -1.0f;
+		DeltaRotation.Y *= -1.0f;
+		DeltaRotation.Z *= -1.0f;
+		DeltaRotation.W *= -1.0f;
+	}
+	FVector RotationAxis = FVector::UpVector;
+	float RotationAngleRadians = 0.0f;
+	DeltaRotation.ToAxisAndAngle(RotationAxis, RotationAngleRadians);
+	ActiveRootMotionTargetAngularVelocityWorldDegPerSec =
+		DeltaRotation.Equals(FQuat::Identity, UE_SMALL_NUMBER)
+			? FVector::ZeroVector
+			: FMath::RadiansToDegrees(
+				RotationAxis.GetSafeNormal() * (RotationAngleRadians / DeltaSeconds));
+
+	PreviousRootMotionTargetPositionCm = ActiveRootMotionTargetPositionCm;
+	PreviousRootMotionTargetVelocityCmPerSec = ActiveRootMotionTargetVelocityCmPerSec;
+	PreviousRootMotionTargetYawDegrees = NominalSetpoint.YawDegrees;
+	PreviousRootMotionDesiredActorRotation = ActiveRootMotionDesiredActorRotation;
+
+	if (ActiveRootMotionDriveMode != EAircraftSimulationDriveMode::FlightController)
+	{
+		InvalidateOutputs();
+		return;
+	}
+	ApplyIntentMotionLimits();
+
+	CachedGuidanceCommand = FGuidanceCommand();
+	CachedTurnCommand = FTurnCommand();
+	if (AutopilotConfig.bEnableCoordinatedTurns)
+	{
+		CachedTurnCommand = TurnBehavior.Compute(
+			NominalSetpoint.VelocityCmPerSec,
+			Snapshot.VelocityCmPerSec,
+			Snapshot.YawDegrees,
+			MovementExecutor.GetActiveIntent().MotionConstraints.MaxYawRateDegPerSec,
+			DeltaSeconds);
+	}
+
+	CachedProfiledSetpoint = MotionProfile.Update(NominalSetpoint, DeltaSeconds);
+	UpdateHoverThrustEstimate(DeltaSeconds);
+	CachedFeedForward = FFeedForward();
+	if (CachedProfiledSetpoint.bValid)
+	{
+		FeedForwardCalculator.Compute(CachedProfiledSetpoint, CachedFeedForward);
+	}
+}
+
+bool UAutopilotComponent::HasReachedRootMotionTarget(
+	const FAircraftAutopilotVehicleSnapshot& Snapshot,
+	float DeltaSeconds)
+{
+	const FAutopilotArrivalCriteria& Criteria =
+		MovementExecutor.GetActiveIntent().ArrivalCriteria;
+	const FVector PositionError = ActiveRootMotionTargetPositionCm - Snapshot.PositionCm;
+	const bool bUsesMotionProfile =
+		ActiveRootMotionDriveMode == EAircraftSimulationDriveMode::FlightController;
+	const FVector SetpointError = bUsesMotionProfile && CachedProfiledSetpoint.bValid
+		? ActiveRootMotionTargetPositionCm - CachedProfiledSetpoint.PositionCm
+		: PositionError;
+	const bool bPositionReached =
+		FVector2D(PositionError.X, PositionError.Y).Size() <= Criteria.HorizontalToleranceCm
+		&& FMath::Abs(PositionError.Z) <= Criteria.VerticalToleranceCm;
+	const bool bSetpointReached =
+		FVector2D(SetpointError.X, SetpointError.Y).Size() <= Criteria.HorizontalToleranceCm
+		&& FMath::Abs(SetpointError.Z) <= Criteria.VerticalToleranceCm;
+	const bool bSpeedReached =
+		Snapshot.VelocityCmPerSec.Size() <= Criteria.SpeedToleranceCmPerSec;
+	const FQuat ControlToBody = FlightController.GetInterface()
+		? FlightController->GetAircraftControlToBodyRotation()
+		: FQuat::Identity;
+	const float ConstraintTargetYawDegrees = (
+		ActiveRootMotionDesiredActorRotation * ControlToBody).Rotator().Yaw;
+	const float DesiredYawDegrees = bUsesMotionProfile && CachedProfiledSetpoint.bValid
+		? CachedProfiledSetpoint.YawDegrees
+		: ConstraintTargetYawDegrees;
+	const bool bYawReached = FMath::Abs(FMath::FindDeltaAngleDegrees(
+		Snapshot.YawDegrees, DesiredYawDegrees)) <= Criteria.YawToleranceDegrees;
+	RootMotionArrivalStableTimeSeconds =
+		bPositionReached && bSetpointReached && bSpeedReached && bYawReached
+			? RootMotionArrivalStableTimeSeconds + FMath::Max(DeltaSeconds, 0.0f)
+			: 0.0f;
+	return RootMotionArrivalStableTimeSeconds >= Criteria.StableTimeSeconds;
 }
 
 void UAutopilotComponent::CleanupRootMotionIntent(bool bStopMontage)
 {
-	if (IsValid(ActiveRootMotionAnimInstance))
+	if (ActiveRootMotionAnimInstance)
 	{
-		ActiveRootMotionAnimInstance->OnMontageEnded.RemoveAll(this);
-		if (bStopMontage && IsValid(ActiveRootMotionMontage))
+		if (ActiveRootMotionMontage)
 		{
-			ActiveRootMotionAnimInstance->Montage_Stop(0.2f, ActiveRootMotionMontage);
+			if (FOnMontageEnded* EndDelegate =
+				ActiveRootMotionAnimInstance->Montage_GetEndedDelegate(ActiveRootMotionMontage))
+			{
+				EndDelegate->Unbind();
+			}
 		}
+		if (bStopMontage
+			&& ActiveRootMotionMontage
+			&& ActiveRootMotionAnimInstance->Montage_IsPlaying(ActiveRootMotionMontage))
+		{
+			ActiveRootMotionAnimInstance->Montage_Stop(0.0f, ActiveRootMotionMontage);
+		}
+	}
+	if (ActiveRootMotionMesh)
+	{
+		RemoveTickPrerequisiteComponent(ActiveRootMotionMesh);
 	}
 	ActiveRootMotionMesh = nullptr;
 	ActiveRootMotionAnimInstance = nullptr;
 	ActiveRootMotionMontage = nullptr;
 	ActiveRootMotionHandle = FAutopilotIntentHandle();
-	ActiveRootMotionTarget = FAircraftMotionTarget();
-	ActiveRootMotionDriveOverride = FAircraftSimulationDriveOverride();
-	UpdateTickEnabled();
+	ActiveRootMotionDriveMode = EAircraftSimulationDriveMode::FlightController;
+	bActiveRootMotionApplyRotation = true;
+	bRootMotionMontageEnded = false;
+	bRootMotionMontageInterrupted = false;
+	ActiveRootMotionTargetPositionCm = FVector::ZeroVector;
+	PreviousRootMotionTargetPositionCm = FVector::ZeroVector;
+	ActiveRootMotionTrajectoryActorRotation = FQuat::Identity;
+	ActiveRootMotionDesiredActorRotation = FQuat::Identity;
+	PreviousRootMotionDesiredActorRotation = FQuat::Identity;
+	PreviousRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	ActiveRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	ActiveRootMotionTargetAccelerationCmPerSecSq = FVector::ZeroVector;
+	ActiveRootMotionTargetAngularVelocityWorldDegPerSec = FVector::ZeroVector;
+	PreviousRootMotionTargetYawDegrees = 0.0f;
+	RootMotionArrivalStableTimeSeconds = 0.0f;
+	ActiveRootMotionStartPositionSeconds = 0.0f;
+	RefreshSimulationDriveSelection();
+	RefreshSimulationTickEnabled();
 }
 
-void UAutopilotComponent::UpdateTickEnabled()
+bool UAutopilotComponent::CaptureActiveRootMotionSnapshot(
+	FAircraftAutopilotVehicleSnapshot& OutSnapshot,
+	float DeltaSeconds,
+	const FVector& PreviousLocation) const
 {
-	const bool bBudgetAllowsTick = SimulationBudget.LODIndex == INDEX_NONE
+	if (ActiveRootMotionDriveMode != EAircraftSimulationDriveMode::Kinematic)
+	{
+		return CaptureSnapshot(OutSnapshot);
+	}
+	if (!GetOwner())
+	{
+		return false;
+	}
+	OutSnapshot = MakeRootMotionSnapshot(DeltaSeconds, PreviousLocation);
+	return true;
+}
+
+FAircraftAutopilotVehicleSnapshot UAutopilotComponent::MakeRootMotionSnapshot(
+	float DeltaSeconds, const FVector& PreviousLocation) const
+{
+	FAircraftAutopilotVehicleSnapshot Snapshot;
+	const AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return Snapshot;
+	}
+	Snapshot.PositionCm = Owner->GetActorLocation();
+	Snapshot.VelocityCmPerSec = DeltaSeconds > UE_SMALL_NUMBER
+		? (Snapshot.PositionCm - PreviousLocation) / DeltaSeconds
+		: FVector::ZeroVector;
+	const FQuat ControlWorld = FlightController.GetInterface()
+		? Owner->GetActorQuat() * FlightController->GetAircraftControlToBodyRotation()
+		: Owner->GetActorQuat();
+	Snapshot.YawDegrees = ControlWorld.Rotator().Yaw;
+	return Snapshot;
+}
+
+void UAutopilotComponent::RefreshSimulationTickEnabled()
+{
+	const bool bRootMotionRequiresTick = ActiveRootMotionHandle.IsValid()
+		&& !SimulationBudget.bIsNetworkProxy;
+	const bool bBudgetAllowsTick = bRootMotionRequiresTick
 		|| (SimulationBudget.bRunSlowLogic && !SimulationBudget.bIsNetworkProxy);
-	SetComponentTickEnabled(bBudgetAllowsTick
-		&& (bAutopilotActive || ActiveRootMotionHandle.IsValid()));
+	PrimaryComponentTick.TickInterval = bRootMotionRequiresTick
+		? 0.0f : FMath::Max(SimulationBudget.SlowLogicIntervalSeconds, 0.0f);
+	SetComponentTickEnabled(bAutopilotActive && bBudgetAllowsTick);
+}
+
+void UAutopilotComponent::RefreshSimulationDriveSelection() const
+{
+	if (!GetOwner()) return;
+	TArray<UActorComponent*> Components;
+	GetOwner()->GetComponents(Components);
+	for (UActorComponent* Component : Components)
+	{
+		if (Component
+			&& Component->GetClass()->ImplementsInterface(
+				UAircraftSimulationLODController::StaticClass()))
+		{
+			IAircraftSimulationLODController::Execute_RefreshAircraftSimulationDrive(Component);
+		}
+	}
 }
 
 void UAutopilotComponent::HandleRootMotionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
@@ -840,14 +1379,7 @@ void UAutopilotComponent::HandleRootMotionMontageEnded(UAnimMontage* Montage, bo
 	if (Montage == ActiveRootMotionMontage)
 	{
 		bRootMotionMontageEnded = true;
-		if (bInterrupted && ActiveRootMotionHandle.IsValid())
-		{
-			FAircraftAutopilotVehicleSnapshot Snapshot;
-			CaptureSnapshot(Snapshot);
-			MovementExecutor.FinishExternalIntent(ActiveRootMotionHandle, Snapshot,
-				EAutopilotIntentStatus::Interrupted, EAutopilotIntentFailureReason::AnimationInterrupted);
-			CleanupRootMotionIntent(/*bStopMontage=*/false);
-		}
+		bRootMotionMontageInterrupted = bInterrupted;
 	}
 }
 
@@ -858,23 +1390,51 @@ void UAutopilotComponent::HandleRootMotionMontageEnded(UAnimMontage* Montage, bo
 void UAutopilotComponent::ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget)
 {
 	SimulationBudget = Budget;
-	SetComponentTickInterval(FMath::Max(Budget.SlowLogicIntervalSeconds, 0.0f));
+	PrimaryComponentTick.TickInterval = ActiveRootMotionHandle.IsValid()
+		? 0.0f : FMath::Max(Budget.SlowLogicIntervalSeconds, 0.0f);
 	ResolveAutopilotConfig(/*bForceRefresh=*/true);
-	UpdateTickEnabled();
+	RefreshSimulationTickEnabled();
 }
 
 bool UAutopilotComponent::GetAircraftMotionTarget_Implementation(FAircraftMotionTarget& OutTarget) const
 {
-	if (ActiveRootMotionTarget.bValid)
+	OutTarget = FAircraftMotionTarget();
+	if (!bAutopilotActive) return false;
+	if (ActiveRootMotionHandle.IsValid())
 	{
-		OutTarget = ActiveRootMotionTarget;
+		OutTarget.PositionCm = ActiveRootMotionTargetPositionCm;
+		OutTarget.VelocityCmPerSec = ActiveRootMotionTargetVelocityCmPerSec;
+		OutTarget.AccelerationCmPerSecSq = ActiveRootMotionTargetAccelerationCmPerSecSq;
+		OutTarget.RotationDegrees = ActiveRootMotionDesiredActorRotation.Rotator();
+		OutTarget.AngularVelocityWorldDegPerSec =
+			ActiveRootMotionTargetAngularVelocityWorldDegPerSec;
+		OutTarget.Priority = 1000;
+		OutTarget.bValid = true;
 		return true;
 	}
-	OutTarget = FAircraftMotionTarget();
-	return false;
+	if (!CachedProfiledSetpoint.bValid) return false;
+	OutTarget.PositionCm = CachedProfiledSetpoint.PositionCm;
+	OutTarget.VelocityCmPerSec = CachedProfiledSetpoint.VelocityCmPerSec;
+	OutTarget.AccelerationCmPerSecSq = CachedProfiledSetpoint.AccelerationCmPerSecSq;
+	const FQuat DesiredControlWorld =
+		FRotator(0.0f, CachedProfiledSetpoint.YawDegrees, 0.0f).Quaternion();
+	const FQuat ControlToBody = FlightController.GetInterface()
+		? FlightController->GetAircraftControlToBodyRotation()
+		: FQuat::Identity;
+	OutTarget.RotationDegrees = (DesiredControlWorld * ControlToBody.Inverse()).Rotator();
+	OutTarget.AngularVelocityWorldDegPerSec =
+		FVector(0.0f, 0.0f, CachedProfiledSetpoint.YawRateDegreesPerSec);
+	OutTarget.Priority = 0;
+	OutTarget.bValid = true;
+	return true;
 }
 
 FAircraftSimulationDriveOverride UAutopilotComponent::GetAircraftSimulationDriveOverride_Implementation() const
 {
-	return ActiveRootMotionDriveOverride;
+	FAircraftSimulationDriveOverride Override;
+	if (!ActiveRootMotionHandle.IsValid()) return Override;
+	Override.DriveMode = ActiveRootMotionDriveMode;
+	Override.Priority = 1000;
+	Override.bValid = true;
+	return Override;
 }

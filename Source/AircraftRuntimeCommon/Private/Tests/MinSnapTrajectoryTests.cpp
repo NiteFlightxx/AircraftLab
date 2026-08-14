@@ -133,7 +133,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftMinimumSnapMovementIntentIntegrationTest::RunTest(const FString& Parameters)
 {
 	FAircraftAutopilotMovementExecutor Executor;
-	Executor.Initialize();
 	FAircraftAutopilotVehicleSnapshot Snapshot;
 	FAutopilotMovementIntent Intent;
 	Intent.Type = EAutopilotMovementIntentType::FollowPath;

@@ -44,7 +44,6 @@ class AIRCRAFTRUNTIMECOMMON_API UAutopilotComponent
 public:
 	UAutopilotComponent();
 
-	virtual void OnRegister() override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
@@ -169,13 +168,13 @@ protected:
 
 private:
 	bool bAutopilotActive = false;
+	bool bActivationInitialized = false;
 	uint8 FlightModeBeforeActivation = 0;
 	bool bFlightModeBeforeActivationCaptured = false;
 	FProfiledSetpoint CachedProfiledSetpoint;
 	FFeedForward CachedFeedForward;
 	FGuidanceCommand CachedGuidanceCommand;
 	FTurnCommand CachedTurnCommand;
-	FAutopilotInjection CachedInjection;
 	FAircraftSimulationBudget SimulationBudget;
 
 	/* Root Motion 桥接状态 */
@@ -186,12 +185,23 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> ActiveRootMotionMontage;
 	FAutopilotIntentHandle ActiveRootMotionHandle;
-	FAircraftMotionTarget ActiveRootMotionTarget;
-	FAircraftSimulationDriveOverride ActiveRootMotionDriveOverride;
+	EAircraftSimulationDriveMode ActiveRootMotionDriveMode = EAircraftSimulationDriveMode::FlightController;
+	bool bActiveRootMotionApplyRotation = true;
 	float ActiveRootMotionStartPositionSeconds = 0.0f;
 	bool bRootMotionMontageEnded = false;
+	bool bRootMotionMontageInterrupted = false;
+	FVector ActiveRootMotionTargetPositionCm = FVector::ZeroVector;
+	FVector PreviousRootMotionTargetPositionCm = FVector::ZeroVector;
+	FQuat ActiveRootMotionTrajectoryActorRotation = FQuat::Identity;
+	FQuat ActiveRootMotionDesiredActorRotation = FQuat::Identity;
+	FQuat PreviousRootMotionDesiredActorRotation = FQuat::Identity;
+	FVector PreviousRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	FVector ActiveRootMotionTargetVelocityCmPerSec = FVector::ZeroVector;
+	FVector ActiveRootMotionTargetAccelerationCmPerSecSq = FVector::ZeroVector;
+	FVector ActiveRootMotionTargetAngularVelocityWorldDegPerSec = FVector::ZeroVector;
+	float PreviousRootMotionTargetYawDegrees = 0.0f;
+	float RootMotionArrivalStableTimeSeconds = 0.0f;
 
-	void CreateRuntimeObjects();
 	void ResolveFlightController();
 	/** 从飞控接口拉取 Dataflow 编译的 Autopilot 配置并装配子系统。 */
 	bool ResolveAutopilotConfig(bool bForceRefresh);
@@ -201,11 +211,32 @@ private:
 	bool CaptureSnapshot(FAircraftAutopilotVehicleSnapshot& OutSnapshot) const;
 	void BroadcastIntentEvents();
 	void InvalidateOutputs();
-	void BuildInjection();
+	void BuildInjection(FAutopilotInjection& OutInjection) const;
 	void UpdateHoverThrustEstimate(float DeltaSeconds);
+	FAutopilotIntentHandle SubmitRootMotionRequest(
+		const FAutopilotMontagePlayback& Playback,
+		const FAutopilotMovementIntent& Intent,
+		EAircraftSimulationDriveMode DriveMode,
+		bool bApplyRootMotionRotation);
 	void TickRootMotionIntent(float DeltaSeconds);
+	bool ConsumeRootMotionDelta(USkeletalMeshComponent* SkeletalMesh, FTransform& OutWorldRootMotion) const;
+	void AccumulateRootMotionTarget(const FTransform& WorldRootMotion);
+	void UpdateRootMotionTarget(
+		const FAircraftAutopilotVehicleSnapshot& Snapshot,
+		bool bConsumedRootMotion,
+		float DeltaSeconds);
+	bool HasReachedRootMotionTarget(
+		const FAircraftAutopilotVehicleSnapshot& Snapshot,
+		float DeltaSeconds);
 	void CleanupRootMotionIntent(bool bStopMontage);
-	void UpdateTickEnabled();
+	bool CaptureActiveRootMotionSnapshot(
+		FAircraftAutopilotVehicleSnapshot& OutSnapshot,
+		float DeltaSeconds,
+		const FVector& PreviousLocation) const;
+	FAircraftAutopilotVehicleSnapshot MakeRootMotionSnapshot(
+		float DeltaSeconds, const FVector& PreviousLocation) const;
+	void RefreshSimulationTickEnabled();
+	void RefreshSimulationDriveSelection() const;
 	void HandleRootMotionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	static void ApplyHeadingOptions(FAutopilotMovementIntent& Intent, const FAutopilotHeadingOptions& Heading);

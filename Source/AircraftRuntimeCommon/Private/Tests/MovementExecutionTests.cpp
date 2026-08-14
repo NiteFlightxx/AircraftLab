@@ -35,7 +35,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftExecutorSubmitAndCompleteTest::RunTest(const FString& Parameters)
 {
 	FAircraftAutopilotMovementExecutor Executor;
-	Executor.Initialize();
 
 	const FVector Target(500.0f, 0.0f, 0.0f);
 	const FAutopilotIntentHandle Handle = Executor.Submit(
@@ -75,7 +74,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftExecutorCancelAndReplaceTest::RunTest(const FString& Parameters)
 {
 	FAircraftAutopilotMovementExecutor Executor;
-	Executor.Initialize();
 
 	const FAutopilotIntentHandle First = Executor.Submit(
 		MakeMoveToIntent(FVector(500.0f, 0.0f, 0.0f)), MakeSnapshot(FVector::ZeroVector),
@@ -107,7 +105,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftExecutorTimeoutTest::RunTest(const FString& Parameters)
 {
 	FAircraftAutopilotMovementExecutor Executor;
-	Executor.Initialize();
 
 	FAutopilotMovementIntent Intent = MakeMoveToIntent(FVector(100000.0f, 0.0f, 0.0f));
 	Intent.TimeoutSeconds = 0.05f;
@@ -134,7 +131,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftExecutorInvalidIntentTest::RunTest(const FString& Parameters)
 {
 	FAircraftAutopilotMovementExecutor Executor;
-	Executor.Initialize();
 
 	// 路径点不足 → 拒绝
 	FAutopilotMovementIntent Intent;
@@ -142,13 +138,133 @@ bool FAircraftExecutorInvalidIntentTest::RunTest(const FString& Parameters)
 	Intent.PathPointsCm = { FVector::ZeroVector };
 	const FAutopilotIntentHandle Handle = Executor.Submit(
 		Intent, MakeSnapshot(FVector::ZeroVector), EAutopilotIntentFailureReason::None);
-	TestFalse(TEXT("Under-specified path intent returns no handle"), Handle.IsValid());
+	TestTrue(TEXT("Under-specified path intent receives a queryable handle"), Handle.IsValid());
+	TestEqual(TEXT("Under-specified path intent is rejected"),
+		Executor.GetResult(Handle).Status, EAutopilotIntentStatus::Rejected);
 
 	// 未激活/飞控不可用时提交 → 拒绝原因透传
 	const FAutopilotIntentHandle RejectedHandle = Executor.Submit(
 		MakeMoveToIntent(FVector(100.0f, 0.0f, 0.0f)), MakeSnapshot(FVector::ZeroVector),
 		EAutopilotIntentFailureReason::AutopilotInactive);
-	TestFalse(TEXT("Inactive autopilot submission returns no handle"), RejectedHandle.IsValid());
+	TestTrue(TEXT("Inactive autopilot submission receives a queryable handle"), RejectedHandle.IsValid());
+	TestEqual(TEXT("Inactive rejection reason is retained"),
+		Executor.GetResult(RejectedHandle).FailureReason,
+		EAutopilotIntentFailureReason::AutopilotInactive);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftExecutorRootMotionLifecycleTest,
+	"AircraftAutopilot.Movement.RootMotionUsesExternalLifecycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftExecutorRootMotionLifecycleTest::RunTest(const FString& Parameters)
+{
+	FAircraftAutopilotMovementExecutor Executor;
+	const FAircraftAutopilotVehicleSnapshot Snapshot = MakeSnapshot(FVector(100.0f, 200.0f, 300.0f));
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::RootMotion;
+	const FAutopilotIntentHandle Handle = Executor.Submit(
+		Intent, Snapshot, EAutopilotIntentFailureReason::None);
+
+	TestTrue(TEXT("External tick starts Root Motion execution"),
+		Executor.TickExternalIntent(Handle, Snapshot, 0.25f, 0.4f));
+	TestEqual(TEXT("Root Motion is executing"),
+		Executor.GetResult(Handle).Status, EAutopilotIntentStatus::Executing);
+	TestTrue(TEXT("Root Motion progress is retained"),
+		FMath::IsNearlyEqual(Executor.GetResult(Handle).Progress, 0.4f));
+	TestTrue(TEXT("External completion succeeds"),
+		Executor.FinishExternalIntent(
+			Handle, Snapshot, EAutopilotIntentStatus::Succeeded,
+			EAutopilotIntentFailureReason::None));
+	TestEqual(TEXT("Completed Root Motion reports success"),
+		Executor.GetResult(Handle).Status, EAutopilotIntentStatus::Succeeded);
+	TestEqual(TEXT("Root Motion completion returns to Hold"),
+		Executor.GetActiveIntent().Type, EAutopilotMovementIntentType::Hold);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftExecutorVelocityContinuityTest,
+	"AircraftAutopilot.Movement.VelocityCommandPreservesProfilePosition",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftExecutorVelocityContinuityTest::RunTest(const FString& Parameters)
+{
+	FAircraftAutopilotMovementExecutor Executor;
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::MoveWithVelocity;
+	Intent.DesiredVelocityCmPerSec = FVector(300.0f, 0.0f, 0.0f);
+	const FAircraftAutopilotVehicleSnapshot Snapshot = MakeSnapshot(FVector(1000.0f, 0.0f, 0.0f));
+	Executor.Submit(Intent, Snapshot, EAutopilotIntentFailureReason::None);
+	FProfiledSetpoint Previous;
+	Previous.PositionCm = FVector(250.0f, 0.0f, 0.0f);
+	Previous.bValid = true;
+	FTrajectoryPoint Setpoint;
+	TestTrue(TEXT("Velocity command produces a setpoint"),
+		Executor.BuildSetpoint(Snapshot, 0.02f, Previous, Setpoint));
+	TestTrue(TEXT("Velocity command continues from the previous profiled position"),
+		Setpoint.PositionCm.Equals(Previous.PositionCm));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftExecutorHeadingSemanticsTest,
+	"AircraftAutopilot.Movement.HeadingUsesHeldYawAndBrakingRate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftExecutorHeadingSemanticsTest::RunTest(const FString& Parameters)
+{
+	FAircraftAutopilotMovementExecutor Executor;
+	FAircraftAutopilotVehicleSnapshot Snapshot = MakeSnapshot(FVector::ZeroVector);
+	Snapshot.YawDegrees = 15.0f;
+	Executor.EnterHold(Snapshot);
+	Snapshot.YawDegrees = 40.0f;
+	FTrajectoryPoint Setpoint;
+	Setpoint.bValid = true;
+	Executor.ApplyHeading(Snapshot, Setpoint);
+	TestTrue(TEXT("KeepCurrent retains the captured yaw"),
+		FMath::IsNearlyEqual(Setpoint.YawDegrees, 15.0f));
+
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::Hold;
+	Intent.HeadingMode = EAutopilotHeadingMode::FixedYaw;
+	Intent.FixedYawDegrees = 41.0f;
+	Intent.DesiredYawRateDegPerSec = 25.0f;
+	Intent.MotionConstraints.MaxYawRateDegPerSec = 25.0f;
+	Intent.MotionConstraints.MaxYawAccelerationDegPerSecSq = 10.0f;
+	Executor.Submit(Intent, Snapshot, EAutopilotIntentFailureReason::None);
+	Executor.ApplyHeading(Snapshot, Setpoint);
+	TestTrue(TEXT("Fixed yaw rate is reduced to the braking-limited rate"),
+		FMath::IsNearlyEqual(Setpoint.YawRateDegreesPerSec, FMath::Sqrt(20.0f), 0.01f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftExecutorCircleArcCompletionTest,
+	"AircraftAutopilot.Movement.FullCircleDoesNotCompleteAtStart",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftExecutorCircleArcCompletionTest::RunTest(const FString& Parameters)
+{
+	FAircraftAutopilotMovementExecutor Executor;
+	FAircraftAutopilotVehicleSnapshot Snapshot = MakeSnapshot(FVector(100.0f, 0.0f, 0.0f));
+	FAutopilotMovementIntent Intent;
+	Intent.Type = EAutopilotMovementIntentType::CircleArc;
+	Intent.OrbitRadiusCm = 100.0f;
+	Intent.ArcStartAngleDegrees = 0.0f;
+	Intent.ArcEndAngleDegrees = 360.0f;
+	Intent.ArrivalMode = EAutopilotArrivalMode::StopAndComplete;
+	const FAutopilotIntentHandle Handle = Executor.Submit(
+		Intent, Snapshot, EAutopilotIntentFailureReason::None);
+	FTrajectoryPoint Setpoint;
+	TestTrue(TEXT("Full-circle trajectory produces a setpoint"),
+		Executor.BuildSetpoint(Snapshot, 0.02f, FProfiledSetpoint(), Setpoint));
+	FProfiledSetpoint Profiled;
+	Profiled.bValid = true;
+	Executor.UpdateCompletion(Snapshot, 1.0f, Profiled);
+	TestEqual(TEXT("Coincident endpoint does not complete before the sweep"),
+		Executor.GetResult(Handle).Status, EAutopilotIntentStatus::Executing);
 	return true;
 }
 

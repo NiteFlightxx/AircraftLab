@@ -43,11 +43,6 @@ public:
 		MaxLateralAccelCmPerSecSq = InConfig.MaxLateralAccelCmPerSecSq;
 	}
 
-	void SetGravity(float GravityCmPerSecSq)
-	{
-		Gravity = FMath::Max(GravityCmPerSecSq, UE_SMALL_NUMBER);
-	}
-
 	void Reset()
 	{
 		bHasPrevYaw = false;
@@ -60,8 +55,6 @@ private:
 	float TurnSpeedThresholdCmPerSec = 300.0f;
 	float MaxBankAngleDegrees = 35.0f;
 	float MaxLateralAccelCmPerSecSq = 500.0f;
-	float Gravity = 980.0f;
-
 	float PrevDesiredYawDegrees = 0.0f;
 	bool bHasPrevYaw = false;
 };

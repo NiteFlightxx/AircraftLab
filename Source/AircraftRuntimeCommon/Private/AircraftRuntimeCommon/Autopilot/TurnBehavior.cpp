@@ -4,7 +4,6 @@
 FTurnCommand FAircraftTurnBehavior::Compute(const FVector& DesiredVelocityCmPerSec, const FVector& CurrentVelocityCmPerSec,
 	float CurrentYawDegrees, float MaxYawRateDegPerSec, float DeltaSeconds)
 {
-	(void)CurrentYawDegrees;
 	FTurnCommand Cmd;
 	Cmd.bValid = false;
 
@@ -43,14 +42,15 @@ FTurnCommand FAircraftTurnBehavior::Compute(const FVector& DesiredVelocityCmPerS
 		LateralAccel = FMath::Clamp(LateralAccel, -MaxLateralAccelCmPerSecSq, MaxLateralAccelCmPerSecSq);
 
 		// 滚转角 φ = atan2(a_c, g)
-		float BankAngle = FMath::RadiansToDegrees(FMath::Atan2(LateralAccel, Gravity));
+		const float G = 980.0f;
+		float BankAngle = FMath::RadiansToDegrees(FMath::Atan2(LateralAccel, G));
 		BankAngle = FMath::Clamp(BankAngle, -MaxBankAngleDegrees, MaxBankAngleDegrees);
 
 		// 协调转弯所需的偏航角速度 = g·tan(φ)/v
 		float CoordYawRate = 0.0f;
 		if (CurrSpeed > UE_SMALL_NUMBER)
 		{
-			CoordYawRate = FMath::RadiansToDegrees(Gravity * FMath::Tan(FMath::DegreesToRadians(BankAngle)) / CurrSpeed);
+			CoordYawRate = FMath::RadiansToDegrees(G * FMath::Tan(FMath::DegreesToRadians(BankAngle)) / CurrSpeed);
 		}
 		CoordYawRate = FMath::Clamp(CoordYawRate, -MaxYawRateDegPerSec, MaxYawRateDegPerSec);
 
