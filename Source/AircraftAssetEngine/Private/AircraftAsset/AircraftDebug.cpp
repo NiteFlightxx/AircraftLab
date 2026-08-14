@@ -249,6 +249,7 @@ void FAircraftDebug::TickConstraint(
 	const FAircraftMotionTarget& Target,
 	const FVector& WorldCenterOfMassTarget,
 	const FVector& WorldCenterOfMassVelocityTarget,
+	const FVector& WorldPositionFeedForward,
 	const FQuat& WorldOrientationTarget,
 	const FVector& WorldAngularVelocityTargetRevPerSec,
 	const TCHAR* const MotionPhaseX,
@@ -312,7 +313,7 @@ void FAircraftDebug::TickConstraint(
 		{
 			InOutLogAccumulatorSeconds = 0.0f;
 			UE_LOG(LogAircraft, Log,
-				TEXT("[Aircraft.Constraint.Tick] Owner=%s LOD=%d Phase(X/Y/Z)=(%s/%s/%s) BrakeVel=(%+.1f,%+.1f,%+.1f) Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) ManualVel=(%+.1f,%+.1f,%+.1f) BodyPos=(%.1f,%.1f,%.1f) BodyCOM=(%.1f,%.1f,%.1f) ConstraintArm=(%+.2f,%+.2f,%+.2f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) WorldTargetPos=(%.1f,%.1f,%.1f) WorldTargetVel=(%+.1f,%+.1f,%+.1f) Error=(%+.1f,%+.1f,%+.1f) WorldTargetCOM=(%+.1f,%+.1f,%+.1f) WorldTargetCOMVel=(%+.1f,%+.1f,%+.1f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) WorldTargetQuat=(%+.3f,%+.3f,%+.3f,%+.3f) WorldTargetAngVel=(%+.3f,%+.3f,%+.3f) Drive(P/V)=(%d%d%d/%d%d%d)"),
+				TEXT("[Aircraft.Constraint.Tick] Owner=%s LOD=%d Phase(X/Y/Z)=(%s/%s/%s) BrakeVel=(%+.1f,%+.1f,%+.1f) Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) ManualVel=(%+.1f,%+.1f,%+.1f) BodyPos=(%.1f,%.1f,%.1f) BodyCOM=(%.1f,%.1f,%.1f) ConstraintArm=(%+.2f,%+.2f,%+.2f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) WorldTargetPos=(%.1f,%.1f,%.1f) WorldTargetVel=(%+.1f,%+.1f,%+.1f) Error=(%+.1f,%+.1f,%+.1f) WorldTargetCOM=(%+.1f,%+.1f,%+.1f) WorldTargetCOMVel=(%+.1f,%+.1f,%+.1f) PositionFF=(%+.2f,%+.2f,%+.2f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) WorldTargetQuat=(%+.3f,%+.3f,%+.3f,%+.3f) WorldTargetAngVel=(%+.3f,%+.3f,%+.3f) Drive(P/V)=(%d%d%d/%d%d%d)"),
 				*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(),
 				MotionPhaseX, MotionPhaseY, MotionPhaseZ,
 				BrakeVelocityCmPerSec.X, BrakeVelocityCmPerSec.Y,
@@ -332,6 +333,8 @@ void FAircraftDebug::TickConstraint(
 				WorldCenterOfMassTarget.X, WorldCenterOfMassTarget.Y, WorldCenterOfMassTarget.Z,
 				WorldCenterOfMassVelocityTarget.X, WorldCenterOfMassVelocityTarget.Y,
 				WorldCenterOfMassVelocityTarget.Z,
+				WorldPositionFeedForward.X, WorldPositionFeedForward.Y,
+				WorldPositionFeedForward.Z,
 				ConstraintForce.X, ConstraintForce.Y, ConstraintForce.Z,
 				ConstraintTorque.X, ConstraintTorque.Y, ConstraintTorque.Z,
 				WorldOrientationTarget.X, WorldOrientationTarget.Y,

@@ -52,6 +52,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftDebug
 		const FAircraftMotionTarget& Target,
 		const FVector& WorldCenterOfMassTarget,
 		const FVector& WorldCenterOfMassVelocityTarget,
+		const FVector& WorldPositionFeedForward,
 		const FQuat& WorldOrientationTarget,
 		const FVector& WorldAngularVelocityTargetRevPerSec,
 		const TCHAR* MotionPhaseX,

@@ -722,7 +722,20 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 			TargetAngularVelocityWorldRadPerSec, TargetCenterOfMassOffsetWorld);
 	const FVector WorldAngularVelocityTargetRevPerSec =
 		Target.AngularVelocityWorldDegPerSec / 360.0f;
-	SimulationConstraint->SetLinearPositionTarget(TargetCenterOfMass);
+	const FVector GravityAccelerationCmPerSecSq(
+		0.0, 0.0, GetWorld() ? GetWorld()->GetGravityZ() : -980.0f);
+	const FVector DynamicsFeedForwardPositionOffset =
+		UE::AircraftLab::ConstraintDrive::ComputeDynamicsFeedForwardPositionOffset(
+			GravityAccelerationCmPerSecSq,
+			TargetCenterOfMassVelocity,
+			ChassisBody->LinearDamping,
+			Model->FlightController.LinearDampingFeedForwardScale,
+			Model->FlightController.ConstraintLinearStrength,
+			Model->FlightController.bConstraintAccelerationMode,
+			ChassisBody->GetBodyMass());
+	const FVector ConstraintTargetCenterOfMass =
+		TargetCenterOfMass + DynamicsFeedForwardPositionOffset;
+	SimulationConstraint->SetLinearPositionTarget(ConstraintTargetCenterOfMass);
 	SimulationConstraint->SetLinearVelocityTarget(TargetCenterOfMassVelocity);
 	SimulationConstraint->SetAngularOrientationTarget(TargetRotation);
 	SimulationConstraint->SetAngularVelocityTarget(WorldAngularVelocityTargetRevPerSec);
@@ -744,7 +757,8 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	};
 	FAircraftDebug::TickConstraint(
 		*this, *SimulationConstraint, Model->RootBone, PilotInput, ManualCommand, Target,
-		TargetCenterOfMass, TargetCenterOfMassVelocity,
+		ConstraintTargetCenterOfMass, TargetCenterOfMassVelocity,
+		DynamicsFeedForwardPositionOffset,
 		TargetRotation, WorldAngularVelocityTargetRevPerSec,
 		MotionPhaseName(PilotMotionPhaseX),
 		MotionPhaseName(PilotMotionPhaseY),

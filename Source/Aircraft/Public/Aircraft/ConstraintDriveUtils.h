@@ -50,6 +50,33 @@ namespace UE::AircraftLab::ConstraintDrive
 			+ (DesiredVelocityCmPerSec - CurrentVelocityCmPerSec) / AngularFrequency;
 	}
 
+	/**
+	 * Convert gravity and rigid-body linear damping feed-forward into a position offset
+	 * for a Chaos linear spring drive. Inputs use Unreal units (cm, s, kg).
+	 */
+	inline FVector ComputeDynamicsFeedForwardPositionOffset(
+		const FVector& GravityAccelerationCmPerSecSq,
+		const FVector& DesiredVelocityCmPerSec,
+		const double LinearDampingPerSecond,
+		const double LinearDampingFeedForwardScale,
+		const double Strength,
+		const bool bAccelerationMode,
+		const double BodyMassKg)
+	{
+		const double Stiffness = StrengthToStiffness(Strength);
+		if (Stiffness <= UE_SMALL_NUMBER)
+		{
+			return FVector::ZeroVector;
+		}
+
+		const FVector RequiredAcceleration = -GravityAccelerationCmPerSecSq
+			+ DesiredVelocityCmPerSec
+				* FMath::Max(LinearDampingPerSecond, 0.0)
+				* FMath::Max(LinearDampingFeedForwardScale, 0.0);
+		const double DriveMassScale = bAccelerationMode ? 1.0 : FMath::Max(BodyMassKg, 0.0);
+		return RequiredAcceleration * (DriveMassScale / Stiffness);
+	}
+
 	inline void ConvertStrengthToSpringParams(
 		FVector& OutStiffness,
 		FVector& OutDamping,
