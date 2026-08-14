@@ -20,11 +20,18 @@
 
 class UAircraftAssetBase;
 class UThumbnailInfo;
-class UPhysicsConstraintComponent;
 class FAircraftSimulationProxy;
 class FAircraftVisualization;
+struct FConstraintInstance;
 struct FAircraftSimulationModel;
 struct FAircraftSimulationLodModel;
+
+enum class EAircraftPilotHorizontalMotionPhase : uint8
+{
+	Hold,
+	Manual,
+	Brake
+};
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnAircraftSimulationLODChanged,
@@ -377,10 +384,7 @@ private:
 	bool bSimulationPhysicsEnabled = true;
 
 	/** 物理约束后端（PhysicsConstraint 驱动模式按需创建）。 */
-	UPROPERTY(Transient)
-	TObjectPtr<UPhysicsConstraintComponent> SimulationConstraint;
-	/** 约束创建时的组件世界变换（约束空间原点）。 */
-	FTransform SimulationConstraintReference = FTransform::Identity;
+	TSharedPtr<FConstraintInstance> SimulationConstraint;
 	float ConstraintDebugLogAccumulatorSeconds = 0.0f;
 	float ConstraintDebugUnresponsiveSeconds = 0.0f;
 	float AlternativeDriveDebugLogAccumulatorSeconds = 0.0f;
@@ -392,6 +396,13 @@ private:
 	/** Constraint/Kinematic 后端由飞行员输入持续积分出的目标。 */
 	FAircraftMotionTarget PilotMotionTarget;
 	bool bPilotMotionTargetInitialized = false;
+	/** PhysicsConstraint 的 X/Y 轴独立运动阶段；松杆后先制动，再捕获位置保持。 */
+	EAircraftPilotHorizontalMotionPhase PilotHorizontalMotionPhaseX =
+		EAircraftPilotHorizontalMotionPhase::Hold;
+	EAircraftPilotHorizontalMotionPhase PilotHorizontalMotionPhaseY =
+		EAircraftPilotHorizontalMotionPhase::Hold;
+	/** PhysicsConstraint 松杆制动轨迹的 X/Y 目标速度。 */
+	FVector2D PilotHorizontalBrakeVelocityCmPerSec = FVector2D::ZeroVector;
 	/** 精确临时驱动覆盖。 */
 	FAircraftSimulationDriveOverride DriveOverride;
 	/** Owner 上实现 IAircraftSimulationLODConsumer 的其他组件（运动目标来源缓存）。 */

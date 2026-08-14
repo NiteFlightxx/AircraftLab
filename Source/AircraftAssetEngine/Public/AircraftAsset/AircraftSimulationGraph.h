@@ -31,6 +31,6 @@ namespace UE::AircraftLab::AircraftAsset
 	 */
 	AIRCRAFTASSETENGINE_API UDataflow* GetOrCreateAircraftSimulationGraph();
 
-	/** 在 AircraftAssetEngine 模块卸载时释放默认 Simulation 图的 GC Root。 */
+	/** 在 CoreUObject 退出清理前释放默认 Simulation 图的 GC Root；模块热卸载时同样调用。 */
 	AIRCRAFTASSETENGINE_API void ReleaseAircraftSimulationGraph();
 }

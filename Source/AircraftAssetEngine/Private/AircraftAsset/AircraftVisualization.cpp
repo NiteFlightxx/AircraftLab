@@ -6,7 +6,7 @@
 #include "AircraftAsset/AircraftSimulationProxy.h"
 #include "DrawDebugHelpers.h"
 #include "HAL/IConsoleManager.h"
-#include "PhysicsEngine/PhysicsConstraintComponent.h"
+#include "PhysicsEngine/ConstraintInstance.h"
 #include "PrimitiveDrawingUtils.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 
@@ -332,7 +332,7 @@ void FAircraftVisualization::DrawConstraint(
 	const UAircraftComponent& Component,
 	const FAircraftVisualizationContext& Context)
 {
-	if (!IsValid(Component.SimulationConstraint))
+	if (!Component.SimulationConstraint.IsValid())
 	{
 		return;
 	}
@@ -343,7 +343,8 @@ void FAircraftVisualization::DrawConstraint(
 		UE::AircraftLab::Visualization::Private::CVarVectorScale.GetValueOnAnyThread(), 0.0f);
 	const FVector Origin = Component.GetCenterOfMass();
 	UE::AircraftLab::Visualization::Private::DrawPoint(
-		Context, Component.SimulationConstraintReference.GetLocation(),
+		Context,
+		Component.SimulationConstraint->GetLinearPositionTarget(),
 		FLinearColor(0.8f, 0.2f, 1.0f), 8.0f);
 	UE::AircraftLab::Visualization::Private::DrawArrow(
 		Context, Origin, Force * Scale, FLinearColor(1.0f, 0.5f, 0.0f));

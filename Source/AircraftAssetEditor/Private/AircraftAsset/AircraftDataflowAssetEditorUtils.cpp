@@ -554,7 +554,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				}
 
 				// 工具分类：左侧出现 "General"（引擎内置）与 "Aircraft"（AircraftAssetEditorTools
-				AssetEditor->RegisterToolCategories({ "General", "Aircraft" });
+				AssetEditor->RegisterToolCategories({ "Aircraft" });
 
 				// Simulation 视口预览类（布料传 BP_ClothPreview；我们用等价的 C++ 类）。
 				const TSubclassOf<AActor> ActorClass = AAircraftDataflowPreviewActor::StaticClass();

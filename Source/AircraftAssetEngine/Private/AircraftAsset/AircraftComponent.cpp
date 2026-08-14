@@ -12,7 +12,6 @@
 #include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsEngine/ConstraintInstance.h"
 #include "PhysicsEngine/PhysicsAsset.h"
-#include "PhysicsEngine/PhysicsConstraintComponent.h"
 #include "Chaos/Framework/PhysicsSolverBase.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 #include "Engine/HitResult.h"
@@ -575,8 +574,8 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 
 bool UAircraftComponent::CreateSimulationConstraint()
 {
-	if (IsValid(SimulationConstraint)
-		&& SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
+	if (SimulationConstraint.IsValid()
+		&& SimulationConstraint->IsValidConstraintInstance()
 		&& !SimulationConstraint->IsBroken())
 	{
 		return true;
@@ -596,32 +595,40 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	}
 
 	DestroySimulationConstraint();
-	const FName ConstraintName = MakeUniqueObjectName(
-		GetOwner(), UPhysicsConstraintComponent::StaticClass(),
-		TEXT("AircraftSimulationConstraint"));
-	SimulationConstraint = NewObject<UPhysicsConstraintComponent>(
-		GetOwner(), ConstraintName, RF_Transient);
-	if (!SimulationConstraint)
+	SimulationConstraint = MakeShared<FConstraintInstance>();
+	SimulationConstraint->InitConstraint(ChassisBody, nullptr, 1.0f, this);
+	if (!SimulationConstraint->IsValidConstraintInstance())
 	{
-		FAircraftDebug::LogConstraintCreationFailure(*this, Model->RootBone, TEXT("AllocationFailed"));
+		SimulationConstraint.Reset();
+		FAircraftDebug::LogConstraintCreationFailure(*this, Model->RootBone, TEXT("InitConstraintFailed"));
 		return false;
 	}
 
-	GetOwner()->AddInstanceComponent(SimulationConstraint);
-	SimulationConstraintReference = GetComponentTransform();
-	SimulationConstraint->SetWorldTransform(SimulationConstraintReference);
-	SimulationConstraint->RegisterComponent();
-	SimulationConstraint->SetLinearXLimit(LCM_Free, 0.0f);
-	SimulationConstraint->SetLinearYLimit(LCM_Free, 0.0f);
-	SimulationConstraint->SetLinearZLimit(LCM_Free, 0.0f);
-	SimulationConstraint->SetAngularSwing1Limit(ACM_Free, 0.0f);
-	SimulationConstraint->SetAngularSwing2Limit(ACM_Free, 0.0f);
-	SimulationConstraint->SetAngularTwistLimit(ACM_Free, 0.0f);
-	SimulationConstraint->SetLinearPositionDrive(true, true, true);
-	SimulationConstraint->SetLinearVelocityDrive(true, true, true);
+	SimulationConstraint->SetDisableCollision(true);
+	SimulationConstraint->SetLinearXMotion(ELinearConstraintMotion::LCM_Free);
+	SimulationConstraint->SetLinearYMotion(ELinearConstraintMotion::LCM_Free);
+	SimulationConstraint->SetLinearZMotion(ELinearConstraintMotion::LCM_Free);
+	SimulationConstraint->SetAngularSwing1Motion(EAngularConstraintMotion::ACM_Free);
+	SimulationConstraint->SetAngularSwing2Motion(EAngularConstraintMotion::ACM_Free);
+	SimulationConstraint->SetAngularTwistMotion(EAngularConstraintMotion::ACM_Free);
 	SimulationConstraint->SetAngularDriveMode(EAngularDriveMode::SLERP);
 	SimulationConstraint->SetOrientationDriveSLERP(true);
 	SimulationConstraint->SetAngularVelocityDriveSLERP(true);
+	SimulationConstraint->SetLinearPositionDrive(true, true, true);
+	SimulationConstraint->SetLinearVelocityDrive(true, true, true);
+
+	// 与 PhysicsControl 的世界空间控制完全一致：Constraint 的 Body1 是被控刚体，
+	// Body2 为世界；Frame1 只移动到刚体 COM，Frame2 始终保持 Identity。
+	FTransform BodyFrame = SimulationConstraint->GetRefFrame(EConstraintFrame::Frame1);
+	BodyFrame.SetTranslation(ChassisBody->GetMassSpaceLocal().GetTranslation());
+	SimulationConstraint->SetRefFrame(EConstraintFrame::Frame1, BodyFrame);
+
+	const FVector InitialCenterOfMass = ChassisBody->GetCOMPosition();
+	const FQuat InitialRotation = ChassisBody->GetUnrealWorldTransform().GetRotation();
+	SimulationConstraint->SetLinearPositionTarget(InitialCenterOfMass);
+	SimulationConstraint->SetLinearVelocityTarget(FVector::ZeroVector);
+	SimulationConstraint->SetAngularOrientationTarget(InitialRotation);
+	SimulationConstraint->SetAngularVelocityTarget(FVector::ZeroVector);
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
 	float LinearStiffness = 0.0f;
@@ -641,25 +648,20 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	SimulationConstraint->SetLinearDriveAccelerationMode(Config.bConstraintAccelerationMode);
 	SimulationConstraint->SetAngularDriveAccelerationMode(Config.bConstraintAccelerationMode);
 	SimulationConstraint->SetLinearDriveParams(
-		LinearStiffness,
-		LinearDamping,
-		Config.ConstraintLinearForceLimit);
+		LinearStiffness, LinearDamping, Config.ConstraintLinearForceLimit);
 	SimulationConstraint->SetAngularDriveParams(
-		AngularStiffness,
-		AngularDamping,
-		Config.ConstraintAngularTorqueLimit);
-	SimulationConstraint->SetProjectionEnabled(false);
-	SimulationConstraint->SetDisableCollision(true);
-	SimulationConstraint->SetConstrainedComponents(this, Model->RootBone, nullptr, NAME_None);
+		AngularStiffness, AngularDamping, Config.ConstraintAngularTorqueLimit);
+
 	WakeAllRigidBodies();
-	const bool bCreated = SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
+
+	const bool bCreated = SimulationConstraint->IsValidConstraintInstance()
 		&& !SimulationConstraint->IsBroken();
 	if (bCreated)
 	{
 		ConstraintDebugLogAccumulatorSeconds = 0.0f;
 		ConstraintDebugUnresponsiveSeconds = 0.0f;
 		FAircraftDebug::LogConstraintCreated(
-			*this, *SimulationConstraint, Model->RootBone, Config, SimulationConstraintReference);
+			*this, *SimulationConstraint, Model->RootBone, Config);
 	}
 	else
 	{
@@ -672,19 +674,18 @@ void UAircraftComponent::DestroySimulationConstraint()
 {
 	ConstraintDebugLogAccumulatorSeconds = 0.0f;
 	ConstraintDebugUnresponsiveSeconds = 0.0f;
-	if (!IsValid(SimulationConstraint))
+	if (!SimulationConstraint.IsValid())
 	{
 		return;
 	}
-	SimulationConstraint->TermComponentConstraint();
-	SimulationConstraint->DestroyComponent();
-	SimulationConstraint = nullptr;
+	SimulationConstraint->TermConstraint();
+	SimulationConstraint.Reset();
 }
 
 void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 {
-	if (!IsValid(SimulationConstraint)
-		|| !SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
+	if (!SimulationConstraint.IsValid()
+		|| !SimulationConstraint->IsValidConstraintInstance()
 		|| SimulationConstraint->IsBroken())
 	{
 		return;
@@ -700,23 +701,54 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	{
 		return;
 	}
+	FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+	if (!ChassisBody)
+	{
+		return;
+	}
 
-	const FVector PositionTarget =SimulationConstraintReference.InverseTransformPosition(Target.PositionCm);
-	const FVector VelocityTarget =SimulationConstraintReference.InverseTransformVectorNoScale(Target.VelocityCmPerSec);
-	const FQuat OrientationTarget = (SimulationConstraintReference.GetRotation().Inverse()* Target.RotationDegrees.Quaternion()).GetNormalized();
-	const FVector AngularVelocityTargetRevPerSec =SimulationConstraintReference.InverseTransformVectorNoScale(Target.AngularVelocityWorldDegPerSec) / 360.0f;
-	SimulationConstraint->SetLinearPositionTarget(PositionTarget);
-	SimulationConstraint->SetLinearVelocityTarget(VelocityTarget);
-	SimulationConstraint->SetAngularOrientationTarget(OrientationTarget.Rotator());
-	SimulationConstraint->SetAngularVelocityTarget(AngularVelocityTargetRevPerSec);
+	// 运动目标的 PositionCm 是组件原点，约束连接点则是 COM；先把目标换算到 COM。
+	const FVector CurrentCenterOfMass = ChassisBody->GetCOMPosition();
+	const FVector CenterOfMassOffsetLocal = GetComponentQuat().UnrotateVector(
+		CurrentCenterOfMass - GetComponentLocation());
+	const FQuat TargetRotation = Target.RotationDegrees.Quaternion();
+	const FVector TargetCenterOfMassOffsetWorld = TargetRotation.RotateVector(
+		CenterOfMassOffsetLocal);
+	const FVector TargetCenterOfMass = Target.PositionCm + TargetCenterOfMassOffsetWorld;
+	const FVector TargetAngularVelocityWorldRadPerSec =
+		Target.AngularVelocityWorldDegPerSec * (UE_PI / 180.0f);
+	const FVector TargetCenterOfMassVelocity = Target.VelocityCmPerSec
+		+ FVector::CrossProduct(
+			TargetAngularVelocityWorldRadPerSec, TargetCenterOfMassOffsetWorld);
+	const FVector WorldAngularVelocityTargetRevPerSec =
+		Target.AngularVelocityWorldDegPerSec / 360.0f;
+	SimulationConstraint->SetLinearPositionTarget(TargetCenterOfMass);
+	SimulationConstraint->SetLinearVelocityTarget(TargetCenterOfMassVelocity);
+	SimulationConstraint->SetAngularOrientationTarget(TargetRotation);
+	SimulationConstraint->SetAngularVelocityTarget(WorldAngularVelocityTargetRevPerSec);
 	WakeAllRigidBodies();
 	const FAircraftManualCommand ManualCommand =
 		UE::AircraftLab::PilotInputMapping::BuildManualCommand(
 			PilotInput, GetComponentQuat(), Model->FlightController);
+	auto MotionPhaseName = [](const EAircraftPilotHorizontalMotionPhase Phase)
+	{
+		switch (Phase)
+		{
+		case EAircraftPilotHorizontalMotionPhase::Manual:
+			return TEXT("Manual");
+		case EAircraftPilotHorizontalMotionPhase::Brake:
+			return TEXT("Brake");
+		default:
+			return TEXT("Hold");
+		}
+	};
 	FAircraftDebug::TickConstraint(
-		*this, *SimulationConstraint, PilotInput, ManualCommand, Target,
-		SimulationConstraintReference, PositionTarget, VelocityTarget,
-		OrientationTarget, AngularVelocityTargetRevPerSec, DeltaSeconds,
+		*this, *SimulationConstraint, Model->RootBone, PilotInput, ManualCommand, Target,
+		TargetCenterOfMass, TargetCenterOfMassVelocity,
+		TargetRotation, WorldAngularVelocityTargetRevPerSec,
+		MotionPhaseName(PilotHorizontalMotionPhaseX),
+		MotionPhaseName(PilotHorizontalMotionPhaseY),
+		PilotHorizontalBrakeVelocityCmPerSec, DeltaSeconds,
 		ConstraintDebugLogAccumulatorSeconds, ConstraintDebugUnresponsiveSeconds);
 }
 
@@ -906,6 +938,9 @@ void UAircraftComponent::UpdatePilotMotionTarget(float DeltaSeconds)
 	{
 		PilotMotionTarget.VelocityCmPerSec = FVector::ZeroVector;
 		PilotMotionTarget.AngularVelocityWorldDegPerSec = FVector::ZeroVector;
+		PilotHorizontalMotionPhaseX = EAircraftPilotHorizontalMotionPhase::Hold;
+		PilotHorizontalMotionPhaseY = EAircraftPilotHorizontalMotionPhase::Hold;
+		PilotHorizontalBrakeVelocityCmPerSec = FVector2D::ZeroVector;
 		return;
 	}
 
@@ -923,8 +958,100 @@ void UAircraftComponent::UpdatePilotMotionTarget(float DeltaSeconds)
 	const FAircraftManualCommand ManualCommand =
 		UE::AircraftLab::PilotInputMapping::BuildManualCommand(PilotInput, GetComponentQuat(), Config);
 
-	PilotMotionTarget.VelocityCmPerSec = ManualCommand.DesiredVelocityCmPerSec;
-	PilotMotionTarget.PositionCm += ManualCommand.DesiredVelocityCmPerSec * DeltaSeconds;
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint)
+	{
+		const FVector CurrentPosition = GetComponentLocation();
+		const FVector CurrentVelocity = GetPhysicsLinearVelocity();
+		const double HoldSpeed = FMath::Max(
+			static_cast<double>(Config.HorizontalBrakeToHoldSpeedCmPerSec), 0.0);
+		const double BrakeDecayRate =
+			UE::AircraftLab::ConstraintDrive::StrengthToAngularFrequency(
+				Config.ConstraintLinearStrength);
+		// 位置驱动只补助当前速度误差，不积分一条与刚体脱节的世界空间轨迹。
+		// 这样持续输入会持续移动，达到目标速度后位置前置量归零；
+		// 松杆时速度目标指数衰减，不会留下将飞机拉回起点的远端锚点。
+		auto UpdateHorizontalAxis = [DeltaSeconds, HoldSpeed, BrakeDecayRate,
+			Strength = static_cast<double>(Config.ConstraintLinearStrength)](
+			const double DesiredVelocity,
+			const double CurrentAxisPosition,
+			const double CurrentAxisVelocity,
+			double& InOutTargetPosition,
+			double& OutTargetVelocity,
+			EAircraftPilotHorizontalMotionPhase& InOutPhase,
+			double& InOutBrakeVelocity)
+		{
+			if (!FMath::IsNearlyZero(DesiredVelocity))
+			{
+				InOutTargetPosition =
+					UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
+						CurrentAxisPosition, CurrentAxisVelocity, DesiredVelocity, Strength);
+				OutTargetVelocity = DesiredVelocity;
+				InOutBrakeVelocity = 0.0;
+				InOutPhase = EAircraftPilotHorizontalMotionPhase::Manual;
+				return;
+			}
+
+			if (InOutPhase == EAircraftPilotHorizontalMotionPhase::Manual)
+			{
+				InOutTargetPosition = CurrentAxisPosition;
+				InOutBrakeVelocity = CurrentAxisVelocity;
+				InOutPhase = EAircraftPilotHorizontalMotionPhase::Brake;
+			}
+			if (InOutPhase == EAircraftPilotHorizontalMotionPhase::Brake)
+			{
+				if (BrakeDecayRate > UE_SMALL_NUMBER)
+				{
+					InOutBrakeVelocity *= FMath::Exp(-BrakeDecayRate * DeltaSeconds);
+				}
+				else
+				{
+					InOutBrakeVelocity = 0.0;
+				}
+				InOutTargetPosition =
+					UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
+						CurrentAxisPosition, CurrentAxisVelocity, InOutBrakeVelocity, Strength);
+				OutTargetVelocity = InOutBrakeVelocity;
+				if (FMath::Abs(InOutBrakeVelocity) <= HoldSpeed
+					&& FMath::Abs(CurrentAxisVelocity) <= HoldSpeed)
+				{
+					InOutTargetPosition = CurrentAxisPosition;
+					OutTargetVelocity = 0.0;
+					InOutBrakeVelocity = 0.0;
+					InOutPhase = EAircraftPilotHorizontalMotionPhase::Hold;
+				}
+				return;
+			}
+
+			OutTargetVelocity = 0.0;
+		};
+
+		UpdateHorizontalAxis(
+			ManualCommand.DesiredVelocityCmPerSec.X,
+			CurrentPosition.X,
+			CurrentVelocity.X,
+			PilotMotionTarget.PositionCm.X,
+			PilotMotionTarget.VelocityCmPerSec.X,
+			PilotHorizontalMotionPhaseX,
+			PilotHorizontalBrakeVelocityCmPerSec.X);
+		UpdateHorizontalAxis(
+			ManualCommand.DesiredVelocityCmPerSec.Y,
+			CurrentPosition.Y,
+			CurrentVelocity.Y,
+			PilotMotionTarget.PositionCm.Y,
+			PilotMotionTarget.VelocityCmPerSec.Y,
+			PilotHorizontalMotionPhaseY,
+			PilotHorizontalBrakeVelocityCmPerSec.Y);
+		PilotMotionTarget.VelocityCmPerSec.Z = ManualCommand.DesiredVelocityCmPerSec.Z;
+		PilotMotionTarget.PositionCm.Z += ManualCommand.DesiredVelocityCmPerSec.Z * DeltaSeconds;
+	}
+	else
+	{
+		PilotHorizontalMotionPhaseX = EAircraftPilotHorizontalMotionPhase::Hold;
+		PilotHorizontalMotionPhaseY = EAircraftPilotHorizontalMotionPhase::Hold;
+		PilotHorizontalBrakeVelocityCmPerSec = FVector2D::ZeroVector;
+		PilotMotionTarget.VelocityCmPerSec = ManualCommand.DesiredVelocityCmPerSec;
+		PilotMotionTarget.PositionCm += ManualCommand.DesiredVelocityCmPerSec * DeltaSeconds;
+	}
 	PilotMotionTarget.AngularVelocityWorldDegPerSec = FVector(
 		0.0, 0.0, ManualCommand.DesiredYawRateDegPerSec);
 	PilotMotionTarget.RotationDegrees.Yaw = FRotator::NormalizeAxis(
@@ -937,6 +1064,9 @@ void UAircraftComponent::ResetPilotMotionTarget()
 {
 	PilotMotionTarget = FAircraftMotionTarget();
 	bPilotMotionTargetInitialized = false;
+	PilotHorizontalMotionPhaseX = EAircraftPilotHorizontalMotionPhase::Hold;
+	PilotHorizontalMotionPhaseY = EAircraftPilotHorizontalMotionPhase::Hold;
+	PilotHorizontalBrakeVelocityCmPerSec = FVector2D::ZeroVector;
 }
 
 /* ==================== IAircraftFlightControllerInterface（Autopilot 窄契约） ==================== */
@@ -1419,8 +1549,8 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		{
 			DriveHeartbeatDebugLogAccumulatorSeconds = 0.0f;
 			const FBodyInstance* const Body = ResolveChassisBodyInstance();
-			const bool bConstraintValid = IsValid(SimulationConstraint)
-				&& SimulationConstraint->ConstraintInstance.IsValidConstraintInstance()
+			const bool bConstraintValid = SimulationConstraint.IsValid()
+				&& SimulationConstraint->IsValidConstraintInstance()
 				&& !SimulationConstraint->IsBroken();
 			UE_LOG(LogAircraft, Log,
 				TEXT("[Aircraft.Drive.Heartbeat] Owner=%s Component=%s LOD=%d Drive=%s Enabled=%d Suspended=%d PhysicsWanted=%d Simulating=%d PhysicsState=%d Proxy=%d Body=%d BodySimulating=%d Arm=%s Controller=%d Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) PilotTarget=%d TargetValid=%d TargetPos=(%.1f,%.1f,%.1f) TargetVel=(%+.1f,%+.1f,%+.1f) Constraint=%d"),

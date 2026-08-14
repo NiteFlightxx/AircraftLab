@@ -6,7 +6,6 @@
 #include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "HAL/IConsoleManager.h"
 #include "PhysicsEngine/ConstraintInstance.h"
-#include "PhysicsEngine/PhysicsConstraintComponent.h"
 #include "UObject/UObjectIterator.h"
 
 DEFINE_LOG_CATEGORY(LogAircraft);
@@ -175,13 +174,17 @@ const TCHAR* FAircraftDebug::GetSignLabel(const int32 Sign)
 
 void FAircraftDebug::LogConstraintCreated(
 	const UAircraftComponent& Component,
-	const UPhysicsConstraintComponent& Constraint,
+	FConstraintInstance& Constraint,
 	const FName RootBone,
-	const FAircraftFlightControllerRuntimeConfig& Config,
-	const FTransform& ReferenceTransform)
+	const FAircraftFlightControllerRuntimeConfig& Config)
 {
-	const FConstraintInstance& Instance = Constraint.ConstraintInstance;
-	const bool bBroken = const_cast<UPhysicsConstraintComponent*>(&Constraint)->IsBroken();
+	const FTransform BodyFrame = Constraint.GetRefFrame(EConstraintFrame::Frame1);
+	const FTransform WorldFrame = Constraint.GetRefFrame(EConstraintFrame::Frame2);
+	const FVector InitialWorldTarget = Constraint.GetLinearPositionTarget();
+	const bool bBroken = Constraint.IsBroken();
+	const FBodyInstance* const BodyInstance = Component.GetBodyInstance(RootBone);
+	const float BodyMassKg = BodyInstance ? BodyInstance->GetBodyMass() : 0.0f;
+	const float BodyLinearDampingPerSecond = BodyInstance ? BodyInstance->LinearDamping : 0.0f;
 	float LinearStiffness = 0.0f;
 	float LinearDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
@@ -197,24 +200,27 @@ void FAircraftDebug::LogConstraintCreated(
 		Config.ConstraintAngularDampingRatio,
 		Config.ConstraintAngularExtraDamping);
 	UE_LOG(LogAircraft, Log,
-		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Valid=%d Broken=%d Simulating=%d RefPos=(%.1f,%.1f,%.1f) MotionLimits(H/Up/Down/Yaw)=(%.1f,%.1f,%.1f,%.1f) Deadbands(H/V/Y)=(%.3f,%.3f,%.3f) LinearDrive(P/V)=(%d%d%d/%d%d%d) LinearControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) LinearSpring(K/D/Limit)=(%.3f,%.3f,%.3f) AngularControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) AngularSpring(K/D/Limit)=(%.3f,%.3f,%.3f) AccelerationMode=%d"),
+		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Valid=%d Broken=%d Simulating=%d BodyFrameLocal=(%.1f,%.1f,%.1f) WorldFrame=(%.1f,%.1f,%.1f) InitialWorldTarget=(%.1f,%.1f,%.1f) MotionLimits(H/Up/Down/Yaw)=(%.1f,%.1f,%.1f,%.1f) Deadbands(H/V/Y)=(%.3f,%.3f,%.3f) LinearDrive(P/V)=(%d%d%d/%d%d%d) LinearControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) LinearSpring(K/D/Limit)=(%.3f,%.3f,%.3f) Body(Mass/LinearDamping/FeedForwardScale)=(%.3f,%.3f,%.3f) AngularControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) AngularSpring(K/D/Limit)=(%.3f,%.3f,%.3f) AccelerationMode=%d"),
 		*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(), *RootBone.ToString(),
-		Instance.IsValidConstraintInstance() ? 1 : 0, bBroken ? 1 : 0,
+		Constraint.IsValidConstraintInstance() ? 1 : 0, bBroken ? 1 : 0,
 		Component.IsSimulatingPhysics() ? 1 : 0,
-		ReferenceTransform.GetLocation().X, ReferenceTransform.GetLocation().Y, ReferenceTransform.GetLocation().Z,
+		BodyFrame.GetLocation().X, BodyFrame.GetLocation().Y, BodyFrame.GetLocation().Z,
+		WorldFrame.GetLocation().X, WorldFrame.GetLocation().Y, WorldFrame.GetLocation().Z,
+		InitialWorldTarget.X, InitialWorldTarget.Y, InitialWorldTarget.Z,
 		Config.MaxHorizontalSpeedCmPerSec, Config.MaxClimbRateCmPerSec,
 		Config.MaxDescentRateCmPerSec, Config.MaxYawRateDegreesPerSec,
 		Config.HorizontalHoldStickDeadband, Config.VerticalHoldStickDeadband,
 		Config.YawHoldStickDeadband,
-		Instance.IsLinearPositionDriveXEnabled() ? 1 : 0,
-		Instance.IsLinearPositionDriveYEnabled() ? 1 : 0,
-		Instance.IsLinearPositionDriveZEnabled() ? 1 : 0,
-		Instance.IsLinearVelocityDriveXEnabled() ? 1 : 0,
-		Instance.IsLinearVelocityDriveYEnabled() ? 1 : 0,
-		Instance.IsLinearVelocityDriveZEnabled() ? 1 : 0,
+		Constraint.IsLinearPositionDriveXEnabled() ? 1 : 0,
+		Constraint.IsLinearPositionDriveYEnabled() ? 1 : 0,
+		Constraint.IsLinearPositionDriveZEnabled() ? 1 : 0,
+		Constraint.IsLinearVelocityDriveXEnabled() ? 1 : 0,
+		Constraint.IsLinearVelocityDriveYEnabled() ? 1 : 0,
+		Constraint.IsLinearVelocityDriveZEnabled() ? 1 : 0,
 		Config.ConstraintLinearStrength, Config.ConstraintLinearDampingRatio,
 		Config.ConstraintLinearExtraDamping,
 		LinearStiffness, LinearDamping, Config.ConstraintLinearForceLimit,
+		BodyMassKg, BodyLinearDampingPerSecond, Config.LinearDampingFeedForwardScale,
 		Config.ConstraintAngularStrength, Config.ConstraintAngularDampingRatio,
 		Config.ConstraintAngularExtraDamping,
 		AngularStiffness, AngularDamping, Config.ConstraintAngularTorqueLimit,
@@ -234,15 +240,18 @@ void FAircraftDebug::LogConstraintCreationFailure(
 
 void FAircraftDebug::TickConstraint(
 	const UAircraftComponent& Component,
-	const UPhysicsConstraintComponent& Constraint,
+	FConstraintInstance& Constraint,
+	const FName RootBone,
 	const FAircraftPilotInput& PilotInput,
 	const FAircraftManualCommand& ManualCommand,
 	const FAircraftMotionTarget& Target,
-	const FTransform& ReferenceTransform,
-	const FVector& ConstraintPositionTarget,
-	const FVector& ConstraintVelocityTarget,
-	const FQuat& ConstraintOrientationTarget,
-	const FVector& ConstraintAngularVelocityTargetRevPerSec,
+	const FVector& WorldCenterOfMassTarget,
+	const FVector& WorldCenterOfMassVelocityTarget,
+	const FQuat& WorldOrientationTarget,
+	const FVector& WorldAngularVelocityTargetRevPerSec,
+	const TCHAR* const HorizontalMotionPhaseX,
+	const TCHAR* const HorizontalMotionPhaseY,
+	const FVector2D& HorizontalBrakeVelocityCmPerSec,
 	const float DeltaSeconds,
 	float& InOutLogAccumulatorSeconds,
 	float& InOutUnresponsiveSeconds)
@@ -250,12 +259,18 @@ void FAircraftDebug::TickConstraint(
 	const FVector BodyPosition = Component.GetComponentLocation();
 	const FVector BodyVelocity = Component.GetPhysicsLinearVelocity();
 	const FVector PositionError = Target.PositionCm - BodyPosition;
-	UPhysicsConstraintComponent* const MutableConstraint =
-		const_cast<UPhysicsConstraintComponent*>(&Constraint);
-	const bool bConstraintBroken = MutableConstraint->IsBroken();
+	const FVector BodyCenterOfMass = Component.GetCenterOfMass(RootBone);
+	const FBodyInstance* const BodyInstance = Component.GetBodyInstance(RootBone);
+	const FVector BodyConstraintLocation = BodyInstance
+		? BodyInstance->GetUnrealWorldTransform().TransformPosition(
+			Constraint.GetRefFrame(EConstraintFrame::Frame1).GetLocation())
+		: FVector::ZeroVector;
+	const FVector ConstraintArmFromCenterOfMass = BodyConstraintLocation - BodyCenterOfMass;
+	const bool bBodyAwake = BodyInstance && BodyInstance->IsInstanceAwake();
+	const bool bConstraintBroken = Constraint.IsBroken();
 	FVector ConstraintForce = FVector::ZeroVector;
 	FVector ConstraintTorque = FVector::ZeroVector;
-	MutableConstraint->GetConstraintForce(ConstraintForce, ConstraintTorque);
+	Constraint.GetConstraintForce(ConstraintForce, ConstraintTorque);
 	const bool bCommandedMotion = ManualCommand.DesiredVelocityCmPerSec.SizeSquared()
 		> FMath::Square(UE::AircraftLab::Debug::Private::MinimumCommandSpeedCmPerSec);
 	const bool bBodyResponding = BodyVelocity.SizeSquared()
@@ -266,15 +281,16 @@ void FAircraftDebug::TickConstraint(
 		if (InOutUnresponsiveSeconds >= UE::AircraftLab::Debug::Private::UnresponsiveWarningSeconds)
 		{
 			UE_LOG(LogAircraft, Warning,
-				TEXT("[Aircraft.Constraint.Unresponsive] Owner=%s LOD=%d CommandVel=(%+.1f,%+.1f,%+.1f) TargetError=(%+.1f,%+.1f,%+.1f) BodyVel=(%+.1f,%+.1f,%+.1f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) ConstraintValid=%d Broken=%d Simulating=%d"),
+				TEXT("[Aircraft.Constraint.Unresponsive] Owner=%s LOD=%d CommandVel=(%+.1f,%+.1f,%+.1f) TargetError=(%+.1f,%+.1f,%+.1f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) ConstraintValid=%d Broken=%d Simulating=%d"),
 				*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(),
 				ManualCommand.DesiredVelocityCmPerSec.X, ManualCommand.DesiredVelocityCmPerSec.Y,
 				ManualCommand.DesiredVelocityCmPerSec.Z,
 				PositionError.X, PositionError.Y, PositionError.Z,
+				bBodyAwake ? 1 : 0,
 				BodyVelocity.X, BodyVelocity.Y, BodyVelocity.Z,
 				ConstraintForce.X, ConstraintForce.Y, ConstraintForce.Z,
 				ConstraintTorque.X, ConstraintTorque.Y, ConstraintTorque.Z,
-				Constraint.ConstraintInstance.IsValidConstraintInstance() ? 1 : 0,
+				Constraint.IsValidConstraintInstance() ? 1 : 0,
 				bConstraintBroken ? 1 : 0,
 				Component.IsSimulatingPhysics() ? 1 : 0);
 			InOutUnresponsiveSeconds = 0.0f;
@@ -292,35 +308,39 @@ void FAircraftDebug::TickConstraint(
 		if (IntervalSeconds <= UE_SMALL_NUMBER || InOutLogAccumulatorSeconds + UE_SMALL_NUMBER >= IntervalSeconds)
 		{
 			InOutLogAccumulatorSeconds = 0.0f;
-			const FConstraintInstance& Instance = Constraint.ConstraintInstance;
 			UE_LOG(LogAircraft, Log,
-				TEXT("[Aircraft.Constraint.Tick] Owner=%s LOD=%d Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) ManualVel=(%+.1f,%+.1f,%+.1f) BodyPos=(%.1f,%.1f,%.1f) BodyVel=(%+.1f,%+.1f,%+.1f) WorldTargetPos=(%.1f,%.1f,%.1f) WorldTargetVel=(%+.1f,%+.1f,%+.1f) Error=(%+.1f,%+.1f,%+.1f) ConstraintTargetPos=(%+.1f,%+.1f,%+.1f) ConstraintTargetVel=(%+.1f,%+.1f,%+.1f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) ConstraintTargetQuat=(%+.3f,%+.3f,%+.3f,%+.3f) ConstraintTargetAngVel=(%+.3f,%+.3f,%+.3f) Drive(P/V)=(%d%d%d/%d%d%d) RefPos=(%.1f,%.1f,%.1f)"),
+				TEXT("[Aircraft.Constraint.Tick] Owner=%s LOD=%d Phase(X/Y)=(%s/%s) BrakeVel=(%+.1f,%+.1f) Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) ManualVel=(%+.1f,%+.1f,%+.1f) BodyPos=(%.1f,%.1f,%.1f) BodyCOM=(%.1f,%.1f,%.1f) ConstraintArm=(%+.2f,%+.2f,%+.2f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) WorldTargetPos=(%.1f,%.1f,%.1f) WorldTargetVel=(%+.1f,%+.1f,%+.1f) Error=(%+.1f,%+.1f,%+.1f) WorldTargetCOM=(%+.1f,%+.1f,%+.1f) WorldTargetCOMVel=(%+.1f,%+.1f,%+.1f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) WorldTargetQuat=(%+.3f,%+.3f,%+.3f,%+.3f) WorldTargetAngVel=(%+.3f,%+.3f,%+.3f) Drive(P/V)=(%d%d%d/%d%d%d)"),
 				*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(),
+				HorizontalMotionPhaseX, HorizontalMotionPhaseY,
+				HorizontalBrakeVelocityCmPerSec.X, HorizontalBrakeVelocityCmPerSec.Y,
 				PilotInput.Throttle, PilotInput.Roll, PilotInput.Pitch, PilotInput.Yaw,
 				ManualCommand.DesiredVelocityCmPerSec.X, ManualCommand.DesiredVelocityCmPerSec.Y,
 				ManualCommand.DesiredVelocityCmPerSec.Z,
 				BodyPosition.X, BodyPosition.Y, BodyPosition.Z,
+				BodyCenterOfMass.X, BodyCenterOfMass.Y, BodyCenterOfMass.Z,
+				ConstraintArmFromCenterOfMass.X, ConstraintArmFromCenterOfMass.Y,
+				ConstraintArmFromCenterOfMass.Z,
+				bBodyAwake ? 1 : 0,
 				BodyVelocity.X, BodyVelocity.Y, BodyVelocity.Z,
 				Target.PositionCm.X, Target.PositionCm.Y, Target.PositionCm.Z,
 				Target.VelocityCmPerSec.X, Target.VelocityCmPerSec.Y, Target.VelocityCmPerSec.Z,
 				PositionError.X, PositionError.Y, PositionError.Z,
-				ConstraintPositionTarget.X, ConstraintPositionTarget.Y, ConstraintPositionTarget.Z,
-				ConstraintVelocityTarget.X, ConstraintVelocityTarget.Y, ConstraintVelocityTarget.Z,
+				WorldCenterOfMassTarget.X, WorldCenterOfMassTarget.Y, WorldCenterOfMassTarget.Z,
+				WorldCenterOfMassVelocityTarget.X, WorldCenterOfMassVelocityTarget.Y,
+				WorldCenterOfMassVelocityTarget.Z,
 				ConstraintForce.X, ConstraintForce.Y, ConstraintForce.Z,
 				ConstraintTorque.X, ConstraintTorque.Y, ConstraintTorque.Z,
-				ConstraintOrientationTarget.X, ConstraintOrientationTarget.Y,
-				ConstraintOrientationTarget.Z, ConstraintOrientationTarget.W,
-				ConstraintAngularVelocityTargetRevPerSec.X,
-				ConstraintAngularVelocityTargetRevPerSec.Y,
-				ConstraintAngularVelocityTargetRevPerSec.Z,
-				Instance.IsLinearPositionDriveXEnabled() ? 1 : 0,
-				Instance.IsLinearPositionDriveYEnabled() ? 1 : 0,
-				Instance.IsLinearPositionDriveZEnabled() ? 1 : 0,
-				Instance.IsLinearVelocityDriveXEnabled() ? 1 : 0,
-				Instance.IsLinearVelocityDriveYEnabled() ? 1 : 0,
-				Instance.IsLinearVelocityDriveZEnabled() ? 1 : 0,
-				ReferenceTransform.GetLocation().X, ReferenceTransform.GetLocation().Y,
-				ReferenceTransform.GetLocation().Z);
+				WorldOrientationTarget.X, WorldOrientationTarget.Y,
+				WorldOrientationTarget.Z, WorldOrientationTarget.W,
+				WorldAngularVelocityTargetRevPerSec.X,
+				WorldAngularVelocityTargetRevPerSec.Y,
+				WorldAngularVelocityTargetRevPerSec.Z,
+				Constraint.IsLinearPositionDriveXEnabled() ? 1 : 0,
+				Constraint.IsLinearPositionDriveYEnabled() ? 1 : 0,
+				Constraint.IsLinearPositionDriveZEnabled() ? 1 : 0,
+				Constraint.IsLinearVelocityDriveXEnabled() ? 1 : 0,
+				Constraint.IsLinearVelocityDriveYEnabled() ? 1 : 0,
+				Constraint.IsLinearVelocityDriveZEnabled() ? 1 : 0);
 		}
 	}
 

@@ -4,6 +4,7 @@
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
+#include "AircraftAsset/AircraftSimulationGraph.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -51,6 +52,10 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	const FAircraftSimulationLodModel* const ProjectSettingsLOD = ProjectSettingsModel.GetLodModel(0);
 	TestNotNull(TEXT("A collection compiles one LOD model"), ProjectSettingsLOD);
 	const FAircraftFlightControllerRuntimeConfig RuntimeDefaults;
+	TestTrue(TEXT("Constraint strength is interpreted as frequency in Hz"),
+		FMath::IsNearlyEqual(
+			UE::AircraftLab::ConstraintDrive::StrengthToAngularFrequency(2.0),
+			2.0 * UE_DOUBLE_TWO_PI, 1.e-6));
 	float ConstraintStiffness = 0.0f;
 	float ConstraintDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
@@ -62,6 +67,23 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 		FMath::IsNearlyEqual(ConstraintStiffness, 100.0f, 1.e-3f));
 	TestTrue(TEXT("Default constraint damping ratio converts to the previous damping"),
 		FMath::IsNearlyEqual(ConstraintDamping, 20.0f, 1.e-3f));
+	const double VelocityTrackingTarget =
+		UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
+			100.0, 200.0, 800.0, 2.0);
+	TestTrue(TEXT("Constraint position lead is derived from current velocity error"),
+		FMath::IsNearlyEqual(
+			VelocityTrackingTarget,
+			100.0 + 600.0 / (2.0 * UE_DOUBLE_TWO_PI), 1.e-6));
+	TestTrue(TEXT("Constraint position lead vanishes at the requested velocity"),
+		FMath::IsNearlyEqual(
+			UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
+				100.0, 800.0, 800.0, 2.0),
+			100.0, 1.e-6));
+	TestTrue(TEXT("Zero constraint strength keeps the position target finite"),
+		FMath::IsNearlyEqual(
+			UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
+				100.0, 200.0, 800.0, 0.0),
+			100.0, 1.e-6));
 	TestEqual(TEXT("Schema defaults preserve horizontal manual-flight speed"),
 		ProjectSettingsLOD->FlightController.MaxHorizontalSpeedCmPerSec,
 		RuntimeDefaults.MaxHorizontalSpeedCmPerSec);
@@ -257,6 +279,21 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	TestFalse(TEXT("Vertical-velocity anti-windup configuration compiles"), Config.GetVerticalVelocityPidGains().bFreezeIntegralWhenSaturated);
 	TestFalse(TEXT("Controller execution default compiles"), Config.bControllerEnabledByDefault);
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftProgrammaticSimulationGraphLifetimeTest,
+	"AircraftLab.Dataflow.Runtime.ProgrammaticSimulationGraphLifetime",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftProgrammaticSimulationGraphLifetimeTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	UDataflow* const SimulationGraph =
+		UE::AircraftLab::AircraftAsset::GetOrCreateAircraftSimulationGraph();
+	TestNotNull(TEXT("Programmatic simulation graph is created and kept alive until pre-exit"),
+		SimulationGraph);
+	return SimulationGraph != nullptr;
 }
 
 #endif

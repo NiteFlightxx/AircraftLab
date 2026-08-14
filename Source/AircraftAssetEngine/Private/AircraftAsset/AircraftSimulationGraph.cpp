@@ -107,13 +107,23 @@ namespace UE::AircraftLab::AircraftAsset
 	{
 		check(IsInGameThread());
 
-		if (Private::AircraftSimulationGraph)
+		UDataflow* const SimulationGraph = Private::AircraftSimulationGraph;
+		Private::AircraftSimulationGraph = nullptr;
+		if (!SimulationGraph)
 		{
-			UE_LOG(LogAircraft, Display,
-				TEXT("[AircraftDF.Graph.Release] Graph=%s Rooted=0"),
-				*GetNameSafe(Private::AircraftSimulationGraph));
-			Private::AircraftSimulationGraph->RemoveFromRoot();
-			Private::AircraftSimulationGraph = nullptr;
+			return;
 		}
+
+		// CoreUObject 的 OnExit 回调早于模块 ShutdownModule。若异常退出路径没有触发
+		// OnPreExit，静态指针可能仍非空但其 UObject 已被销毁，此时禁止任何解引用。
+		if (!UObjectInitialized())
+		{
+			return;
+		}
+
+		UE_LOG(LogAircraft, Display,
+			TEXT("[AircraftDF.Graph.Release] Graph=%s Rooted=0"),
+			*GetNameSafe(SimulationGraph));
+		SimulationGraph->RemoveFromRoot();
 	}
 }

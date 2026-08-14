@@ -7,7 +7,7 @@
 #include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
 class UAircraftComponent;
-class UPhysicsConstraintComponent;
+struct FConstraintInstance;
 struct FAircraftFlightControllerRuntimeConfig;
 struct FAircraftManualCommand;
 struct FAircraftPilotInput;
@@ -34,10 +34,9 @@ struct AIRCRAFTASSETENGINE_API FAircraftDebug
 
 	static void LogConstraintCreated(
 		const UAircraftComponent& Component,
-		const UPhysicsConstraintComponent& Constraint,
+		FConstraintInstance& Constraint,
 		FName RootBone,
-		const FAircraftFlightControllerRuntimeConfig& Config,
-		const FTransform& ReferenceTransform);
+		const FAircraftFlightControllerRuntimeConfig& Config);
 
 	static void LogConstraintCreationFailure(
 		const UAircraftComponent& Component,
@@ -46,15 +45,18 @@ struct AIRCRAFTASSETENGINE_API FAircraftDebug
 
 	static void TickConstraint(
 		const UAircraftComponent& Component,
-		const UPhysicsConstraintComponent& Constraint,
+		FConstraintInstance& Constraint,
+		FName RootBone,
 		const FAircraftPilotInput& PilotInput,
 		const FAircraftManualCommand& ManualCommand,
 		const FAircraftMotionTarget& Target,
-		const FTransform& ReferenceTransform,
-		const FVector& ConstraintPositionTarget,
-		const FVector& ConstraintVelocityTarget,
-		const FQuat& ConstraintOrientationTarget,
-		const FVector& ConstraintAngularVelocityTargetRevPerSec,
+		const FVector& WorldCenterOfMassTarget,
+		const FVector& WorldCenterOfMassVelocityTarget,
+		const FQuat& WorldOrientationTarget,
+		const FVector& WorldAngularVelocityTargetRevPerSec,
+		const TCHAR* HorizontalMotionPhaseX,
+		const TCHAR* HorizontalMotionPhaseY,
+		const FVector2D& HorizontalBrakeVelocityCmPerSec,
 		float DeltaSeconds,
 		float& InOutLogAccumulatorSeconds,
 		float& InOutUnresponsiveSeconds);
