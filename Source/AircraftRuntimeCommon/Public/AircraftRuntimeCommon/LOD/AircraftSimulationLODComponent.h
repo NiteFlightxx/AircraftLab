@@ -29,9 +29,22 @@ struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODRuntimeSettingsLite
 	float MaxDistanceCm = 6000.0f;
 	bool bRunSlowLogic = true;
 	float SlowLogicIntervalSeconds = 0.0f;
-	float SuggestedNetUpdateFrequency = 30.0f;
-	bool bEnableNetworkDormancy = false;
 	bool bAllowDebugDraw = false;
+};
+
+/** Gameplay 网络策略。数组下标与资产 LOD 下标一一对应，但不参与资产编译。 */
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODNetworkSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation|Networking", meta = (
+		DisplayName = "网络更新频率", ClampMin = "1.0", Units = "Hz"))
+	float NetUpdateFrequency = 30.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation|Networking", meta = (
+		DisplayName = "启用网络休眠"))
+	bool bEnableDormancy = false;
 };
 
 UCLASS(ClassGroup = (Aircraft), meta = (BlueprintSpawnableComponent))
@@ -127,14 +140,27 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
 	float DamageKeepAliveSeconds = 5.0f;
 
+	/** 客户端仅消费服务器复制的 LOD 与刚体状态，不在本地执行飞控或位置驱动。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation|Networking", meta = (
+		DisplayName = "仅服务器执行权威模拟"))
+	bool bAuthoritySimulationOnly = true;
+
+	/** 模拟代理保留物理刚体，交由 UE 物理复制执行预测插值。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation|Networking", meta = (
+		DisplayName = "客户端代理启用物理复制"))
+	bool bClientProxyUsesDefaultPhysicsReplication = true;
+
+	/** 每个 LOD 的 Actor 复制频率与休眠策略；数组下标对应资产 LOD 下标。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation|Networking", meta = (
+		DisplayName = "各 LOD 网络设置"))
+	TArray<FAircraftSimulationLODNetworkSettings> NetworkSettingsPerLOD;
+
 protected:
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation")
 	FAircraftSimulationImportance Importance;
 
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentLODIndex)
 	int32 CurrentLODIndex = 0;
-
-public:
 
 private:
 	bool bManualDriveModeOverrideActive = false;
@@ -156,5 +182,6 @@ private:
 
 	void RefreshConsumerCache();
 	void RefreshConsumers();
+	FAircraftSimulationLODNetworkSettings GetNetworkSettings(int32 LODIndex) const;
 	FAircraftSimulationDriveOverride ResolveDriveOverride() const;
 };

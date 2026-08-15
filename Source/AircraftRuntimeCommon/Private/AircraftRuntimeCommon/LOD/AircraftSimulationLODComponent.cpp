@@ -16,6 +16,13 @@ UAircraftSimulationLODComponent::UAircraftSimulationLODComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
+
+	NetworkSettingsPerLOD.SetNum(4);
+	NetworkSettingsPerLOD[0].NetUpdateFrequency = 30.0f;
+	NetworkSettingsPerLOD[1].NetUpdateFrequency = 15.0f;
+	NetworkSettingsPerLOD[2].NetUpdateFrequency = 8.0f;
+	NetworkSettingsPerLOD[3].NetUpdateFrequency = 2.0f;
+	NetworkSettingsPerLOD[3].bEnableDormancy = true;
 }
 
 void UAircraftSimulationLODComponent::BeginPlay()
@@ -101,8 +108,6 @@ bool UAircraftSimulationLODComponent::GetLODSettings(TArray<FAircraftSimulationL
 		Lite.MaxDistanceCm = Settings.MaxDistanceCm;
 		Lite.bRunSlowLogic = Settings.bRunSlowLogic;
 		Lite.SlowLogicIntervalSeconds = Settings.SlowLogicIntervalSeconds;
-		Lite.SuggestedNetUpdateFrequency = Settings.SuggestedNetUpdateFrequency;
-		Lite.bEnableNetworkDormancy = Settings.bEnableNetworkDormancy;
 		Lite.bAllowDebugDraw = Settings.bAllowDebugDraw;
 		OutSettings.Add(Lite);
 	}
@@ -111,11 +116,7 @@ bool UAircraftSimulationLODComponent::GetLODSettings(TArray<FAircraftSimulationL
 
 bool UAircraftSimulationLODComponent::IsAuthoritySimulationOnly() const
 {
-	const UAircraftComponent* const Aircraft = AircraftComponent.IsValid()
-		? AircraftComponent.Get()
-		: (GetOwner() ? GetOwner()->FindComponentByClass<UAircraftComponent>() : nullptr);
-	const FAircraftSimulationModel* const Model = Aircraft ? Aircraft->GetSimulationModel() : nullptr;
-	return !Model || Model->SimulationLOD.bAuthoritySimulationOnly;
+	return bAuthoritySimulationOnly;
 }
 
 void UAircraftSimulationLODComponent::SetSimulationImportance(const FAircraftSimulationImportance& NewImportance)
@@ -287,11 +288,12 @@ void UAircraftSimulationLODComponent::ApplyLODFromSubsystem(int32 NewLODIndex, f
 	RefreshConsumers();
 	if (AActor* const Owner = GetOwner(); Owner && Owner->HasAuthority())
 	{
-		const FAircraftSimulationLODRuntimeSettingsLite& Entry = Settings[CurrentLODIndex];
-		const float NetFrequency = FMath::Max(Entry.SuggestedNetUpdateFrequency, 1.0f);
+		const FAircraftSimulationLODNetworkSettings NetworkSettings =
+			GetNetworkSettings(CurrentLODIndex);
+		const float NetFrequency = FMath::Max(NetworkSettings.NetUpdateFrequency, 1.0f);
 		Owner->SetNetUpdateFrequency(NetFrequency);
 		Owner->SetMinNetUpdateFrequency(FMath::Min(NetFrequency, 2.0f));
-		if (Entry.bEnableNetworkDormancy)
+		if (NetworkSettings.bEnableDormancy)
 		{
 			if (!bHasSavedNetDormancy)
 			{
@@ -348,17 +350,22 @@ void UAircraftSimulationLODComponent::RefreshAircraftSimulationDrive_Implementat
 		return;
 	}
 
-	// 构建预算并推送给 Owner 上所有 LOD 消费者
-	const UAircraftComponent* const Aircraft = AircraftComponent.IsValid()
-		? AircraftComponent.Get()
-		: (GetOwner() ? GetOwner()->FindComponentByClass<UAircraftComponent>() : nullptr);
-	const FAircraftSimulationModel* const Model = Aircraft ? Aircraft->GetSimulationModel() : nullptr;
-	if (!Model)
-	{
-		return;
-	}
-	const FAircraftSimulationBudget Budget =
-		Model->SimulationLOD.BuildBudget(CurrentLODIndex, bNetworkProxyBudget);
+	const FAircraftSimulationLODRuntimeSettingsLite& Entry = Settings[CurrentLODIndex];
+	const bool bPhysicalDrive =
+		Entry.DriveMode == EAircraftSimulationDriveMode::FlightController
+		|| Entry.DriveMode == EAircraftSimulationDriveMode::PhysicsConstraint;
+	FAircraftSimulationBudget Budget;
+	Budget.LODIndex = CurrentLODIndex;
+	Budget.bIsNetworkProxy = bNetworkProxyBudget;
+	Budget.DriveMode = bNetworkProxyBudget
+		? EAircraftSimulationDriveMode::None : Entry.DriveMode;
+	Budget.bEnablePhysics = bNetworkProxyBudget
+		? bClientProxyUsesDefaultPhysicsReplication && bPhysicalDrive
+		: bPhysicalDrive;
+	Budget.bRunSlowLogic = !bNetworkProxyBudget && Entry.bRunSlowLogic;
+	Budget.SlowLogicIntervalSeconds = Entry.SlowLogicIntervalSeconds;
+	Budget.CollisionMode = Entry.CollisionMode;
+	Budget.bAllowDebugDraw = Entry.bAllowDebugDraw;
 
 	for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
 	{
@@ -367,4 +374,12 @@ void UAircraftSimulationLODComponent::RefreshAircraftSimulationDrive_Implementat
 			IAircraftSimulationLODConsumer::Execute_ApplyAircraftSimulationBudget(Component, Budget);
 		}
 	}
+}
+
+FAircraftSimulationLODNetworkSettings UAircraftSimulationLODComponent::GetNetworkSettings(
+	int32 LODIndex) const
+{
+	return NetworkSettingsPerLOD.IsValidIndex(LODIndex)
+		? NetworkSettingsPerLOD[LODIndex]
+		: FAircraftSimulationLODNetworkSettings{};
 }

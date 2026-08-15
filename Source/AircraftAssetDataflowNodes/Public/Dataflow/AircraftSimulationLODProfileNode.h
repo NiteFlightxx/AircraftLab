@@ -38,8 +38,6 @@ struct FAircraftSimulationLODProfileData
 	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "0.0")) float MaxDistanceCm = 6000.0f;
 	UPROPERTY(EditAnywhere, Category = "LOD") bool bRunSlowLogic = true;
 	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "0.0")) float SlowLogicIntervalSeconds = 0.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "1.0")) float SuggestedNetUpdateFrequency = 30.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD") bool bEnableNetworkDormancy = false;
 	UPROPERTY(EditAnywhere, Category = "LOD") bool bAllowDebugDraw = false;
 };
 

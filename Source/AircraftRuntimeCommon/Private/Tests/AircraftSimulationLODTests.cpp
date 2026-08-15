@@ -73,6 +73,21 @@ bool FAircraftNetworkReplicationContractTest::RunTest(const FString& Parameters)
 		GetDefault<UAircraftSimulationLODComponent>();
 	TestTrue(TEXT("Simulation LOD component replicates by default"),
 		Component->GetIsReplicated());
+	TestTrue(TEXT("Authority-only simulation is owned by the component"),
+		Component->bAuthoritySimulationOnly);
+	TestTrue(TEXT("Client physics replication is owned by the component"),
+		Component->bClientProxyUsesDefaultPhysicsReplication);
+	TestEqual(TEXT("Component supplies one network policy for each default LOD"),
+		Component->NetworkSettingsPerLOD.Num(), 4);
+	if (Component->NetworkSettingsPerLOD.Num() == 4)
+	{
+		TestEqual(TEXT("LOD0 network frequency defaults to 30 Hz"),
+			Component->NetworkSettingsPerLOD[0].NetUpdateFrequency, 30.0f);
+		TestEqual(TEXT("LOD3 network frequency defaults to 2 Hz"),
+			Component->NetworkSettingsPerLOD[3].NetUpdateFrequency, 2.0f);
+		TestTrue(TEXT("LOD3 enables dormancy by default"),
+			Component->NetworkSettingsPerLOD[3].bEnableDormancy);
+	}
 	const FProperty* const LODProperty = FindFProperty<FProperty>(
 		UAircraftSimulationLODComponent::StaticClass(), TEXT("CurrentLODIndex"));
 	TestNotNull(TEXT("Current LOD property exists"), LODProperty);

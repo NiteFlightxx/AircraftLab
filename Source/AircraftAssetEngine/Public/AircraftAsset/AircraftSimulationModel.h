@@ -33,21 +33,13 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODRuntimeSettings
 	float MaxDistanceCm = 6000.0f;
 	bool bRunSlowLogic = true;
 	float SlowLogicIntervalSeconds = 0.0f;
-	float SuggestedNetUpdateFrequency = 30.0f;
-	bool bEnableNetworkDormancy = false;
 	bool bAllowDebugDraw = false;
 };
 
 /** Dataflow 编译后的模拟 LOD Profile。 */
 struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODProfileRuntimeConfig
 {
-	/** 飞行模拟只在服务器权威执行；客户端只消费复制结果。 */
-	bool bAuthoritySimulationOnly = true;
-	/** 模拟代理保留 Chaos 刚体，由 UE 物理复制执行预测插值。 */
-	bool bClientProxyUsesDefaultPhysicsReplication = true;
 	TArray<FAircraftSimulationLODRuntimeSettings> LODs;
-
-	FAircraftSimulationBudget BuildBudget(int32 LODIndex, bool bNetworkProxy = false) const;
 };
 
 /**

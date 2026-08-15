@@ -21,13 +21,6 @@ public:
 	UPROPERTY()
 	TArray<FManagedArrayCollection> CollectionLods;
 
-	/** LOD 列表级网络策略；只在 Terminal 配置一次，避免每个 LOD 重复声明。 */
-	UPROPERTY(EditAnywhere, Category = "Networking", meta = (DisplayName = "仅服务器执行权威模拟"))
-	bool bAuthoritySimulationOnly = true;
-
-	UPROPERTY(EditAnywhere, Category = "Networking", meta = (DisplayName = "客户端代理启用物理复制"))
-	bool bClientProxyUsesDefaultPhysicsReplication = true;
-
 	//~ Begin FDataflowNode interface
 	virtual void SetAssetValue(TObjectPtr<UObject> Asset, UE::Dataflow::FContext& Context) const override;
 	virtual void Evaluate(UE::Dataflow::FContext& Context) const override {}

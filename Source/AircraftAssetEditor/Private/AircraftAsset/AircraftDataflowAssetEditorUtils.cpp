@@ -331,16 +331,14 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				float MaxDistanceCm;
 				bool bRunSlowLogic;
 				float SlowLogicIntervalSeconds;
-				float SuggestedNetUpdateFrequency;
-				bool bEnableNetworkDormancy;
 				bool bAllowDebugDraw;
 			};
 			const FDefaultLodEntry DefaultLods[] =
 			{
-				{ TEXT("LOD0"), EAircraftProfileDriveMode::FlightController, EAircraftProfileCollisionMode::QueryAndPhysics, 6000.0f, true, 0.0f, 30.0f, false, false },
-				{ TEXT("LOD1"), EAircraftProfileDriveMode::PhysicsConstraint, EAircraftProfileCollisionMode::QueryAndPhysics, 15000.0f, true, 0.05f, 15.0f, false, false },
-				{ TEXT("LOD2"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::QueryOnly, 50000.0f, true, 0.10f, 8.0f, false, false },
-				{ TEXT("LOD3"), EAircraftProfileDriveMode::None, EAircraftProfileCollisionMode::Disabled, 0.0f, false, 0.0f, 2.0f, true, false },
+				{ TEXT("LOD0"), EAircraftProfileDriveMode::FlightController, EAircraftProfileCollisionMode::QueryAndPhysics, 6000.0f, true, 0.0f, false },
+				{ TEXT("LOD1"), EAircraftProfileDriveMode::PhysicsConstraint, EAircraftProfileCollisionMode::QueryAndPhysics, 15000.0f, true, 0.05f, false },
+				{ TEXT("LOD2"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::QueryOnly, 50000.0f, true, 0.10f, false },
+				{ TEXT("LOD3"), EAircraftProfileDriveMode::None, EAircraftProfileCollisionMode::Disabled, 0.0f, false, 0.0f, false },
 			};
 			TArray<FCreatedTemplateNode> SimulationLODNodes;
 			SimulationLODNodes.Reserve(UE_ARRAY_COUNT(DefaultLods));
@@ -359,8 +357,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 						Node.Profile.MaxDistanceCm = EntryCopy.MaxDistanceCm;
 						Node.Profile.bRunSlowLogic = EntryCopy.bRunSlowLogic;
 						Node.Profile.SlowLogicIntervalSeconds = EntryCopy.SlowLogicIntervalSeconds;
-						Node.Profile.SuggestedNetUpdateFrequency = EntryCopy.SuggestedNetUpdateFrequency;
-						Node.Profile.bEnableNetworkDormancy = EntryCopy.bEnableNetworkDormancy;
 						Node.Profile.bAllowDebugDraw = EntryCopy.bAllowDebugDraw;
 					}));
 			}
