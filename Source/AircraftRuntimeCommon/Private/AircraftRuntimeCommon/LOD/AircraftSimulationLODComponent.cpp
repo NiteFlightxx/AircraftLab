@@ -4,6 +4,7 @@
 
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "Net/UnrealNetwork.h"
 
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
@@ -14,17 +15,34 @@
 UAircraftSimulationLODComponent::UAircraftSimulationLODComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+	SetIsReplicatedByDefault(true);
 }
 
 void UAircraftSimulationLODComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	RefreshConsumerCache();
+	TArray<FAircraftSimulationLODRuntimeSettingsLite> Settings;
+	bHasAppliedBudget = false;
+	if (GetLODSettings(Settings) && !Settings.IsEmpty())
+	{
+		CurrentLODIndex = FMath::Clamp(CurrentLODIndex, 0, Settings.Num() - 1);
+		ApplyLODFromSubsystem(
+			CurrentLODIndex,
+			GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+	}
 	if (UAircraftSimulationWorldSubsystem* const Subsystem =
 		GetWorld() ? GetWorld()->GetSubsystem<UAircraftSimulationWorldSubsystem>() : nullptr)
 	{
 		Subsystem->RegisterAircraft(this);
 	}
+}
+
+void UAircraftSimulationLODComponent::GetLifetimeReplicatedProps(
+	TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(UAircraftSimulationLODComponent, CurrentLODIndex);
 }
 
 void UAircraftSimulationLODComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -89,6 +107,15 @@ bool UAircraftSimulationLODComponent::GetLODSettings(TArray<FAircraftSimulationL
 		OutSettings.Add(Lite);
 	}
 	return OutSettings.Num() > 0;
+}
+
+bool UAircraftSimulationLODComponent::IsAuthoritySimulationOnly() const
+{
+	const UAircraftComponent* const Aircraft = AircraftComponent.IsValid()
+		? AircraftComponent.Get()
+		: (GetOwner() ? GetOwner()->FindComponentByClass<UAircraftComponent>() : nullptr);
+	const FAircraftSimulationModel* const Model = Aircraft ? Aircraft->GetSimulationModel() : nullptr;
+	return !Model || Model->SimulationLOD.bAuthoritySimulationOnly;
 }
 
 void UAircraftSimulationLODComponent::SetSimulationImportance(const FAircraftSimulationImportance& NewImportance)
@@ -238,7 +265,11 @@ void UAircraftSimulationLODComponent::ApplyLODFromSubsystem(int32 NewLODIndex, f
 		return;
 	}
 	NewLODIndex = FMath::Clamp(NewLODIndex, 0, Settings.Num() - 1);
-	if (NewLODIndex == CurrentLODIndex && bHasAppliedBudget)
+	const AActor* const OwnerActor = GetOwner();
+	const bool bNetworkProxy = OwnerActor && !OwnerActor->HasAuthority()
+		&& IsAuthoritySimulationOnly();
+	if (NewLODIndex == CurrentLODIndex && bHasAppliedBudget
+		&& bNetworkProxyBudget == bNetworkProxy)
 	{
 		return;
 	}
@@ -246,6 +277,7 @@ void UAircraftSimulationLODComponent::ApplyLODFromSubsystem(int32 NewLODIndex, f
 	const int32 PreviousLODIndex = CurrentLODIndex;
 	const bool bLodChanged = NewLODIndex != CurrentLODIndex;
 	CurrentLODIndex = NewLODIndex;
+	bNetworkProxyBudget = bNetworkProxy;
 	if (bLodChanged)
 	{
 		LastLODChangeWorldTime = WorldTimeSeconds;
@@ -253,10 +285,53 @@ void UAircraftSimulationLODComponent::ApplyLODFromSubsystem(int32 NewLODIndex, f
 	bHasAppliedBudget = true;
 
 	RefreshConsumers();
+	if (AActor* const Owner = GetOwner(); Owner && Owner->HasAuthority())
+	{
+		const FAircraftSimulationLODRuntimeSettingsLite& Entry = Settings[CurrentLODIndex];
+		const float NetFrequency = FMath::Max(Entry.SuggestedNetUpdateFrequency, 1.0f);
+		Owner->SetNetUpdateFrequency(NetFrequency);
+		Owner->SetMinNetUpdateFrequency(FMath::Min(NetFrequency, 2.0f));
+		if (Entry.bEnableNetworkDormancy)
+		{
+			if (!bHasSavedNetDormancy)
+			{
+				SavedNetDormancy = Owner->NetDormancy;
+				bHasSavedNetDormancy = true;
+			}
+			Owner->SetNetDormancy(DORM_DormantAll);
+			Owner->ForceNetUpdate();
+		}
+		else
+		{
+			Owner->FlushNetDormancy();
+			if (bHasSavedNetDormancy)
+			{
+				Owner->SetNetDormancy(SavedNetDormancy);
+				bHasSavedNetDormancy = false;
+			}
+			Owner->ForceNetUpdate();
+		}
+	}
 	if (bLodChanged)
 	{
 		OnLODSelectionChanged.Broadcast(PreviousLODIndex, CurrentLODIndex);
 	}
+}
+
+void UAircraftSimulationLODComponent::OnRep_CurrentLODIndex(int32 PreviousLODIndex)
+{
+	const int32 ReplicatedLODIndex = CurrentLODIndex;
+	TArray<FAircraftSimulationLODRuntimeSettingsLite> Settings;
+	if (!GetLODSettings(Settings) || Settings.IsEmpty())
+	{
+		bHasAppliedBudget = false;
+		return;
+	}
+	CurrentLODIndex = PreviousLODIndex;
+	bHasAppliedBudget = false;
+	ApplyLODFromSubsystem(
+		ReplicatedLODIndex,
+		GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
 }
 
 void UAircraftSimulationLODComponent::RefreshConsumers()
@@ -274,22 +349,16 @@ void UAircraftSimulationLODComponent::RefreshAircraftSimulationDrive_Implementat
 	}
 
 	// 构建预算并推送给 Owner 上所有 LOD 消费者
-	const FAircraftSimulationLODRuntimeSettingsLite& Entry = Settings[CurrentLODIndex];
-	FAircraftSimulationBudget Budget;
-	Budget.LODIndex = CurrentLODIndex;
-	Budget.DriveMode = Entry.DriveMode;
-	Budget.bRunSlowLogic = Entry.bRunSlowLogic;
-	const AActor* const OwnerActor = GetOwner();
-	Budget.bIsNetworkProxy = OwnerActor && GetWorld() && GetWorld()->GetNetMode() == NM_Client
-		&& OwnerActor->GetLocalRole() == ROLE_SimulatedProxy;
-	Budget.bEnablePhysics = !Budget.bIsNetworkProxy
-		&& (Entry.DriveMode == EAircraftSimulationDriveMode::FlightController
-			|| Entry.DriveMode == EAircraftSimulationDriveMode::PhysicsConstraint);
-	Budget.SlowLogicIntervalSeconds = Entry.SlowLogicIntervalSeconds;
-	Budget.SuggestedNetUpdateFrequency = Entry.SuggestedNetUpdateFrequency;
-	Budget.CollisionMode = Entry.CollisionMode;
-	Budget.bEnableNetworkDormancy = Entry.bEnableNetworkDormancy;
-	Budget.bAllowDebugDraw = Entry.bAllowDebugDraw;
+	const UAircraftComponent* const Aircraft = AircraftComponent.IsValid()
+		? AircraftComponent.Get()
+		: (GetOwner() ? GetOwner()->FindComponentByClass<UAircraftComponent>() : nullptr);
+	const FAircraftSimulationModel* const Model = Aircraft ? Aircraft->GetSimulationModel() : nullptr;
+	if (!Model)
+	{
+		return;
+	}
+	const FAircraftSimulationBudget Budget =
+		Model->SimulationLOD.BuildBudget(CurrentLODIndex, bNetworkProxyBudget);
 
 	for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
 	{

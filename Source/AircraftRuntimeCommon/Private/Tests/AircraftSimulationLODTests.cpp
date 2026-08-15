@@ -1,7 +1,9 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/AutomationTest.h"
+#include "UObject/UnrealType.h"
 
+#include "AircraftRuntimeCommon/AircraftPawn.h"
 #include "AircraftRuntimeCommon/LOD/AircraftSimulationLODComponent.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
@@ -53,6 +55,34 @@ bool FAircraftMotionTargetModeTest::RunTest(const FString& Parameters)
 	Target.Mode = EAircraftMotionTargetMode::ConstrainedTrajectory;
 	TestEqual(TEXT("Fully constrained trajectories have a distinct target semantic"),
 		Target.Mode, EAircraftMotionTargetMode::ConstrainedTrajectory);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNetworkReplicationContractTest,
+	"AircraftLab.SimulationLOD.NetworkReplicationContract",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNetworkReplicationContractTest::RunTest(const FString& Parameters)
+{
+	const AAircraftPawn* const Pawn = GetDefault<AAircraftPawn>();
+	TestTrue(TEXT("Aircraft pawn replicates"), Pawn->GetIsReplicated());
+	TestTrue(TEXT("Aircraft pawn replicates movement"), Pawn->IsReplicatingMovement());
+
+	const UAircraftSimulationLODComponent* const Component =
+		GetDefault<UAircraftSimulationLODComponent>();
+	TestTrue(TEXT("Simulation LOD component replicates by default"),
+		Component->GetIsReplicated());
+	const FProperty* const LODProperty = FindFProperty<FProperty>(
+		UAircraftSimulationLODComponent::StaticClass(), TEXT("CurrentLODIndex"));
+	TestNotNull(TEXT("Current LOD property exists"), LODProperty);
+	if (LODProperty)
+	{
+		TestTrue(TEXT("Current LOD is a replicated property"),
+			LODProperty->HasAnyPropertyFlags(CPF_Net));
+		TestEqual(TEXT("Current LOD uses the network-proxy apply callback"),
+			LODProperty->RepNotifyFunc, FName(TEXT("OnRep_CurrentLODIndex")));
+	}
 	return true;
 }
 

@@ -10,6 +10,9 @@
 
 AAircraftPawn::AAircraftPawn()
 {
+	bReplicates = true;
+	SetReplicateMovement(true);
+
 	// 机身 = UAircraftComponent（骨骼网格 + 物理 + 飞控一体），作为根组件。
 	Aircraft = CreateDefaultSubobject<UAircraftComponent>(TEXT("Aircraft"));
 	SetRootComponent(Aircraft);
@@ -21,12 +24,20 @@ AAircraftPawn::AAircraftPawn()
 	AutopilotComponent = CreateDefaultSubobject<UAutopilotComponent>(TEXT("AutopilotComponent"));
 	SimulationLOD = CreateDefaultSubobject<UAircraftSimulationLODComponent>(TEXT("SimulationLOD"));
 
-	SetReplicatingMovement(true);
 }
 
 void AAircraftPawn::BeginPlay()
 {
 	Super::BeginPlay();
+	if (GetNetMode() != NM_Standalone
+		&& (HasAuthority() || GetLocalRole() == ROLE_SimulatedProxy))
+	{
+		SetPhysicsReplicationMode(EPhysicsReplicationMode::PredictiveInterpolation);
+	}
+	if (Aircraft)
+	{
+		Aircraft->WakeAllRigidBodies();
+	}
 
 	// Autopilot ↔ 飞控双向接线（经契约层）。
 	if (Aircraft && AutopilotComponent)
@@ -56,7 +67,7 @@ void AAircraftPawn::PawnClientRestart()
 void AAircraftPawn::OnRep_Controller()
 {
 	Super::OnRep_Controller();
-	if (AircraftInput)
+	if (AircraftInput && IsLocallyControlled())
 	{
 		AircraftInput->ApplyMappingContext();
 	}

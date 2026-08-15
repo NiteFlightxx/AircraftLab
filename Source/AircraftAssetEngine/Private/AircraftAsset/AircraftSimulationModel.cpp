@@ -366,10 +366,60 @@ FAircraftSimulationModel::FAircraftSimulationModel(
 	AircraftName = InAircraftName;
 	LodModels.SetNum(InAircraftCollections.Num());
 	SimulationLOD.LODs.SetNum(InAircraftCollections.Num());
+	if (!InAircraftCollections.IsEmpty())
+	{
+		const UE::AircraftLab::AircraftAsset::FCollectionAircraftPropertyConstFacade Properties(
+			InAircraftCollections[0]);
+		if (Properties.IsValid())
+		{
+			SimulationLOD.bAuthoritySimulationOnly = Properties.GetValue<bool>(
+				TEXT("SimulationLOD.AuthoritySimulationOnly"),
+				SimulationLOD.bAuthoritySimulationOnly);
+			SimulationLOD.bClientProxyUsesDefaultPhysicsReplication = Properties.GetValue<bool>(
+				TEXT("SimulationLOD.ClientProxyUsesDefaultPhysicsReplication"),
+				SimulationLOD.bClientProxyUsesDefaultPhysicsReplication);
+		}
+	}
 	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
 	{
 		UE::AircraftLab::AircraftAsset::Private::ParseLodModel(InAircraftCollections[LodIndex], LodModels[LodIndex]);
 		SimulationLOD.LODs[LodIndex] = UE::AircraftLab::AircraftAsset::Private::ParseLodSettings(
 			InAircraftCollections[LodIndex], LodIndex);
 	}
+}
+
+FAircraftSimulationBudget FAircraftSimulationLODProfileRuntimeConfig::BuildBudget(
+	int32 LODIndex,
+	bool bNetworkProxy) const
+{
+	FAircraftSimulationBudget Budget;
+	Budget.LODIndex = LODIndex;
+	Budget.bIsNetworkProxy = bNetworkProxy;
+	if (!LODs.IsValidIndex(LODIndex))
+	{
+		Budget.DriveMode = EAircraftSimulationDriveMode::None;
+		Budget.bRunSlowLogic = false;
+		Budget.bEnablePhysics = false;
+		Budget.CollisionMode = EAircraftSimulationCollisionMode::Disabled;
+		Budget.SuggestedNetUpdateFrequency = 2.0f;
+		Budget.bEnableNetworkDormancy = true;
+		return Budget;
+	}
+
+	const FAircraftSimulationLODRuntimeSettings& Settings = LODs[LODIndex];
+	const bool bPhysicalDrive =
+		Settings.DriveMode == EAircraftSimulationDriveMode::FlightController
+		|| Settings.DriveMode == EAircraftSimulationDriveMode::PhysicsConstraint;
+	Budget.DriveMode = bNetworkProxy
+		? EAircraftSimulationDriveMode::None : Settings.DriveMode;
+	Budget.bEnablePhysics = bNetworkProxy
+		? bClientProxyUsesDefaultPhysicsReplication && bPhysicalDrive
+		: bPhysicalDrive;
+	Budget.bRunSlowLogic = !bNetworkProxy && Settings.bRunSlowLogic;
+	Budget.SlowLogicIntervalSeconds = Settings.SlowLogicIntervalSeconds;
+	Budget.SuggestedNetUpdateFrequency = Settings.SuggestedNetUpdateFrequency;
+	Budget.CollisionMode = Settings.CollisionMode;
+	Budget.bAllowDebugDraw = Settings.bAllowDebugDraw;
+	Budget.bEnableNetworkDormancy = Settings.bEnableNetworkDormancy;
+	return Budget;
 }

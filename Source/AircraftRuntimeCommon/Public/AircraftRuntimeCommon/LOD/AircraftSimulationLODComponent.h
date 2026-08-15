@@ -46,6 +46,7 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void RefreshAircraftSimulationDrive_Implementation() override;
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
@@ -109,6 +110,7 @@ public:
 
 	/** 从 Owner 的 UAircraftComponent 读取 Dataflow 编译的 LOD 条目表。 */
 	bool GetLODSettings(TArray<FAircraftSimulationLODRuntimeSettingsLite>& OutSettings) const;
+	bool IsAuthoritySimulationOnly() const;
 
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
 	float EvaluationIntervalSeconds = 0.25f;
@@ -129,6 +131,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation")
 	FAircraftSimulationImportance Importance;
 
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentLODIndex)
 	int32 CurrentLODIndex = 0;
 
 public:
@@ -142,8 +145,14 @@ private:
 	float LastCombatActivityWorldTime = -1000.0f;
 	float LastDamageWorldTime = -1000.0f;
 	bool bHasAppliedBudget = false;
+	bool bNetworkProxyBudget = false;
 	TWeakObjectPtr<class UAircraftComponent> AircraftComponent;
 	TArray<TWeakObjectPtr<UActorComponent>> Consumers;
+	TEnumAsByte<ENetDormancy> SavedNetDormancy = DORM_Awake;
+	bool bHasSavedNetDormancy = false;
+
+	UFUNCTION()
+	void OnRep_CurrentLODIndex(int32 PreviousLODIndex);
 
 	void RefreshConsumerCache();
 	void RefreshConsumers();

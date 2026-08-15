@@ -51,6 +51,10 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	const FAircraftSimulationModel ProjectSettingsModel(CollectionsWithoutOverride, TEXT("ProjectSettings"));
 	const FAircraftSimulationLodModel* const ProjectSettingsLOD = ProjectSettingsModel.GetLodModel(0);
 	TestNotNull(TEXT("A collection compiles one LOD model"), ProjectSettingsLOD);
+	TestTrue(TEXT("Aircraft simulation is server-authoritative by default"),
+		ProjectSettingsModel.SimulationLOD.bAuthoritySimulationOnly);
+	TestTrue(TEXT("Client proxies use UE physics replication by default"),
+		ProjectSettingsModel.SimulationLOD.bClientProxyUsesDefaultPhysicsReplication);
 	const FAircraftFlightControllerRuntimeConfig RuntimeDefaults;
 	TestTrue(TEXT("Constraint strength is interpreted as frequency in Hz"),
 		FMath::IsNearlyEqual(
@@ -157,6 +161,17 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	};
 	SetLodSettings(Lod0Collection, TEXT("LOD0"), 2);
 	SetLodSettings(Lod1Collection, TEXT("LOD1"), 1);
+	{
+		FCollectionAircraftPropertyMutableFacade Properties(Lod0Collection);
+		const int32 AuthorityIndex = Properties.AddProperty(
+			TEXT("SimulationLOD.AuthoritySimulationOnly"),
+			EAircraftCollectionPropertyFlags::Enabled);
+		Properties.SetValue(AuthorityIndex, false);
+		const int32 ClientPhysicsIndex = Properties.AddProperty(
+			TEXT("SimulationLOD.ClientProxyUsesDefaultPhysicsReplication"),
+			EAircraftCollectionPropertyFlags::Enabled);
+		Properties.SetValue(ClientPhysicsIndex, false);
+	}
 	const TArray<TSharedRef<const FManagedArrayCollection>> TwoLodCollections = { Lod0Collection, Lod1Collection };
 	const FAircraftSimulationModel TwoLodModel(TwoLodCollections, TEXT("TwoLOD"));
 	TestEqual(TEXT("Each terminal collection compiles to one runtime LOD"), TwoLodModel.GetNumLods(), 2);
@@ -165,6 +180,29 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 		TwoLodModel.SimulationLOD.LODs[0].DriveMode, EAircraftSimulationDriveMode::PhysicsConstraint);
 	TestEqual(TEXT("LOD 1 reads its own flight-controller profile"),
 		TwoLodModel.SimulationLOD.LODs[1].DriveMode, EAircraftSimulationDriveMode::FlightController);
+	TestFalse(TEXT("LOD-list authority policy is compiled from LOD0"),
+		TwoLodModel.SimulationLOD.bAuthoritySimulationOnly);
+	TestFalse(TEXT("LOD-list client physics policy is compiled from LOD0"),
+		TwoLodModel.SimulationLOD.bClientProxyUsesDefaultPhysicsReplication);
+	const FAircraftSimulationBudget ServerBudget = TwoLodModel.SimulationLOD.BuildBudget(0);
+	TestEqual(TEXT("Authority keeps the authored drive backend"),
+		ServerBudget.DriveMode, EAircraftSimulationDriveMode::PhysicsConstraint);
+	TestTrue(TEXT("Authority keeps Chaos enabled for a physical backend"),
+		ServerBudget.bEnablePhysics);
+	const FAircraftSimulationBudget ProxyWithoutPhysics =
+		TwoLodModel.SimulationLOD.BuildBudget(0, true);
+	TestEqual(TEXT("Network proxy runs no local drive backend"),
+		ProxyWithoutPhysics.DriveMode, EAircraftSimulationDriveMode::None);
+	TestFalse(TEXT("Disabled client physics policy turns Chaos off on the proxy"),
+		ProxyWithoutPhysics.bEnablePhysics);
+	TestFalse(TEXT("Network proxy runs no slow simulation logic"),
+		ProxyWithoutPhysics.bRunSlowLogic);
+
+	FAircraftSimulationLODProfileRuntimeConfig ProxyPhysicsConfig = TwoLodModel.SimulationLOD;
+	ProxyPhysicsConfig.bClientProxyUsesDefaultPhysicsReplication = true;
+	const FAircraftSimulationBudget ProxyWithPhysics = ProxyPhysicsConfig.BuildBudget(0, true);
+	TestTrue(TEXT("Enabled client physics policy keeps Chaos active for UE replication"),
+		ProxyWithPhysics.bEnablePhysics);
 	return true;
 }
 

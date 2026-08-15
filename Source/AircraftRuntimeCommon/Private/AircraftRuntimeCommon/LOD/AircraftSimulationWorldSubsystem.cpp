@@ -79,7 +79,19 @@ void UAircraftSimulationWorldSubsystem::Tick(float DeltaTime)
 
 void UAircraftSimulationWorldSubsystem::EvaluateAircraft(UAircraftSimulationLODComponent& Component, float WorldTimeSeconds)
 {
-	const FVector Location = Component.GetOwner() ? Component.GetOwner()->GetActorLocation() : FVector::ZeroVector;
+	AActor* const Owner = Component.GetOwner();
+	if (!Owner)
+	{
+		return;
+	}
+	if (Component.IsAuthoritySimulationOnly() && !Owner->HasAuthority())
+	{
+		Component.ApplyLODFromSubsystem(
+			Component.GetCurrentSimulationLOD(), WorldTimeSeconds);
+		return;
+	}
+
+	const FVector Location = Owner->GetActorLocation();
 	const float NearestPlayerDistance = FindNearestPlayerDistanceCm(Location);
 	const FAircraftSimulationSnapshot Snapshot = Component.BuildSnapshot(NearestPlayerDistance, WorldTimeSeconds);
 

@@ -570,6 +570,12 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 			TEXT("[AircraftDF.LOD] Physics constraint for '%s' is pending a valid chassis physics body."),
 			*GetNameSafe(GetOwner()));
 	}
+
+	// DriveMode::None 的网络代理保留 Chaos 刚体给 UE 物理复制，
+	// 但不运行本地驱动或飞控物理线程。
+	SetComponentTickEnabled(SimulationDriveMode != EAircraftSimulationDriveMode::None);
+	SetAsyncPhysicsTickEnabled(
+		SimulationDriveMode == EAircraftSimulationDriveMode::FlightController);
 }
 
 bool UAircraftComponent::CreateSimulationConstraint()
@@ -1445,11 +1451,6 @@ void UAircraftComponent::ApplyAircraftSimulationBudget_Implementation(const FAir
 		break;
 	}
 
-	if (AActor* const OwnerActor = GetOwner(); OwnerActor && OwnerActor->HasAuthority())
-	{
-		OwnerActor->SetNetUpdateFrequency(FMath::Max(Budget.SuggestedNetUpdateFrequency, 1.0f));
-		OwnerActor->SetNetDormancy(Budget.bEnableNetworkDormancy ? DORM_DormantAll : DORM_Awake);
-	}
 }
 
 bool UAircraftComponent::GetAircraftMotionTarget_Implementation(FAircraftMotionTarget& OutTarget) const

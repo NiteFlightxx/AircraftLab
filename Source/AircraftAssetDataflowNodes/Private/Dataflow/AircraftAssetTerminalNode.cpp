@@ -13,6 +13,24 @@
 // Terminal 节点是 Dataflow 图末端，把当前 ManagedArrayCollection 提交给 UAircraftAsset::Build()，
 // 由资产编译产生 FAircraftSimulationModel。校验和用于跳过几何/结构未变的情况，避免重复 Build。
 
+namespace
+{
+	template<typename T>
+	void SetTerminalProperty(
+		UE::AircraftLab::AircraftAsset::FCollectionAircraftPropertyMutableFacade& Properties,
+		const FName Key,
+		const T& Value)
+	{
+		int32 Index = Properties.GetKeyNameIndex(Key);
+		if (Index == INDEX_NONE)
+		{
+			Index = Properties.AddProperty(
+				Key, UE::AircraftLab::AircraftAsset::EAircraftCollectionPropertyFlags::Enabled);
+		}
+		Properties.SetValue(Index, Value);
+	}
+}
+
 FAircraftAssetTerminalNode::FAircraftAssetTerminalNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
 	: FDataflowTerminalNode(InParam, InGuid)
 {
@@ -200,7 +218,7 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 		return;
 	}
 
-	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = GetCollectionLodValues(Context);
+	TArray<TSharedRef<const FManagedArrayCollection>> Collections = GetCollectionLodValues(Context);
 	if (Collections.IsEmpty())
 	{
 		Context.Error(NSLOCTEXT("AircraftAssetTerminal", "MissingLOD0", "Aircraft Terminal requires at least Collection LOD 0."), this);
@@ -211,12 +229,33 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 	// 缺失组走默认值（Build/模型层本就容错）；图的正确性由作者人为控制。
 	// 这样 Frame→Constraint→LOD1 这类"按需求挂载"的精简支路拓扑不会被一刀切拒绝。
 
-	const uint32 NewChecksum = ComputeCollectionsChecksum(Collections);
+	uint32 NewChecksum = ComputeCollectionsChecksum(Collections);
+	const uint8 NetworkPolicyBits =
+		(bAuthoritySimulationOnly ? 1u : 0u)
+		| (bClientProxyUsesDefaultPhysicsReplication ? 2u : 0u);
+	NewChecksum = FCrc::MemCrc32(
+		&NetworkPolicyBits, sizeof(NetworkPolicyBits), NewChecksum);
 	if (NewChecksum == CollectionChecksum && !bPropertyStructureChanged
 		&& AircraftAssetObject->HasValidAircraftSimulationModels())
 	{
 		return;
 	}
+
+	// 网络策略属于整个 LOD 列表。Terminal 将它写入 LOD0 的编译 Collection，
+	// 运行时模型只读取一次，不要求每条 LOD 分支重复配置。
+	TSharedRef<FManagedArrayCollection> LOD0 =
+		MakeShared<FManagedArrayCollection>(Collections[0].Get());
+	UE::AircraftLab::AircraftAsset::FCollectionAircraftPropertyMutableFacade Properties(LOD0);
+	Properties.DefineSchema();
+	SetTerminalProperty(
+		Properties,
+		TEXT("SimulationLOD.AuthoritySimulationOnly"),
+		bAuthoritySimulationOnly);
+	SetTerminalProperty(
+		Properties,
+		TEXT("SimulationLOD.ClientProxyUsesDefaultPhysicsReplication"),
+		bClientProxyUsesDefaultPhysicsReplication);
+	Collections[0] = LOD0;
 
 	FText ErrorText;
 	FText VerboseText;
