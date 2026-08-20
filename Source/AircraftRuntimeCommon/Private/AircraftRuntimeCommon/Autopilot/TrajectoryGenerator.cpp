@@ -3,26 +3,26 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogAircraftTrajectoryGen, Log, All);
 
-bool FAircraftTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
+bool FAircraftTrajectoryGenerator::SetPlan(const FAircraftTrajectoryPlan& Plan)
 {
 	Clear();
+	FAircraftTrajectoryPlan EffectivePlan = Plan;
+	ResolveEffectiveMotionLimits(EffectivePlan);
+	const FTrajectoryMotionConstraints& Constraints = EffectivePlan.MotionConstraints;
 
-	// 悬停退化：Start≈Target（零长度 Waypoint/Line）时无需构造段，
-	// 直接缓存目标位置为驻留设定值（避免 LineSegment coincident 检查刷屏）。
-	const float StartToTargetDist = FVector::Dist(Request.StartPositionCm, Request.TargetPositionCm);
-	const bool bHoverRequest = (Request.Type == ETrajectoryType::Waypoint || Request.Type == ETrajectoryType::Line)
-		&& StartToTargetDist <= 1.0f;
+	const bool bStationaryPath = EffectivePlan.Path.Geometry == EAircraftPathGeometry::Polyline
+		&& EffectivePlan.Path.PointsCm.Num() == 1;
 
-	if (!bHoverRequest && (Request.CruiseSpeedCmPerSec <= UE_SMALL_NUMBER
-		|| Request.PlanningAccelerationCmPerSecSq <= UE_SMALL_NUMBER
-		|| Request.PlanningDecelerationCmPerSecSq <= UE_SMALL_NUMBER))
+	if (!bStationaryPath && (Constraints.CruiseSpeedCmPerSec <= UE_SMALL_NUMBER
+		|| Constraints.MaxAccelerationCmPerSecSq <= UE_SMALL_NUMBER
+		|| Constraints.MaxDecelerationCmPerSecSq <= UE_SMALL_NUMBER))
 	{
 		UE_LOG(LogAircraftTrajectoryGen, Warning,
 			TEXT("TrajectoryGenerator: cruise speed, acceleration, and deceleration must be positive."));
 		return false;
 	}
-	const float RequestedTerminalSpeed = Request.TargetVelocityCmPerSec.Size();
-	if (!bHoverRequest && RequestedTerminalSpeed > Request.CruiseSpeedCmPerSec + UE_SMALL_NUMBER)
+	const float RequestedTerminalSpeed = EffectivePlan.TerminalVelocityCmPerSec.Size();
+	if (!bStationaryPath && RequestedTerminalSpeed > Constraints.CruiseSpeedCmPerSec + UE_SMALL_NUMBER)
 	{
 		UE_LOG(LogAircraftTrajectoryGen, Warning,
 			TEXT("TrajectoryGenerator: terminal speed cannot exceed cruise speed."));
@@ -30,33 +30,30 @@ bool FAircraftTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 	}
 
 	FString Error;
-	if (!bHoverRequest && !BuildSegments(Request, Error))
+	if (!bStationaryPath && !BuildGeometry(EffectivePlan, Error))
 	{
 		UE_LOG(LogAircraftTrajectoryGen, Warning, TEXT("TrajectoryGenerator: build failed — %s"), *Error);
 		bIsValid = false;
 		return false;
 	}
 
-	if (bHoverRequest)
+	if (bStationaryPath)
 	{
-		// 驻留态：零弧长，设定值=目标位置静止
 		TotalArcLengthCm = 0.0f;
 		CruiseSpeedCmPerSec = 0.0f;
-		PlanningAccelCmPerSecSq = FMath::Max(Request.PlanningAccelerationCmPerSecSq, UE_SMALL_NUMBER);
-		PlanningDecelCmPerSecSq = FMath::Max(Request.PlanningDecelerationCmPerSecSq, UE_SMALL_NUMBER);
-		PlanningJerkCmPerSecCubed = FMath::Max(Request.PlanningJerkCmPerSecCubed, 0.0f);
+		PlanningAccelCmPerSecSq = FMath::Max(Constraints.MaxAccelerationCmPerSecSq, UE_SMALL_NUMBER);
+		PlanningDecelCmPerSecSq = FMath::Max(Constraints.MaxDecelerationCmPerSecSq, UE_SMALL_NUMBER);
+		PlanningJerkCmPerSecCubed = FMath::Max(Constraints.MaxJerkCmPerSecCubed, 0.0f);
 		InitialSpeedCmPerSec = 0.0f;
 		TargetEndSpeedCmPerSec = 0.0f;
-		AcceptanceRadiusCm = FMath::Max(Request.AcceptanceRadiusCm, 1.0f);
+		AcceptanceRadiusCm = FMath::Max(EffectivePlan.AcceptanceRadiusCm, 1.0f);
 		CurrentArcLength = 0.0f;
 		CurrentSpeedCmPerSec = 0.0f;
 		CurrentPathAccelerationCmPerSecSq = 0.0f;
-		bFollowVehicleProgress = false;
 		bIsValid = true;
-		CurrentSetpoint.PositionCm = Request.TargetPositionCm;
+		CurrentSetpoint.PositionCm = EffectivePlan.Path.PointsCm[0];
 		CurrentSetpoint.VelocityCmPerSec = FVector::ZeroVector;
 		CurrentSetpoint.AccelerationCmPerSecSq = FVector::ZeroVector;
-		CurrentSetpoint.YawDegrees = Request.TargetYawDegrees;
 		CurrentSetpoint.YawRateDegreesPerSec = 0.0f;
 		CurrentSetpoint.ArcLengthCm = 0.0f;
 		CurrentSetpoint.Curvature = 0.0f;
@@ -71,50 +68,50 @@ bool FAircraftTrajectoryGenerator::SetRequest(const FTrajectoryRequest& Request)
 		bIsValid = false;
 		return false;
 	}
-	bUsesNativeTimeParameterization = Segments.Num() == 1
-		&& Segments[0].IsValid() && Segments[0]->UsesNativeTimeParameterization();
+	bUsesNativeTimeParameterization = Geometries.Num() == 1
+		&& Geometries[0].IsValid() && Geometries[0]->UsesNativeTimeParameterization();
 	TotalDurationSeconds = bUsesNativeTimeParameterization
-		? Segments[0]->GetTotalDurationSeconds() : 0.0f;
+		? Geometries[0]->GetTotalDurationSeconds() : 0.0f;
 
-	CruiseSpeedCmPerSec = FMath::Max(Request.CruiseSpeedCmPerSec, UE_SMALL_NUMBER);
-	PlanningAccelCmPerSecSq = FMath::Max(Request.PlanningAccelerationCmPerSecSq, UE_SMALL_NUMBER);
-	PlanningDecelCmPerSecSq = FMath::Max(Request.PlanningDecelerationCmPerSecSq, UE_SMALL_NUMBER);
-	PlanningJerkCmPerSecCubed = FMath::Max(Request.PlanningJerkCmPerSecCubed, 0.0f);
+	CruiseSpeedCmPerSec = FMath::Max(Constraints.CruiseSpeedCmPerSec, UE_SMALL_NUMBER);
+	PlanningAccelCmPerSecSq = FMath::Max(Constraints.MaxAccelerationCmPerSecSq, UE_SMALL_NUMBER);
+	PlanningDecelCmPerSecSq = FMath::Max(Constraints.MaxDecelerationCmPerSecSq, UE_SMALL_NUMBER);
+	PlanningJerkCmPerSecCubed = FMath::Max(Constraints.MaxJerkCmPerSecCubed, 0.0f);
 	TargetEndSpeedCmPerSec = FMath::Clamp(
-		Request.TargetVelocityCmPerSec.Size(),
+		EffectivePlan.TerminalVelocityCmPerSec.Size(),
 		0.0f, CruiseSpeedCmPerSec);
-	AcceptanceRadiusCm = FMath::Max(Request.AcceptanceRadiusCm, 1.0f);
+	AcceptanceRadiusCm = FMath::Max(EffectivePlan.AcceptanceRadiusCm, 1.0f);
+	bLooping = EffectivePlan.Traversal == EAircraftPathTraversal::Loop;
 
-	const FVector StartTangent = Segments.Num() > 0 && Segments[0].IsValid()
-		? Segments[0]->GetFrenetAtArcLength(0.0f).Tangent.GetSafeNormal()
+	const FVector StartTangent = Geometries.Num() > 0 && Geometries[0].IsValid()
+		? Geometries[0]->GetFrenetAtArcLength(0.0f).Tangent.GetSafeNormal()
 		: FVector::ZeroVector;
 	InitialSpeedCmPerSec = StartTangent.IsNearlyZero()
 		? 0.0f
-		: FMath::Clamp(FVector::DotProduct(Request.StartVelocityCmPerSec, StartTangent), 0.0f, CruiseSpeedCmPerSec);
+		: FMath::Clamp(FVector::DotProduct(EffectivePlan.InitialVelocityCmPerSec, StartTangent), 0.0f, CruiseSpeedCmPerSec);
 	CurrentPathAccelerationCmPerSecSq = StartTangent.IsNearlyZero()
 		? 0.0f
 		: FMath::Clamp(
-			FVector::DotProduct(Request.StartAccelerationCmPerSecSq, StartTangent),
+			FVector::DotProduct(EffectivePlan.InitialAccelerationCmPerSecSq, StartTangent),
 			-PlanningDecelCmPerSecSq,
 			PlanningAccelCmPerSecSq);
 
 	CurrentArcLength = 0.0f;
 	CurrentTimeSeconds = 0.0f;
 	CurrentSpeedCmPerSec = InitialSpeedCmPerSec;
-	bFollowVehicleProgress = Request.Type == ETrajectoryType::Waypoint;
 	bIsValid = true;
 	return true;
 }
 
 void FAircraftTrajectoryGenerator::Clear()
 {
-	Segments.Reset();
+	Geometries.Reset();
 	CumStartArc.Reset();
 	TotalArcLengthCm = 0.0f;
 	CurrentArcLength = 0.0f;
 	CurrentSpeedCmPerSec = 0.0f;
 	CurrentPathAccelerationCmPerSecSq = 0.0f;
-	bFollowVehicleProgress = false;
+	bLooping = false;
 	CurrentTimeSeconds = 0.0f;
 	TotalDurationSeconds = 0.0f;
 	bUsesNativeTimeParameterization = false;
@@ -132,29 +129,13 @@ bool FAircraftTrajectoryGenerator::IsComplete() const
 	{
 		return CurrentTimeSeconds + UE_SMALL_NUMBER >= TotalDurationSeconds;
 	}
-	if (IsCurrentSegmentInfiniteLoop())
+	if (bLooping)
 	{
 		return false;
 	}
 	return CurrentArcLength + UE_SMALL_NUMBER >= TotalArcLengthCm
 		&& FMath::Abs(CurrentSpeedCmPerSec - TargetEndSpeedCmPerSec) <= 1.0f
 		&& FMath::Abs(CurrentPathAccelerationCmPerSecSq) <= 1.0f;
-}
-
-bool FAircraftTrajectoryGenerator::IsCurrentSegmentInfiniteLoop() const
-{
-	if (!bIsValid || Segments.Num() == 0)
-	{
-		return false;
-	}
-	int32 SegIndex;
-	float LocalArc;
-	LocateSegment(CurrentArcLength, SegIndex, LocalArc);
-	if (Segments.IsValidIndex(SegIndex) && Segments[SegIndex].IsValid())
-	{
-		return Segments[SegIndex]->IsInfiniteLoop();
-	}
-	return false;
 }
 
 float FAircraftTrajectoryGenerator::GetProgress() const
@@ -188,33 +169,32 @@ bool FAircraftTrajectoryGenerator::UpdateSetpoint(
 		return true;
 	}
 
-	if (bUsesNativeTimeParameterization && Segments.Num() == 1 && Segments[0].IsValid())
+	if (bUsesNativeTimeParameterization && Geometries.Num() == 1 && Geometries[0].IsValid())
 	{
 		CurrentTimeSeconds = FMath::Clamp(
 			CurrentTimeSeconds + DeltaSeconds, 0.0f, TotalDurationSeconds);
-		OutSetpoint = Segments[0]->SampleAtTime(CurrentTimeSeconds);
+		OutSetpoint = Geometries[0]->SampleAtTime(CurrentTimeSeconds);
 		CurrentSetpoint = OutSetpoint;
-		CurrentArcLength = Segments[0]->GetArcLengthAtTime(CurrentTimeSeconds);
+		CurrentArcLength = Geometries[0]->GetArcLengthAtTime(CurrentTimeSeconds);
 		CurrentSpeedCmPerSec = OutSetpoint.VelocityCmPerSec.Size();
 		CurrentPathAccelerationCmPerSecSq = 0.0f;
 		return OutSetpoint.bValid;
 	}
 
-	const bool bInfinite = IsCurrentSegmentInfiniteLoop();
+	const bool bInfinite = bLooping;
 
 	// MoveTo 的参考点必须跟随飞机实际进度，只领先一个更新步；否则参考轨迹会先到终点，
 	// 真实飞机只能在零速目标下依靠位置误差缓慢补齐剩余距离。
 	const float ProjectedS = ProjectToArcLength(CurrentPosition);
-	const float ProgressArc = bFollowVehicleProgress
-		? FMath::Clamp(ProjectedS, 0.0f, TotalArcLengthCm)
-		: FMath::Max(CurrentArcLength, ProjectedS);
+	const float ProgressArc = bInfinite
+		? FMath::Max(CurrentArcLength, ProjectedS)
+		: FMath::Clamp(ProjectedS, 0.0f, TotalArcLengthCm);
 	CurrentArcLength = ProgressArc;
 
 	if (bInfinite)
 	{
-		// --- 无限循环段（Orbit）：恒定巡航速，游标不 clamp、不触发完成 ---
-		CurrentSpeedCmPerSec = CruiseSpeedCmPerSec;
-		CurrentPathAccelerationCmPerSecSq = 0.0f;
+		// 闭合路径只改变遍历策略；速度仍使用同一套 V/A/J 时序。
+		CurrentSpeedCmPerSec = AdvanceSpeedToward(CruiseSpeedCmPerSec, DeltaSeconds);
 		CurrentArcLength += CurrentSpeedCmPerSec * DeltaSeconds;
 
 		const float SampleArc = bUseLookAhead
@@ -258,91 +238,95 @@ bool FAircraftTrajectoryGenerator::UpdateSetpoint(
 	return true;
 }
 
-bool FAircraftTrajectoryGenerator::BuildSegments(const FTrajectoryRequest& Request, FString& OutError)
+bool FAircraftTrajectoryGenerator::BuildGeometry(const FAircraftTrajectoryPlan& Plan, FString& OutError)
 {
-	switch (Request.Type)
+	if (Plan.Path.Geometry == EAircraftPathGeometry::Polyline)
 	{
-	case ETrajectoryType::Waypoint:
-		return BuildWaypointSegment(Request, OutError);
-	case ETrajectoryType::FollowPath:
-		return BuildFollowPathSegments(Request, OutError);
-	case ETrajectoryType::Line:
-	case ETrajectoryType::Bezier:
-	case ETrajectoryType::Circle:
-	case ETrajectoryType::Orbit:
-	case ETrajectoryType::MinimumSnap:
-	{
-		TUniquePtr<FAircraftTrajectorySegment> Seg;
-		switch (Request.Type)
-		{
-		case ETrajectoryType::Line:       Seg = MakeUnique<FAircraftLineTrajectorySegment>(); break;
-		case ETrajectoryType::Bezier:     Seg = MakeUnique<FAircraftBezierTrajectorySegment>(); break;
-		case ETrajectoryType::Circle:     Seg = MakeUnique<FAircraftCircleTrajectorySegment>(); break;
-		case ETrajectoryType::Orbit:      Seg = MakeUnique<FAircraftOrbitTrajectorySegment>(); break;
-		case ETrajectoryType::MinimumSnap: Seg = MakeUnique<FAircraftMinSnapTrajectorySegment>(); break;
-		default: break;
-		}
-		if (!Seg.IsValid()) { OutError = TEXT("Unknown segment type."); return false; }
-		if (!Seg->BuildSegment(Request, OutError)) { return false; }
-		Segments.Add(MoveTemp(Seg));
-		return true;
+		return BuildPolyline(Plan, OutError);
 	}
-	}
-	return false;
-}
 
-bool FAircraftTrajectoryGenerator::BuildWaypointSegment(const FTrajectoryRequest& Request, FString& OutError)
-{
-	TUniquePtr<FAircraftLineTrajectorySegment> Seg = MakeUnique<FAircraftLineTrajectorySegment>();
-	if (!Seg->BuildSegment(Request, OutError))
+	TUniquePtr<FAircraftPathGeometry> Geometry;
+	switch (Plan.Path.Geometry)
 	{
+	case EAircraftPathGeometry::Bezier:
+		Geometry = MakeUnique<FAircraftBezierPathGeometry>();
+		break;
+	case EAircraftPathGeometry::Circle:
+		Geometry = MakeUnique<FAircraftCirclePathGeometry>();
+		break;
+	case EAircraftPathGeometry::MinimumSnap:
+		Geometry = MakeUnique<FAircraftMinimumSnapPathGeometry>();
+		break;
+	default:
+		OutError = TEXT("Unsupported path geometry.");
 		return false;
 	}
-	Segments.Add(MoveTemp(Seg));
+	if (!Geometry->BuildPath(Plan, OutError)) return false;
+	Geometries.Add(MoveTemp(Geometry));
 	return true;
 }
 
-bool FAircraftTrajectoryGenerator::BuildFollowPathSegments(const FTrajectoryRequest& Request, FString& OutError)
+bool FAircraftTrajectoryGenerator::BuildPolyline(const FAircraftTrajectoryPlan& Plan, FString& OutError)
 {
-	const TArray<FVector>& Points = Request.PathPointsCm;
-	if (Points.Num() < 2)
+	if (Plan.Path.PointsCm.Num() < 2)
 	{
-		OutError = TEXT("FollowPath: PathPointsCm needs >= 2 points.");
+		OutError = TEXT("Polyline requires at least two points.");
 		return false;
 	}
-
-	// 起点与首个路径点不重合时，自动插入连接段
-	const FVector Prev = Request.StartPositionCm;
-	const bool bNeedConnectToFirst = FVector::Dist(Prev, Points[0]) > Request.AcceptanceRadiusCm * 0.5f;
-
-	if (bNeedConnectToFirst)
+	for (int32 Index = 1; Index < Plan.Path.PointsCm.Num(); ++Index)
 	{
-		FTrajectoryRequest ConnReq = Request;
-		ConnReq.Type = ETrajectoryType::Line;
-		ConnReq.StartPositionCm = Prev;
-		ConnReq.TargetPositionCm = Points[0];
-		TUniquePtr<FAircraftLineTrajectorySegment> Conn = MakeUnique<FAircraftLineTrajectorySegment>();
-		if (!Conn->BuildSegment(ConnReq, OutError))
-		{
-			return false;
-		}
-		Segments.Add(MoveTemp(Conn));
-	}
-
-	for (int32 i = 1; i < Points.Num(); ++i)
-	{
-		FTrajectoryRequest LegReq = Request;
-		LegReq.Type = ETrajectoryType::Line;
-		LegReq.StartPositionCm = Points[i - 1];
-		LegReq.TargetPositionCm = Points[i];
-		TUniquePtr<FAircraftLineTrajectorySegment> Leg = MakeUnique<FAircraftLineTrajectorySegment>();
-		if (!Leg->BuildSegment(LegReq, OutError))
-		{
-			return false;
-		}
-		Segments.Add(MoveTemp(Leg));
+		FAircraftTrajectoryPlan LegPlan = Plan;
+		LegPlan.Path.PointsCm = {
+			Plan.Path.PointsCm[Index - 1], Plan.Path.PointsCm[Index] };
+		TUniquePtr<FAircraftLinePathGeometry> Leg = MakeUnique<FAircraftLinePathGeometry>();
+		if (!Leg->BuildPath(LegPlan, OutError)) return false;
+		Geometries.Add(MoveTemp(Leg));
 	}
 	return true;
+}
+
+void FAircraftTrajectoryGenerator::ResolveEffectiveMotionLimits(FAircraftTrajectoryPlan& InOutPlan) const
+{
+	FTrajectoryMotionConstraints& Limits = InOutPlan.MotionConstraints;
+	auto ApplyDirection = [&Limits, &InOutPlan](const FVector& RawDirection)
+	{
+		const FVector Direction = RawDirection.GetSafeNormal();
+		if (Direction.IsNearlyZero()) return;
+		const float HorizontalFraction = FVector2D(Direction.X, Direction.Y).Size();
+		const float VerticalFraction = FMath::Abs(Direction.Z);
+		if (HorizontalFraction > UE_SMALL_NUMBER)
+		{
+			Limits.CruiseSpeedCmPerSec = FMath::Min(Limits.CruiseSpeedCmPerSec,
+				InOutPlan.PhysicalMaxHorizontalSpeedCmPerSec / HorizontalFraction);
+			Limits.MaxAccelerationCmPerSecSq = FMath::Min(Limits.MaxAccelerationCmPerSecSq,
+				InOutPlan.PhysicalMaxHorizontalAccelerationCmPerSecSq / HorizontalFraction);
+			Limits.MaxDecelerationCmPerSecSq = FMath::Min(Limits.MaxDecelerationCmPerSecSq,
+				InOutPlan.PhysicalMaxHorizontalAccelerationCmPerSecSq / HorizontalFraction);
+		}
+		if (VerticalFraction > UE_SMALL_NUMBER)
+		{
+			const float VerticalSpeed = Direction.Z >= 0.0f
+				? Limits.MaxClimbRateCmPerSec : Limits.MaxDescentRateCmPerSec;
+			Limits.CruiseSpeedCmPerSec = FMath::Min(Limits.CruiseSpeedCmPerSec,
+				VerticalSpeed / VerticalFraction);
+			Limits.MaxAccelerationCmPerSecSq = FMath::Min(Limits.MaxAccelerationCmPerSecSq,
+				Limits.MaxVerticalAccelerationCmPerSecSq / VerticalFraction);
+			Limits.MaxDecelerationCmPerSecSq = FMath::Min(Limits.MaxDecelerationCmPerSecSq,
+				Limits.MaxVerticalAccelerationCmPerSecSq / VerticalFraction);
+			Limits.MaxJerkCmPerSecCubed = FMath::Min(Limits.MaxJerkCmPerSecCubed,
+				Limits.MaxVerticalJerkCmPerSecCubed / VerticalFraction);
+		}
+	};
+
+	if (InOutPlan.Path.Geometry == EAircraftPathGeometry::Circle)
+	{
+		ApplyDirection(FVector::ForwardVector);
+		return;
+	}
+	for (int32 Index = 1; Index < InOutPlan.Path.PointsCm.Num(); ++Index)
+	{
+		ApplyDirection(InOutPlan.Path.PointsCm[Index] - InOutPlan.Path.PointsCm[Index - 1]);
+	}
 }
 
 void FAircraftTrajectoryGenerator::RecomputeArcLengths()
@@ -350,11 +334,11 @@ void FAircraftTrajectoryGenerator::RecomputeArcLengths()
 	CumStartArc.Reset();
 	CumStartArc.Add(0.0f);
 	float Cum = 0.0f;
-	for (const TUniquePtr<FAircraftTrajectorySegment>& Seg : Segments)
+	for (const TUniquePtr<FAircraftPathGeometry>& Geometry : Geometries)
 	{
-		if (Seg.IsValid())
+		if (Geometry.IsValid())
 		{
-			Cum += Seg->GetTotalArcLengthCm();
+			Cum += Geometry->GetTotalArcLengthCm();
 		}
 		CumStartArc.Add(Cum);
 	}
@@ -367,9 +351,7 @@ float FAircraftTrajectoryGenerator::ComputeConstrainedSpeed(
 	float DeltaSeconds)
 {
 	const float Vc = CruiseSpeedCmPerSec;
-	const float A = PlanningAccelCmPerSecSq;
 	const float VEnd = TargetEndSpeedCmPerSec;
-	const float D = PlanningDecelCmPerSecSq;
 	if (DeltaSeconds <= UE_SMALL_NUMBER || TotalS <= UE_SMALL_NUMBER)
 	{
 		CurrentPathAccelerationCmPerSecSq = 0.0f;
@@ -379,8 +361,17 @@ float FAircraftTrajectoryGenerator::ComputeConstrainedSpeed(
 	const float RemainingForBraking = FMath::Max(TotalS - CurrentS, 0.0f);
 	const float TargetSpeed = FMath::Min(
 		Vc, ComputeBrakingSpeedLimit(RemainingForBraking));
+	return AdvanceSpeedToward(TargetSpeed, DeltaSeconds);
+}
+
+float FAircraftTrajectoryGenerator::AdvanceSpeedToward(
+	float TargetSpeedCmPerSec,
+	float DeltaSeconds)
+{
+	const float TargetSpeed = FMath::Clamp(TargetSpeedCmPerSec, 0.0f, CruiseSpeedCmPerSec);
 	const float SpeedError = TargetSpeed - CurrentSpeedCmPerSec;
-	const float AccelerationLimit = SpeedError >= 0.0f ? A : D;
+	const float AccelerationLimit = SpeedError >= 0.0f
+		? PlanningAccelCmPerSecSq : PlanningDecelCmPerSecSq;
 	float DesiredAcceleration = 0.0f;
 	if (PlanningJerkCmPerSecCubed > UE_SMALL_NUMBER)
 	{
@@ -404,13 +395,13 @@ float FAircraftTrajectoryGenerator::ComputeConstrainedSpeed(
 	else
 	{
 		CurrentPathAccelerationCmPerSecSq = FMath::Clamp(
-			SpeedError / DeltaSeconds, -D, A);
+			SpeedError / DeltaSeconds, -PlanningDecelCmPerSecSq, PlanningAccelCmPerSecSq);
 	}
 
 	float NewSpeed = FMath::Clamp(
 		CurrentSpeedCmPerSec + CurrentPathAccelerationCmPerSecSq * DeltaSeconds,
 		0.0f,
-		Vc);
+		CruiseSpeedCmPerSec);
 	if (!FMath::IsNearlyZero(SpeedError)
 		&& SpeedError * (TargetSpeed - NewSpeed) <= 0.0f)
 	{
@@ -494,7 +485,7 @@ void FAircraftTrajectoryGenerator::LocateSegment(float GlobalArc, int32& OutSegI
 {
 	OutSegIndex = INDEX_NONE;
 	OutLocalArc = 0.0f;
-	if (Segments.Num() == 0)
+	if (Geometries.Num() == 0)
 	{
 		return;
 	}
@@ -507,25 +498,25 @@ void FAircraftTrajectoryGenerator::LocateSegment(float GlobalArc, int32& OutSegI
 		if (CumStartArc[Mid] <= GlobalArc) Lo = Mid;
 		else Hi = Mid;
 	}
-	OutSegIndex = FMath::Clamp(Lo, 0, Segments.Num() - 1);
+	OutSegIndex = FMath::Clamp(Lo, 0, Geometries.Num() - 1);
 
-	if (!Segments[OutSegIndex].IsValid())
+	if (!Geometries[OutSegIndex].IsValid())
 	{
-		for (int32 i = OutSegIndex + 1; i < Segments.Num(); ++i)
+		for (int32 i = OutSegIndex + 1; i < Geometries.Num(); ++i)
 		{
-			if (Segments[i].IsValid())
+			if (Geometries[i].IsValid())
 			{
 				OutSegIndex = i;
 				break;
 			}
 		}
-		if (!Segments[OutSegIndex].IsValid())
+		if (!Geometries[OutSegIndex].IsValid())
 		{
 			return;
 		}
 	}
 
-	OutLocalArc = FMath::Clamp(GlobalArc - CumStartArc[OutSegIndex], 0.0f, Segments[OutSegIndex]->GetTotalArcLengthCm());
+	OutLocalArc = FMath::Clamp(GlobalArc - CumStartArc[OutSegIndex], 0.0f, Geometries[OutSegIndex]->GetTotalArcLengthCm());
 }
 
 FTrajectoryPoint FAircraftTrajectoryGenerator::SampleGlobalArcLength(
@@ -534,7 +525,7 @@ FTrajectoryPoint FAircraftTrajectoryGenerator::SampleGlobalArcLength(
 	float TangentialAccelerationCmPerSecSq) const
 {
 	FTrajectoryPoint Point;
-	if (!bIsValid || Segments.Num() == 0)
+	if (!bIsValid || Geometries.Num() == 0)
 	{
 		Point.bValid = false;
 		return Point;
@@ -543,14 +534,14 @@ FTrajectoryPoint FAircraftTrajectoryGenerator::SampleGlobalArcLength(
 	int32 SegIndex;
 	float LocalArc;
 	LocateSegment(GlobalArc, SegIndex, LocalArc);
-	if (!Segments.IsValidIndex(SegIndex))
+	if (!Geometries.IsValidIndex(SegIndex))
 	{
 		Point.bValid = false;
 		return Point;
 	}
 
-	Point = Segments[SegIndex]->SampleAtArcLength(LocalArc, Speed);
-	const FVector Tangent = Segments[SegIndex]->GetFrenetAtArcLength(LocalArc).Tangent.GetSafeNormal();
+	Point = Geometries[SegIndex]->SampleAtArcLength(LocalArc, Speed);
+	const FVector Tangent = Geometries[SegIndex]->GetFrenetAtArcLength(LocalArc).Tangent.GetSafeNormal();
 	Point.AccelerationCmPerSecSq += Tangent * TangentialAccelerationCmPerSecSq;
 	Point.ArcLengthCm = GlobalArc;
 	return Point;
@@ -558,7 +549,7 @@ FTrajectoryPoint FAircraftTrajectoryGenerator::SampleGlobalArcLength(
 
 float FAircraftTrajectoryGenerator::ProjectToArcLength(const FVector& WorldPosition) const
 {
-	if (!bIsValid || Segments.Num() == 0)
+	if (!bIsValid || Geometries.Num() == 0)
 	{
 		return 0.0f;
 	}
@@ -567,7 +558,7 @@ float FAircraftTrajectoryGenerator::ProjectToArcLength(const FVector& WorldPosit
 	float BestDistSq = TNumericLimits<float>::Max();
 
 	// 无限循环段（Orbit）：限制在当前游标附近 ±单圈 局部窗口搜索
-	const bool bInfinite = IsCurrentSegmentInfiniteLoop();
+	const bool bInfinite = bLooping;
 	float SearchWindowMin = 0.0f;
 	float SearchWindowMax = TNumericLimits<float>::Max();
 	if (bInfinite)
@@ -575,17 +566,17 @@ float FAircraftTrajectoryGenerator::ProjectToArcLength(const FVector& WorldPosit
 		int32 CurSegIdx;
 		float CurLocalArc;
 		LocateSegment(CurrentArcLength, CurSegIdx, CurLocalArc);
-		if (Segments.IsValidIndex(CurSegIdx) && Segments[CurSegIdx].IsValid())
+		if (Geometries.IsValidIndex(CurSegIdx) && Geometries[CurSegIdx].IsValid())
 		{
-			const float OneLap = Segments[CurSegIdx]->GetTotalArcLengthCm();
+			const float OneLap = Geometries[CurSegIdx]->GetTotalArcLengthCm();
 			SearchWindowMin = FMath::Max(CurrentArcLength - OneLap, 0.0f);
 			SearchWindowMax = CurrentArcLength + OneLap;
 		}
 	}
 
-	for (int32 i = 0; i < Segments.Num(); ++i)
+	for (int32 i = 0; i < Geometries.Num(); ++i)
 	{
-		const FAircraftTrajectorySegment* Seg = Segments[i].Get();
+		const FAircraftPathGeometry* Seg = Geometries[i].Get();
 		if (!Seg)
 		{
 			continue;
@@ -674,24 +665,24 @@ float FAircraftTrajectoryGenerator::ProjectToArcLength(const FVector& WorldPosit
 FTrajectoryPoint FAircraftTrajectoryGenerator::SampleAtGlobalArc(float GlobalArc, float Speed) const
 {
 	FTrajectoryPoint Point;
-	if (!bIsValid || Segments.Num() == 0)
+	if (!bIsValid || Geometries.Num() == 0)
 	{
 		Point.bValid = false;
 		return Point;
 	}
 
 	// 无限循环段（Orbit）：不 clamp 上界，段内部 Fmod 绕回单圈
-	if (IsCurrentSegmentInfiniteLoop())
+	if (bLooping)
 	{
 		const float EffectiveArc = FMath::Max(GlobalArc, 0.0f);
 		int32 CurSegIdx;
 		float CurLocalArc;
 		LocateSegment(CurrentArcLength, CurSegIdx, CurLocalArc);
-		if (Segments.IsValidIndex(CurSegIdx) && Segments[CurSegIdx].IsValid())
+		if (Geometries.IsValidIndex(CurSegIdx) && Geometries[CurSegIdx].IsValid())
 		{
 			const float SegStart = CumStartArc.IsValidIndex(CurSegIdx) ? CumStartArc[CurSegIdx] : 0.0f;
 			const float LocalArc = EffectiveArc - SegStart;
-			FTrajectoryPoint P = Segments[CurSegIdx]->SampleAtArcLength(LocalArc, Speed);
+			FTrajectoryPoint P = Geometries[CurSegIdx]->SampleAtArcLength(LocalArc, Speed);
 			P.ArcLengthCm = EffectiveArc;
 			return P;
 		}

@@ -1,6 +1,7 @@
 // （IsSameTrajectoryAs 去抖）、完成判定（到达判据 + 稳定时间 + 超时）、事件队列。
 
 #include "AircraftRuntimeCommon/Autopilot/AutopilotMovementExecutor.h"
+#include "AircraftRuntimeCommon/Autopilot/AircraftPathCompiler.h"
 
 #include "GameFramework/Actor.h"
 
@@ -57,60 +58,6 @@ namespace
 			&& FMath::IsNearlyEqual(A.MaxYawJerkDegPerSecCubed, B.MaxYawJerkDegPerSecCubed);
 	}
 
-	void ApplyMoveToDirectionalLimits(
-		FTrajectoryRequest& Request,
-		const FTrajectoryMotionConstraints& Constraints,
-		const FAutopilotArrivalCriteria& ArrivalCriteria,
-		float PhysicalMaxHorizontalSpeedCmPerSec,
-		float PhysicalMaxHorizontalAccelerationCmPerSecSq)
-	{
-		const FVector Direction =
-			(Request.TargetPositionCm - Request.StartPositionCm).GetSafeNormal();
-		const float HorizontalFraction = FVector2D(Direction.X, Direction.Y).Size();
-		const float VerticalFraction = FMath::Abs(Direction.Z);
-
-		Request.CruiseSpeedCmPerSec = Constraints.CruiseSpeedCmPerSec;
-		Request.PlanningAccelerationCmPerSecSq = Constraints.MaxAccelerationCmPerSecSq;
-		Request.PlanningDecelerationCmPerSecSq = Constraints.MaxDecelerationCmPerSecSq;
-		Request.PlanningJerkCmPerSecCubed = Constraints.MaxJerkCmPerSecCubed;
-		if (HorizontalFraction > UE_SMALL_NUMBER)
-		{
-			Request.AcceptanceRadiusCm = ArrivalCriteria.HorizontalToleranceCm
-				/ HorizontalFraction;
-			Request.CruiseSpeedCmPerSec = FMath::Min(
-				Request.CruiseSpeedCmPerSec,
-				PhysicalMaxHorizontalSpeedCmPerSec / HorizontalFraction);
-			Request.PlanningAccelerationCmPerSecSq = FMath::Min(
-				Request.PlanningAccelerationCmPerSecSq,
-				PhysicalMaxHorizontalAccelerationCmPerSecSq / HorizontalFraction);
-			Request.PlanningDecelerationCmPerSecSq = FMath::Min(
-				Request.PlanningDecelerationCmPerSecSq,
-				PhysicalMaxHorizontalAccelerationCmPerSecSq / HorizontalFraction);
-		}
-		if (VerticalFraction > UE_SMALL_NUMBER)
-		{
-			const float VerticalAcceptanceRadiusCm = ArrivalCriteria.VerticalToleranceCm
-				/ VerticalFraction;
-			Request.AcceptanceRadiusCm = HorizontalFraction > UE_SMALL_NUMBER
-				? FMath::Min(Request.AcceptanceRadiusCm, VerticalAcceptanceRadiusCm)
-				: VerticalAcceptanceRadiusCm;
-			const float VerticalSpeedLimit = Direction.Z >= 0.0f
-				? Constraints.MaxClimbRateCmPerSec
-				: Constraints.MaxDescentRateCmPerSec;
-			Request.CruiseSpeedCmPerSec = FMath::Min(
-				Request.CruiseSpeedCmPerSec,
-				VerticalSpeedLimit / VerticalFraction);
-			Request.PlanningAccelerationCmPerSecSq = FMath::Min(
-				Request.PlanningAccelerationCmPerSecSq,
-				Constraints.MaxVerticalAccelerationCmPerSecSq / VerticalFraction);
-			Request.PlanningDecelerationCmPerSecSq = FMath::Min(
-				Request.PlanningDecelerationCmPerSecSq,
-				Constraints.MaxVerticalAccelerationCmPerSecSq / VerticalFraction);
-			Request.PlanningJerkCmPerSecCubed = FMath::Min(
-				Request.PlanningJerkCmPerSecCubed,
-				Constraints.MaxVerticalJerkCmPerSecCubed / VerticalFraction);
-		}
-	}
 }
 
 void FAircraftAutopilotMovementExecutor::SetPhysicalMotionLimits(float MaxHorizontalSpeedCmPerSec, float MaxHorizontalAccelerationCmPerSecSq)
@@ -351,98 +298,21 @@ bool FAircraftAutopilotMovementExecutor::RebuildTrajectory(const FAircraftAutopi
 {
 	bTrajectoryDirty = false;
 	TrajectoryGenerator.Clear();
-	FTrajectoryRequest Request;
-	Request.StartPositionCm = Snapshot.PositionCm;
-	Request.StartVelocityCmPerSec = Snapshot.VelocityCmPerSec;
-	Request.StartAccelerationCmPerSecSq = Snapshot.AccelerationCmPerSecSq;
-	Request.CruiseSpeedCmPerSec = FMath::Min(
-		ActiveIntent.MotionConstraints.CruiseSpeedCmPerSec, PhysicalMaxHorizontalSpeedCmPerSec);
-	Request.PlanningAccelerationCmPerSecSq = FMath::Min(
-		ActiveIntent.MotionConstraints.MaxAccelerationCmPerSecSq,
-		PhysicalMaxHorizontalAccelerationCmPerSecSq);
-	Request.PlanningDecelerationCmPerSecSq = FMath::Min(
-		ActiveIntent.MotionConstraints.MaxDecelerationCmPerSecSq,
-		PhysicalMaxHorizontalAccelerationCmPerSecSq);
-	Request.PlanningJerkCmPerSecCubed = ActiveIntent.MotionConstraints.MaxJerkCmPerSecCubed;
-	Request.AcceptanceRadiusCm = ActiveIntent.ArrivalCriteria.HorizontalToleranceCm;
-	const float EffectivePassThroughSpeedCmPerSec = FMath::Min(
-		ActiveIntent.PassThroughSpeedCmPerSec, Request.CruiseSpeedCmPerSec);
-
-	switch (ActiveIntent.Type)
+	FAircraftPathCompileContext Context;
+	Context.PositionCm = Snapshot.PositionCm;
+	Context.VelocityCmPerSec = Snapshot.VelocityCmPerSec;
+	Context.AccelerationCmPerSecSq = Snapshot.AccelerationCmPerSecSq;
+	Context.ResolvedTargetCm = ResolveTargetPosition(ActiveIntent);
+	Context.PhysicalMaxHorizontalSpeedCmPerSec = PhysicalMaxHorizontalSpeedCmPerSec;
+	Context.PhysicalMaxHorizontalAccelerationCmPerSecSq = PhysicalMaxHorizontalAccelerationCmPerSecSq;
+	FAircraftTrajectoryPlan Plan;
+	FString Error;
+	if (!FAircraftPathCompiler::Compile(ActiveIntent, Context, Plan, Error))
 	{
-	case EAutopilotMovementIntentType::MoveToPosition:
-		Request.Type = ETrajectoryType::Waypoint;
-		Request.TargetPositionCm = ResolveTargetPosition(ActiveIntent);
-		ApplyMoveToDirectionalLimits(
-			Request,
-			ActiveIntent.MotionConstraints,
-			ActiveIntent.ArrivalCriteria,
-			PhysicalMaxHorizontalSpeedCmPerSec,
-			PhysicalMaxHorizontalAccelerationCmPerSecSq);
-		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
-		{
-			const float MoveToPassThroughSpeedCmPerSec = FMath::Min(
-				ActiveIntent.PassThroughSpeedCmPerSec, Request.CruiseSpeedCmPerSec);
-			Request.TargetVelocityCmPerSec = (Request.TargetPositionCm - Snapshot.PositionCm).GetSafeNormal()
-				* MoveToPassThroughSpeedCmPerSec;
-		}
-		break;
-	case EAutopilotMovementIntentType::FollowPath:
-		switch (ActiveIntent.PathTrajectoryMode)
-		{
-		case EAutopilotPathTrajectoryMode::MinimumSnap:
-			Request.Type = ETrajectoryType::MinimumSnap;
-			break;
-		case EAutopilotPathTrajectoryMode::Bezier:
-			Request.Type = ETrajectoryType::Bezier;
-			Request.BezierDegree = ActiveIntent.PathPointsCm.Num() - 1;
-			break;
-		case EAutopilotPathTrajectoryMode::PiecewiseLinear:
-		default:
-			Request.Type = ETrajectoryType::FollowPath;
-			break;
-		}
-		Request.PathPointsCm = ActiveIntent.PathPointsCm;
-		Request.TargetPositionCm = ActiveIntent.PathPointsCm.Last();
-		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
-		{
-			Request.TargetVelocityCmPerSec = (ActiveIntent.PathPointsCm.Last()
-				- ActiveIntent.PathPointsCm[ActiveIntent.PathPointsCm.Num() - 2]).GetSafeNormal()
-				* EffectivePassThroughSpeedCmPerSec;
-		}
-		break;
-	case EAutopilotMovementIntentType::Orbit:
-		Request.Type = ETrajectoryType::Orbit;
-		Request.OrbitCenterCm = ResolveTargetPosition(ActiveIntent);
-		Request.OrbitRadiusCm = ActiveIntent.OrbitRadiusCm;
-		Request.OrbitAngularRateDegPerSec = ActiveIntent.OrbitAngularRateDegPerSec;
-		Request.CruiseSpeedCmPerSec = FMath::Min(FMath::Abs(
-			FMath::DegreesToRadians(ActiveIntent.OrbitAngularRateDegPerSec) * ActiveIntent.OrbitRadiusCm),
-			PhysicalMaxHorizontalSpeedCmPerSec);
-		break;
-	case EAutopilotMovementIntentType::CircleArc:
-		Request.Type = ETrajectoryType::Circle;
-		Request.OrbitCenterCm = ResolveTargetPosition(ActiveIntent);
-		Request.OrbitRadiusCm = ActiveIntent.OrbitRadiusCm;
-		Request.ArcStartAngleDegrees = ActiveIntent.ArcStartAngleDegrees;
-		Request.ArcEndAngleDegrees = ActiveIntent.ArcEndAngleDegrees;
-		Request.TargetPositionCm = ResolveCompletionTarget(ActiveIntent);
-		if (ActiveIntent.ArrivalMode == EAutopilotArrivalMode::PassThrough)
-		{
-			const float EndAngleRadians = FMath::DegreesToRadians(ActiveIntent.ArcEndAngleDegrees);
-			const float SpinSign = FMath::Sign(
-				ActiveIntent.ArcEndAngleDegrees - ActiveIntent.ArcStartAngleDegrees);
-			Request.TargetVelocityCmPerSec = FVector(
-				-FMath::Sin(EndAngleRadians) * SpinSign,
-				FMath::Cos(EndAngleRadians) * SpinSign,
-				0.0f) * EffectivePassThroughSpeedCmPerSec;
-		}
-		break;
-	default:
-		return true;
+		return false;
 	}
 	LastResolvedTargetCm = ResolveTargetPosition(ActiveIntent);
-	return TrajectoryGenerator.SetRequest(Request);
+	return TrajectoryGenerator.SetPlan(Plan);
 }
 
 bool FAircraftAutopilotMovementExecutor::BuildSetpoint(

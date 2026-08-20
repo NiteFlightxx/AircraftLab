@@ -11,15 +11,15 @@
  * 职责边界：只描述几何与沿弧长的运动学采样；时间化（速度剖面）由
  * FAircraftTrajectoryGenerator 统一处理；V/A/Jerk 硬限幅是 Motion Profile 的职责。
  */
-class AIRCRAFTRUNTIMECOMMON_API FAircraftTrajectorySegment
+class AIRCRAFTRUNTIMECOMMON_API FAircraftPathGeometry
 {
 public:
-	virtual ~FAircraftTrajectorySegment() = default;
+	virtual ~FAircraftPathGeometry() = default;
 
 	/** 根据请求构建几何参数；失败时填写诊断信息。 */
-	virtual bool BuildSegment(const FTrajectoryRequest& Request, FString& OutError)
+	virtual bool BuildPath(const FAircraftTrajectoryPlan& Plan, FString& OutError)
 	{
-		(void)Request; (void)OutError;
+		(void)Plan; (void)OutError;
 		return true;
 	}
 
@@ -34,9 +34,6 @@ public:
 	virtual FFrenetFrame GetFrenetAtArcLength(float S) const = 0;
 
 	virtual bool IsComplete(float CurrentS) const { return CurrentS + UE_SMALL_NUMBER >= TotalArcLengthCm; }
-
-	/** 无限循环段（Orbit）：生成器不 clamp 游标、不触发完成判定。 */
-	virtual bool IsInfiniteLoop() const { return false; }
 
 	/** 原生时间参数化段（MinSnap）绕开梯形重定时。 */
 	virtual bool UsesNativeTimeParameterization() const { return false; }
@@ -65,10 +62,10 @@ protected:
 };
 
 /** 直线段：Start → Target。 */
-class AIRCRAFTRUNTIMECOMMON_API FAircraftLineTrajectorySegment : public FAircraftTrajectorySegment
+class AIRCRAFTRUNTIMECOMMON_API FAircraftLinePathGeometry : public FAircraftPathGeometry
 {
 public:
-	virtual bool BuildSegment(const FTrajectoryRequest& Request, FString& OutError) override;
+	virtual bool BuildPath(const FAircraftTrajectoryPlan& Plan, FString& OutError) override;
 	virtual FTrajectoryPoint SampleAtArcLength(float S, float SpeedCmPerSec) const override;
 	virtual FFrenetFrame GetFrenetAtArcLength(float S) const override;
 
@@ -79,10 +76,10 @@ private:
 };
 
 /** 贝塞尔段（de Casteljau 求值 + 累积弧长表 + 数值切向/曲率）。 */
-class AIRCRAFTRUNTIMECOMMON_API FAircraftBezierTrajectorySegment : public FAircraftTrajectorySegment
+class AIRCRAFTRUNTIMECOMMON_API FAircraftBezierPathGeometry : public FAircraftPathGeometry
 {
 public:
-	virtual bool BuildSegment(const FTrajectoryRequest& Request, FString& OutError) override;
+	virtual bool BuildPath(const FAircraftTrajectoryPlan& Plan, FString& OutError) override;
 	virtual FTrajectoryPoint SampleAtArcLength(float S, float SpeedCmPerSec) const override;
 	virtual FFrenetFrame GetFrenetAtArcLength(float S) const override;
 
@@ -97,10 +94,10 @@ private:
 };
 
 /** 圆弧段（有限扫角；EndAngle < StartAngle 表示顺时针）。 */
-class AIRCRAFTRUNTIMECOMMON_API FAircraftCircleTrajectorySegment : public FAircraftTrajectorySegment
+class AIRCRAFTRUNTIMECOMMON_API FAircraftCirclePathGeometry : public FAircraftPathGeometry
 {
 public:
-	virtual bool BuildSegment(const FTrajectoryRequest& Request, FString& OutError) override;
+	virtual bool BuildPath(const FAircraftTrajectoryPlan& Plan, FString& OutError) override;
 	virtual FTrajectoryPoint SampleAtArcLength(float S, float SpeedCmPerSec) const override;
 	virtual FFrenetFrame GetFrenetAtArcLength(float S) const override;
 
@@ -113,30 +110,14 @@ private:
 	float SpinSign = 1.0f;
 };
 
-/** 环绕段（无限循环；起始角由当前位置相对圆心方位自动计算）。 */
-class AIRCRAFTRUNTIMECOMMON_API FAircraftOrbitTrajectorySegment : public FAircraftTrajectorySegment
-{
-public:
-	virtual bool BuildSegment(const FTrajectoryRequest& Request, FString& OutError) override;
-	virtual FTrajectoryPoint SampleAtArcLength(float S, float SpeedCmPerSec) const override;
-	virtual FFrenetFrame GetFrenetAtArcLength(float S) const override;
-	virtual bool IsInfiniteLoop() const override { return true; }
-
-private:
-	FVector CenterCm = FVector::ZeroVector;
-	float RadiusCm = 500.0f;
-	float StartAngleDeg = 0.0f;
-	float SpinSign = 1.0f;
-};
-
 /**
  * Minimum-Snap 段：7 阶多项式、KKT 等式约束求解（位置/速度/加速度/加加速度连续），
  * 原生时间参数化 + 时间缩放以满足 V/A/Jerk 限幅。
  */
-class AIRCRAFTRUNTIMECOMMON_API FAircraftMinSnapTrajectorySegment : public FAircraftTrajectorySegment
+class AIRCRAFTRUNTIMECOMMON_API FAircraftMinimumSnapPathGeometry : public FAircraftPathGeometry
 {
 public:
-	virtual bool BuildSegment(const FTrajectoryRequest& Request, FString& OutError) override;
+	virtual bool BuildPath(const FAircraftTrajectoryPlan& Plan, FString& OutError) override;
 	virtual FTrajectoryPoint SampleAtArcLength(float S, float SpeedCmPerSec) const override;
 	virtual FFrenetFrame GetFrenetAtArcLength(float S) const override;
 	virtual bool UsesNativeTimeParameterization() const override { return true; }
@@ -161,9 +142,9 @@ private:
 	};
 
 	void AllocateInitialTimes(float CruiseSpeedCmPerSec);
-	bool SolvePolynomials(const FTrajectoryRequest& Request, FString& OutError);
-	bool SolveAxis(int32 Axis, const FTrajectoryRequest& Request, FString& OutError);
-	bool ScaleTimesToLimits(const FTrajectoryRequest& Request, FString& OutError);
+	bool SolvePolynomials(const FAircraftTrajectoryPlan& Plan, FString& OutError);
+	bool SolveAxis(int32 Axis, const FAircraftTrajectoryPlan& Plan, FString& OutError);
+	bool ScaleTimesToLimits(const FAircraftTrajectoryPlan& Plan, FString& OutError);
 	void MeasureDerivativePeaks(float& OutMaxSpeed, float& OutMaxAcceleration, float& OutMaxJerk) const;
 	void BuildArcLengthLookup();
 	int32 FindSegmentAtTime(float TimeSeconds, float& OutLocalTimeSeconds) const;

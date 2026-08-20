@@ -3,10 +3,15 @@
 
 /* ================================ Line ================================ */
 
-bool FAircraftLineTrajectorySegment::BuildSegment(const FTrajectoryRequest& Request, FString& OutError)
+bool FAircraftLinePathGeometry::BuildPath(const FAircraftTrajectoryPlan& Plan, FString& OutError)
 {
-	StartCm = Request.StartPositionCm;
-	EndCm = Request.TargetPositionCm;
+	if (Plan.Path.PointsCm.Num() != 2)
+	{
+		OutError = TEXT("Line path requires exactly two points.");
+		return false;
+	}
+	StartCm = Plan.Path.PointsCm[0];
+	EndCm = Plan.Path.PointsCm[1];
 	const FVector Delta = EndCm - StartCm;
 	const float Length = Delta.Size();
 
@@ -21,7 +26,7 @@ bool FAircraftLineTrajectorySegment::BuildSegment(const FTrajectoryRequest& Requ
 	return true;
 }
 
-FFrenetFrame FAircraftLineTrajectorySegment::GetFrenetAtArcLength(float S) const
+FFrenetFrame FAircraftLinePathGeometry::GetFrenetAtArcLength(float S) const
 {
 	FFrenetFrame Frame;
 	const float ClampedS = ClampArcLength(S);
@@ -44,7 +49,7 @@ FFrenetFrame FAircraftLineTrajectorySegment::GetFrenetAtArcLength(float S) const
 	return Frame;
 }
 
-FTrajectoryPoint FAircraftLineTrajectorySegment::SampleAtArcLength(float S, float SpeedCmPerSec) const
+FTrajectoryPoint FAircraftLinePathGeometry::SampleAtArcLength(float S, float SpeedCmPerSec) const
 {
 	FTrajectoryPoint Point;
 	const FFrenetFrame Frame = GetFrenetAtArcLength(S);
@@ -62,9 +67,9 @@ FTrajectoryPoint FAircraftLineTrajectorySegment::SampleAtArcLength(float S, floa
 
 /* ================================ Bezier ================================ */
 
-bool FAircraftBezierTrajectorySegment::BuildSegment(const FTrajectoryRequest& Request, FString& OutError)
+bool FAircraftBezierPathGeometry::BuildPath(const FAircraftTrajectoryPlan& Plan, FString& OutError)
 {
-	ControlPoints = Request.PathPointsCm;
+	ControlPoints = Plan.Path.PointsCm;
 	if (ControlPoints.Num() < 2)
 	{
 		OutError = TEXT("BezierSegment: need at least 2 control points (in PathPointsCm).");
@@ -92,7 +97,7 @@ bool FAircraftBezierTrajectorySegment::BuildSegment(const FTrajectoryRequest& Re
 	return true;
 }
 
-FVector FAircraftBezierTrajectorySegment::EvaluatePosition(float U) const
+FVector FAircraftBezierPathGeometry::EvaluatePosition(float U) const
 {
 	// de Casteljau
 	const int32 N = ControlPoints.Num();
@@ -115,7 +120,7 @@ FVector FAircraftBezierTrajectorySegment::EvaluatePosition(float U) const
 	return Points[0];
 }
 
-FVector FAircraftBezierTrajectorySegment::EvaluateTangent(float U) const
+FVector FAircraftBezierPathGeometry::EvaluateTangent(float U) const
 {
 	const float Du = 1.0f / static_cast<float>(ArcTableResolution);
 	const float U1 = FMath::Clamp(U - Du, 0.0f, 1.0f);
@@ -123,7 +128,7 @@ FVector FAircraftBezierTrajectorySegment::EvaluateTangent(float U) const
 	return (EvaluatePosition(U2) - EvaluatePosition(U1)).GetSafeNormal();
 }
 
-float FAircraftBezierTrajectorySegment::ArcLengthToParameter(float S) const
+float FAircraftBezierPathGeometry::ArcLengthToParameter(float S) const
 {
 	const float ClampedS = ClampArcLength(S);
 	if (CumArcLengths.Num() < 2)
@@ -148,7 +153,7 @@ float FAircraftBezierTrajectorySegment::ArcLengthToParameter(float S) const
 	return FMath::Lerp(ULo, UHi, Frac);
 }
 
-FFrenetFrame FAircraftBezierTrajectorySegment::GetFrenetAtArcLength(float S) const
+FFrenetFrame FAircraftBezierPathGeometry::GetFrenetAtArcLength(float S) const
 {
 	FFrenetFrame Frame;
 	const float U = ArcLengthToParameter(S);
@@ -181,7 +186,7 @@ FFrenetFrame FAircraftBezierTrajectorySegment::GetFrenetAtArcLength(float S) con
 	return Frame;
 }
 
-FTrajectoryPoint FAircraftBezierTrajectorySegment::SampleAtArcLength(float S, float SpeedCmPerSec) const
+FTrajectoryPoint FAircraftBezierPathGeometry::SampleAtArcLength(float S, float SpeedCmPerSec) const
 {
 	FTrajectoryPoint Point;
 	const FFrenetFrame Frame = GetFrenetAtArcLength(S);
@@ -211,17 +216,17 @@ FTrajectoryPoint FAircraftBezierTrajectorySegment::SampleAtArcLength(float S, fl
 
 /* ================================ Circle ================================ */
 
-bool FAircraftCircleTrajectorySegment::BuildSegment(const FTrajectoryRequest& Request, FString& OutError)
+bool FAircraftCirclePathGeometry::BuildPath(const FAircraftTrajectoryPlan& Plan, FString& OutError)
 {
-	CenterCm = Request.OrbitCenterCm;
-	if (!FMath::IsFinite(Request.OrbitRadiusCm) || Request.OrbitRadiusCm <= UE_SMALL_NUMBER)
+	CenterCm = Plan.Path.CircleCenterCm;
+	if (!FMath::IsFinite(Plan.Path.CircleRadiusCm) || Plan.Path.CircleRadiusCm <= UE_SMALL_NUMBER)
 	{
 		OutError = TEXT("CircleSegment: radius must be positive and finite.");
 		return false;
 	}
-	RadiusCm = Request.OrbitRadiusCm;
-	StartAngleDeg = Request.ArcStartAngleDegrees;
-	EndAngleDeg = Request.ArcEndAngleDegrees;
+	RadiusCm = Plan.Path.CircleRadiusCm;
+	StartAngleDeg = Plan.Path.CircleStartAngleDegrees;
+	EndAngleDeg = StartAngleDeg + Plan.Path.CircleSweepAngleDegrees;
 	if (!FMath::IsFinite(StartAngleDeg) || !FMath::IsFinite(EndAngleDeg))
 	{
 		OutError = TEXT("CircleSegment: start and end angles must be finite.");
@@ -242,13 +247,25 @@ bool FAircraftCircleTrajectorySegment::BuildSegment(const FTrajectoryRequest& Re
 	return true;
 }
 
-FFrenetFrame FAircraftCircleTrajectorySegment::GetFrenetAtArcLength(float S) const
+FFrenetFrame FAircraftCirclePathGeometry::GetFrenetAtArcLength(float S) const
 {
 	FFrenetFrame Frame;
-	const float ClampedS = ClampArcLength(S);
+	float SampleS = S;
+	if (TotalArcLengthCm > UE_SMALL_NUMBER && (S < 0.0f || S > TotalArcLengthCm))
+	{
+		SampleS = FMath::Fmod(S, TotalArcLengthCm);
+		if (SampleS < 0.0f)
+		{
+			SampleS += TotalArcLengthCm;
+		}
+	}
+	else
+	{
+		SampleS = ClampArcLength(S);
+	}
 
 	const float StartRad = FMath::DegreesToRadians(StartAngleDeg);
-	const float Angle = StartRad + (ClampedS / RadiusCm) * SpinSign;
+	const float Angle = StartRad + (SampleS / RadiusCm) * SpinSign;
 	const float CosA = FMath::Cos(Angle);
 	const float SinA = FMath::Sin(Angle);
 
@@ -256,81 +273,12 @@ FFrenetFrame FAircraftCircleTrajectorySegment::GetFrenetAtArcLength(float S) con
 	Frame.Tangent = FVector(-SinA * SpinSign, CosA * SpinSign, 0.0f).GetSafeNormal();
 	Frame.Normal = FVector(-CosA, -SinA, 0.0f).GetSafeNormal();
 	Frame.Up = FVector::UpVector;
-	Frame.ArcLengthCm = ClampedS;
+	Frame.ArcLengthCm = SampleS;
 	Frame.Curvature = 1.0f / RadiusCm;
 	return Frame;
 }
 
-FTrajectoryPoint FAircraftCircleTrajectorySegment::SampleAtArcLength(float S, float SpeedCmPerSec) const
-{
-	FTrajectoryPoint Point;
-	const FFrenetFrame Frame = GetFrenetAtArcLength(S);
-
-	Point.PositionCm = Frame.OriginCm;
-	Point.VelocityCmPerSec = Frame.Tangent * SpeedCmPerSec;
-	Point.AccelerationCmPerSecSq = Frame.Normal * (SpeedCmPerSec * SpeedCmPerSec * Frame.Curvature);
-	Point.YawDegrees = Frame.GetYawDegrees();
-	Point.YawRateDegreesPerSec = FMath::RadiansToDegrees(Frame.Curvature * SpeedCmPerSec * SpinSign);
-	Point.ArcLengthCm = Frame.ArcLengthCm;
-	Point.Curvature = Frame.Curvature;
-	Point.bValid = true;
-	return Point;
-}
-
-/* ================================ Orbit ================================ */
-
-bool FAircraftOrbitTrajectorySegment::BuildSegment(const FTrajectoryRequest& Request, FString& OutError)
-{
-	CenterCm = Request.OrbitCenterCm;
-	if (!FMath::IsFinite(Request.OrbitRadiusCm) || Request.OrbitRadiusCm <= UE_SMALL_NUMBER)
-	{
-		OutError = TEXT("OrbitSegment: radius must be positive and finite.");
-		return false;
-	}
-	if (!FMath::IsFinite(Request.OrbitAngularRateDegPerSec)
-		|| FMath::IsNearlyZero(Request.OrbitAngularRateDegPerSec))
-	{
-		OutError = TEXT("OrbitSegment: angular rate must be finite and non-zero.");
-		return false;
-	}
-	RadiusCm = Request.OrbitRadiusCm;
-	SpinSign = (Request.OrbitAngularRateDegPerSec >= 0.0f) ? 1.0f : -1.0f;
-
-	// 起始角由当前位置相对圆心的方位自动计算，保证平滑接入圆周
-	const FVector ToStart = Request.StartPositionCm - CenterCm;
-	StartAngleDeg = FMath::RadiansToDegrees(FMath::Atan2(ToStart.Y, ToStart.X));
-
-	TotalArcLengthCm = 2.0f * PI * RadiusCm;
-	return true;
-}
-
-FFrenetFrame FAircraftOrbitTrajectorySegment::GetFrenetAtArcLength(float S) const
-{
-	FFrenetFrame Frame;
-
-	// 连续环绕：s 取模一圈弧长
-	const float OneLap = 2.0f * PI * RadiusCm;
-	float WrappedS = OneLap > UE_SMALL_NUMBER ? FMath::Fmod(S, OneLap) : 0.0f;
-	if (WrappedS < 0.0f)
-	{
-		WrappedS += OneLap;
-	}
-
-	const float StartRad = FMath::DegreesToRadians(StartAngleDeg);
-	const float Angle = StartRad + (WrappedS / RadiusCm) * SpinSign;
-	const float CosA = FMath::Cos(Angle);
-	const float SinA = FMath::Sin(Angle);
-
-	Frame.OriginCm = FVector(CenterCm.X + RadiusCm * CosA, CenterCm.Y + RadiusCm * SinA, CenterCm.Z);
-	Frame.Tangent = FVector(-SinA * SpinSign, CosA * SpinSign, 0.0f).GetSafeNormal();
-	Frame.Normal = FVector(-CosA, -SinA, 0.0f).GetSafeNormal();
-	Frame.Up = FVector::UpVector;
-	Frame.ArcLengthCm = WrappedS;
-	Frame.Curvature = 1.0f / RadiusCm;
-	return Frame;
-}
-
-FTrajectoryPoint FAircraftOrbitTrajectorySegment::SampleAtArcLength(float S, float SpeedCmPerSec) const
+FTrajectoryPoint FAircraftCirclePathGeometry::SampleAtArcLength(float S, float SpeedCmPerSec) const
 {
 	FTrajectoryPoint Point;
 	const FFrenetFrame Frame = GetFrenetAtArcLength(S);
@@ -443,22 +391,14 @@ namespace MinSnapPrivate
 	}
 }
 
-bool FAircraftMinSnapTrajectorySegment::BuildSegment(const FTrajectoryRequest& Request, FString& OutError)
+bool FAircraftMinimumSnapPathGeometry::BuildPath(const FAircraftTrajectoryPlan& Plan, FString& OutError)
 {
-	if (Request.PathPointsCm.Num() < 2)
+	if (Plan.Path.PointsCm.Num() < 2)
 	{
 		OutError = TEXT("MinimumSnap requires at least two path points.");
 		return false;
 	}
-	Waypoints = Request.PathPointsCm;
-	if (FVector::DistSquared(Request.StartPositionCm, Waypoints[0]) > FMath::Square(1.0f))
-	{
-		Waypoints.Insert(Request.StartPositionCm, 0);
-	}
-	else
-	{
-		Waypoints[0] = Request.StartPositionCm;
-	}
+	Waypoints = Plan.Path.PointsCm;
 	if (Waypoints.Num() > 16)
 	{
 		OutError = TEXT("MinimumSnap supports at most 16 waypoints including the current position.");
@@ -478,12 +418,12 @@ bool FAircraftMinSnapTrajectorySegment::BuildSegment(const FTrajectoryRequest& R
 	{
 		Segment.Coefficients.SetNumZeroed(MinSnapPrivate::CoefficientCount);
 	}
-	AllocateInitialTimes(Request.CruiseSpeedCmPerSec);
-	if (!SolvePolynomials(Request, OutError))
+	AllocateInitialTimes(Plan.MotionConstraints.CruiseSpeedCmPerSec);
+	if (!SolvePolynomials(Plan, OutError))
 	{
 		return false;
 	}
-	if (!ScaleTimesToLimits(Request, OutError))
+	if (!ScaleTimesToLimits(Plan, OutError))
 	{
 		return false;
 	}
@@ -496,7 +436,7 @@ bool FAircraftMinSnapTrajectorySegment::BuildSegment(const FTrajectoryRequest& R
 	return true;
 }
 
-void FAircraftMinSnapTrajectorySegment::AllocateInitialTimes(float CruiseSpeedCmPerSec)
+void FAircraftMinimumSnapPathGeometry::AllocateInitialTimes(float CruiseSpeedCmPerSec)
 {
 	WaypointTimes.SetNumZeroed(Waypoints.Num());
 	float Time = 0.0f;
@@ -514,11 +454,11 @@ void FAircraftMinSnapTrajectorySegment::AllocateInitialTimes(float CruiseSpeedCm
 	TotalDurationSeconds = Time;
 }
 
-bool FAircraftMinSnapTrajectorySegment::SolvePolynomials(const FTrajectoryRequest& Request, FString& OutError)
+bool FAircraftMinimumSnapPathGeometry::SolvePolynomials(const FAircraftTrajectoryPlan& Plan, FString& OutError)
 {
 	for (int32 Axis = 0; Axis < 3; ++Axis)
 	{
-		if (!SolveAxis(Axis, Request, OutError))
+		if (!SolveAxis(Axis, Plan, OutError))
 		{
 			return false;
 		}
@@ -526,7 +466,7 @@ bool FAircraftMinSnapTrajectorySegment::SolvePolynomials(const FTrajectoryReques
 	return true;
 }
 
-bool FAircraftMinSnapTrajectorySegment::SolveAxis(int32 Axis, const FTrajectoryRequest& Request, FString& OutError)
+bool FAircraftMinimumSnapPathGeometry::SolveAxis(int32 Axis, const FAircraftTrajectoryPlan& Plan, FString& OutError)
 {
 	using namespace MinSnapPrivate;
 
@@ -585,14 +525,14 @@ bool FAircraftMinSnapTrajectorySegment::SolveAxis(int32 Axis, const FTrajectoryR
 	{
 		AddDerivative(ConstraintRow, 0, DerivativeOrder, 0.0, 1.0);
 		B[ConstraintRow++] = DerivativeOrder == 1
-			? AxisValue(Request.StartVelocityCmPerSec, Axis)
-			: DerivativeOrder == 2 ? AxisValue(Request.StartAccelerationCmPerSecSq, Axis) : 0.0;
+			? AxisValue(Plan.InitialVelocityCmPerSec, Axis)
+			: DerivativeOrder == 2 ? AxisValue(Plan.InitialAccelerationCmPerSecSq, Axis) : 0.0;
 	}
 	for (int32 DerivativeOrder = 1; DerivativeOrder <= 3; ++DerivativeOrder)
 	{
 		AddDerivative(ConstraintRow, SegmentCount - 1, DerivativeOrder, 1.0, 1.0);
 		B[ConstraintRow++] = DerivativeOrder == 1
-			? AxisValue(Request.TargetVelocityCmPerSec, Axis) : 0.0;
+			? AxisValue(Plan.TerminalVelocityCmPerSec, Axis) : 0.0;
 	}
 	for (int32 SegmentIndex = 0; SegmentIndex < SegmentCount - 1; ++SegmentIndex)
 	{
@@ -645,15 +585,16 @@ bool FAircraftMinSnapTrajectorySegment::SolveAxis(int32 Axis, const FTrajectoryR
 	return true;
 }
 
-bool FAircraftMinSnapTrajectorySegment::ScaleTimesToLimits(const FTrajectoryRequest& Request, FString& OutError)
+bool FAircraftMinimumSnapPathGeometry::ScaleTimesToLimits(const FAircraftTrajectoryPlan& Plan, FString& OutError)
 {
+	const FTrajectoryMotionConstraints& Constraints = Plan.MotionConstraints;
 	const float AllowedSpeed = FMath::Max3(
-		Request.CruiseSpeedCmPerSec,
-		static_cast<float>(Request.StartVelocityCmPerSec.Size()),
-		static_cast<float>(Request.TargetVelocityCmPerSec.Size()));
+		Constraints.CruiseSpeedCmPerSec,
+		static_cast<float>(Plan.InitialVelocityCmPerSec.Size()),
+		static_cast<float>(Plan.TerminalVelocityCmPerSec.Size()));
 	const float AllowedAcceleration = FMath::Max3(
-		FMath::Min(Request.PlanningAccelerationCmPerSecSq, Request.PlanningDecelerationCmPerSecSq),
-		static_cast<float>(Request.StartAccelerationCmPerSecSq.Size()), 1.0f);
+		FMath::Min(Constraints.MaxAccelerationCmPerSecSq, Constraints.MaxDecelerationCmPerSecSq),
+		static_cast<float>(Plan.InitialAccelerationCmPerSecSq.Size()), 1.0f);
 	for (int32 Iteration = 0; Iteration < 5; ++Iteration)
 	{
 		float MaxSpeed;
@@ -662,10 +603,10 @@ bool FAircraftMinSnapTrajectorySegment::ScaleTimesToLimits(const FTrajectoryRequ
 		MeasureDerivativePeaks(MaxSpeed, MaxAcceleration, MaxJerk);
 		float Scale = FMath::Max(MaxSpeed / AllowedSpeed,
 			FMath::Sqrt(MaxAcceleration / AllowedAcceleration));
-		if (Request.PlanningJerkCmPerSecCubed > UE_SMALL_NUMBER)
+		if (Constraints.MaxJerkCmPerSecCubed > UE_SMALL_NUMBER)
 		{
 			Scale = FMath::Max(Scale,
-				FMath::Pow(MaxJerk / Request.PlanningJerkCmPerSecCubed, 1.0f / 3.0f));
+				FMath::Pow(MaxJerk / Constraints.MaxJerkCmPerSecCubed, 1.0f / 3.0f));
 		}
 		if (Scale <= 1.001f)
 		{
@@ -683,7 +624,7 @@ bool FAircraftMinSnapTrajectorySegment::ScaleTimesToLimits(const FTrajectoryRequ
 			WaypointTimes[SegmentIndex + 1] = Time;
 		}
 		TotalDurationSeconds = Time;
-		if (!SolvePolynomials(Request, OutError))
+		if (!SolvePolynomials(Plan, OutError))
 		{
 			return false;
 		}
@@ -692,7 +633,7 @@ bool FAircraftMinSnapTrajectorySegment::ScaleTimesToLimits(const FTrajectoryRequ
 	return false;
 }
 
-void FAircraftMinSnapTrajectorySegment::MeasureDerivativePeaks(
+void FAircraftMinimumSnapPathGeometry::MeasureDerivativePeaks(
 	float& OutMaxSpeed, float& OutMaxAcceleration, float& OutMaxJerk) const
 {
 	OutMaxSpeed = OutMaxAcceleration = OutMaxJerk = 0.0f;
@@ -710,7 +651,7 @@ void FAircraftMinSnapTrajectorySegment::MeasureDerivativePeaks(
 	}
 }
 
-void FAircraftMinSnapTrajectorySegment::BuildArcLengthLookup()
+void FAircraftMinimumSnapPathGeometry::BuildArcLengthLookup()
 {
 	ArcLookupTimes.Reset();
 	ArcLookupLengths.Reset();
@@ -735,7 +676,7 @@ void FAircraftMinSnapTrajectorySegment::BuildArcLengthLookup()
 	TotalArcLengthCm = ArcLength;
 }
 
-int32 FAircraftMinSnapTrajectorySegment::FindSegmentAtTime(float TimeSeconds, float& OutLocalTimeSeconds) const
+int32 FAircraftMinimumSnapPathGeometry::FindSegmentAtTime(float TimeSeconds, float& OutLocalTimeSeconds) const
 {
 	if (PolynomialSegments.IsEmpty())
 	{
@@ -757,7 +698,7 @@ int32 FAircraftMinSnapTrajectorySegment::FindSegmentAtTime(float TimeSeconds, fl
 	return Low;
 }
 
-FVector FAircraftMinSnapTrajectorySegment::EvaluateSegmentDerivative(
+FVector FAircraftMinimumSnapPathGeometry::EvaluateSegmentDerivative(
 	int32 SegmentIndex, float LocalTimeSeconds, int32 Order) const
 {
 	if (!PolynomialSegments.IsValidIndex(SegmentIndex) || Order < 0 || Order > 4)
@@ -776,14 +717,14 @@ FVector FAircraftMinSnapTrajectorySegment::EvaluateSegmentDerivative(
 	return Result;
 }
 
-FVector FAircraftMinSnapTrajectorySegment::EvaluateDerivativeAtTime(float TimeSeconds, int32 DerivativeOrder) const
+FVector FAircraftMinimumSnapPathGeometry::EvaluateDerivativeAtTime(float TimeSeconds, int32 DerivativeOrder) const
 {
 	float LocalTime;
 	const int32 SegmentIndex = FindSegmentAtTime(TimeSeconds, LocalTime);
 	return EvaluateSegmentDerivative(SegmentIndex, LocalTime, DerivativeOrder);
 }
 
-float FAircraftMinSnapTrajectorySegment::GetArcLengthAtTime(float TimeSeconds) const
+float FAircraftMinimumSnapPathGeometry::GetArcLengthAtTime(float TimeSeconds) const
 {
 	if (ArcLookupTimes.IsEmpty())
 	{
@@ -806,7 +747,7 @@ float FAircraftMinSnapTrajectorySegment::GetArcLengthAtTime(float TimeSeconds) c
 	return FMath::Lerp(ArcLookupLengths[Low], ArcLookupLengths[High], Alpha);
 }
 
-float FAircraftMinSnapTrajectorySegment::FindTimeAtArcLength(float S) const
+float FAircraftMinimumSnapPathGeometry::FindTimeAtArcLength(float S) const
 {
 	if (ArcLookupLengths.IsEmpty())
 	{
@@ -829,7 +770,7 @@ float FAircraftMinSnapTrajectorySegment::FindTimeAtArcLength(float S) const
 	return FMath::Lerp(ArcLookupTimes[Low], ArcLookupTimes[High], Alpha);
 }
 
-FTrajectoryPoint FAircraftMinSnapTrajectorySegment::SampleAtTime(float TimeSeconds) const
+FTrajectoryPoint FAircraftMinimumSnapPathGeometry::SampleAtTime(float TimeSeconds) const
 {
 	FTrajectoryPoint Point;
 	if (PolynomialSegments.IsEmpty())
@@ -858,7 +799,7 @@ FTrajectoryPoint FAircraftMinSnapTrajectorySegment::SampleAtTime(float TimeSecon
 	return Point;
 }
 
-FFrenetFrame FAircraftMinSnapTrajectorySegment::GetFrenetAtArcLength(float S) const
+FFrenetFrame FAircraftMinimumSnapPathGeometry::GetFrenetAtArcLength(float S) const
 {
 	FFrenetFrame Frame;
 	const float Time = FindTimeAtArcLength(S);
@@ -880,7 +821,7 @@ FFrenetFrame FAircraftMinSnapTrajectorySegment::GetFrenetAtArcLength(float S) co
 	return Frame;
 }
 
-FTrajectoryPoint FAircraftMinSnapTrajectorySegment::SampleAtArcLength(float S, float SpeedCmPerSec) const
+FTrajectoryPoint FAircraftMinimumSnapPathGeometry::SampleAtArcLength(float S, float SpeedCmPerSec) const
 {
 	const float Arc = ClampArcLength(S);
 	const float Time = FindTimeAtArcLength(Arc);

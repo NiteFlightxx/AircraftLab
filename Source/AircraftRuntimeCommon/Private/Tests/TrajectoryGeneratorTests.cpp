@@ -5,6 +5,17 @@
 #include "AircraftRuntimeCommon/Autopilot/MotionProfile.h"
 #include "AircraftRuntimeCommon/Autopilot/TrajectoryGenerator.h"
 
+namespace
+{
+	FAircraftTrajectoryPlan MakePolylinePlan(const FVector& StartCm, const FVector& TargetCm)
+	{
+		FAircraftTrajectoryPlan Plan;
+		Plan.Path.Geometry = EAircraftPathGeometry::Polyline;
+		Plan.Path.PointsCm = { StartCm, TargetCm };
+		return Plan;
+	}
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftAutopilotOrbitWrapTest,
 	"AircraftAutopilot.Trajectory.OrbitContinuesAfterOneLap",
@@ -13,27 +24,32 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftAutopilotOrbitWrapTest::RunTest(const FString& Parameters)
 {
 	FAircraftTrajectoryGenerator Generator;
-	FTrajectoryRequest Request;
-	Request.Type = ETrajectoryType::Orbit;
-	Request.OrbitCenterCm = FVector::ZeroVector;
-	Request.OrbitRadiusCm = 100.0f;
-	Request.StartPositionCm = FVector(100.0f, 0.0f, 0.0f);
-	Request.CruiseSpeedCmPerSec = 100.0f;
-	Request.OrbitAngularRateDegPerSec = 45.0f;
+	FAircraftTrajectoryPlan Plan;
+	Plan.Path.Geometry = EAircraftPathGeometry::Circle;
+	Plan.Path.CircleCenterCm = FVector::ZeroVector;
+	Plan.Path.CircleRadiusCm = 100.0f;
+	Plan.Path.CircleStartAngleDegrees = 0.0f;
+	Plan.Path.CircleSweepAngleDegrees = 360.0f;
+	Plan.Traversal = EAircraftPathTraversal::Loop;
+	Plan.MotionConstraints.CruiseSpeedCmPerSec = 100.0f;
 
-	TestTrue(TEXT("Orbit request builds"), Generator.SetRequest(Request));
+	TestTrue(TEXT("Looping circle plan builds"), Generator.SetPlan(Plan));
 
-	const float ArcAfterOneAndQuarterLaps = 2.5f * PI * Request.OrbitRadiusCm;
-	const float DeltaSeconds = ArcAfterOneAndQuarterLaps / Request.CruiseSpeedCmPerSec;
+	FVector SimulatedPosition(100.0f, 0.0f, 0.0f);
 	FTrajectoryPoint Setpoint;
-	TestTrue(TEXT("Orbit produces a setpoint"), Generator.UpdateSetpoint(
-		DeltaSeconds, Request.StartPositionCm, Setpoint));
+	const float TargetArc = 2.5f * PI * Plan.Path.CircleRadiusCm;
+	for (int32 Step = 0; Step < 2000 && Generator.GetCurrentArcLength() < TargetArc; ++Step)
+	{
+		TestTrue(TEXT("Looping circle produces a setpoint"),
+			Generator.UpdateSetpoint(0.01f, SimulatedPosition, Setpoint));
+		SimulatedPosition = Setpoint.PositionCm;
+	}
 
 	TestTrue(TEXT("Setpoint remains valid after one lap"), Setpoint.bValid);
 	TestTrue(TEXT("Arc length is not clamped to one lap"),
 		Generator.GetCurrentArcLength() > Generator.GetTotalArcLength());
-	TestTrue(TEXT("Position wraps continuously to the quarter-lap point"),
-		Setpoint.PositionCm.Equals(FVector(0.0f, 100.0f, 0.0f), 0.1f));
+	TestTrue(TEXT("Looping path remains on the configured circle"),
+		FMath::IsNearlyEqual(Setpoint.PositionCm.Size2D(), Plan.Path.CircleRadiusCm, 0.1f));
 	return true;
 }
 
@@ -45,23 +61,24 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftAutopilotFiniteTrajectoryCompletionTest::RunTest(const FString& Parameters)
 {
 	FAircraftTrajectoryGenerator Generator;
-	FTrajectoryRequest Request;
-	Request.Type = ETrajectoryType::Line;
-	Request.StartPositionCm = FVector::ZeroVector;
-	Request.TargetPositionCm = FVector(100.0f, 0.0f, 0.0f);
-	Request.CruiseSpeedCmPerSec = 1000.0f;
-	Request.PlanningAccelerationCmPerSecSq = 10000.0f;
-	Request.AcceptanceRadiusCm = 1.0f;
+	FAircraftTrajectoryPlan Plan = MakePolylinePlan(
+		FVector::ZeroVector, FVector(100.0f, 0.0f, 0.0f));
+	Plan.MotionConstraints.CruiseSpeedCmPerSec = 1000.0f;
+	Plan.MotionConstraints.MaxAccelerationCmPerSecSq = 10000.0f;
+	Plan.MotionConstraints.MaxDecelerationCmPerSecSq = 10000.0f;
+	Plan.AcceptanceRadiusCm = 1.0f;
 
-	TestTrue(TEXT("Line request builds"), Generator.SetRequest(Request));
+	TestTrue(TEXT("Line plan builds"), Generator.SetPlan(Plan));
 	FTrajectoryPoint Setpoint;
+	FVector SimulatedPosition = FVector::ZeroVector;
 	TestTrue(TEXT("Line produces a setpoint"), Generator.UpdateSetpoint(
-		10.0f, FVector::ZeroVector, Setpoint));
+		10.0f, SimulatedPosition, Setpoint));
+	SimulatedPosition = Setpoint.PositionCm;
 	TestTrue(TEXT("Line produces the terminal braking setpoint"), Generator.UpdateSetpoint(
-		10.0f, FVector::ZeroVector, Setpoint));
+		10.0f, SimulatedPosition, Setpoint));
 	TestTrue(TEXT("Trajectory completes in the frame that reaches its end"), Generator.IsComplete());
 	TestTrue(TEXT("Completion frame outputs the endpoint"),
-		Setpoint.PositionCm.Equals(Request.TargetPositionCm, 0.1f));
+		Setpoint.PositionCm.Equals(Plan.Path.PointsCm.Last(), 0.1f));
 	return true;
 }
 
@@ -73,26 +90,26 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftAutopilotAsymmetricCruiseProfileTest::RunTest(const FString& Parameters)
 {
 	FAircraftTrajectoryGenerator Generator;
-	FTrajectoryRequest Request;
-	Request.Type = ETrajectoryType::Line;
-	Request.StartPositionCm = FVector::ZeroVector;
-	Request.TargetPositionCm = FVector(3000.0f, 0.0f, 0.0f);
-	Request.CruiseSpeedCmPerSec = 800.0f;
-	Request.PlanningAccelerationCmPerSecSq = 400.0f;
-	Request.PlanningDecelerationCmPerSecSq = 800.0f;
-	Request.AcceptanceRadiusCm = 1.0f;
+	FAircraftTrajectoryPlan Plan = MakePolylinePlan(
+		FVector::ZeroVector, FVector(3000.0f, 0.0f, 0.0f));
+	Plan.MotionConstraints.CruiseSpeedCmPerSec = 800.0f;
+	Plan.MotionConstraints.MaxAccelerationCmPerSecSq = 400.0f;
+	Plan.MotionConstraints.MaxDecelerationCmPerSecSq = 800.0f;
+	Plan.AcceptanceRadiusCm = 1.0f;
 
-	TestTrue(TEXT("Long line request builds"), Generator.SetRequest(Request));
+	TestTrue(TEXT("Long line plan builds"), Generator.SetPlan(Plan));
 
 	constexpr float Dt = 0.01f;
 	float MaxSpeed = 0.0f;
 	float MaxObservedAcceleration = 0.0f;
 	float MaxObservedDeceleration = 0.0f;
 	float PreviousSpeed = 0.0f;
+	FVector SimulatedPosition = FVector::ZeroVector;
 	FTrajectoryPoint Setpoint;
 	for (int32 Step = 0; Step < 2000 && !Generator.IsComplete(); ++Step)
 	{
-		Generator.UpdateSetpoint(Dt, FVector::ZeroVector, Setpoint);
+		Generator.UpdateSetpoint(Dt, SimulatedPosition, Setpoint);
+		SimulatedPosition = Setpoint.PositionCm;
 		const float Speed = Setpoint.VelocityCmPerSec.Size();
 		const float Rate = (Speed - PreviousSpeed) / Dt;
 		MaxObservedAcceleration = FMath::Max(MaxObservedAcceleration, Rate);
@@ -116,27 +133,28 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftAutopilotShortPathPeakSpeedTest::RunTest(const FString& Parameters)
 {
 	FAircraftTrajectoryGenerator Generator;
-	FTrajectoryRequest Request;
-	Request.Type = ETrajectoryType::Line;
-	Request.StartPositionCm = FVector::ZeroVector;
-	Request.TargetPositionCm = FVector(600.0f, 0.0f, 0.0f);
-	Request.CruiseSpeedCmPerSec = 800.0f;
-	Request.PlanningAccelerationCmPerSecSq = 300.0f;
-	Request.PlanningDecelerationCmPerSecSq = 600.0f;
-	Request.AcceptanceRadiusCm = 1.0f;
+	FAircraftTrajectoryPlan Plan = MakePolylinePlan(
+		FVector::ZeroVector, FVector(600.0f, 0.0f, 0.0f));
+	Plan.MotionConstraints.CruiseSpeedCmPerSec = 800.0f;
+	Plan.MotionConstraints.MaxAccelerationCmPerSecSq = 300.0f;
+	Plan.MotionConstraints.MaxDecelerationCmPerSecSq = 600.0f;
+	Plan.AcceptanceRadiusCm = 1.0f;
 
-	TestTrue(TEXT("Short line request builds"), Generator.SetRequest(Request));
+	TestTrue(TEXT("Short line plan builds"), Generator.SetPlan(Plan));
 	constexpr float Dt = 0.005f;
 	float MaxSpeed = 0.0f;
+	FVector SimulatedPosition = FVector::ZeroVector;
 	FTrajectoryPoint Setpoint;
 	for (int32 Step = 0; Step < 2000 && !Generator.IsComplete(); ++Step)
 	{
-		Generator.UpdateSetpoint(Dt, FVector::ZeroVector, Setpoint);
+		Generator.UpdateSetpoint(Dt, SimulatedPosition, Setpoint);
+		SimulatedPosition = Setpoint.PositionCm;
 		MaxSpeed = FMath::Max(MaxSpeed, Setpoint.VelocityCmPerSec.Size());
 	}
 
 	const float ExpectedPeak = FMath::Sqrt(240000.0f);
-	TestTrue(TEXT("Short path does not claim unreachable cruise speed"), MaxSpeed < Request.CruiseSpeedCmPerSec);
+	TestTrue(TEXT("Short path does not claim unreachable cruise speed"),
+		MaxSpeed < Plan.MotionConstraints.CruiseSpeedCmPerSec);
 	TestTrue(TEXT("Short path peak matches asymmetric physical envelope"),
 		FMath::IsNearlyEqual(MaxSpeed, ExpectedPeak, 2.0f));
 	return true;
@@ -150,21 +168,21 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftAutopilotTerminalSpeedTest::RunTest(const FString& Parameters)
 {
 	FAircraftTrajectoryGenerator Generator;
-	FTrajectoryRequest Request;
-	Request.Type = ETrajectoryType::Line;
-	Request.StartPositionCm = FVector::ZeroVector;
-	Request.TargetPositionCm = FVector(2000.0f, 0.0f, 0.0f);
-	Request.CruiseSpeedCmPerSec = 600.0f;
-	Request.PlanningAccelerationCmPerSecSq = 300.0f;
-	Request.PlanningDecelerationCmPerSecSq = 500.0f;
-	Request.TargetVelocityCmPerSec = FVector(200.0f, 0.0f, 0.0f);
-	Request.AcceptanceRadiusCm = 1.0f;
+	FAircraftTrajectoryPlan Plan = MakePolylinePlan(
+		FVector::ZeroVector, FVector(2000.0f, 0.0f, 0.0f));
+	Plan.MotionConstraints.CruiseSpeedCmPerSec = 600.0f;
+	Plan.MotionConstraints.MaxAccelerationCmPerSecSq = 300.0f;
+	Plan.MotionConstraints.MaxDecelerationCmPerSecSq = 500.0f;
+	Plan.TerminalVelocityCmPerSec = FVector(200.0f, 0.0f, 0.0f);
+	Plan.AcceptanceRadiusCm = 1.0f;
 
-	TestTrue(TEXT("Fly-through line request builds"), Generator.SetRequest(Request));
+	TestTrue(TEXT("Fly-through line plan builds"), Generator.SetPlan(Plan));
 	FTrajectoryPoint Setpoint;
+	FVector SimulatedPosition = FVector::ZeroVector;
 	for (int32 Step = 0; Step < 3000 && !Generator.IsComplete(); ++Step)
 	{
-		Generator.UpdateSetpoint(0.005f, FVector::ZeroVector, Setpoint);
+		Generator.UpdateSetpoint(0.005f, SimulatedPosition, Setpoint);
+		SimulatedPosition = Setpoint.PositionCm;
 	}
 
 	TestTrue(TEXT("Fly-through profile reaches target"), Generator.IsComplete());
@@ -181,16 +199,15 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftAutopilotJerkLimitedMoveToTest::RunTest(const FString& Parameters)
 {
 	FAircraftTrajectoryGenerator Generator;
-	FTrajectoryRequest Request;
-	Request.Type = ETrajectoryType::Waypoint;
-	Request.TargetPositionCm = FVector(6000.0f, 0.0f, 0.0f);
-	Request.CruiseSpeedCmPerSec = 800.0f;
-	Request.PlanningAccelerationCmPerSecSq = 400.0f;
-	Request.PlanningDecelerationCmPerSecSq = 500.0f;
-	Request.PlanningJerkCmPerSecCubed = 1000.0f;
-	Request.AcceptanceRadiusCm = 1.0f;
+	FAircraftTrajectoryPlan Plan = MakePolylinePlan(
+		FVector::ZeroVector, FVector(6000.0f, 0.0f, 0.0f));
+	Plan.MotionConstraints.CruiseSpeedCmPerSec = 800.0f;
+	Plan.MotionConstraints.MaxAccelerationCmPerSecSq = 400.0f;
+	Plan.MotionConstraints.MaxDecelerationCmPerSecSq = 500.0f;
+	Plan.MotionConstraints.MaxJerkCmPerSecCubed = 1000.0f;
+	Plan.AcceptanceRadiusCm = 1.0f;
 
-	TestTrue(TEXT("Jerk-limited MoveTo request builds"), Generator.SetRequest(Request));
+	TestTrue(TEXT("Jerk-limited MoveTo plan builds"), Generator.SetPlan(Plan));
 	constexpr float DeltaSeconds = 0.01f;
 	float PreviousAcceleration = 0.0f;
 	float MaxAccelerationChange = 0.0f;
@@ -211,7 +228,7 @@ bool FAircraftAutopilotJerkLimitedMoveToTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("MoveTo publishes non-zero acceleration feed-forward"),
 		bSawAccelerationFeedForward);
 	TestTrue(TEXT("MoveTo acceleration changes respect the jerk limit"),
-		MaxAccelerationChange <= Request.PlanningJerkCmPerSecCubed * DeltaSeconds + 0.1f);
+		MaxAccelerationChange <= Plan.MotionConstraints.MaxJerkCmPerSecCubed * DeltaSeconds + 0.1f);
 	TestTrue(TEXT("Jerk-limited MoveTo reaches the target"), Generator.IsComplete());
 	return true;
 }
@@ -224,15 +241,14 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FAircraftAutopilotMoveToVehicleProgressTest::RunTest(const FString& Parameters)
 {
 	FAircraftTrajectoryGenerator Generator;
-	FTrajectoryRequest Request;
-	Request.Type = ETrajectoryType::Waypoint;
-	Request.TargetPositionCm = FVector(5000.0f, 0.0f, 0.0f);
-	Request.CruiseSpeedCmPerSec = 800.0f;
-	Request.PlanningAccelerationCmPerSecSq = 400.0f;
-	Request.PlanningDecelerationCmPerSecSq = 400.0f;
-	Request.PlanningJerkCmPerSecCubed = 2000.0f;
-	Request.AcceptanceRadiusCm = 1.0f;
-	TestTrue(TEXT("Vehicle-synchronized MoveTo request builds"), Generator.SetRequest(Request));
+	FAircraftTrajectoryPlan Plan = MakePolylinePlan(
+		FVector::ZeroVector, FVector(5000.0f, 0.0f, 0.0f));
+	Plan.MotionConstraints.CruiseSpeedCmPerSec = 800.0f;
+	Plan.MotionConstraints.MaxAccelerationCmPerSecSq = 400.0f;
+	Plan.MotionConstraints.MaxDecelerationCmPerSecSq = 400.0f;
+	Plan.MotionConstraints.MaxJerkCmPerSecCubed = 2000.0f;
+	Plan.AcceptanceRadiusCm = 1.0f;
+	TestTrue(TEXT("Vehicle-synchronized MoveTo plan builds"), Generator.SetPlan(Plan));
 
 	FTrajectoryPoint Setpoint;
 	for (int32 Step = 0; Step < 200; ++Step)
@@ -240,7 +256,7 @@ bool FAircraftAutopilotMoveToVehicleProgressTest::RunTest(const FString& Paramet
 		Generator.UpdateSetpoint(0.01f, FVector::ZeroVector, Setpoint);
 	}
 	TestTrue(TEXT("A stalled vehicle cannot leave an unbounded position reference ahead"),
-		Setpoint.PositionCm.X <= Request.CruiseSpeedCmPerSec * 0.01f + 0.1f);
+		Setpoint.PositionCm.X <= Plan.MotionConstraints.CruiseSpeedCmPerSec * 0.01f + 0.1f);
 	TestFalse(TEXT("A stalled vehicle does not complete its reference trajectory"),
 		Generator.IsComplete());
 	return true;

@@ -7,27 +7,22 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AircraftRuntimeInterface/AircraftMovementIntent.h"
 
 #include "AutopilotTrajectoryTypes.generated.h"
 
-/** 轨迹类型枚举。 */
-UENUM(BlueprintType)
-enum class ETrajectoryType : uint8
+enum class EAircraftPathGeometry : uint8
 {
-	/** 单航点：从当前位置直飞目标点（内部由 Line 段实现）。 */
-	Waypoint UMETA(DisplayName = "Waypoint"),
-	/** 直线段。 */
-	Line UMETA(DisplayName = "Line"),
-	/** 贝塞尔曲线段（支持 2~N 阶控制点）。 */
-	Bezier UMETA(DisplayName = "Bezier"),
-	/** 圆弧段（沿固定半径圆心走一段弧）。 */
-	Circle UMETA(DisplayName = "Circle"),
-	/** 环绕段（绕中心点持续盘旋，不自动终止）。 */
-	Orbit UMETA(DisplayName = "Orbit"),
-	/** 跟随外部导航器给出的无碰撞世界系路径点。 */
-	FollowPath UMETA(DisplayName = "Follow Path"),
-	/** 7 阶时间参数化 minimum-snap 轨迹。 */
-	MinimumSnap UMETA(DisplayName = "Minimum Snap"),
+	Polyline,
+	Bezier,
+	Circle,
+	MinimumSnap
+};
+
+enum class EAircraftPathTraversal : uint8
+{
+	Once,
+	Loop
 };
 
 /** Frenet-Serret 路径坐标系帧。 */
@@ -112,100 +107,27 @@ struct AIRCRAFTRUNTIMECOMMON_API FTrajectoryPoint
 	}
 };
 
-/**
- * 轨迹请求（Movement Executor 构建）。
- * 字段语义按 ETrajectoryType 取用：Waypoint/Line 用 Start→Target；
- * Bezier 用 PathPointsCm 控制点；Circle/Orbit 用 OrbitCenter/Radius/角度；
- * FollowPath 用 PathPointsCm 折线点。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMECOMMON_API FTrajectoryRequest
+/** 只描述空间曲线，不包含意图类型和执行策略。 */
+struct AIRCRAFTRUNTIMECOMMON_API FAircraftPathDefinition
 {
-	GENERATED_BODY()
+	EAircraftPathGeometry Geometry = EAircraftPathGeometry::Polyline;
+	TArray<FVector> PointsCm;
+	FVector CircleCenterCm = FVector::ZeroVector;
+	float CircleRadiusCm = 0.0f;
+	float CircleStartAngleDegrees = 0.0f;
+	float CircleSweepAngleDegrees = 0.0f;
+};
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	ETrajectoryType Type = ETrajectoryType::Waypoint;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	FVector StartPositionCm = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	FVector StartVelocityCmPerSec = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	FVector StartAccelerationCmPerSecSq = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	FVector TargetPositionCm = FVector::ZeroVector;
-
-	/** 终点期望速度；默认 0 表示停在该点。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	FVector TargetVelocityCmPerSec = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	float TargetYawDegrees = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	TArray<FVector> PathPointsCm;
-
-	/** 名义速度剖面峰值；硬限幅由 Motion Profile 保证。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float CruiseSpeedCmPerSec = 800.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float PlanningAccelerationCmPerSecSq = 400.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float PlanningDecelerationCmPerSecSq = 400.0f;
-
-	/** 原生轨迹 jerk 限；0 关闭基于 jerk 的时间缩放。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float PlanningJerkCmPerSecCubed = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
+/** PathCompiler 的唯一输出：路径几何、遍历语义和一次运动所需的约束快照。 */
+struct AIRCRAFTRUNTIMECOMMON_API FAircraftTrajectoryPlan
+{
+	FAircraftPathDefinition Path;
+	EAircraftPathTraversal Traversal = EAircraftPathTraversal::Once;
+	FVector InitialVelocityCmPerSec = FVector::ZeroVector;
+	FVector InitialAccelerationCmPerSecSq = FVector::ZeroVector;
+	FVector TerminalVelocityCmPerSec = FVector::ZeroVector;
+	FTrajectoryMotionConstraints MotionConstraints;
+	float PhysicalMaxHorizontalSpeedCmPerSec = TNumericLimits<float>::Max();
+	float PhysicalMaxHorizontalAccelerationCmPerSecSq = TNumericLimits<float>::Max();
 	float AcceptanceRadiusCm = 50.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	FVector OrbitCenterCm = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "0.0"))
-	float OrbitRadiusCm = 500.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	float OrbitAngularRateDegPerSec = 45.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	float ArcStartAngleDegrees = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory")
-	float ArcEndAngleDegrees = 360.0f;
-
-	/** 贝塞尔阶数（2=二次，3=三次）；PathPointsCm 数量需 = 阶数+1。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Autopilot|Trajectory", meta = (ClampMin = "1"))
-	int32 BezierDegree = 3;
-
-	/**
-	 * 语义等价比较（1cm 容差）：Hover 每帧 Target=当前位置，微动（<1cm）
-	 * 不应判为请求变化，避免每帧重建轨迹 + 重置 MotionProfile。
-	 */
-	bool IsSameTrajectoryAs(const FTrajectoryRequest& Other) const
-	{
-		constexpr float PosTol = 1.0f;
-		return Type == Other.Type
-			&& TargetPositionCm.Equals(Other.TargetPositionCm, PosTol)
-			&& FMath::IsNearlyEqual(TargetYawDegrees, Other.TargetYawDegrees, 0.5f)
-			&& CruiseSpeedCmPerSec == Other.CruiseSpeedCmPerSec
-			&& PlanningAccelerationCmPerSecSq == Other.PlanningAccelerationCmPerSecSq
-			&& PlanningDecelerationCmPerSecSq == Other.PlanningDecelerationCmPerSecSq
-			&& PlanningJerkCmPerSecCubed == Other.PlanningJerkCmPerSecCubed
-			&& TargetVelocityCmPerSec.Equals(Other.TargetVelocityCmPerSec, 0.1f)
-			&& AcceptanceRadiusCm == Other.AcceptanceRadiusCm
-			&& PathPointsCm == Other.PathPointsCm
-			&& OrbitCenterCm.Equals(Other.OrbitCenterCm, PosTol)
-			&& OrbitRadiusCm == Other.OrbitRadiusCm
-			&& OrbitAngularRateDegPerSec == Other.OrbitAngularRateDegPerSec
-			&& ArcStartAngleDegrees == Other.ArcStartAngleDegrees
-			&& ArcEndAngleDegrees == Other.ArcEndAngleDegrees
-			&& BezierDegree == Other.BezierDegree;
-	}
 };

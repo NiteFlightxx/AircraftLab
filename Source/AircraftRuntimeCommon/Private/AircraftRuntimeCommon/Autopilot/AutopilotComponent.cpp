@@ -278,7 +278,8 @@ void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	}
 
 	const EAutopilotMovementIntentType IntentType = MovementExecutor.GetActiveIntent().Type;
-	const bool bPathIntent = IntentType == EAutopilotMovementIntentType::FollowPath
+	const bool bPathIntent = IntentType == EAutopilotMovementIntentType::MoveToPosition
+		|| IntentType == EAutopilotMovementIntentType::FollowPath
 		|| IntentType == EAutopilotMovementIntentType::Orbit
 		|| IntentType == EAutopilotMovementIntentType::CircleArc;
 	FGuidanceCommand Guidance;
@@ -307,7 +308,7 @@ void UAutopilotComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 			DeltaTime);
 	}
 
-	CachedProfiledSetpoint = IntentType == EAutopilotMovementIntentType::MoveToPosition
+	CachedProfiledSetpoint = bPathIntent
 		? MotionProfile.FollowConstrainedTrajectory(NominalSetpoint, DeltaTime)
 		: MotionProfile.Update(NominalSetpoint, DeltaTime);
 	UpdateHoverThrustEstimate(DeltaTime);
