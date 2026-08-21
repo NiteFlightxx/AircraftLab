@@ -2,6 +2,7 @@
 
 #include "AircraftRuntimeCommon/LOD/AircraftSimulationLODComponent.h"
 
+#include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
@@ -29,6 +30,7 @@ void UAircraftSimulationLODComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	RefreshConsumerCache();
+	RefreshCollisionComponents();
 	TArray<FAircraftSimulationLODRuntimeSettingsLite> Settings;
 	bHasAppliedBudget = false;
 	if (GetLODSettings(Settings) && !Settings.IsEmpty())
@@ -61,6 +63,7 @@ void UAircraftSimulationLODComponent::EndPlay(const EEndPlayReason::Type EndPlay
 	}
 	AircraftComponent.Reset();
 	Consumers.Reset();
+	CollisionComponents.Reset();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -112,6 +115,63 @@ bool UAircraftSimulationLODComponent::GetLODSettings(TArray<FAircraftSimulationL
 		OutSettings.Add(Lite);
 	}
 	return OutSettings.Num() > 0;
+}
+
+void UAircraftSimulationLODComponent::RefreshCollisionComponents()
+{
+	// OnRep_CurrentLODIndex 可能先于 BeginPlay 应用碰撞预算。首次采样后必须保留真正的
+	// 原始碰撞状态，不能把预算修改后的 NoCollision 当作新的恢复目标。
+	if (!CollisionComponents.IsEmpty())
+	{
+		return;
+	}
+
+	AActor* const OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		return;
+	}
+
+	TArray<UPrimitiveComponent*> Primitives;
+	OwnerActor->GetComponents(Primitives);
+	CollisionComponents.Reserve(Primitives.Num());
+	for (UPrimitiveComponent* const Primitive : Primitives)
+	{
+		if (!Primitive)
+		{
+			continue;
+		}
+
+		FCollisionComponentState& State = CollisionComponents.AddDefaulted_GetRef();
+		State.Component = Primitive;
+		State.OriginalCollision = Primitive->GetCollisionEnabled();
+	}
+}
+
+void UAircraftSimulationLODComponent::ApplyCollisionBudget(
+	const FAircraftSimulationBudget& Budget)
+{
+	RefreshCollisionComponents();
+	for (const FCollisionComponentState& State : CollisionComponents)
+	{
+		UPrimitiveComponent* const Primitive = State.Component.Get();
+		if (!Primitive)
+		{
+			continue;
+		}
+
+		ECollisionEnabled::Type CollisionEnabled = State.OriginalCollision;
+		if (Budget.CollisionMode == EAircraftSimulationCollisionMode::Disabled)
+		{
+			CollisionEnabled = ECollisionEnabled::NoCollision;
+		}
+		else if (Budget.CollisionMode == EAircraftSimulationCollisionMode::QueryOnly
+			&& CollisionEnabled != ECollisionEnabled::NoCollision)
+		{
+			CollisionEnabled = ECollisionEnabled::QueryOnly;
+		}
+		Primitive->SetCollisionEnabled(CollisionEnabled);
+	}
 }
 
 bool UAircraftSimulationLODComponent::IsAuthoritySimulationOnly() const
@@ -367,6 +427,9 @@ void UAircraftSimulationLODComponent::RefreshAircraftSimulationDrive_Implementat
 	Budget.CollisionMode = Entry.CollisionMode;
 	Budget.bAllowDebugDraw = Entry.bAllowDebugDraw;
 
+	// 物理驱动消费者可能立即调用 SetSimulatePhysics(true)。必须先恢复物理碰撞，
+	// 否则从 NoCollision LOD 升级时 Chaos 刚体无法重新进入模拟。
+	ApplyCollisionBudget(Budget);
 	for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
 	{
 		if (UActorComponent* const Component = Consumer.Get())

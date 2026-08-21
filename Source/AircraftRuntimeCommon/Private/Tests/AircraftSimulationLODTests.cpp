@@ -2,6 +2,8 @@
 
 #include "Misc/AutomationTest.h"
 #include "UObject/UnrealType.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/Actor.h"
 
 #include "AircraftRuntimeCommon/AircraftPawn.h"
 #include "AircraftRuntimeCommon/LOD/AircraftSimulationLODComponent.h"
@@ -55,6 +57,44 @@ bool FAircraftMotionTargetModeTest::RunTest(const FString& Parameters)
 	Target.Mode = EAircraftMotionTargetMode::ConstrainedTrajectory;
 	TestEqual(TEXT("Fully constrained trajectories have a distinct target semantic"),
 		Target.Mode, EAircraftMotionTargetMode::ConstrainedTrajectory);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftCollisionBudgetStateTest,
+	"AircraftLab.SimulationLOD.CollisionBudgetPreservesOriginalState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftCollisionBudgetStateTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	AActor* const Owner = NewObject<AActor>();
+	UAircraftSimulationLODComponent* const LODComponent =
+		NewObject<UAircraftSimulationLODComponent>(Owner);
+	UStaticMeshComponent* const PhysicalPrimitive = NewObject<UStaticMeshComponent>(Owner);
+	UStaticMeshComponent* const DisabledPrimitive = NewObject<UStaticMeshComponent>(Owner);
+	Owner->AddInstanceComponent(LODComponent);
+	Owner->AddInstanceComponent(PhysicalPrimitive);
+	Owner->AddInstanceComponent(DisabledPrimitive);
+	PhysicalPrimitive->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	DisabledPrimitive->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	LODComponent->RefreshCollisionComponents();
+	FAircraftSimulationBudget DisabledBudget;
+	DisabledBudget.CollisionMode = EAircraftSimulationCollisionMode::Disabled;
+	LODComponent->ApplyCollisionBudget(DisabledBudget);
+	TestEqual(TEXT("Disabled LOD turns the physical primitive collision off"),
+		PhysicalPrimitive->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+
+	// 模拟 OnRep 先应用 LOD3、随后 BeginPlay 再次刷新缓存。
+	LODComponent->RefreshCollisionComponents();
+	FAircraftSimulationBudget PhysicalBudget;
+	PhysicalBudget.CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
+	LODComponent->ApplyCollisionBudget(PhysicalBudget);
+	TestEqual(TEXT("Physical LOD restores the initially physical primitive"),
+		PhysicalPrimitive->GetCollisionEnabled(), ECollisionEnabled::QueryAndPhysics);
+	TestEqual(TEXT("Physical LOD preserves a primitive that was originally disabled"),
+		DisabledPrimitive->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
 	return true;
 }
 

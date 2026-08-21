@@ -474,27 +474,6 @@ void UAircraftComponent::ApplySimulationLOD(
 
 	if (bLODChanged)
 	{
-		const FAircraftSimulationLODRuntimeSettings* const Settings =
-			Model->SimulationLOD.LODs.IsValidIndex(LodIndex)
-				? &Model->SimulationLOD.LODs[LodIndex]
-				: nullptr;
-		if (Settings)
-		{
-			switch (Settings->CollisionMode)
-			{
-			case EAircraftSimulationCollisionMode::Disabled:
-				SetCollisionEnabled(ECollisionEnabled::NoCollision);
-				break;
-			case EAircraftSimulationCollisionMode::QueryOnly:
-				SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-				break;
-			case EAircraftSimulationCollisionMode::QueryAndPhysics:
-			default:
-				SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-				break;
-			}
-		}
-
 		ApplyMassPropertiesToBodyInstance();
 		ApplySolverSettingsToBodyInstance();
 		OnSimulationLODChanged.Broadcast(PreviousLOD, CurrentSimulationLOD);
@@ -1435,20 +1414,6 @@ void UAircraftComponent::ApplyAircraftSimulationBudget_Implementation(const FAir
 	else
 	{
 		SetSimulationDriveMode(Budget.DriveMode, Budget.bEnablePhysics);
-	}
-
-	switch (Budget.CollisionMode)
-	{
-	case EAircraftSimulationCollisionMode::Disabled:
-		SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		break;
-	case EAircraftSimulationCollisionMode::QueryOnly:
-		SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-		break;
-	case EAircraftSimulationCollisionMode::QueryAndPhysics:
-	default:
-		SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-		break;
 	}
 
 }

@@ -14,6 +14,7 @@
 #include "AircraftSimulationLODComponent.generated.h"
 
 class UAircraftSimulationWorldSubsystem;
+class UPrimitiveComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnAircraftLODSelectionChanged,
@@ -163,6 +164,14 @@ protected:
 	int32 CurrentLODIndex = 0;
 
 private:
+	friend class FAircraftCollisionBudgetStateTest;
+
+	struct FCollisionComponentState
+	{
+		TWeakObjectPtr<UPrimitiveComponent> Component;
+		ECollisionEnabled::Type OriginalCollision = ECollisionEnabled::NoCollision;
+	};
+
 	bool bManualDriveModeOverrideActive = false;
 	EAircraftSimulationDriveMode ManualDriveModeOverride = EAircraftSimulationDriveMode::None;
 
@@ -174,6 +183,7 @@ private:
 	bool bNetworkProxyBudget = false;
 	TWeakObjectPtr<class UAircraftComponent> AircraftComponent;
 	TArray<TWeakObjectPtr<UActorComponent>> Consumers;
+	TArray<FCollisionComponentState> CollisionComponents;
 	TEnumAsByte<ENetDormancy> SavedNetDormancy = DORM_Awake;
 	bool bHasSavedNetDormancy = false;
 
@@ -181,6 +191,8 @@ private:
 	void OnRep_CurrentLODIndex(int32 PreviousLODIndex);
 
 	void RefreshConsumerCache();
+	void RefreshCollisionComponents();
+	void ApplyCollisionBudget(const FAircraftSimulationBudget& Budget);
 	void RefreshConsumers();
 	FAircraftSimulationLODNetworkSettings GetNetworkSettings(int32 LODIndex) const;
 	FAircraftSimulationDriveOverride ResolveDriveOverride() const;
