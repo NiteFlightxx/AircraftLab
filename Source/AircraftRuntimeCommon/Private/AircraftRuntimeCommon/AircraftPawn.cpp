@@ -25,7 +25,6 @@ AAircraftPawn::AAircraftPawn()
 	SimulationLOD = CreateDefaultSubobject<UAircraftSimulationLODComponent>(TEXT("SimulationLOD"));
 
 }
-
 void AAircraftPawn::BeginPlay()
 {
 	Super::BeginPlay();

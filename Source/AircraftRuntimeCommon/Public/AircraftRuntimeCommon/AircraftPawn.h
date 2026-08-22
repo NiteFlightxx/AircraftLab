@@ -51,15 +51,12 @@ public:
 	UAircraftSimulationLODComponent* GetSimulationLODComponent() const { return SimulationLOD; }
 
 private:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UAircraftComponent> Aircraft;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UAircraftInputComponent> AircraftInput;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UAutopilotComponent> AutopilotComponent;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UAircraftSimulationLODComponent> SimulationLOD;
+	/**
+	 * 四个指针均为非拥有引用。组件由构造函数创建，并由 Actor 的默认子对象系统管理。
+	 * 指针不参与反射或资产序列化，蓝图必须通过对应 Getter 访问。
+	 */
+	UAircraftComponent* Aircraft = nullptr;
+	UAircraftInputComponent* AircraftInput = nullptr;
+	UAutopilotComponent* AutopilotComponent = nullptr;
+	UAircraftSimulationLODComponent* SimulationLOD = nullptr;
 };
