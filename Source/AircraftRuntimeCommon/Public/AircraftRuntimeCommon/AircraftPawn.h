@@ -50,13 +50,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
 	UAircraftSimulationLODComponent* GetSimulationLODComponent() const { return SimulationLOD; }
 
+
+
 private:
-	/**
-	 * 四个指针均为非拥有引用。组件由构造函数创建，并由 Actor 的默认子对象系统管理。
-	 * 指针不参与反射或资产序列化，蓝图必须通过对应 Getter 访问。
-	 */
+	UPROPERTY(EditAnywhere)
 	UAircraftComponent* Aircraft = nullptr;
+	
+	UPROPERTY(EditAnywhere)
 	UAircraftInputComponent* AircraftInput = nullptr;
+	
+	UPROPERTY(EditAnywhere)
 	UAutopilotComponent* AutopilotComponent = nullptr;
+	
+	UPROPERTY(EditAnywhere)
 	UAircraftSimulationLODComponent* SimulationLOD = nullptr;
 };

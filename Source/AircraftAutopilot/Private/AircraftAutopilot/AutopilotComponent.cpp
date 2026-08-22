@@ -53,7 +53,135 @@ void UAutopilotComponent::ResolveFlightController()
 	}
 }
 
-FAircraftMovementIntentHandle UAutopilotComponent::SubmitMovementIntent(
+FAircraftMovementIntent UAutopilotComponent::BuildIntent(
+	EAircraftMovementIntentType Type,
+	const FAircraftMovementIntentSettings& Settings,
+	const FAircraftCompletionPolicy* Completion)
+{
+	FAircraftMovementIntent Intent;
+	Intent.Type = Type;
+	Intent.Limits = Settings.Limits;
+	Intent.Heading = Settings.Heading;
+	Intent.TimeoutSeconds = Settings.TimeoutSeconds;
+	if (Completion)
+	{
+		Intent.Completion = *Completion;
+	}
+	return Intent;
+}
+
+FAircraftMovementIntentHandle UAutopilotComponent::SubmitHoldIntent(
+	const FAircraftHoldIntent& Hold,
+	const FAircraftMovementIntentSettings& Settings,
+	const FAircraftCompletionPolicy& Completion)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::Hold, Settings, &Completion);
+	Intent.Hold = Hold;
+	return SubmitIntent(Intent);
+}
+
+bool UAutopilotComponent::UpdateHoldIntent(
+	FAircraftMovementIntentHandle Handle,
+	const FAircraftHoldIntent& Hold,
+	const FAircraftMovementIntentSettings& Settings,
+	const FAircraftCompletionPolicy& Completion)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::Hold, Settings, &Completion);
+	Intent.Hold = Hold;
+	return UpdateIntent(Handle, Intent);
+}
+
+FAircraftMovementIntentHandle UAutopilotComponent::SubmitVelocityIntent(
+	const FAircraftVelocityIntent& Velocity,
+	const FAircraftMovementIntentSettings& Settings)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::Velocity, Settings);
+	Intent.Velocity = Velocity;
+	return SubmitIntent(Intent);
+}
+
+bool UAutopilotComponent::UpdateVelocityIntent(
+	FAircraftMovementIntentHandle Handle,
+	const FAircraftVelocityIntent& Velocity,
+	const FAircraftMovementIntentSettings& Settings)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::Velocity, Settings);
+	Intent.Velocity = Velocity;
+	return UpdateIntent(Handle, Intent);
+}
+
+FAircraftMovementIntentHandle UAutopilotComponent::SubmitRouteIntent(
+	const FAircraftRouteIntent& Route,
+	const FAircraftMovementIntentSettings& Settings,
+	const FAircraftCompletionPolicy& Completion)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::Route, Settings, &Completion);
+	Intent.Route = Route;
+	return SubmitIntent(Intent);
+}
+
+bool UAutopilotComponent::UpdateRouteIntent(
+	FAircraftMovementIntentHandle Handle,
+	const FAircraftRouteIntent& Route,
+	const FAircraftMovementIntentSettings& Settings,
+	const FAircraftCompletionPolicy& Completion)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::Route, Settings, &Completion);
+	Intent.Route = Route;
+	return UpdateIntent(Handle, Intent);
+}
+
+FAircraftMovementIntentHandle UAutopilotComponent::SubmitOrbitIntent(
+	const FAircraftOrbitIntent& Orbit,
+	const FAircraftMovementIntentSettings& Settings)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::Orbit, Settings);
+	Intent.Orbit = Orbit;
+	return SubmitIntent(Intent);
+}
+
+bool UAutopilotComponent::UpdateOrbitIntent(
+	FAircraftMovementIntentHandle Handle,
+	const FAircraftOrbitIntent& Orbit,
+	const FAircraftMovementIntentSettings& Settings)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::Orbit, Settings);
+	Intent.Orbit = Orbit;
+	return UpdateIntent(Handle, Intent);
+}
+
+FAircraftMovementIntentHandle UAutopilotComponent::SubmitTimedTrajectoryIntent(
+	const FAircraftTimedTrajectoryIntent& TimedTrajectory,
+	const FAircraftMovementIntentSettings& Settings,
+	const FAircraftCompletionPolicy& Completion)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::TimedTrajectory, Settings, &Completion);
+	Intent.TimedTrajectory = TimedTrajectory;
+	return SubmitIntent(Intent);
+}
+
+bool UAutopilotComponent::UpdateTimedTrajectoryIntent(
+	FAircraftMovementIntentHandle Handle,
+	const FAircraftTimedTrajectoryIntent& TimedTrajectory,
+	const FAircraftMovementIntentSettings& Settings,
+	const FAircraftCompletionPolicy& Completion)
+{
+	FAircraftMovementIntent Intent = BuildIntent(
+		EAircraftMovementIntentType::TimedTrajectory, Settings, &Completion);
+	Intent.TimedTrajectory = TimedTrajectory;
+	return UpdateIntent(Handle, Intent);
+}
+
+FAircraftMovementIntentHandle UAutopilotComponent::SubmitIntent(
 	const FAircraftMovementIntent& Intent)
 {
 	if (!bActive || !Intent.IsValid())
@@ -86,7 +214,7 @@ FAircraftMovementIntentHandle UAutopilotComponent::SubmitMovementIntent(
 	return ActiveHandle;
 }
 
-bool UAutopilotComponent::UpdateMovementIntent(
+bool UAutopilotComponent::UpdateIntent(
 	FAircraftMovementIntentHandle Handle, const FAircraftMovementIntent& Intent)
 {
 	if (!bActive || Handle != ActiveHandle || !Intent.IsValid())

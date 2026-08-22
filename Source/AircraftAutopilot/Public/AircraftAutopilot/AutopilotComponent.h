@@ -27,12 +27,57 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
 		FActorComponentTickFunction* ThisTickFunction) override;
 
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot")
-	FAircraftMovementIntentHandle SubmitMovementIntent(const FAircraftMovementIntent& Intent);
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Hold")
+	FAircraftMovementIntentHandle SubmitHoldIntent(const FAircraftHoldIntent& Hold,
+		const FAircraftMovementIntentSettings& Settings,
+		const FAircraftCompletionPolicy& Completion);
 
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot")
-	bool UpdateMovementIntent(FAircraftMovementIntentHandle Handle,
-		const FAircraftMovementIntent& Intent);
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Hold")
+	bool UpdateHoldIntent(FAircraftMovementIntentHandle Handle,
+		const FAircraftHoldIntent& Hold,
+		const FAircraftMovementIntentSettings& Settings,
+		const FAircraftCompletionPolicy& Completion);
+
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Velocity")
+	FAircraftMovementIntentHandle SubmitVelocityIntent(const FAircraftVelocityIntent& Velocity,
+		const FAircraftMovementIntentSettings& Settings);
+
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Velocity")
+	bool UpdateVelocityIntent(FAircraftMovementIntentHandle Handle,
+		const FAircraftVelocityIntent& Velocity,
+		const FAircraftMovementIntentSettings& Settings);
+
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Route")
+	FAircraftMovementIntentHandle SubmitRouteIntent(const FAircraftRouteIntent& Route,
+		const FAircraftMovementIntentSettings& Settings,
+		const FAircraftCompletionPolicy& Completion);
+
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Route")
+	bool UpdateRouteIntent(FAircraftMovementIntentHandle Handle,
+		const FAircraftRouteIntent& Route,
+		const FAircraftMovementIntentSettings& Settings,
+		const FAircraftCompletionPolicy& Completion);
+
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Orbit")
+	FAircraftMovementIntentHandle SubmitOrbitIntent(const FAircraftOrbitIntent& Orbit,
+		const FAircraftMovementIntentSettings& Settings);
+
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Orbit")
+	bool UpdateOrbitIntent(FAircraftMovementIntentHandle Handle,
+		const FAircraftOrbitIntent& Orbit,
+		const FAircraftMovementIntentSettings& Settings);
+
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Timed Trajectory")
+	FAircraftMovementIntentHandle SubmitTimedTrajectoryIntent(
+		const FAircraftTimedTrajectoryIntent& TimedTrajectory,
+		const FAircraftMovementIntentSettings& Settings,
+		const FAircraftCompletionPolicy& Completion);
+
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Timed Trajectory")
+	bool UpdateTimedTrajectoryIntent(FAircraftMovementIntentHandle Handle,
+		const FAircraftTimedTrajectoryIntent& TimedTrajectory,
+		const FAircraftMovementIntentSettings& Settings,
+		const FAircraftCompletionPolicy& Completion);
 
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot")
 	bool CancelMovementIntent(FAircraftMovementIntentHandle Handle);
@@ -66,6 +111,12 @@ private:
 	bool bActive = true;
 
 	IAircraftFlightControllerInterface* GetFlightController() const;
+	static FAircraftMovementIntent BuildIntent(EAircraftMovementIntentType Type,
+		const FAircraftMovementIntentSettings& Settings,
+		const FAircraftCompletionPolicy* Completion = nullptr);
+	FAircraftMovementIntentHandle SubmitIntent(const FAircraftMovementIntent& Intent);
+	bool UpdateIntent(FAircraftMovementIntentHandle Handle,
+		const FAircraftMovementIntent& Intent);
 	void ResolveFlightController();
 	void ResolveActorTargets();
 	void Finish(EAircraftMovementIntentStatus Status,

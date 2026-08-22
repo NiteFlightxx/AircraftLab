@@ -1,3 +1,4 @@
+#include "AircraftAutopilot/AutopilotComponent.h"
 #include "AircraftAutopilot/AircraftMotionPlan.h"
 #include "AircraftAutopilot/AircraftPredictiveController.h"
 #include "AircraftAutopilot/AircraftSpatialPath.h"
@@ -31,6 +32,85 @@ namespace
 		Intent.Completion.ArrivalMode = EAircraftArrivalMode::Stop;
 		return Intent;
 	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAutopilotTypedIntentApiTest,
+	"AircraftAutopilot.API.TypedIntentMapping",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAutopilotTypedIntentApiTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	UAutopilotComponent* Autopilot = NewObject<UAutopilotComponent>();
+	TestNotNull(TEXT("Autopilot component is created"), Autopilot);
+
+	FAircraftMovementIntentSettings Settings;
+	Settings.Limits.CruiseSpeedCmPerSec = 725.0f;
+	Settings.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+	Settings.Heading.FixedYawDegrees = 37.0f;
+	Settings.TimeoutSeconds = 12.0f;
+	FAircraftCompletionPolicy Completion;
+	Completion.HorizontalToleranceCm = 25.0f;
+
+	FAircraftHoldIntent Hold;
+	Hold.bCaptureCurrentPosition = false;
+	Hold.PositionCm = FVector(100.0, 200.0, 300.0);
+	const FAircraftMovementIntentHandle Handle = Autopilot->SubmitHoldIntent(
+		Hold, Settings, Completion);
+	TestTrue(TEXT("Typed hold submission returns a handle"), Handle.IsValid());
+
+	FAircraftMovementIntent Internal;
+	FAircraftMovementIntentHandle InternalHandle;
+	uint64 Revision = 0;
+	TestTrue(TEXT("Submitted hold is available to the flight controller"),
+		Autopilot->GetAircraftMovementIntent(Internal, InternalHandle, Revision));
+	TestEqual(TEXT("Hold type is mapped"), Internal.Type, EAircraftMovementIntentType::Hold);
+	TestTrue(TEXT("Hold payload is mapped"), Internal.Hold.PositionCm.Equals(Hold.PositionCm));
+	TestEqual(TEXT("Shared speed setting is mapped"),
+		Internal.Limits.CruiseSpeedCmPerSec, Settings.Limits.CruiseSpeedCmPerSec);
+	TestEqual(TEXT("Completion policy is mapped"),
+		Internal.Completion.HorizontalToleranceCm, Completion.HorizontalToleranceCm);
+
+	FAircraftVelocityIntent Velocity;
+	Velocity.VelocityCmPerSec = FVector(500.0, 0.0, 0.0);
+	TestTrue(TEXT("Typed velocity update succeeds"),
+		Autopilot->UpdateVelocityIntent(Handle, Velocity, Settings));
+	Autopilot->GetAircraftMovementIntent(Internal, InternalHandle, Revision);
+	TestEqual(TEXT("Velocity type is mapped"), Internal.Type, EAircraftMovementIntentType::Velocity);
+	TestTrue(TEXT("Velocity payload is mapped"),
+		Internal.Velocity.VelocityCmPerSec.Equals(Velocity.VelocityCmPerSec));
+
+	FAircraftRouteIntent Route;
+	Route.PointsCm = { FVector::ZeroVector, FVector(1000.0, 0.0, 0.0) };
+	TestTrue(TEXT("Typed route update succeeds"),
+		Autopilot->UpdateRouteIntent(Handle, Route, Settings, Completion));
+	Autopilot->GetAircraftMovementIntent(Internal, InternalHandle, Revision);
+	TestEqual(TEXT("Route type is mapped"), Internal.Type, EAircraftMovementIntentType::Route);
+	TestEqual(TEXT("Route payload is mapped"), Internal.Route.PointsCm.Num(), 2);
+
+	FAircraftOrbitIntent Orbit;
+	Orbit.CenterCm = FVector(50.0, 75.0, 100.0);
+	TestTrue(TEXT("Typed orbit update succeeds"),
+		Autopilot->UpdateOrbitIntent(Handle, Orbit, Settings));
+	Autopilot->GetAircraftMovementIntent(Internal, InternalHandle, Revision);
+	TestEqual(TEXT("Orbit type is mapped"), Internal.Type, EAircraftMovementIntentType::Orbit);
+	TestTrue(TEXT("Orbit payload is mapped"), Internal.Orbit.CenterCm.Equals(Orbit.CenterCm));
+
+	FAircraftTimedTrajectoryIntent TimedTrajectory;
+	TimedTrajectory.Samples.AddDefaulted();
+	FAircraftTimedTrajectorySample& LastSample = TimedTrajectory.Samples.AddDefaulted_GetRef();
+	LastSample.TimeSeconds = 1.0f;
+	LastSample.PositionCm = FVector(100.0, 0.0, 0.0);
+	TestTrue(TEXT("Typed timed trajectory update succeeds"),
+		Autopilot->UpdateTimedTrajectoryIntent(
+			Handle, TimedTrajectory, Settings, Completion));
+	Autopilot->GetAircraftMovementIntent(Internal, InternalHandle, Revision);
+	TestEqual(TEXT("Timed trajectory type is mapped"),
+		Internal.Type, EAircraftMovementIntentType::TimedTrajectory);
+	TestEqual(TEXT("Timed trajectory payload is mapped"),
+		Internal.TimedTrajectory.Samples.Num(), 2);
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

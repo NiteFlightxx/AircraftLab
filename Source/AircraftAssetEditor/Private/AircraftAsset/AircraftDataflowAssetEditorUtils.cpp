@@ -9,6 +9,7 @@
 
 #include "Dataflow/AircraftAssetTerminalNode.h"
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
+#include "Dataflow/AircraftSolverConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
 #include "Dataflow/AircraftAirscrewProfileNode.h"
 #include "Dataflow/AircraftFlightControlLimitsConfigNode.h"
@@ -22,6 +23,8 @@
 #include "Dataflow/AircraftAutopilotPathConfigNode.h"
 #include "Dataflow/AircraftAutopilotTimingConfigNode.h"
 #include "Dataflow/AircraftAutopilotMpccConfigNode.h"
+#include "Dataflow/AircraftRotorFailurePolicyConfigNode.h"
+#include "Dataflow/AircraftAerodynamicsConfigNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 
 #include "Editor.h"
@@ -44,11 +47,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 {
 	namespace
 	{
-		// 模板节点画布布局：每行最多 N 个节点；行间距 / 列间距与 ChaosClothAsset 模板图一致风格。
-		constexpr int32 TemplateNodesPerRow = 10;
-		constexpr double TemplateNodeSpacingX = 460.0;
-		constexpr double TemplateNodeSpacingY = 600.0;
-
 		// 默认骨骼根节点名。多旋翼资产模板假设 SkeletalMesh 的根骨骼为 "Root"；用户可在节点中改写。
 		const FName RootBoneName(TEXT("Root"));
 
@@ -56,15 +54,12 @@ namespace UE::AircraftDataflowAssetEditor::Private
 		{
 			UDataflowEdNode* EdNode = nullptr;
 			TSharedPtr<FDataflowNode> Node;
-		};
 
-		FVector2D GetTemplateNodeLocation(const int32 NodeIndex)
-		{
-			const int32 RowIndex = NodeIndex / TemplateNodesPerRow;
-			const int32 ColumnIndex = NodeIndex % TemplateNodesPerRow;
-			const int32 VisualColumnIndex = (RowIndex % 2 == 0) ? ColumnIndex : (TemplateNodesPerRow - 1 - ColumnIndex);
-			return FVector2D(VisualColumnIndex * TemplateNodeSpacingX, RowIndex * TemplateNodeSpacingY);
-		}
+			bool IsValid() const
+			{
+				return EdNode != nullptr && Node.IsValid();
+			}
+		};
 
 		FName MakeUniqueTemplateNodeName(UDataflow* DataflowAsset, const FName DesiredName)
 		{
@@ -136,22 +131,36 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			return EdNode;
 		}
 
-		FCreatedTemplateNode AddTemplateNode(UDataflow* DataflowAsset, const FName NodeName, const FName NodeTypeName, const int32 NodeIndex)
+		FCreatedTemplateNode AddTemplateNode(
+			UDataflow* DataflowAsset,
+			const FName NodeName,
+			const FName NodeTypeName,
+			const FVector2D& NodeLocation)
 		{
 			FCreatedTemplateNode Result;
 			Result.Node = CreateTemplateDataflowNode(DataflowAsset, NodeName, NodeTypeName);
-			Result.EdNode = CreateTemplateEdNode(DataflowAsset, Result.Node, GetTemplateNodeLocation(NodeIndex));
+			Result.EdNode = CreateTemplateEdNode(DataflowAsset, Result.Node, NodeLocation);
 			return Result;
+		}
+
+		template <typename NodeType>
+		FCreatedTemplateNode AddTemplateNode(
+			UDataflow* DataflowAsset,
+			const FName NodeName,
+			const FVector2D& NodeLocation)
+		{
+			return AddTemplateNode(DataflowAsset, NodeName, NodeType::StaticType(), NodeLocation);
 		}
 
 		template <typename NodeType, typename ConfigureCallbackType>
 		FCreatedTemplateNode AddConfiguredTemplateNode(
 			UDataflow* DataflowAsset,
 			const FName NodeName,
-			const int32 NodeIndex,
+			const FVector2D& NodeLocation,
 			ConfigureCallbackType&& ConfigureCallback)
 		{
-			FCreatedTemplateNode Result = AddTemplateNode(DataflowAsset, NodeName, NodeType::StaticType(), NodeIndex);
+			FCreatedTemplateNode Result = AddTemplateNode(
+				DataflowAsset, NodeName, NodeType::StaticType(), NodeLocation);
 			if (NodeType* const TypedNode = Result.Node.IsValid() ? Result.Node->AsType<NodeType>() : nullptr)
 			{
 				ConfigureCallback(*TypedNode);
@@ -168,50 +177,37 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			return EdNode ? EdNode->FindPin(PinName, Direction) : nullptr;
 		}
 
-		void ConnectTemplateNodes(UDataflow* DataflowAsset, UDataflowEdNode* OutputNode, const FName OutputPinName, UDataflowEdNode* InputNode, const FName InputPinName)
+		bool ConnectTemplateNodes(
+			UDataflow* DataflowAsset,
+			UDataflowEdNode* OutputNode,
+			const FName OutputPinName,
+			UDataflowEdNode* InputNode,
+			const FName InputPinName)
 		{
 			if (!DataflowAsset || !OutputNode || !InputNode)
 			{
-				return;
+				return false;
 			}
 
 			UEdGraphPin* const OutputPin = FindNodePin(OutputNode, OutputPinName, EEdGraphPinDirection::EGPD_Output);
 			UEdGraphPin* const InputPin = FindNodePin(InputNode, InputPinName, EEdGraphPinDirection::EGPD_Input);
 			if (!OutputPin || !InputPin)
 			{
-				return;
+				return false;
 			}
 
 			if (const UEdGraphSchema* const GraphSchema = DataflowAsset->GetSchema())
 			{
-				GraphSchema->TryCreateConnection(OutputPin, InputPin);
+				return GraphSchema->TryCreateConnection(OutputPin, InputPin);
 			}
-
-			const TSharedPtr<FDataflowNode> OutputDataflowNode = OutputNode->GetDataflowNode();
-			const TSharedPtr<FDataflowNode> InputDataflowNode = InputNode->GetDataflowNode();
-			const TSharedPtr<UE::Dataflow::FGraph> Graph = DataflowAsset->GetDataflow();
-			if (!OutputDataflowNode.IsValid() || !InputDataflowNode.IsValid() || !Graph.IsValid())
-			{
-				return;
-			}
-
-			FDataflowOutput* const OutputConnection = OutputDataflowNode->FindOutput(OutputPinName);
-			FDataflowInput* const InputConnection = InputDataflowNode->FindInput(InputPinName);
-			if (!OutputConnection || !InputConnection)
-			{
-				return;
-			}
-
-			Graph->Connect(OutputConnection, InputConnection);
-			DataflowAsset->RefreshEdNode(OutputNode);
-			DataflowAsset->RefreshEdNode(InputNode);
+			return false;
 		}
 
-		void CreateAircraftTemplateGraph(UDataflow* DataflowAsset)
+		bool CreateAircraftTemplateGraph(UDataflow* DataflowAsset)
 		{
 			if (!DataflowAsset || !DataflowAsset->GetDataflow())
 			{
-				return;
+				return false;
 			}
 
 			// 默认 QuadX 旋翼布局（30cm 臂长）。模板显式列出全部旋翼；
@@ -241,24 +237,24 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				{ TEXT("Rotor4_RR"), FVector3f(-DefaultArmLengthCm, -DefaultArmLengthCm, 0.f), EAircraftAirscrewSpinDirection::Clockwise },
 			};
 
-			int32 NodeIndex = 0;
-
-			/* ---------- 1. Source 节点（骨骼网格 + 物理资产） ---------- */
+			/* ---------- Source / Solver / Frame ---------- */
 			const FCreatedTemplateNode SourceNode = AddConfiguredTemplateNode<FAircraftSkeletalMeshSourceNode>(
 				DataflowAsset,
 				TEXT("AircraftSkeletalMeshSource"),
-				NodeIndex++,
+				FVector2D(512.0, 0.0),
 				[&DefaultSkeletalMeshPath, &DefaultPhysicsAssetPath](FAircraftSkeletalMeshSourceNode& Node)
 				{
 					Node.SkeletalMesh = LoadObject<USkeletalMesh>(nullptr, *DefaultSkeletalMeshPath);
 					Node.PhysicsAsset = LoadObject<UPhysicsAsset>(nullptr, *DefaultPhysicsAssetPath);
 				});
 
-			/* ---------- 2. Frame 节点（机架 + 质量/质心/惯量） ---------- */
+			const FCreatedTemplateNode SolverNode = AddTemplateNode<FAircraftSolverConfigNode>(
+				DataflowAsset, TEXT("AircraftSolverConfig"), FVector2D(880.0, 0.0));
+
 			const FCreatedTemplateNode FrameNode = AddConfiguredTemplateNode<FAircraftFrameConfigNode>(
 				DataflowAsset,
 				TEXT("AircraftFrameConfig"),
-				NodeIndex++,
+				FVector2D(1248.0, 0.0),
 				[](FAircraftFrameConfigNode& Node)
 				{
 					Node.RootBone = RootBoneName;
@@ -268,16 +264,22 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.InertiaTensorScale = FVector3f::OneVector;
 				});
 
-			/* ---------- 3-6. 四个单旋翼 Airscrew Profile 节点 ---------- */
+			// 空气动力学严格由节点是否接入 Collection 链决定。模板提供完整配置入口但默认不接线，
+			// 从而不会在用户尚未标定气动参数时关闭刚体原生阻尼。
+			const FCreatedTemplateNode OptionalAerodynamicsNode = AddTemplateNode<FAircraftAerodynamicsConfigNode>(
+				DataflowAsset, TEXT("OptionalAircraftAerodynamicsConfig"), FVector2D(1248.0, 640.0));
+
+			/* ---------- QuadX rotors ---------- */
 			TArray<FCreatedTemplateNode> AirscrewNodes;
 			AirscrewNodes.Reserve(UE_ARRAY_COUNT(QuadXEntries));
-			for (const FQuadXEntry& Entry : QuadXEntries)
+			for (int32 RotorIndex = 0; RotorIndex < UE_ARRAY_COUNT(QuadXEntries); ++RotorIndex)
 			{
+				const FQuadXEntry& Entry = QuadXEntries[RotorIndex];
 				const FQuadXEntry EntryCopy = Entry;
 				AirscrewNodes.Add(AddConfiguredTemplateNode<FAircraftAirscrewProfileNode>(
 					DataflowAsset,
 					FName(*FString::Printf(TEXT("AircraftAirscrewProfile_%s"), *Entry.RotorName.ToString())),
-					NodeIndex++,
+					FVector2D(1664.0, 112.0 * RotorIndex),
 					[EntryCopy](FAircraftAirscrewProfileNode& Node)
 					{
 						Node.Profile.Name = EntryCopy.RotorName;
@@ -286,9 +288,9 @@ namespace UE::AircraftDataflowAssetEditor::Private
 						Node.Profile.bUseSocketTransform = false;
 						Node.Profile.PositionLocalCm = EntryCopy.Position;
 						Node.Profile.ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
-							// 单旋翼最大推力需满足 Σ(MaxThrust×系数×效率) > MassKg×g：
-							// 100 kg 四旋翼单电机需 >245 N；取 350 N → 总推力 1400 N，悬停油门约 70%。
-							Node.Profile.MaxThrustForce = 350.f;
+						// 单旋翼最大推力需满足 Σ(MaxThrust×系数×效率) > MassKg×g：
+						// 100 kg 四旋翼单电机需 >245 N；取 350 N → 总推力 1400 N，悬停油门约 70%。
+						Node.Profile.MaxThrustForce = 350.f;
 						Node.Profile.ThrustCoefficient = 1.f;
 						Node.Profile.ReactionTorqueCoefficient = 0.03f;
 						Node.Profile.Efficiency = 1.f;
@@ -297,44 +299,36 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					}));
 			}
 
-			/* ---------- 7-15. 所有驱动后端共享的运动意图与飞控配置 ---------- */
-			const FCreatedTemplateNode LimitsNode = AddConfiguredTemplateNode<FAircraftFlightControlLimitsConfigNode>(
-				DataflowAsset, TEXT("AircraftFlightControlLimitsConfig"), NodeIndex++,
-				[](FAircraftFlightControlLimitsConfigNode& Node) { (void)Node; });
-			const FCreatedTemplateNode PositionNode = AddConfiguredTemplateNode<FAircraftPositionControllerConfigNode>(
-				DataflowAsset, TEXT("AircraftPositionControllerConfig"), NodeIndex++,
-				[](FAircraftPositionControllerConfigNode& Node) { (void)Node; });
-			const FCreatedTemplateNode AttitudeNode = AddConfiguredTemplateNode<FAircraftAttitudeControllerConfigNode>(
-				DataflowAsset, TEXT("AircraftAttitudeControllerConfig"), NodeIndex++,
-				[](FAircraftAttitudeControllerConfigNode& Node) { (void)Node; });
-			const FCreatedTemplateNode AltitudeNode = AddConfiguredTemplateNode<FAircraftAltitudeControllerConfigNode>(
-				DataflowAsset, TEXT("AircraftAltitudeControllerConfig"), NodeIndex++,
-				[](FAircraftAltitudeControllerConfigNode& Node) { (void)Node; });
-			const FCreatedTemplateNode AllocatorNode = AddConfiguredTemplateNode<FAircraftControlAllocatorConfigNode>(
-				DataflowAsset, TEXT("AircraftControlAllocatorConfig"), NodeIndex++,
-				[](FAircraftControlAllocatorConfigNode& Node) { (void)Node; });
-			const FCreatedTemplateNode InputNode = AddConfiguredTemplateNode<FAircraftControllerInputConfigNode>(
-				DataflowAsset, TEXT("AircraftControllerInputConfig"), NodeIndex++,
-				[](FAircraftControllerInputConfigNode& Node) { (void)Node; });
-			const FCreatedTemplateNode PathNode = AddConfiguredTemplateNode<FAircraftAutopilotPathConfigNode>(
-				DataflowAsset, TEXT("AircraftAutopilotPathConfig"), NodeIndex++,
-				[](FAircraftAutopilotPathConfigNode& Node) { (void)Node; });
-			const FCreatedTemplateNode TimingNode = AddConfiguredTemplateNode<FAircraftAutopilotTimingConfigNode>(
-				DataflowAsset, TEXT("AircraftAutopilotTimingConfig"), NodeIndex++,
-				[](FAircraftAutopilotTimingConfigNode& Node) { (void)Node; });
-			const FCreatedTemplateNode MpccNode = AddConfiguredTemplateNode<FAircraftAutopilotMpccConfigNode>(
-				DataflowAsset, TEXT("AircraftAutopilotMpccConfig"), NodeIndex++,
-				[](FAircraftAutopilotMpccConfigNode& Node) { (void)Node; });
+			/* ---------- Authoritative shared configuration ---------- */
+			const FCreatedTemplateNode LimitsNode = AddTemplateNode<FAircraftFlightControlLimitsConfigNode>(
+				DataflowAsset, TEXT("AircraftFlightControlLimitsConfig"), FVector2D(2128.0, 0.0));
+			const FCreatedTemplateNode PositionNode = AddTemplateNode<FAircraftPositionControllerConfigNode>(
+				DataflowAsset, TEXT("AircraftPositionControllerConfig"), FVector2D(2496.0, 0.0));
+			const FCreatedTemplateNode AttitudeNode = AddTemplateNode<FAircraftAttitudeControllerConfigNode>(
+				DataflowAsset, TEXT("AircraftAttitudeControllerConfig"), FVector2D(2864.0, 0.0));
+			const FCreatedTemplateNode AltitudeNode = AddTemplateNode<FAircraftAltitudeControllerConfigNode>(
+				DataflowAsset, TEXT("AircraftAltitudeControllerConfig"), FVector2D(3232.0, 0.0));
+			const FCreatedTemplateNode AllocatorNode = AddTemplateNode<FAircraftControlAllocatorConfigNode>(
+				DataflowAsset, TEXT("AircraftControlAllocatorConfig"), FVector2D(3600.0, 0.0));
+			const FCreatedTemplateNode InputNode = AddTemplateNode<FAircraftControllerInputConfigNode>(
+				DataflowAsset, TEXT("AircraftControllerInputConfig"), FVector2D(3968.0, 0.0));
+			const FCreatedTemplateNode FailurePolicyNode = AddTemplateNode<FAircraftRotorFailurePolicyConfigNode>(
+				DataflowAsset, TEXT("AircraftRotorFailurePolicyConfig"), FVector2D(4336.0, 0.0));
+			const FCreatedTemplateNode PathNode = AddTemplateNode<FAircraftAutopilotPathConfigNode>(
+				DataflowAsset, TEXT("AircraftAutopilotPathConfig"), FVector2D(4704.0, 0.0));
+			const FCreatedTemplateNode TimingNode = AddTemplateNode<FAircraftAutopilotTimingConfigNode>(
+				DataflowAsset, TEXT("AircraftAutopilotTimingConfig"), FVector2D(5072.0, 0.0));
+			const FCreatedTemplateNode MpccNode = AddTemplateNode<FAircraftAutopilotMpccConfigNode>(
+				DataflowAsset, TEXT("AircraftAutopilotMpccConfig"), FVector2D(5440.0, 0.0));
 
-			/* ---------- 16-17. 可由任意 LOD 表项选择的替代驱动配置 ---------- */
-			const FCreatedTemplateNode ConstraintNode = AddConfiguredTemplateNode<FAircraftConstraintSimulationConfigNode>(
-				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), NodeIndex++,
-				[](FAircraftConstraintSimulationConfigNode& Node) { (void)Node; });
-			const FCreatedTemplateNode KinematicNode = AddConfiguredTemplateNode<FAircraftKinematicSimulationConfigNode>(
-				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), NodeIndex++,
-				[](FAircraftKinematicSimulationConfigNode& Node) { (void)Node; });
+			// 两种替代驱动配置也属于共享资产配置。每个 LOD 都携带完整配置，Profile.DriveMode
+			// 只在运行时选择实际后端，不再由模板拓扑把驱动模式绑定到某个 LOD 索引。
+			const FCreatedTemplateNode ConstraintNode = AddTemplateNode<FAircraftConstraintSimulationConfigNode>(
+				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), FVector2D(5808.0, 0.0));
+			const FCreatedTemplateNode KinematicNode = AddTemplateNode<FAircraftKinematicSimulationConfigNode>(
+				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), FVector2D(6176.0, 0.0));
 
-			/* ---------- 18-21. 每个 Collection LOD 一个独立 Profile 节点 ---------- */
+			/* ---------- Per-LOD profiles ---------- */
 			struct FDefaultLodEntry
 			{
 				FName Name;
@@ -362,7 +356,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				SimulationLODNodes.Add(AddConfiguredTemplateNode<FAircraftSimulationLODProfileNode>(
 					DataflowAsset,
 					FName(*FString::Printf(TEXT("AircraftSimulationLODProfile_%s"), *Entry.Name.ToString())),
-					NodeIndex++,
+					FVector2D(6608.0, 144.0 * SimulationLODNodes.Num()),
 					[EntryCopy](FAircraftSimulationLODProfileNode& Node)
 					{
 						Node.Profile.Name = EntryCopy.Name;
@@ -375,62 +369,19 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					}));
 			}
 
-			/* ---------- 22. Terminal 节点 ---------- */
-			const FCreatedTemplateNode TerminalNode = AddConfiguredTemplateNode<FAircraftAssetTerminalNode>(
-				DataflowAsset,
-				TEXT("AircraftAssetTerminal"),
-				NodeIndex++,
-				[](FAircraftAssetTerminalNode& Node)
-				{
-					(void)Node;
-				});
-
-			/* ---------- 画布布局（显式坐标） ---------- */
-			auto SetNodePosition = [](const FCreatedTemplateNode& CreatedNode, double X, double Y)
-			{
-				if (CreatedNode.EdNode)
-				{
-					CreatedNode.EdNode->NodePosX = FMath::RoundToInt(X);
-					CreatedNode.EdNode->NodePosY = FMath::RoundToInt(Y);
-				}
-			};
-			SetNodePosition(SourceNode, 512.0, 0.0);
-			SetNodePosition(FrameNode, 880.0, 0.0);
-			for (int32 RotorIndex = 0; RotorIndex < AirscrewNodes.Num(); ++RotorIndex)
-			{
-				SetNodePosition(AirscrewNodes[RotorIndex], 1328.0, 112.0 * RotorIndex);
-			}
-			SetNodePosition(LimitsNode, 1824.0, 0.0);
-			SetNodePosition(PositionNode, 2096.0, 0.0);
-			SetNodePosition(AttitudeNode, 2368.0, 0.0);
-			SetNodePosition(AltitudeNode, 2640.0, 0.0);
-			SetNodePosition(AllocatorNode, 2944.0, 0.0);
-			SetNodePosition(InputNode, 3264.0, 0.0);
-			SetNodePosition(PathNode, 3536.0, 0.0);
-			SetNodePosition(TimingNode, 3808.0, 0.0);
-			SetNodePosition(MpccNode, 4080.0, 0.0);
-			SetNodePosition(ConstraintNode, 4360.0, 144.0);
-			SetNodePosition(KinematicNode, 4360.0, 256.0);
-			const double LodNodePosY[] = { 0.0, 144.0, 256.0, 384.0 };
-			for (int32 LodIndex = 0; LodIndex < SimulationLODNodes.Num(); ++LodIndex)
-			{
-				SetNodePosition(SimulationLODNodes[LodIndex], 4744.0, LodNodePosY[LodIndex]);
-			}
-			SetNodePosition(TerminalNode, 5308.0, 0.0);
+			const FCreatedTemplateNode TerminalNode = AddTemplateNode<FAircraftAssetTerminalNode>(
+				DataflowAsset, TEXT("AircraftAssetTerminal"), FVector2D(7136.0, 0.0));
 
 			/* ---------- 连线 ----------
-			 * 主干：Source → Frame → R1..R4 → Limits → Position → Attitude → Altitude → Allocator → Input
-			 * 各 LOD 共享完整 Aircraft 配置，只在分支末端追加后端专属参数：
-			 * LOD0（飞控驱动）：Input → LOD0
-			 * LOD1（约束驱动）：Input → Constraint → LOD1
-			 * LOD2（运动学驱动）：Input → Kinematic → LOD2
-			 * LOD3（无驱动）：Input → LOD3
-			 * LOD 只选择驱动后端，不改变 Aircraft 的质量、输入和飞控限制语义。
+			 * 唯一共享主干包含 Solver、机架、旋翼、完整飞控、自动驾驶和全部驱动后端配置。
+			 * 主干末端扇出到每个 LOD Profile，Profile.DriveMode 可自由选择任意驱动模式。
 			 * 四个 LOD 分别进入 Terminal 的 CollectionLods[0..3]。
+			 * OptionalAerodynamicsNode 默认隔离；把它插入共享主干后，显式空气动力学才会生效。
 			 */
 			TArray<UDataflowEdNode*> MainChain;
-			MainChain.Reserve(15);
+			MainChain.Reserve(19);
 			MainChain.Add(SourceNode.EdNode);
+			MainChain.Add(SolverNode.EdNode);
 			MainChain.Add(FrameNode.EdNode);
 			for (const FCreatedTemplateNode& AirscrewNode : AirscrewNodes)
 			{
@@ -442,48 +393,44 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			MainChain.Add(AltitudeNode.EdNode);
 			MainChain.Add(AllocatorNode.EdNode);
 			MainChain.Add(InputNode.EdNode);
+			MainChain.Add(FailurePolicyNode.EdNode);
 			MainChain.Add(PathNode.EdNode);
 			MainChain.Add(TimingNode.EdNode);
 			MainChain.Add(MpccNode.EdNode);
+			MainChain.Add(ConstraintNode.EdNode);
+			MainChain.Add(KinematicNode.EdNode);
 
+			bool bTemplateComplete = OptionalAerodynamicsNode.IsValid();
 			for (int32 ChainIndex = 0; ChainIndex + 1 < MainChain.Num(); ++ChainIndex)
 			{
-				ConnectTemplateNodes(
+				bTemplateComplete &= ConnectTemplateNodes(
 					DataflowAsset,
 					MainChain[ChainIndex], TEXT("Collection"),
 					MainChain[ChainIndex + 1], TEXT("Collection"));
 			}
-
-			// 各 LOD 链的上游出口。
-			UDataflowEdNode* const LodChainUpstreams[] =
-			{
-				MpccNode.EdNode,        // LOD0：完整飞控链
-				ConstraintNode.EdNode,  // LOD1：机架 + 约束驱动配置
-				KinematicNode.EdNode,   // LOD2：机架 + 运动学驱动配置
-				MpccNode.EdNode,        // LOD3：完整 Aircraft 配置
-			};
-
-			ConnectTemplateNodes(DataflowAsset, MpccNode.EdNode, TEXT("Collection"),
-				ConstraintNode.EdNode, TEXT("Collection"));
-			ConnectTemplateNodes(DataflowAsset, MpccNode.EdNode, TEXT("Collection"),
-				KinematicNode.EdNode, TEXT("Collection"));
 
 			if (const FAircraftAssetTerminalNode* const TerminalDataflowNode =
 				TerminalNode.Node.IsValid() ? TerminalNode.Node->AsType<FAircraftAssetTerminalNode>() : nullptr)
 			{
 				for (int32 LodIndex = 0; LodIndex < SimulationLODNodes.Num(); ++LodIndex)
 				{
-					ConnectTemplateNodes(
+					bTemplateComplete &= ConnectTemplateNodes(
 						DataflowAsset,
-						LodChainUpstreams[LodIndex], TEXT("Collection"),
+						KinematicNode.EdNode, TEXT("Collection"),
 						SimulationLODNodes[LodIndex].EdNode, TEXT("Collection"));
-					ConnectTemplateNodes(
+					bTemplateComplete &= ConnectTemplateNodes(
 						DataflowAsset,
 						SimulationLODNodes[LodIndex].EdNode, TEXT("Collection"),
 						TerminalNode.EdNode,
 						TerminalDataflowNode->GetCollectionLodInputName(LodIndex));
 				}
 			}
+			else
+			{
+				bTemplateComplete = false;
+			}
+
+			return bTemplateComplete;
 		}
 	
 	}
@@ -515,7 +462,12 @@ namespace UE::AircraftDataflowAssetEditor::Private
 		DataflowAsset->Schema = UDataflowSchema::StaticClass();
 
 		AircraftAsset->SetDataflow(DataflowAsset);
-		CreateAircraftTemplateGraph(DataflowAsset);
+		if (!CreateAircraftTemplateGraph(DataflowAsset))
+		{
+			AircraftAsset->SetDataflow(nullptr);
+			DataflowAsset->MarkAsGarbage();
+			return nullptr;
+		}
 
 		AircraftAsset->MarkPackageDirty();
 

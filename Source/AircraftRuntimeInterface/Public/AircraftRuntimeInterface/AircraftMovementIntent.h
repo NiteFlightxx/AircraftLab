@@ -153,6 +153,22 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftCompletionPolicy
 	float StableTimeSeconds = 0.2f;
 };
 
+/** 所有自动驾驶命令共享的运动约束、朝向目标和超时。 */
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMovementIntentSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftRequestedMotionLimits Limits;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftHeadingObjective Heading;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "s"))
+	float TimeoutSeconds = 0.0f;
+};
+
 USTRUCT(BlueprintType)
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftHoldIntent
 {
@@ -262,40 +278,40 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTimedTrajectoryIntent
 	TArray<FAircraftTimedTrajectorySample> Samples;
 };
 
-/** 所有移动源共享的唯一命令。Type 只选择一个载荷；公共约束和完成策略仅定义一次。 */
-USTRUCT(BlueprintType)
+/** 飞控内部传输格式；蓝图使用 UAutopilotComponent 的强类型提交接口。 */
+USTRUCT()
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMovementIntent
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	UPROPERTY()
 	EAircraftMovementIntentType Type = EAircraftMovementIntentType::Hold;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	UPROPERTY()
 	FAircraftHoldIntent Hold;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	UPROPERTY()
 	FAircraftVelocityIntent Velocity;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	UPROPERTY()
 	FAircraftRouteIntent Route;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	UPROPERTY()
 	FAircraftOrbitIntent Orbit;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	UPROPERTY()
 	FAircraftTimedTrajectoryIntent TimedTrajectory;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	UPROPERTY()
 	FAircraftRequestedMotionLimits Limits;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	UPROPERTY()
 	FAircraftHeadingObjective Heading;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	UPROPERTY()
 	FAircraftCompletionPolicy Completion;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "s"))
+	UPROPERTY()
 	float TimeoutSeconds = 0.0f;
 
 	bool IsValid() const;
