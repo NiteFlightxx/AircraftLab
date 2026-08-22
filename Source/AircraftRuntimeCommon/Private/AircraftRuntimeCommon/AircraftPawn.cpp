@@ -37,6 +37,10 @@ void AAircraftPawn::BeginPlay()
 	{
 		Aircraft->WakeAllRigidBodies();
 	}
+	
+	GetAircraftComponent()->SetControllerEnabled(true);
+	GetAircraftComponent()->SetFlightMode(EAircraftFlightMode::Mission);
+	GetAircraftComponent()->Arm();
 
 }
 
