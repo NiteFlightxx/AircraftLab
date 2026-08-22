@@ -21,7 +21,8 @@
 #include "Aircraft/ControlAllocator.h"
 #include "Aircraft/RotorModel.h"
 #include "Aircraft/RotorFailureManager.h"
-#include "AircraftRuntimeInterface/AutopilotProvider.h"
+#include "AircraftAutopilot/AircraftPredictiveController.h"
+#include "AircraftRuntimeInterface/AircraftMovementIntent.h"
 
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftSimulationTypes.h"
@@ -58,7 +59,7 @@ public:
 
 	//~ Begin GameThread API
 	void SetPilotInput_GameThread(const FAircraftPilotInput& InPilotInput);
-	void SetTargets_GameThread(const FAircraftControlTargets& InTargets);
+	void SetLowLevelTargets_GameThread(const FAircraftLowLevelControlTargets& InTargets);
 	void SetFlightMode_GameThread(EAircraftFlightMode InMode);
 	void SetArmRequest_GameThread(bool bArm);
 	void SetEmergencyStop_GameThread(bool bStop);
@@ -66,9 +67,16 @@ public:
 	bool IsControllerEnabled_GameThread() const;
 	void SetGravity_GameThread(float GravityCmPerSecSq);
 
-	/** Autopilot 注入（GT 由组件从 IAutopilotProvider 拉取后写入）。 */
-	void SetAutopilotInjection_GameThread(const FAutopilotInjection& InInjection);
-	void SetUseAutopilotSetpoint_GameThread(bool bEnabled);
+	void SetMovementIntent_GameThread(const FAircraftMovementIntent& Intent,
+		FAircraftMovementIntentHandle Handle, uint64 Revision);
+	void ClearMovementIntent_GameThread(uint64 Revision);
+	void GetTrajectoryReference_GameThread(FAircraftTrajectoryReference& OutReference) const;
+	void GetAutopilotDiagnostics_GameThread(FAircraftAutopilotDiagnostics& OutDiagnostics) const;
+	void TickKinematicPlanner_GameThread(float DeltaTime, double TimeSeconds,
+		const FTransform& BodyTransform, const FVector& VelocityCmPerSec,
+		const FVector& AngularVelocityWorldRadPerSec,
+		float LinearDampingPerSecond, float AngularDampingPerSecond,
+		const FAircraftSimulationLodModel& Model);
 	void SetSimulationState_GameThread(bool bEnabled, bool bSuspended);
 
 	/** 旋翼健康操作（GT 入口；经输入锁排队，PT 在下一子步消费并重建分配缓存）。 */
@@ -148,17 +156,19 @@ private:
 	/* GT → PT 双缓冲 */
 	mutable FCriticalSection InputCriticalSection;
 	FAircraftPilotInput PendingPilotInput;
-	FAircraftControlTargets PendingTargets;
-	FAutopilotInjection PendingAutopilotInjection;
+	FAircraftLowLevelControlTargets PendingLowLevelTargets;
+	FAircraftMovementIntent PendingMovementIntent;
+	FAircraftMovementIntentHandle PendingMovementIntentHandle;
+	uint64 PendingMovementIntentRevision = 0;
+	bool bPendingMovementIntentActive = false;
 	TSharedPtr<const FAircraftSimulationModel> PendingSimulationModel;
 	int32 PendingLodIndex = INDEX_NONE;
-	EAircraftSimulationDriveMode PendingDriveMode = EAircraftSimulationDriveMode::None;
+	EAircraftSimulationDriveMode PendingDriveMode = EAircraftSimulationDriveMode::FlightController;
 	bool bPendingConfiguration = false;
 	bool bArmRequest = true;
 	bool bEmergencyStop = false;
 	bool bRecoverAllRotors = false;
 	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EAircraftFlightMode::PositionHold) };
-	std::atomic<bool> bUseAutopilotSetpoint{ false };
 	std::atomic<bool> bPendingControllerReset{ false };
 	std::atomic<bool> bSimulationEnabled{ true };
 	std::atomic<bool> bSimulationSuspended{ false };
@@ -180,6 +190,8 @@ private:
 	FAircraftFlightControlOutput LatestControlOutput;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftFailurePolicyStatus LatestPolicyStatus;
+	FAircraftTrajectoryReference LatestTrajectoryReference;
+	FAircraftAutopilotDiagnostics LatestAutopilotDiagnostics;
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Armed) };
 	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EAircraftFlightMode::PositionHold) };
 	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
@@ -190,6 +202,9 @@ private:
 	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
 	std::atomic<float> GravityMagnitudeCmPerSecSq{ 980.0f };
+
+	/** Serializes the predictive controller while a drive-mode transition moves execution between PT and GT. */
+	mutable FCriticalSection PlannerCriticalSection;
 
 	/* ---- PT 内部状态（只在 PT 上访问，不需要锁）---- */
 
@@ -205,6 +220,15 @@ private:
 	FAircraftPhysicsCache PhysicsCache;
 	/** 模式能力缓存。 */
 	FAircraftModeCapabilities ModeCapabilities;
+	FAircraftPredictiveController PredictiveController;
+	uint64 ActiveMovementIntentRevision = 0;
+	int64 ActiveMovementIntentId = 0;
+	std::atomic<uint64> VehicleStateSequence{ 0 };
+	bool bMovementIntentActive = false;
+	float NativeLinearDamping = 0.0f;
+	float NativeAngularDamping = 0.0f;
+	bool bNativeDampingCaptured = false;
+	bool bExplicitAerodynamicsApplied = false;
 	/* 单旋翼运行时状态（与 SimulationModel.Rotors 一一对应，索引一致） */
 	TArray<FAircraftRotorRuntimeState> RotorStates;
 

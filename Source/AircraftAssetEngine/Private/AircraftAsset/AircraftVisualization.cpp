@@ -271,8 +271,8 @@ void FAircraftVisualization::DrawMotionTarget(
 	const UAircraftComponent& Component,
 	const FAircraftVisualizationContext& Context)
 {
-	FAircraftMotionTarget Target;
-	if (!Component.BuildMotionTarget(Target))
+	FAircraftTrajectoryReference Target;
+	if (!Component.GetTrajectoryReference(Target))
 	{
 		return;
 	}
@@ -287,10 +287,10 @@ void FAircraftVisualization::DrawMotionTarget(
 		Context, Target.PositionCm, Target.VelocityCmPerSec * Scale,
 		FLinearColor(0.0f, 1.0f, 1.0f));
 	UE::AircraftLab::Visualization::Private::DrawArrow(
-		Context, Target.PositionCm, Target.AngularVelocityWorldDegPerSec * Scale,
+		Context, Target.PositionCm, FVector(0.0f, 0.0f, Target.YawRateDegPerSec) * Scale,
 		FLinearColor(1.0f, 0.5f, 0.0f));
 	UE::AircraftLab::Visualization::Private::DrawAxes(
-		Context, Target.PositionCm, Target.RotationDegrees,
+		Context, Target.PositionCm, FRotator(0.0f, Target.YawDegrees, 0.0f),
 		FMath::Max(UE::AircraftLab::Visualization::Private::CVarAxisLength.GetValueOnAnyThread(), 1.0f));
 }
 

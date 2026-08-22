@@ -10,7 +10,7 @@
 #include "Aircraft/FlightControlPid.h"
 #include "Aircraft/FlightControlStateTypes.h"
 #include "Aircraft/FlightControllerRuntimeConfig.h"
-#include "AircraftRuntimeInterface/AutopilotProvider.h"
+#include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 
 struct FAircraftControlAllocator;
 
@@ -22,9 +22,9 @@ struct FAircraftFlightControlSolverContext
 	const FAircraftModeCapabilities& ModeCapabilities;
 	const FAircraftFlightControllerRuntimeConfig& Config;
 	const FAircraftManualCommand& ManualCommand;
-	const FAutopilotInjection& AutopilotInjection;
+	const FAircraftTrajectoryReference& TrajectoryReference;
 	const FAircraftControlAllocator& AllocationFeedback;
-	bool bUseAutopilotSetpoint = false;
+	bool bUseTrajectoryReference = false;
 };
 
 /** 单轴二阶姿态参考模型的运行状态。 */

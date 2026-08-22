@@ -13,6 +13,7 @@ public class AircraftRuntimeCommon : ModuleRules
                 "CoreUObject",
                 "Engine",
                 "AircraftRuntimeInterface",
+				"AircraftAutopilot",
                 "AircraftAssetEngine"
             }
         );

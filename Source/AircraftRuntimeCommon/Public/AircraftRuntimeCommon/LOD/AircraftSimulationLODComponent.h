@@ -1,6 +1,4 @@
-// 范式分歧：LOD 条目来源由 UAircraftSimulationLODProfileAsset 改为
-// UAircraftComponent 资产的 Dataflow 编译产物（SimulationLOD.LODs，
-// 经 IAircraftSimulationLODController 契约刷新）。
+// LOD 条目直接来自 UAircraftComponent 资产的 Dataflow 编译产物。
 //
 // 每机适配器：所有更新由世界子系统驱动，本组件无 Tick。
 
@@ -51,7 +49,6 @@ struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODNetworkSettings
 UCLASS(ClassGroup = (Aircraft), meta = (BlueprintSpawnableComponent))
 class AIRCRAFTRUNTIMECOMMON_API UAircraftSimulationLODComponent
 	: public UActorComponent
-	, public IAircraftSimulationLODController
 {
 	GENERATED_BODY()
 
@@ -61,7 +58,6 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-	virtual void RefreshAircraftSimulationDrive_Implementation() override;
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
 	int32 GetCurrentSimulationLOD() const { return CurrentLODIndex; }
@@ -94,22 +90,6 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
 	void ForceSimulationReevaluation();
-
-	/**
-	 * 持久选择使用 DriveMode 的 LOD 条目；手动选择在 ClearManualDriveModeOverride
-	 * 之前优先于自动 LOD 与运动源请求。资产中无该驱动模式条目时返回 false。
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation|Drive")
-	bool SetManualDriveModeOverride(EAircraftSimulationDriveMode DriveMode);
-
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation|Drive")
-	void ClearManualDriveModeOverride();
-
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation|Drive")
-	bool HasManualDriveModeOverride() const { return bManualDriveModeOverrideActive; }
-
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation|Drive")
-	EAircraftSimulationDriveMode GetManualDriveModeOverride() const { return ManualDriveModeOverride; }
 
 	UPROPERTY(BlueprintAssignable, Category = "Aircraft|Simulation")
 	FOnAircraftLODSelectionChanged OnLODSelectionChanged;
@@ -172,9 +152,6 @@ private:
 		ECollisionEnabled::Type OriginalCollision = ECollisionEnabled::NoCollision;
 	};
 
-	bool bManualDriveModeOverrideActive = false;
-	EAircraftSimulationDriveMode ManualDriveModeOverride = EAircraftSimulationDriveMode::None;
-
 	float LastEvaluationWorldTime = -1.0f;
 	float LastLODChangeWorldTime = 0.0f;
 	float LastCombatActivityWorldTime = -1000.0f;
@@ -195,5 +172,5 @@ private:
 	void ApplyCollisionBudget(const FAircraftSimulationBudget& Budget);
 	void RefreshConsumers();
 	FAircraftSimulationLODNetworkSettings GetNetworkSettings(int32 LODIndex) const;
-	FAircraftSimulationDriveOverride ResolveDriveOverride() const;
+	void ApplyCurrentBudget();
 };

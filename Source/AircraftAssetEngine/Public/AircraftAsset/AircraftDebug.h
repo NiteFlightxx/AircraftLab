@@ -4,6 +4,7 @@
 #include "Logging/LogMacros.h"
 
 #include "Aircraft/FlightControlStateTypes.h"
+#include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
 class UAircraftComponent;
@@ -47,18 +48,12 @@ struct AIRCRAFTASSETENGINE_API FAircraftDebug
 		const UAircraftComponent& Component,
 		FConstraintInstance& Constraint,
 		FName RootBone,
-		const FAircraftPilotInput& PilotInput,
-		const FAircraftManualCommand& ManualCommand,
-		const FAircraftMotionTarget& Target,
+		const FAircraftTrajectoryReference& Target,
 		const FVector& WorldCenterOfMassTarget,
 		const FVector& WorldCenterOfMassVelocityTarget,
 		const FVector& WorldPositionFeedForward,
 		const FQuat& WorldOrientationTarget,
 		const FVector& WorldAngularVelocityTargetRevPerSec,
-		const TCHAR* MotionPhaseX,
-		const TCHAR* MotionPhaseY,
-		const TCHAR* MotionPhaseZ,
-		const FVector& BrakeVelocityCmPerSec,
 		float DeltaSeconds,
 		float& InOutLogAccumulatorSeconds,
 		float& InOutUnresponsiveSeconds);

@@ -1,207 +1,343 @@
-// 玩家、Autopilot 和 GameplayPolicy 共用的唯一移动意图契约。
-
 #pragma once
 
 #include "CoreMinimal.h"
+
 #include "AircraftMovementIntent.generated.h"
 
 class AActor;
 
 UENUM(BlueprintType)
-enum class EAutopilotMovementIntentType : uint8
+enum class EAircraftMovementIntentType : uint8
 {
-	Hold UMETA(DisplayName = "悬停"),
-	MoveToPosition UMETA(DisplayName = "移动到位置"),
-	MoveWithVelocity UMETA(DisplayName = "速度移动"),
-	FollowPath UMETA(DisplayName = "跟随路径"),
-	Orbit UMETA(DisplayName = "环绕飞行"),
-	/** 围绕 TargetPositionCm/TargetActor 的水平有限圆弧。 */
-	CircleArc UMETA(DisplayName = "圆弧飞行"),
-	/** 运动轨迹取自动画 Montage 的 Root Motion。 */
-	RootMotion UMETA(DisplayName = "Root Motion")
+	Hold,
+	Velocity,
+	Route,
+	Orbit,
+	TimedTrajectory
 };
 
 UENUM(BlueprintType)
-enum class EAutopilotHeadingMode : uint8
+enum class EAircraftVelocityFrame : uint8
 {
-	KeepCurrent UMETA(DisplayName = "保持当前航向"),
-	FixedYaw UMETA(DisplayName = "固定航向"),
-	FaceVelocity UMETA(DisplayName = "朝向速度方向"),
-	FaceTarget UMETA(DisplayName = "朝向目标")
+	World,
+	ControlHeading
 };
 
 UENUM(BlueprintType)
-enum class EAutopilotArrivalMode : uint8
+enum class EAircraftHeadingMode : uint8
 {
-	StopAndComplete UMETA(DisplayName = "停止并完成"),
-	PassThrough UMETA(DisplayName = "穿过不停")
+	KeepCurrent,
+	FixedYaw,
+	FaceVelocity,
+	FaceTarget
 };
 
 UENUM(BlueprintType)
-enum class EAutopilotPathTrajectoryMode : uint8
+enum class EAircraftArrivalMode : uint8
 {
-	PiecewiseLinear UMETA(DisplayName = "分段线性"),
-	MinimumSnap UMETA(DisplayName = "最小snap"),
-	/** 将 PathPointsCm 视为贝塞尔控制点。 */
-	Bezier UMETA(DisplayName = "贝塞尔")
+	Stop,
+	PassThrough
 };
 
-/** MovementIntent 独占拥有的运动整形约束；Profile 不再重复声明这些字段。 */
+UENUM(BlueprintType)
+enum class EAircraftMovementIntentStatus : uint8
+{
+	Invalid,
+	Accepted,
+	Planning,
+	Executing,
+	Succeeded,
+	Failed,
+	Cancelled,
+	Interrupted
+};
+
+UENUM(BlueprintType)
+enum class EAircraftMovementFailureReason : uint8
+{
+	None,
+	InvalidIntent,
+	AutopilotInactive,
+	FlightControllerUnavailable,
+	PlanningFailed,
+	SolverFailed,
+	Timeout,
+	Replaced,
+	CancelledByCaller
+};
+
+/** 本次运动请求的软限制。飞控硬限制和实时控制权限始终具有更高优先级。 */
 USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMEINTERFACE_API FTrajectoryMotionConstraints
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftRequestedMotionLimits
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "巡航速度（厘米/秒）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float CruiseSpeedCmPerSec = 800.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大加速度（厘米/秒²）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "cm/s^2"))
 	float MaxAccelerationCmPerSecSq = 400.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大减速度（厘米/秒²）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "cm/s^2"))
 	float MaxDecelerationCmPerSecSq = 400.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大加加速度（厘米/秒³）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0"))
 	float MaxJerkCmPerSecCubed = 2000.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大爬升率（厘米/秒）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float MaxClimbRateCmPerSec = 300.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大下降率（厘米/秒）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float MaxDescentRateCmPerSec = 200.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大垂直加速度（厘米/秒²）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "cm/s^2"))
 	float MaxVerticalAccelerationCmPerSecSq = 500.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大垂直加加速度（厘米/秒³）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0"))
 	float MaxVerticalJerkCmPerSecCubed = 1500.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航角速度（度/秒）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "deg/s"))
 	float MaxYawRateDegPerSec = 90.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航角加速度（度/秒²）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0"))
 	float MaxYawAccelerationDegPerSecSq = 180.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航加加速度（度/秒³）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0"))
 	float MaxYawJerkDegPerSecCubed = 600.0f;
-};
 
-/**
- * 速度移动和持续环绕使用的约束。
- * 这两类命令没有"终点制动"，其巡航速度分别由期望速度和半径×角速度唯一决定，
- * 因此不暴露有限轨迹中的巡航/减速/终点速度，避免同一件事由多个参数控制。
- */
-USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMEINTERFACE_API FContinuousMotionConstraints
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大水平加速度（厘米/秒²）"))
-	float MaxAccelerationCmPerSecSq = 400.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大水平加加速度（厘米/秒³）"))
-	float MaxJerkCmPerSecCubed = 2000.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大爬升率（厘米/秒）"))
-	float MaxClimbRateCmPerSec = 300.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大下降率（厘米/秒）"))
-	float MaxDescentRateCmPerSec = 200.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大垂直加速度（厘米/秒²）"))
-	float MaxVerticalAccelerationCmPerSecSq = 500.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大垂直加加速度（厘米/秒³）"))
-	float MaxVerticalJerkCmPerSecCubed = 1500.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航角速度（度/秒）"))
-	float MaxYawRateDegPerSec = 90.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航角加速度（度/秒²）"))
-	float MaxYawAccelerationDegPerSecSq = 180.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Constraints", meta = (ClampMin = "0.0", DisplayName = "最大偏航加加速度（度/秒³）"))
-	float MaxYawJerkDegPerSecCubed = 600.0f;
+	bool IsValid() const;
 };
 
 USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMEINTERFACE_API FAutopilotArrivalCriteria
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftHeadingObjective
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Arrival", meta = (ClampMin = "0.0", DisplayName = "水平容差（厘米）"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Heading")
+	EAircraftHeadingMode Mode = EAircraftHeadingMode::FaceVelocity;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Heading", meta = (Units = "deg"))
+	float FixedYawDegrees = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Heading", meta = (Units = "cm"))
+	FVector TargetPositionCm = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Heading")
+	TObjectPtr<AActor> TargetActor = nullptr;
+};
+
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftCompletionPolicy
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion")
+	EAircraftArrivalMode ArrivalMode = EAircraftArrivalMode::Stop;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float TerminalSpeedCmPerSec = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "cm"))
 	float HorizontalToleranceCm = 50.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Arrival", meta = (ClampMin = "0.0", DisplayName = "垂直容差（厘米）"))
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "cm"))
 	float VerticalToleranceCm = 100.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Arrival", meta = (ClampMin = "0.0", DisplayName = "速度容差（厘米/秒）"))
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float SpeedToleranceCmPerSec = 50.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Arrival", meta = (ClampMin = "0.0", ClampMax = "180.0", DisplayName = "航向容差（度）"))
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", ClampMax = "180.0", Units = "deg"))
 	float YawToleranceDegrees = 5.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Arrival", meta = (ClampMin = "0.0", DisplayName = "稳定时间（秒）"))
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "s"))
 	float StableTimeSeconds = 0.2f;
 };
 
-/** 玩家、Autopilot 和 GameplayPolicy 共用的唯一移动意图契约。 */
 USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMEINTERFACE_API FAutopilotMovementIntent
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftHoldIntent
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "意图类型"))
-	EAutopilotMovementIntentType Type = EAutopilotMovementIntentType::Hold;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "目标位置（厘米）"))
-	FVector TargetPositionCm = FVector::ZeroVector;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "目标 Actor"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "cm"))
+	FVector PositionCm = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
 	TObjectPtr<AActor> TargetActor = nullptr;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "期望速度（厘米/秒）"))
-	FVector DesiredVelocityCmPerSec = FVector::ZeroVector;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "期望姿态角（度）"))
-	FRotator DesiredAttitudeDegrees = FRotator::ZeroRotator;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "期望机体角速度（度/秒）"))
-	FVector DesiredBodyRatesDegPerSec = FVector::ZeroVector;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "路径点（厘米）"))
-	TArray<FVector> PathPointsCm;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "路径轨迹模式"))
-	EAutopilotPathTrajectoryMode PathTrajectoryMode = EAutopilotPathTrajectoryMode::PiecewiseLinear;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "运动约束"))
-	FTrajectoryMotionConstraints MotionConstraints;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "航向模式"))
-	EAutopilotHeadingMode HeadingMode = EAutopilotHeadingMode::FaceVelocity;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "固定航向角（度）"))
-	float FixedYawDegrees = 0.0f;
-	/** 使用独立于运动终点的航向目标。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "使用独立航向目标"))
-	bool bUseIndependentHeadingTarget = false;
-	/** 世界坐标；设置了 HeadingTargetActor 时则为 Actor 相对偏移。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "航向目标位置（厘米）"))
-	FVector HeadingTargetPositionCm = FVector::ZeroVector;
-	/** 可选：朝向某个 Actor 而不改变运动终点。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "航向目标 Actor"))
-	TObjectPtr<AActor> HeadingTargetActor = nullptr;
-	/** FixedYaw 时表示转向目标航向所使用的正向速度上限。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent",
-		meta = (ClampMin = "0.0", EditCondition = "HeadingMode == EAutopilotHeadingMode::FixedYaw", EditConditionHides,
-			DisplayName = "航向转动速度（度/秒）"))
-	float DesiredYawRateDegPerSec = 0.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "到达模式"))
-	EAutopilotArrivalMode ArrivalMode = EAutopilotArrivalMode::StopAndComplete;
-	/** 仅 PassThrough 使用；表示穿过有限轨迹终点时保留的速度。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent",
-		meta = (ClampMin = "0.0", EditCondition = "ArrivalMode == EAutopilotArrivalMode::PassThrough", EditConditionHides,
-			DisplayName = "穿越终点速度（厘米/秒）"))
-	float PassThroughSpeedCmPerSec = 0.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "到达判据"))
-	FAutopilotArrivalCriteria ArrivalCriteria;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (ClampMin = "0.0", DisplayName = "环绕半径（厘米）"))
-	float OrbitRadiusCm = 500.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "环绕角速度（度/秒）"))
-	float OrbitAngularRateDegPerSec = 45.0f;
-	/** CircleArc 绕 +Z 的起始角；0 度沿世界 +X。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "圆弧起始角（度）"))
-	float ArcStartAngleDegrees = 0.0f;
-	/** CircleArc 终止角；更大的值逆时针扫掠，更小的值顺时针扫掠。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (DisplayName = "圆弧终止角（度）"))
-	float ArcEndAngleDegrees = 90.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Intent", meta = (ClampMin = "0.0", DisplayName = "超时时间（秒）"))
-	float TimeoutSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	bool bCaptureCurrentPosition = true;
 };
+
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftVelocityIntent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "cm/s"))
+	FVector VelocityCmPerSec = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	EAircraftVelocityFrame Frame = EAircraftVelocityFrame::World;
+};
+
+/** 一段凸安全走廊。Plane 的法向朝向可行区域外侧，约束为 PlaneDot(Position) <= 0。 */
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSafeCorridorSegment
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (ClampMin = "0.0", Units = "cm"))
+	float StartDistanceCm = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (ClampMin = "0.0", Units = "cm"))
+	float EndDistanceCm = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation")
+	TArray<FPlane> BoundaryPlanes;
+};
+
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftRouteIntent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation")
+	TArray<FVector> PointsCm;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation")
+	TArray<FAircraftSafeCorridorSegment> Corridor;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation")
+	bool bClosed = false;
+};
+
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftOrbitIntent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "cm"))
+	FVector CenterCm = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	TObjectPtr<AActor> CenterActor = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "1.0", Units = "cm"))
+	float RadiusCm = 500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "deg/s"))
+	float AngularRateDegPerSec = 45.0f;
+};
+
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTimedTrajectorySample
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "s"))
+	float TimeSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "cm"))
+	FVector PositionCm = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "cm/s"))
+	FVector VelocityCmPerSec = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "cm/s^2"))
+	FVector AccelerationCmPerSecSq = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "deg"))
+	float YawDegrees = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "deg/s"))
+	float YawRateDegPerSec = 0.0f;
+};
+
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTimedTrajectoryIntent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	TArray<FAircraftTimedTrajectorySample> Samples;
+};
+
+/** 所有移动源共享的唯一命令。Type 只选择一个载荷；公共约束和完成策略仅定义一次。 */
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMovementIntent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	EAircraftMovementIntentType Type = EAircraftMovementIntentType::Hold;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftHoldIntent Hold;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftVelocityIntent Velocity;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftRouteIntent Route;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftOrbitIntent Orbit;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftTimedTrajectoryIntent TimedTrajectory;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftRequestedMotionLimits Limits;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftHeadingObjective Heading;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	FAircraftCompletionPolicy Completion;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "0.0", Units = "s"))
+	float TimeoutSeconds = 0.0f;
+
+	bool IsValid() const;
+};
+
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMovementIntentHandle
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement")
+	int64 Id = 0;
+
+	bool IsValid() const { return Id > 0; }
+	bool operator==(const FAircraftMovementIntentHandle& Other) const { return Id == Other.Id; }
+};
+
+FORCEINLINE uint32 GetTypeHash(const FAircraftMovementIntentHandle& Handle)
+{
+	return GetTypeHash(Handle.Id);
+}
+
+USTRUCT(BlueprintType)
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMovementIntentResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement")
+	FAircraftMovementIntentHandle Handle;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement")
+	EAircraftMovementIntentStatus Status = EAircraftMovementIntentStatus::Invalid;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement")
+	EAircraftMovementFailureReason FailureReason = EAircraftMovementFailureReason::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement")
+	float Progress = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement", meta = (Units = "s"))
+	float ElapsedSeconds = 0.0f;
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnAircraftMovementIntentChanged, const FAircraftMovementIntentResult&, Result);

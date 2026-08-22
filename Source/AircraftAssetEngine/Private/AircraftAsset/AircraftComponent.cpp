@@ -25,7 +25,7 @@
 #include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "AircraftAsset/AircraftSimulationProxy.h"
 #include "AircraftAsset/AircraftVisualization.h"
-#include "AircraftRuntimeInterface/AutopilotProvider.h"
+#include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
 #include "Dataflow/DataflowSimulationManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftComponent)
@@ -210,12 +210,12 @@ void UAircraftComponent::SetPilotInput(const FAircraftPilotInput& InPilotInput)
 	}
 }
 
-void UAircraftComponent::SetControlTargets(const FAircraftControlTargets& InTargets)
+void UAircraftComponent::SetLowLevelControlTargets(const FAircraftLowLevelControlTargets& InTargets)
 {
-	ControlTargets = InTargets;
+	LowLevelControlTargets = InTargets;
 	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->SetTargets_GameThread(InTargets);
+		AircraftSimulationProxy->SetLowLevelTargets_GameThread(InTargets);
 	}
 }
 
@@ -426,25 +426,8 @@ void UAircraftComponent::ApplySimulationLOD(int32 LodIndex)
 	const EAircraftSimulationDriveMode DriveMode = Settings
 		? Settings->DriveMode
 		: EAircraftSimulationDriveMode::FlightController;
-	ApplySimulationLOD(LodIndex, DriveMode,
-		DriveMode == EAircraftSimulationDriveMode::FlightController
-		|| DriveMode == EAircraftSimulationDriveMode::PhysicsConstraint);
-}
-
-void UAircraftComponent::ApplySimulationLOD(
-	int32 LodIndex,
-	EAircraftSimulationDriveMode DriveMode,
-	bool bEnablePhysics)
-{
-	const FAircraftSimulationModel* const Model = GetSimulationModel();
-	if (!Model || !Model->IsValidLodIndex(LodIndex))
-	{
-		return;
-	}
-
 	const bool bLODChanged = CurrentSimulationLOD != LodIndex;
-	const bool bDriveChanged = SimulationDriveMode != DriveMode
-		|| bSimulationPhysicsEnabled != bEnablePhysics;
+	const bool bDriveChanged = SimulationDriveMode != DriveMode;
 	if (!bLODChanged && !bDriveChanged)
 	{
 		return;
@@ -456,12 +439,8 @@ void UAircraftComponent::ApplySimulationLOD(
 		// Constraint LOD 之间也必须重建，新的 RootBone、驱动参数和参考变换才会生效。
 		DestroySimulationConstraint();
 	}
-	if (bLODChanged)
-	{
-		ResetPilotMotionTarget();
-	}
 	CurrentSimulationLOD = LodIndex;
-	ApplySimulationDriveMode(DriveMode, bEnablePhysics);
+	ApplySimulationDriveMode(DriveMode);
 	if (FAircraftDebug::IsDriveLogEnabled())
 	{
 		UE_LOG(LogAircraft, Display,
@@ -486,17 +465,9 @@ void UAircraftComponent::ApplySimulationLOD(
 }
 
 
-void UAircraftComponent::SetSimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics)
+void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode)
 {
-	ApplySimulationDriveMode(NewDriveMode, bEnablePhysics);
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->PostConstructor();
-	}
-}
-
-void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics)
-{
+	const bool bEnablePhysics = NewDriveMode != EAircraftSimulationDriveMode::Kinematic;
 	const EAircraftSimulationDriveMode PreviousDriveMode = SimulationDriveMode;
 	if (PreviousDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
 		&& (NewDriveMode != EAircraftSimulationDriveMode::PhysicsConstraint || !bEnablePhysics))
@@ -508,10 +479,6 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 	// 让物理状态创建回调能按 Dataflow LOD 配置建立对应后端。
 	SimulationDriveMode = NewDriveMode;
 	bSimulationPhysicsEnabled = bEnablePhysics;
-	if (PreviousDriveMode != NewDriveMode)
-	{
-		ResetPilotMotionTarget();
-	}
 
 	if (bEnablePhysics)
 	{
@@ -521,9 +488,9 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 			FAircraftEstimatedState Estimated;
 			GetEstimatedState(Estimated);
 			SavedSimulationLinearVelocityCmPerSec = Estimated.State.VelocityCmPerSec;
-			FAircraftMotionTarget Target;
-			SavedSimulationAngularVelocityRadPerSec = BuildMotionTarget(Target)
-				? Target.AngularVelocityWorldDegPerSec * (UE_PI / 180.0f)
+			FAircraftTrajectoryReference Target;
+			SavedSimulationAngularVelocityRadPerSec = GetTrajectoryReference(Target)
+				? FVector(0.0f, 0.0f, FMath::DegreesToRadians(Target.YawRateDegPerSec))
 				: FVector::ZeroVector;
 		}
 		if (!IsSimulatingPhysics())
@@ -550,11 +517,9 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 			*GetNameSafe(GetOwner()));
 	}
 
-	// DriveMode::None 的网络代理保留 Chaos 刚体给 UE 物理复制，
-	// 但不运行本地驱动或飞控物理线程。
-	SetComponentTickEnabled(SimulationDriveMode != EAircraftSimulationDriveMode::None);
+	SetComponentTickEnabled(true);
 	SetAsyncPhysicsTickEnabled(
-		SimulationDriveMode == EAircraftSimulationDriveMode::FlightController);
+		SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic);
 }
 
 bool UAircraftComponent::CreateSimulationConstraint()
@@ -681,8 +646,8 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		return;
 	}
 
-	FAircraftMotionTarget Target;
-	if (!BuildMotionTarget(Target))
+	FAircraftTrajectoryReference Target;
+	if (!GetTrajectoryReference(Target))
 	{
 		return;
 	}
@@ -696,17 +661,17 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	const FVector CurrentCenterOfMass = ChassisBody->GetCOMPosition();
 	const FVector CenterOfMassOffsetLocal = GetComponentQuat().UnrotateVector(
 		CurrentCenterOfMass - GetComponentLocation());
-	const FQuat TargetRotation = Target.RotationDegrees.Quaternion();
+	const FQuat TargetRotation = FRotator(0.0f, Target.YawDegrees, 0.0f).Quaternion();
 	const FVector TargetCenterOfMassOffsetWorld = TargetRotation.RotateVector(
 		CenterOfMassOffsetLocal);
 	const FVector TargetCenterOfMass = Target.PositionCm + TargetCenterOfMassOffsetWorld;
-	const FVector TargetAngularVelocityWorldRadPerSec =
-		Target.AngularVelocityWorldDegPerSec * (UE_PI / 180.0f);
+	const FVector TargetAngularVelocityWorldRadPerSec(
+		0.0f, 0.0f, FMath::DegreesToRadians(Target.YawRateDegPerSec));
 	const FVector TargetCenterOfMassVelocity = Target.VelocityCmPerSec
 		+ FVector::CrossProduct(
 			TargetAngularVelocityWorldRadPerSec, TargetCenterOfMassOffsetWorld);
-	const FVector WorldAngularVelocityTargetRevPerSec =
-		Target.AngularVelocityWorldDegPerSec / 360.0f;
+	const FVector WorldAngularVelocityTargetRevPerSec(
+		0.0f, 0.0f, Target.YawRateDegPerSec / 360.0f);
 	const FVector GravityAccelerationCmPerSecSq(
 		0.0, 0.0, GetWorld() ? GetWorld()->GetGravityZ() : -980.0f);
 	const FVector DynamicsFeedForwardPositionOffset =
@@ -726,30 +691,12 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	SimulationConstraint->SetAngularOrientationTarget(TargetRotation);
 	SimulationConstraint->SetAngularVelocityTarget(WorldAngularVelocityTargetRevPerSec);
 	WakeAllRigidBodies();
-	const FAircraftManualCommand ManualCommand =
-		UE::AircraftLab::PilotInputMapping::BuildManualCommand(
-			PilotInput, GetComponentQuat(), Model->FlightController);
-	auto MotionPhaseName = [](const EAircraftPilotMotionPhase Phase)
-	{
-		switch (Phase)
-		{
-		case EAircraftPilotMotionPhase::Manual:
-			return TEXT("Manual");
-		case EAircraftPilotMotionPhase::Brake:
-			return TEXT("Brake");
-		default:
-			return TEXT("Hold");
-		}
-	};
 	FAircraftDebug::TickConstraint(
-		*this, *SimulationConstraint, Model->RootBone, PilotInput, ManualCommand, Target,
+		*this, *SimulationConstraint, Model->RootBone, Target,
 		ConstraintTargetCenterOfMass, TargetCenterOfMassVelocity,
 		DynamicsFeedForwardPositionOffset,
 		TargetRotation, WorldAngularVelocityTargetRevPerSec,
-		MotionPhaseName(PilotMotionPhaseX),
-		MotionPhaseName(PilotMotionPhaseY),
-		MotionPhaseName(PilotMotionPhaseZ),
-		PilotBrakeVelocityCmPerSec, DeltaSeconds,
+		DeltaSeconds,
 		ConstraintDebugLogAccumulatorSeconds, ConstraintDebugUnresponsiveSeconds);
 }
 
@@ -761,8 +708,8 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 		return;
 	}
 
-	FAircraftMotionTarget Target;
-	if (!BuildMotionTarget(Target))
+	FAircraftTrajectoryReference Target;
+	if (!GetTrajectoryReference(Target))
 	{
 		UpdateAlternativeDriveEstimatedState(DeltaSeconds);
 		return;
@@ -771,20 +718,7 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
 	const FVector CurrentLocation = GetComponentLocation();
 	FVector NewLocation = Target.PositionCm;
-	FRotator NewRotation = Target.RotationDegrees;
-	if (Target.Mode != EAircraftMotionTargetMode::ConstrainedTrajectory)
-	{
-		const FVector PredictedLocation = CurrentLocation
-			+ Target.VelocityCmPerSec * DeltaSeconds;
-		const float CorrectionAlpha = 1.0f - FMath::Exp(
-			-FMath::Max(Config.KinematicPositionCorrectionRate, 0.0f) * DeltaSeconds);
-		NewLocation = FMath::Lerp(PredictedLocation, Target.PositionCm, CorrectionAlpha);
-		NewRotation = FMath::RInterpTo(
-			GetComponentRotation(),
-			Target.RotationDegrees,
-			DeltaSeconds,
-			Config.KinematicRotationInterpSpeed);
-	}
+	const FRotator NewRotation(0.0f, Target.YawDegrees, 0.0f);
 
 	FHitResult Hit;
 	SetWorldLocationAndRotation(NewLocation, NewRotation,
@@ -841,253 +775,22 @@ void UAircraftComponent::UpdateAlternativeDriveEstimatedState(float DeltaSeconds
 	AircraftSimulationProxy->SetEstimatedStateOverride_GameThread(Estimated);
 }
 
-void UAircraftComponent::RefreshMotionTargetSources()
+bool UAircraftComponent::GetTrajectoryReference(FAircraftTrajectoryReference& OutTarget) const
 {
-	MotionTargetSources.Reset();
-	AActor* const OwnerActor = GetOwner();
-	if (!OwnerActor)
+	OutTarget = {};
+	if (!AircraftSimulationProxy.IsValid())
 	{
-		return;
+		return false;
 	}
-	TArray<UActorComponent*> Components;
-	OwnerActor->GetComponents(Components);
-	for (UActorComponent* Component : Components)
+	FAircraftTrajectoryReference Reference;
+	AircraftSimulationProxy->GetTrajectoryReference_GameThread(Reference);
+	const UWorld* const World = GetWorld();
+	if (!Reference.IsFresh(World ? World->GetTimeSeconds() : 0.0))
 	{
-		if (Component && Component != this && Component->Implements<UAircraftSimulationLODConsumer>())
-		{
-			MotionTargetSources.Add(Component);
-		}
+		return false;
 	}
-}
-
-bool UAircraftComponent::BuildMotionTarget(FAircraftMotionTarget& OutTarget) const
-{
-	// 1) 显式覆盖（最高优先级）
-	if (MotionTargetOverride.bValid)
-	{
-		OutTarget = MotionTargetOverride;
-		return true;
-	}
-
-	// 2) Owner 上 LOD 消费者发布的运动目标（取优先级最高者）
-	OutTarget = FAircraftMotionTarget();
-	bool bFoundTarget = false;
-	for (const TWeakObjectPtr<UActorComponent>& Source : MotionTargetSources)
-	{
-		UActorComponent* Component = Source.Get();
-		if (!Component)
-		{
-			continue;
-		}
-		FAircraftMotionTarget Candidate;
-		if (IAircraftSimulationLODConsumer::Execute_GetAircraftMotionTarget(Component, Candidate)
-			&& Candidate.bValid
-			&& (!bFoundTarget || Candidate.Priority > OutTarget.Priority))
-		{
-			OutTarget = Candidate;
-			bFoundTarget = true;
-		}
-	}
-	if (bFoundTarget)
-	{
-		return true;
-	}
-
-	// 3) ControlTargets 合成（保持既有 BP API 在替代驱动下可用）
-	if (ControlTargets.Position.bEnabled || ControlTargets.Velocity.bEnabled || ControlTargets.Attitude.bEnabled)
-	{
-		FAircraftMotionTarget Synth;
-		Synth.PositionCm = ControlTargets.Position.bEnabled
-			? ControlTargets.Position.PositionCm : GetComponentLocation();
-		Synth.VelocityCmPerSec = ControlTargets.Velocity.bEnabled
-			? ControlTargets.Velocity.VelocityCmPerSec : FVector::ZeroVector;
-		FRotator Rotation = GetComponentRotation();
-		if (ControlTargets.Attitude.bEnabled)
-		{
-			Rotation = ControlTargets.Attitude.AttitudeDegrees;
-		}
-		else if (ControlTargets.Position.bEnabled)
-		{
-			Rotation.Yaw = ControlTargets.Position.YawDegrees;
-		}
-		Synth.RotationDegrees = Rotation;
-		Synth.bValid = true;
-		OutTarget = Synth;
-		return true;
-	}
-
-	// 4) 所有可飞行 LOD 后端共享飞行员输入语义。
-	if (bPilotMotionTargetInitialized && PilotMotionTarget.bValid)
-	{
-		OutTarget = PilotMotionTarget;
-		return true;
-	}
-
-	return false;
-}
-
-void UAircraftComponent::UpdatePilotMotionTarget(float DeltaSeconds)
-{
-	if (DeltaSeconds <= UE_SMALL_NUMBER)
-	{
-		return;
-	}
-
-	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-	if (!Model)
-	{
-		ResetPilotMotionTarget();
-		return;
-	}
-
-	if (GetArmState() != EAircraftArmState::Armed || !IsControllerEnabled())
-	{
-		PilotMotionTarget.VelocityCmPerSec = FVector::ZeroVector;
-		PilotMotionTarget.AngularVelocityWorldDegPerSec = FVector::ZeroVector;
-		PilotMotionPhaseX = EAircraftPilotMotionPhase::Hold;
-		PilotMotionPhaseY = EAircraftPilotMotionPhase::Hold;
-		PilotMotionPhaseZ = EAircraftPilotMotionPhase::Hold;
-		PilotBrakeVelocityCmPerSec = FVector::ZeroVector;
-		return;
-	}
-
-	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
-	if (!bPilotMotionTargetInitialized)
-	{
-		PilotMotionTarget = FAircraftMotionTarget();
-		PilotMotionTarget.PositionCm = GetComponentLocation();
-		PilotMotionTarget.RotationDegrees = GetComponentRotation();
-		PilotMotionTarget.Priority = 0;
-		PilotMotionTarget.bValid = true;
-		bPilotMotionTargetInitialized = true;
-	}
-
-	const FAircraftManualCommand ManualCommand =
-		UE::AircraftLab::PilotInputMapping::BuildManualCommand(PilotInput, GetComponentQuat(), Config);
-
-	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint)
-	{
-		const FVector CurrentPosition = GetComponentLocation();
-		const FVector CurrentVelocity = GetPhysicsLinearVelocity();
-		const double HorizontalHoldSpeed = FMath::Max(
-			static_cast<double>(Config.HorizontalBrakeToHoldSpeedCmPerSec), 0.0);
-		const double VerticalHoldSpeed = FMath::Max(
-			static_cast<double>(Config.VerticalBrakeToHoldSpeedCmPerSec), 0.0);
-		const double BrakeDecayRate =
-			UE::AircraftLab::ConstraintDrive::StrengthToAngularFrequency(
-				Config.ConstraintLinearStrength);
-		// 位置驱动只补助当前速度误差，不积分一条与刚体脱节的世界空间轨迹。
-		// 这样持续输入会持续移动，达到目标速度后位置前置量归零；
-		// 松杆时速度目标指数衰减，不会留下将飞机拉回起点的远端锚点。
-		auto UpdateAxis = [DeltaSeconds, BrakeDecayRate,
-			Strength = static_cast<double>(Config.ConstraintLinearStrength)](
-			const double DesiredVelocity,
-			const double CurrentAxisPosition,
-			const double CurrentAxisVelocity,
-			const double HoldSpeed,
-			double& InOutTargetPosition,
-			double& OutTargetVelocity,
-			EAircraftPilotMotionPhase& InOutPhase,
-			double& InOutBrakeVelocity)
-		{
-			if (!FMath::IsNearlyZero(DesiredVelocity))
-			{
-				InOutTargetPosition =
-					UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
-						CurrentAxisPosition, CurrentAxisVelocity, DesiredVelocity, Strength);
-				OutTargetVelocity = DesiredVelocity;
-				InOutBrakeVelocity = 0.0;
-				InOutPhase = EAircraftPilotMotionPhase::Manual;
-				return;
-			}
-
-			if (InOutPhase == EAircraftPilotMotionPhase::Manual)
-			{
-				InOutTargetPosition = CurrentAxisPosition;
-				InOutBrakeVelocity = CurrentAxisVelocity;
-				InOutPhase = EAircraftPilotMotionPhase::Brake;
-			}
-			if (InOutPhase == EAircraftPilotMotionPhase::Brake)
-			{
-				if (BrakeDecayRate > UE_SMALL_NUMBER)
-				{
-					InOutBrakeVelocity *= FMath::Exp(-BrakeDecayRate * DeltaSeconds);
-				}
-				else
-				{
-					InOutBrakeVelocity = 0.0;
-				}
-				InOutTargetPosition =
-					UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
-						CurrentAxisPosition, CurrentAxisVelocity, InOutBrakeVelocity, Strength);
-				OutTargetVelocity = InOutBrakeVelocity;
-				if (FMath::Abs(InOutBrakeVelocity) <= HoldSpeed
-					&& FMath::Abs(CurrentAxisVelocity) <= HoldSpeed)
-				{
-					InOutTargetPosition = CurrentAxisPosition;
-					OutTargetVelocity = 0.0;
-					InOutBrakeVelocity = 0.0;
-					InOutPhase = EAircraftPilotMotionPhase::Hold;
-				}
-				return;
-			}
-
-			OutTargetVelocity = 0.0;
-		};
-
-		UpdateAxis(
-			ManualCommand.DesiredVelocityCmPerSec.X,
-			CurrentPosition.X,
-			CurrentVelocity.X,
-			HorizontalHoldSpeed,
-			PilotMotionTarget.PositionCm.X,
-			PilotMotionTarget.VelocityCmPerSec.X,
-			PilotMotionPhaseX,
-			PilotBrakeVelocityCmPerSec.X);
-		UpdateAxis(
-			ManualCommand.DesiredVelocityCmPerSec.Y,
-			CurrentPosition.Y,
-			CurrentVelocity.Y,
-			HorizontalHoldSpeed,
-			PilotMotionTarget.PositionCm.Y,
-			PilotMotionTarget.VelocityCmPerSec.Y,
-			PilotMotionPhaseY,
-			PilotBrakeVelocityCmPerSec.Y);
-		UpdateAxis(
-			ManualCommand.DesiredVelocityCmPerSec.Z,
-			CurrentPosition.Z,
-			CurrentVelocity.Z,
-			VerticalHoldSpeed,
-			PilotMotionTarget.PositionCm.Z,
-			PilotMotionTarget.VelocityCmPerSec.Z,
-			PilotMotionPhaseZ,
-			PilotBrakeVelocityCmPerSec.Z);
-	}
-	else
-	{
-		PilotMotionPhaseX = EAircraftPilotMotionPhase::Hold;
-		PilotMotionPhaseY = EAircraftPilotMotionPhase::Hold;
-		PilotMotionPhaseZ = EAircraftPilotMotionPhase::Hold;
-		PilotBrakeVelocityCmPerSec = FVector::ZeroVector;
-		PilotMotionTarget.VelocityCmPerSec = ManualCommand.DesiredVelocityCmPerSec;
-		PilotMotionTarget.PositionCm += ManualCommand.DesiredVelocityCmPerSec * DeltaSeconds;
-	}
-	PilotMotionTarget.AngularVelocityWorldDegPerSec = FVector(
-		0.0, 0.0, ManualCommand.DesiredYawRateDegPerSec);
-	PilotMotionTarget.RotationDegrees.Yaw = FRotator::NormalizeAxis(
-		PilotMotionTarget.RotationDegrees.Yaw
-		+ ManualCommand.DesiredYawRateDegPerSec * DeltaSeconds);
-	PilotMotionTarget.bValid = true;
-}
-
-void UAircraftComponent::ResetPilotMotionTarget()
-{
-	PilotMotionTarget = FAircraftMotionTarget();
-	bPilotMotionTargetInitialized = false;
-	PilotMotionPhaseX = EAircraftPilotMotionPhase::Hold;
-	PilotMotionPhaseY = EAircraftPilotMotionPhase::Hold;
-	PilotMotionPhaseZ = EAircraftPilotMotionPhase::Hold;
-	PilotBrakeVelocityCmPerSec = FVector::ZeroVector;
+	OutTarget = Reference;
+	return true;
 }
 
 /* ==================== IAircraftFlightControllerInterface（Autopilot 窄契约） ==================== */
@@ -1104,93 +807,21 @@ bool UAircraftComponent::GetAircraftFlightKinematicState(FAircraftFlightKinemati
 	return true;
 }
 
-void UAircraftComponent::SetAircraftAutopilotProvider(UObject* Provider)
+bool UAircraftComponent::GetAircraftAutopilotDiagnostics(
+	FAircraftAutopilotDiagnostics& OutDiagnostics) const
 {
-	SetAutopilotProvider(Provider);
-}
-
-uint8 UAircraftComponent::ActivateAircraftAutopilotControl()
-{
-	const uint8 PreviousMode = static_cast<uint8>(GetFlightMode());
-	SetFlightMode(EAircraftFlightMode::Mission);
-	SetUseAutopilotSetpoint(true);
-	return PreviousMode;
-}
-
-void UAircraftComponent::DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode)
-{
-	SetUseAutopilotSetpoint(false);
-	if (GetFlightMode() == EAircraftFlightMode::Mission)
+	if (!AircraftSimulationProxy.IsValid())
 	{
-		SetFlightMode(static_cast<EAircraftFlightMode>(PreviousFlightMode));
-	}
-}
-
-void UAircraftComponent::GetAircraftAutopilotMotionLimits(
-	float RequestedCruiseSpeedCmPerSec,
-	float& OutMaxSpeedCmPerSec,
-	float& OutMaxAccelerationCmPerSecSq) const
-{
-	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-	if (!Model)
-	{
-		OutMaxSpeedCmPerSec = RequestedCruiseSpeedCmPerSec;
-		OutMaxAccelerationCmPerSecSq = 0.0f;
-		return;
-	}
-
-	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
-	const float GravityCmPerSecSq = GetWorld() ? -GetWorld()->GetGravityZ() : 980.0f;
-	const float TiltLimitedAcceleration = GravityCmPerSecSq
-		* FMath::Tan(FMath::DegreesToRadians(Config.MaxTiltAngleDegrees));
-	const float PhysicalAcceleration = FMath::Min(
-		Config.MaxHorizontalAccelerationCmPerSecSq, TiltLimitedAcceleration);
-	const float LinearDampingPerSecond = GetLinearDamping();
-	const FlightControlDynamics::FDampingAwareHorizontalLimits DampingAwareLimits =
-		FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
-			FMath::Min(Config.MaxHorizontalSpeedCmPerSec, RequestedCruiseSpeedCmPerSec),
-			PhysicalAcceleration,
-			LinearDampingPerSecond,
-			Config.DampingAccelerationReserveFraction);
-	OutMaxSpeedCmPerSec = DampingAwareLimits.MaxSpeedCmPerSec;
-	OutMaxAccelerationCmPerSecSq = DampingAwareLimits.MaxTrajectoryAccelerationCmPerSecSq;
-}
-
-void UAircraftComponent::GetAircraftAutopilotPhysicalState(
-	float& OutGravityCmPerSecSq,
-	float& OutHoverCollectiveCommand,
-	float& OutVerticalAccelerationMpsSq,
-	float& OutCollectiveThrustCommand) const
-{
-	OutGravityCmPerSecSq = GetWorld() ? -GetWorld()->GetGravityZ() : 980.0f;
-	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-	OutHoverCollectiveCommand = Model
-		? Model->FlightController.HoverCollectiveCommand : 0.5f;
-
-	FAircraftEstimatedState Estimated;
-	GetEstimatedState(Estimated);
-	OutVerticalAccelerationMpsSq = Estimated.State.AccelerationWorldCmPerSecSq.Z * 0.01f;
-	OutCollectiveThrustCommand = AircraftSimulationProxy.IsValid()
-		? AircraftSimulationProxy->GetCollectiveThrustCommand_GameThread() : 0.0f;
-}
-
-FQuat UAircraftComponent::GetAircraftControlToBodyRotation() const
-{
-	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-	return Model
-		? Model->FlightController.GetControlToBodyRotation()
-		: FQuat::Identity;
-}
-
-bool UAircraftComponent::GetAircraftAutopilotRuntimeConfig(FAircraftAutopilotRuntimeConfig& OutConfig) const
-{
-	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-	if (!Model)
-	{
+		OutDiagnostics = {};
 		return false;
 	}
-	OutConfig = Model->Autopilot;
+	AircraftSimulationProxy->GetAutopilotDiagnostics_GameThread(OutDiagnostics);
 	return true;
+}
+
+void UAircraftComponent::SetAircraftMovementIntentProvider(UObject* Provider)
+{
+	SetMovementIntentProvider(Provider);
 }
 
 void UAircraftComponent::SetAircraftPilotInputAxes(float Throttle, float Roll, float Pitch, float Yaw)
@@ -1220,42 +851,124 @@ void UAircraftComponent::RequestAircraftFlightMode(uint8 NewFlightMode)
 	SetFlightMode(static_cast<EAircraftFlightMode>(FMath::Clamp(NewFlightMode, uint8(0), uint8(8))));
 }
 
-/* ==================== Autopilot 注入 ==================== */
+/* ==================== MovementIntent ==================== */
 
-void UAircraftComponent::SetUseAutopilotSetpoint(bool bEnabled)
+void UAircraftComponent::SetMovementIntentProvider(UObject* Provider)
 {
-	bUseAutopilotSetpoint = bEnabled;
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->SetUseAutopilotSetpoint_GameThread(bEnabled);
-	}
+	MovementIntentProviderObject = Provider;
 }
 
-void UAircraftComponent::SetAutopilotProvider(UObject* Provider)
+void UAircraftComponent::RefreshMovementIntentProvider()
 {
-	AutopilotProviderObject = Provider;
-}
-
-void UAircraftComponent::RefreshAutopilotProvider()
-{
-	if (IsValid(AutopilotProviderObject))
+	if (IsValid(MovementIntentProviderObject))
 	{
 		return;
 	}
-	// 延迟自动发现：Owner 上第一个实现 IAutopilotProvider 的组件。
 	if (const AActor* const OwnerActor = GetOwner())
 	{
 		TArray<UActorComponent*> Components;
 		OwnerActor->GetComponents(Components);
 		for (UActorComponent* Component : Components)
 		{
-			if (Component && Component->Implements<UAutopilotProvider>())
+			if (Component && Component->Implements<UAircraftMovementIntentProvider>())
 			{
-				AutopilotProviderObject = Component;
+				MovementIntentProviderObject = Component;
 				break;
 			}
 		}
 	}
+}
+
+void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
+{
+	if (!AircraftSimulationProxy.IsValid())
+	{
+		return;
+	}
+
+	RefreshMovementIntentProvider();
+	if (IAircraftMovementIntentProvider* Provider =
+		Cast<IAircraftMovementIntentProvider>(MovementIntentProviderObject))
+	{
+		FAircraftMovementIntent Intent;
+		FAircraftMovementIntentHandle Handle;
+		uint64 Revision = 0;
+		if (Provider->IsAircraftMovementIntentActive()
+			&& Provider->GetAircraftMovementIntent(Intent, Handle, Revision))
+		{
+			AircraftSimulationProxy->SetMovementIntent_GameThread(Intent, Handle, Revision);
+			bMovementIntentWasPushed = true;
+			return;
+		}
+	}
+
+	const EAircraftFlightMode Mode = GetFlightMode();
+	const bool bUseStabilizedTranslation = Mode == EAircraftFlightMode::VelocityHold
+		|| Mode == EAircraftFlightMode::PositionHold
+		|| Mode == EAircraftFlightMode::Mission
+		|| Mode == EAircraftFlightMode::ReturnToHome
+		|| Mode == EAircraftFlightMode::AutoLand;
+	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
+	if (!bUseStabilizedTranslation || !Model)
+	{
+		if (bMovementIntentWasPushed)
+		{
+			AircraftSimulationProxy->ClearMovementIntent_GameThread(++ManualMovementIntentRevision);
+			bMovementIntentWasPushed = false;
+		}
+		bManualMovementIntentInitialized = false;
+		bManualIntentYawInitialized = false;
+		return;
+	}
+
+	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
+	const FAircraftManualCommand Command = UE::AircraftLab::PilotInputMapping::BuildManualCommand(
+		PilotInput, GetComponentQuat(), Config);
+	if (!bManualIntentYawInitialized)
+	{
+		ManualIntentYawDegrees = GetComponentRotation().Yaw;
+		bManualIntentYawInitialized = true;
+	}
+	ManualIntentYawDegrees = FRotator::NormalizeAxis(ManualIntentYawDegrees
+		+ Command.DesiredYawRateDegPerSec * DeltaSeconds);
+
+	const bool bMoving = !Command.DesiredVelocityCmPerSec.IsNearlyZero(0.1f);
+	const EAircraftMovementIntentType DesiredType = bMoving
+		? EAircraftMovementIntentType::Velocity : EAircraftMovementIntentType::Hold;
+	const bool bChanged = !bManualMovementIntentInitialized
+		|| ManualMovementIntent.Type != DesiredType
+		|| !ManualMovementIntent.Velocity.VelocityCmPerSec.Equals(
+			Command.DesiredVelocityCmPerSec, 0.1f)
+		|| !FMath::IsNearlyEqual(ManualMovementIntent.Heading.FixedYawDegrees,
+			ManualIntentYawDegrees, 0.01f);
+	if (bChanged)
+	{
+		ManualMovementIntent = {};
+		ManualMovementIntent.Type = DesiredType;
+		ManualMovementIntent.Velocity.VelocityCmPerSec = Command.DesiredVelocityCmPerSec;
+		ManualMovementIntent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+		ManualMovementIntent.Heading.FixedYawDegrees = ManualIntentYawDegrees;
+		ManualMovementIntent.Limits.CruiseSpeedCmPerSec = Config.MaxHorizontalSpeedCmPerSec;
+		ManualMovementIntent.Limits.MaxAccelerationCmPerSecSq = Config.MaxHorizontalAccelerationCmPerSecSq;
+		ManualMovementIntent.Limits.MaxDecelerationCmPerSecSq = Config.MaxHorizontalAccelerationCmPerSecSq;
+		ManualMovementIntent.Limits.MaxClimbRateCmPerSec = Config.MaxClimbRateCmPerSec;
+		ManualMovementIntent.Limits.MaxDescentRateCmPerSec = Config.MaxDescentRateCmPerSec;
+		ManualMovementIntent.Limits.MaxVerticalAccelerationCmPerSecSq = Config.MaxVerticalAccelerationCmPerSecSq;
+		ManualMovementIntent.Limits.MaxYawRateDegPerSec = Config.MaxYawRateDegreesPerSec;
+		if (DesiredType == EAircraftMovementIntentType::Hold)
+		{
+			ManualMovementIntent.Hold.bCaptureCurrentPosition = false;
+			ManualMovementIntent.Hold.PositionCm = GetComponentLocation();
+		}
+		bManualMovementIntentInitialized = true;
+		++ManualMovementIntentRevision;
+	}
+
+	FAircraftMovementIntentHandle ManualHandle;
+	ManualHandle.Id = TNumericLimits<int64>::Max();
+	AircraftSimulationProxy->SetMovementIntent_GameThread(
+		ManualMovementIntent, ManualHandle, ManualMovementIntentRevision);
+	bMovementIntentWasPushed = true;
 }
 
 /* ==================== 旋翼健康 / 失效策略 ==================== */
@@ -1360,47 +1073,6 @@ void UAircraftComponent::ApplyFailurePolicyActions()
 	}
 }
 
-/* ==================== 运动目标 / 驱动覆盖 ==================== */
-
-void UAircraftComponent::SetAircraftMotionTarget(const FAircraftMotionTarget& InTarget)
-{
-	MotionTargetOverride = InTarget;
-	MotionTargetOverride.bValid = true;
-}
-
-void UAircraftComponent::ClearAircraftMotionTarget()
-{
-	MotionTargetOverride = FAircraftMotionTarget();
-}
-
-void UAircraftComponent::SetSimulationDriveOverride(const FAircraftSimulationDriveOverride& InOverride)
-{
-	DriveOverride = InOverride;
-	if (DriveOverride.bValid)
-	{
-		SetSimulationDriveMode(DriveOverride.DriveMode,
-			DriveOverride.DriveMode == EAircraftSimulationDriveMode::FlightController
-			|| DriveOverride.DriveMode == EAircraftSimulationDriveMode::PhysicsConstraint);
-	}
-}
-
-void UAircraftComponent::ClearSimulationDriveOverride()
-{
-	DriveOverride = FAircraftSimulationDriveOverride();
-	if (const FAircraftSimulationModel* const Model = GetSimulationModel();
-		Model && Model->IsValidLodIndex(CurrentSimulationLOD))
-	{
-		const FAircraftSimulationLODRuntimeSettings* const Settings =
-			Model->SimulationLOD.LODs.IsValidIndex(CurrentSimulationLOD)
-				? &Model->SimulationLOD.LODs[CurrentSimulationLOD] : nullptr;
-		const EAircraftSimulationDriveMode DriveMode = Settings
-			? Settings->DriveMode : EAircraftSimulationDriveMode::FlightController;
-		SetSimulationDriveMode(DriveMode,
-			DriveMode == EAircraftSimulationDriveMode::FlightController
-			|| DriveMode == EAircraftSimulationDriveMode::PhysicsConstraint);
-	}
-}
-
 /* ==================== IAircraftSimulationLODConsumer ==================== */
 
 void UAircraftComponent::ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget)
@@ -1409,29 +1081,14 @@ void UAircraftComponent::ApplyAircraftSimulationBudget_Implementation(const FAir
 	if (Budget.LODIndex != INDEX_NONE && Model && Model->IsValidLodIndex(Budget.LODIndex))
 	{
 		ForcedSimulationLOD = Budget.LODIndex;
-		ApplySimulationLOD(Budget.LODIndex, Budget.DriveMode, Budget.bEnablePhysics);
+		ApplySimulationLOD(Budget.LODIndex);
 	}
-	else
+	if (AircraftSimulationProxy.IsValid())
 	{
-		SetSimulationDriveMode(Budget.DriveMode, Budget.bEnablePhysics);
+		AircraftSimulationProxy->SetSimulationState_GameThread(
+			bEnableSimulation && !Budget.bIsNetworkProxy,
+			bSuspendSimulation || Budget.bIsNetworkProxy);
 	}
-
-}
-
-bool UAircraftComponent::GetAircraftMotionTarget_Implementation(FAircraftMotionTarget& OutTarget) const
-{
-	if (MotionTargetOverride.bValid)
-	{
-		OutTarget = MotionTargetOverride;
-		return true;
-	}
-	OutTarget = FAircraftMotionTarget();
-	return false;
-}
-
-FAircraftSimulationDriveOverride UAircraftComponent::GetAircraftSimulationDriveOverride_Implementation() const
-{
-	return DriveOverride;
 }
 
 /* ============================ UObject ============================ */
@@ -1477,7 +1134,6 @@ void UAircraftComponent::OnRegister()
 	}
 
 	CurrentSimulationLOD = INDEX_NONE;
-	RefreshMotionTargetSources();
 	UpdateSimulationLOD();
 	// 与 ChaosClothComponent 一致：组件注册时立即建立 Dataflow Proxy。
 	// PhysicsState 的全局通知稍后仍可到达，管理器的 TSet 注册是幂等的。
@@ -1496,8 +1152,7 @@ void UAircraftComponent::OnRegister()
 void UAircraftComponent::OnUnregister()
 {
 	DestroySimulationConstraint();
-	MotionTargetSources.Reset();
-	AutopilotProviderObject = nullptr;
+	MovementIntentProviderObject = nullptr;
 	UE::Dataflow::UnregisterSimulationInterface(this);
 	Super::OnUnregister();
 }
@@ -1555,7 +1210,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 				&& SimulationConstraint->IsValidConstraintInstance()
 				&& !SimulationConstraint->IsBroken();
 			UE_LOG(LogAircraft, Log,
-				TEXT("[Aircraft.Drive.Heartbeat] Owner=%s Component=%s LOD=%d Drive=%s Enabled=%d Suspended=%d PhysicsWanted=%d Simulating=%d PhysicsState=%d Proxy=%d Body=%d BodySimulating=%d Arm=%s Controller=%d Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) PilotTarget=%d TargetValid=%d TargetPos=(%.1f,%.1f,%.1f) TargetVel=(%+.1f,%+.1f,%+.1f) Constraint=%d"),
+				TEXT("[Aircraft.Drive.Heartbeat] Owner=%s Component=%s LOD=%d Drive=%s Enabled=%d Suspended=%d PhysicsWanted=%d Simulating=%d PhysicsState=%d Proxy=%d Body=%d BodySimulating=%d Arm=%s Controller=%d Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) Constraint=%d"),
 				*GetNameSafe(GetOwner()), *GetName(), CurrentSimulationLOD,
 				FAircraftDebug::GetDriveModeLabel(SimulationDriveMode),
 				bEnableSimulation ? 1 : 0, bSuspendSimulation ? 1 : 0,
@@ -1564,39 +1219,15 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 				Body ? 1 : 0, Body && Body->IsInstanceSimulatingPhysics() ? 1 : 0,
 				FAircraftDebug::GetArmStateLabel(GetArmState()), IsControllerEnabled() ? 1 : 0,
 				PilotInput.Throttle, PilotInput.Roll, PilotInput.Pitch, PilotInput.Yaw,
-				bPilotMotionTargetInitialized ? 1 : 0, PilotMotionTarget.bValid ? 1 : 0,
-				PilotMotionTarget.PositionCm.X, PilotMotionTarget.PositionCm.Y, PilotMotionTarget.PositionCm.Z,
-				PilotMotionTarget.VelocityCmPerSec.X, PilotMotionTarget.VelocityCmPerSec.Y,
-				PilotMotionTarget.VelocityCmPerSec.Z, bConstraintValid ? 1 : 0);
+				bConstraintValid ? 1 : 0);
 		}
 	}
 
-	// TG_PrePhysics：从 Autopilot 提供者拉取本周期的注入设定值（无锁交接依赖
-	if (AircraftSimulationProxy.IsValid() && bUseAutopilotSetpoint)
-	{
-		RefreshAutopilotProvider();
-		FAutopilotInjection Injection;
-		if (IAutopilotProvider* Provider = Cast<IAutopilotProvider>(AutopilotProviderObject))
-		{
-			if (Provider->GetAutopilotInjection(Injection))
-			{
-				AircraftSimulationProxy->SetAutopilotInjection_GameThread(Injection);
-			}
-			else
-			{
-				AircraftSimulationProxy->SetAutopilotInjection_GameThread(FAutopilotInjection());
-			}
-		}
-		else
-		{
-			AircraftSimulationProxy->SetAutopilotInjection_GameThread(FAutopilotInjection());
-		}
-	}
+	PushMovementIntentToProxy(DeltaTime);
 
 	switch (SimulationDriveMode)
 	{
 	case EAircraftSimulationDriveMode::PhysicsConstraint:
-		UpdatePilotMotionTarget(DeltaTime);
 		if (!CreateSimulationConstraint())
 		{
 			break;
@@ -1605,7 +1236,16 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		UpdateAlternativeDriveEstimatedState(DeltaTime);
 		break;
 	case EAircraftSimulationDriveMode::Kinematic:
-		UpdatePilotMotionTarget(DeltaTime);
+		if (AircraftSimulationProxy.IsValid())
+		{
+			if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel())
+			{
+				AircraftSimulationProxy->TickKinematicPlanner_GameThread(
+					DeltaTime, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0,
+					GetComponentTransform(), PreviousAlternativeVelocityCmPerSec,
+					FVector::ZeroVector, GetLinearDamping(), GetAngularDamping(), *Model);
+			}
+		}
 		UpdateKinematicSimulation(DeltaTime);
 		break;
 	default:
@@ -1691,7 +1331,7 @@ void UAircraftComponent::WriteToSimulation(const float /*DeltaTime*/, const bool
 	// （主输入通路仍是 TG_PrePhysics 推送，本路径仅保证管理器调度流下目标不丢帧）。
 	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->SetTargets_GameThread(ControlTargets);
+		AircraftSimulationProxy->SetLowLevelTargets_GameThread(LowLevelControlTargets);
 	}
 }
 

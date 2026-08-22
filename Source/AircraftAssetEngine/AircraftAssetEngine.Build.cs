@@ -18,6 +18,7 @@ public class AircraftAssetEngine : ModuleRules
                 "Engine",
                 "AircraftAsset",
                 "AircraftRuntimeInterface",
+				"AircraftAutopilot",
                 "Aircraft"
             }
         );

@@ -13,7 +13,9 @@
 #include "Dataflow/Interfaces/DataflowPhysicsSolver.h"
 
 #include "AircraftAsset/AircraftSimulationTypes.h"
+#include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
+#include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODConsumer.h"
 
 #include "AircraftComponent.generated.h"
@@ -25,13 +27,6 @@ class FAircraftVisualization;
 struct FConstraintInstance;
 struct FAircraftSimulationModel;
 struct FAircraftSimulationLodModel;
-
-enum class EAircraftPilotMotionPhase : uint8
-{
-	Hold,
-	Manual,
-	Brake
-};
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnAircraftSimulationLODChanged,
@@ -77,7 +72,7 @@ public:
 	void SetPilotInput(const FAircraftPilotInput& InPilotInput);
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Input")
-	void SetControlTargets(const FAircraftControlTargets& InTargets);
+	void SetLowLevelControlTargets(const FAircraftLowLevelControlTargets& InTargets);
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Mode")
 	void SetFlightMode(EAircraftFlightMode InMode);
@@ -154,16 +149,9 @@ public:
 	FOnAircraftSimulationLODChanged OnSimulationLODChanged;
 
 
-	/** 启用后，TG_PrePhysics 每帧从 AutopilotProvider 拉取 FAutopilotInjection 注入飞控。 */
+	/** 指定唯一 MovementIntent 提供者；为空时自动发现 Owner 上的实现组件。 */
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Autopilot")
-	void SetUseAutopilotSetpoint(bool bEnabled);
-
-	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Autopilot")
-	bool IsUsingAutopilotSetpoint() const { return bUseAutopilotSetpoint; }
-
-	/** 显式指定 Autopilot 提供者；为 nullptr 时延迟自动发现 Owner 上的 IAutopilotProvider。 */
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Autopilot")
-	void SetAutopilotProvider(UObject* Provider);
+	void SetMovementIntentProvider(UObject* Provider);
 
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
@@ -186,24 +174,6 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
 	void ResetFailurePolicyLatch();
-
-	/* ------- 运动目标发布（约束/运动学后端消费） ------- */
-
-	/** 直接发布一个运动目标（优先级最高），约束/运动学驱动后端立即消费。 */
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
-	void SetAircraftMotionTarget(const FAircraftMotionTarget& InTarget);
-
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
-	void ClearAircraftMotionTarget();
-
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
-	void SetSimulationDriveOverride(const FAircraftSimulationDriveOverride& InOverride);
-
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|MotionTarget")
-	void ClearSimulationDriveOverride();
-
-	/** 切换模拟驱动后端（由 LOD 预算/覆盖驱动）；约束模式按需创建物理约束组件。 */
-	void SetSimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics);
 
 	/* ------- 内部访问 ------- */
 
@@ -247,20 +217,8 @@ protected:
 
 	//~ Begin IAircraftFlightControllerInterface Interface（Autopilot 窄契约）
 	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const override;
-	virtual void SetAircraftAutopilotProvider(UObject* Provider) override;
-	virtual uint8 ActivateAircraftAutopilotControl() override;
-	virtual void DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode) override;
-	virtual void GetAircraftAutopilotMotionLimits(
-		float RequestedCruiseSpeedCmPerSec,
-		float& OutMaxSpeedCmPerSec,
-		float& OutMaxAccelerationCmPerSecSq) const override;
-	virtual void GetAircraftAutopilotPhysicalState(
-		float& OutGravityCmPerSecSq,
-		float& OutHoverCollectiveCommand,
-		float& OutVerticalAccelerationMpsSq,
-		float& OutCollectiveThrustCommand) const override;
-	virtual FQuat GetAircraftControlToBodyRotation() const override;
-	virtual bool GetAircraftAutopilotRuntimeConfig(FAircraftAutopilotRuntimeConfig& OutConfig) const override;
+	virtual bool GetAircraftAutopilotDiagnostics(FAircraftAutopilotDiagnostics& OutDiagnostics) const override;
+	virtual void SetAircraftMovementIntentProvider(UObject* Provider) override;
 	virtual void SetAircraftPilotInputAxes(float Throttle, float Roll, float Pitch, float Yaw) override;
 	virtual void RequestAircraftArm(bool bArm) override;
 	virtual void RequestAircraftFlightMode(uint8 NewFlightMode) override;
@@ -268,8 +226,6 @@ protected:
 
 	//~ Begin IAircraftSimulationLODConsumer Interface
 	virtual void ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget) override;
-	virtual bool GetAircraftMotionTarget_Implementation(FAircraftMotionTarget& OutTarget) const override;
-	virtual FAircraftSimulationDriveOverride GetAircraftSimulationDriveOverride_Implementation() const override;
 	//~ End IAircraftSimulationLODConsumer Interface
 
 private:
@@ -287,16 +243,12 @@ private:
 	/** 替代驱动下由组件合成估计状态并回写代理输出槽。 */
 	void UpdateAlternativeDriveEstimatedState(float DeltaSeconds);
 
-	/** 汇总运动目标：显式覆盖 > Owner 上 LOD 消费者发布 > ControlTargets > 飞行员输入。 */
-	bool BuildMotionTarget(FAircraftMotionTarget& OutTarget) const;
-	/** 把共享飞行员输入转换为替代后端消费的连续运动目标。 */
-	void UpdatePilotMotionTarget(float DeltaSeconds);
-	void ResetPilotMotionTarget();
-	void RefreshMotionTargetSources();
+	bool GetTrajectoryReference(FAircraftTrajectoryReference& OutReference) const;
+	void RefreshMovementIntentProvider();
+	void PushMovementIntentToProxy(float DeltaSeconds);
 
 	/** GT 消费代理回传的失效策略动作。 */
 	void ApplyFailurePolicyActions();
-	void RefreshAutopilotProvider();
 
 	/**
 	 * 把 SimulationModel.Mass（FrameConfig 中的质量/质心/惯性缩放参数）
@@ -319,11 +271,7 @@ private:
 	void ApplySolverSettingsToBodyInstance();
 	void UpdateSimulationLOD();
 	void ApplySimulationLOD(int32 LodIndex);
-	void ApplySimulationLOD(
-		int32 LodIndex,
-		EAircraftSimulationDriveMode DriveMode,
-		bool bEnablePhysics);
-	void ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode, bool bEnablePhysics);
+	void ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode);
 
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
 	TObjectPtr<UAircraftAssetBase> Asset;
@@ -367,19 +315,15 @@ private:
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;
 	/** 所有驱动后端共享的最新飞行员输入。 */
 	FAircraftPilotInput PilotInput;
-	FAircraftControlTargets ControlTargets;
+	FAircraftLowLevelControlTargets LowLevelControlTargets;
 
 	/* ------- Autopilot / 替代驱动后端状态 ------- */
 
-	/** 是否从 IAutopilotProvider 拉取注入（灰度开关）。 */
-	UPROPERTY(EditAnywhere, Category = "AircraftComponent|Autopilot")
-	bool bUseAutopilotSetpoint = false;
-
-	/** Autopilot 提供者（实现 IAutopilotProvider 的对象，通常为 UAutopilotComponent）。 */
+	/** 唯一高层 MovementIntent 提供者。 */
 	UPROPERTY(Transient)
-	TObjectPtr<UObject> AutopilotProviderObject;
+	TObjectPtr<UObject> MovementIntentProviderObject;
 
-	/** 当前模拟驱动后端（由 LOD/覆盖驱动，未必等于资产 LOD 表中的静态值）。 */
+	/** 当前模拟驱动后端，由当前 LOD 表项直接决定。 */
 	EAircraftSimulationDriveMode SimulationDriveMode = EAircraftSimulationDriveMode::FlightController;
 	bool bSimulationPhysicsEnabled = true;
 
@@ -391,21 +335,12 @@ private:
 	float DriveHeartbeatDebugLogAccumulatorSeconds = 0.0f;
 	double InputDebugLastLogTimeSeconds = -DBL_MAX;
 
-	/** 运动目标显式覆盖（最高优先级）。 */
-	FAircraftMotionTarget MotionTargetOverride;
-	/** Constraint/Kinematic 后端由飞行员输入持续积分出的目标。 */
-	FAircraftMotionTarget PilotMotionTarget;
-	bool bPilotMotionTargetInitialized = false;
-	/** PhysicsConstraint 各轴独立运动阶段；松杆后先制动，再捕获最终保持位置。 */
-	EAircraftPilotMotionPhase PilotMotionPhaseX = EAircraftPilotMotionPhase::Hold;
-	EAircraftPilotMotionPhase PilotMotionPhaseY = EAircraftPilotMotionPhase::Hold;
-	EAircraftPilotMotionPhase PilotMotionPhaseZ = EAircraftPilotMotionPhase::Hold;
-	/** PhysicsConstraint 松杆制动阶段的三轴目标速度。 */
-	FVector PilotBrakeVelocityCmPerSec = FVector::ZeroVector;
-	/** 精确临时驱动覆盖。 */
-	FAircraftSimulationDriveOverride DriveOverride;
-	/** Owner 上实现 IAircraftSimulationLODConsumer 的其他组件（运动目标来源缓存）。 */
-	TArray<TWeakObjectPtr<UActorComponent>> MotionTargetSources;
+	uint64 ManualMovementIntentRevision = 1;
+	float ManualIntentYawDegrees = 0.0f;
+	bool bManualIntentYawInitialized = false;
+	bool bManualMovementIntentInitialized = false;
+	bool bMovementIntentWasPushed = false;
+	FAircraftMovementIntent ManualMovementIntent;
 
 	/** 驱动切换时保存/恢复的物理速度（Kinematic↔物理 切换连续性）。 */
 	FVector SavedSimulationLinearVelocityCmPerSec = FVector::ZeroVector;

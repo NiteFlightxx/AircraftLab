@@ -2,7 +2,7 @@
 #include "AircraftRuntimeCommon/AircraftPawn.h"
 
 #include "AircraftAsset/AircraftComponent.h"
-#include "AircraftRuntimeCommon/Autopilot/AutopilotComponent.h"
+#include "AircraftAutopilot/AutopilotComponent.h"
 #include "AircraftRuntimeCommon/Input/AircraftInputComponent.h"
 #include "AircraftRuntimeCommon/LOD/AircraftSimulationLODComponent.h"
 
@@ -39,11 +39,6 @@ void AAircraftPawn::BeginPlay()
 		Aircraft->WakeAllRigidBodies();
 	}
 
-	// Autopilot ↔ 飞控双向接线（经契约层）。
-	if (Aircraft && AutopilotComponent)
-	{
-		Aircraft->SetAutopilotProvider(AutopilotComponent);
-	}
 }
 
 void AAircraftPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)

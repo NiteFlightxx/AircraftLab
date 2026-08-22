@@ -19,6 +19,9 @@
 #include "Dataflow/AircraftControllerInputConfigNode.h"
 #include "Dataflow/AircraftConstraintSimulationConfigNode.h"
 #include "Dataflow/AircraftKinematicSimulationConfigNode.h"
+#include "Dataflow/AircraftAutopilotPathConfigNode.h"
+#include "Dataflow/AircraftAutopilotTimingConfigNode.h"
+#include "Dataflow/AircraftAutopilotMpccConfigNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 
 #include "Editor.h"
@@ -294,7 +297,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					}));
 			}
 
-			/* ---------- 7-12. LOD0 链的飞控配置节点（默认参数） ---------- */
+			/* ---------- 7-15. 所有驱动后端共享的运动意图与飞控配置 ---------- */
 			const FCreatedTemplateNode LimitsNode = AddConfiguredTemplateNode<FAircraftFlightControlLimitsConfigNode>(
 				DataflowAsset, TEXT("AircraftFlightControlLimitsConfig"), NodeIndex++,
 				[](FAircraftFlightControlLimitsConfigNode& Node) { (void)Node; });
@@ -313,8 +316,17 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			const FCreatedTemplateNode InputNode = AddConfiguredTemplateNode<FAircraftControllerInputConfigNode>(
 				DataflowAsset, TEXT("AircraftControllerInputConfig"), NodeIndex++,
 				[](FAircraftControllerInputConfigNode& Node) { (void)Node; });
+			const FCreatedTemplateNode PathNode = AddConfiguredTemplateNode<FAircraftAutopilotPathConfigNode>(
+				DataflowAsset, TEXT("AircraftAutopilotPathConfig"), NodeIndex++,
+				[](FAircraftAutopilotPathConfigNode& Node) { (void)Node; });
+			const FCreatedTemplateNode TimingNode = AddConfiguredTemplateNode<FAircraftAutopilotTimingConfigNode>(
+				DataflowAsset, TEXT("AircraftAutopilotTimingConfig"), NodeIndex++,
+				[](FAircraftAutopilotTimingConfigNode& Node) { (void)Node; });
+			const FCreatedTemplateNode MpccNode = AddConfiguredTemplateNode<FAircraftAutopilotMpccConfigNode>(
+				DataflowAsset, TEXT("AircraftAutopilotMpccConfig"), NodeIndex++,
+				[](FAircraftAutopilotMpccConfigNode& Node) { (void)Node; });
 
-			/* ---------- 13-14. LOD1/LOD2 链的替代驱动配置节点 ---------- */
+			/* ---------- 16-17. 可由任意 LOD 表项选择的替代驱动配置 ---------- */
 			const FCreatedTemplateNode ConstraintNode = AddConfiguredTemplateNode<FAircraftConstraintSimulationConfigNode>(
 				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), NodeIndex++,
 				[](FAircraftConstraintSimulationConfigNode& Node) { (void)Node; });
@@ -322,7 +334,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), NodeIndex++,
 				[](FAircraftKinematicSimulationConfigNode& Node) { (void)Node; });
 
-			/* ---------- 15-18. 每个 Collection LOD 一个独立 Profile 节点 ---------- */
+			/* ---------- 18-21. 每个 Collection LOD 一个独立 Profile 节点 ---------- */
 			struct FDefaultLodEntry
 			{
 				FName Name;
@@ -333,12 +345,14 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				float SlowLogicIntervalSeconds;
 				bool bAllowDebugDraw;
 			};
+			// 仅是新资产模板的初始值；运行时直接读取每个表项的 DriveMode，
+			// 不存在 LOD 索引到驱动类型的固定映射。
 			const FDefaultLodEntry DefaultLods[] =
 			{
 				{ TEXT("LOD0"), EAircraftProfileDriveMode::FlightController, EAircraftProfileCollisionMode::QueryAndPhysics, 6000.0f, true, 0.0f, false },
 				{ TEXT("LOD1"), EAircraftProfileDriveMode::PhysicsConstraint, EAircraftProfileCollisionMode::QueryAndPhysics, 15000.0f, true, 0.05f, false },
 				{ TEXT("LOD2"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::QueryOnly, 50000.0f, true, 0.10f, false },
-				{ TEXT("LOD3"), EAircraftProfileDriveMode::None, EAircraftProfileCollisionMode::Disabled, 0.0f, false, 0.0f, false },
+				{ TEXT("LOD3"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::Disabled, 0.0f, false, 0.0f, false },
 			};
 			TArray<FCreatedTemplateNode> SimulationLODNodes;
 			SimulationLODNodes.Reserve(UE_ARRAY_COUNT(DefaultLods));
@@ -361,7 +375,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					}));
 			}
 
-			/* ---------- 19. Terminal 节点 ---------- */
+			/* ---------- 22. Terminal 节点 ---------- */
 			const FCreatedTemplateNode TerminalNode = AddConfiguredTemplateNode<FAircraftAssetTerminalNode>(
 				DataflowAsset,
 				TEXT("AircraftAssetTerminal"),
@@ -392,14 +406,17 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			SetNodePosition(AltitudeNode, 2640.0, 0.0);
 			SetNodePosition(AllocatorNode, 2944.0, 0.0);
 			SetNodePosition(InputNode, 3264.0, 0.0);
-			SetNodePosition(ConstraintNode, 3644.0, 144.0);
-			SetNodePosition(KinematicNode, 3644.0, 256.0);
+			SetNodePosition(PathNode, 3536.0, 0.0);
+			SetNodePosition(TimingNode, 3808.0, 0.0);
+			SetNodePosition(MpccNode, 4080.0, 0.0);
+			SetNodePosition(ConstraintNode, 4360.0, 144.0);
+			SetNodePosition(KinematicNode, 4360.0, 256.0);
 			const double LodNodePosY[] = { 0.0, 144.0, 256.0, 384.0 };
 			for (int32 LodIndex = 0; LodIndex < SimulationLODNodes.Num(); ++LodIndex)
 			{
-				SetNodePosition(SimulationLODNodes[LodIndex], 4028.0, LodNodePosY[LodIndex]);
+				SetNodePosition(SimulationLODNodes[LodIndex], 4744.0, LodNodePosY[LodIndex]);
 			}
-			SetNodePosition(TerminalNode, 4592.0, 0.0);
+			SetNodePosition(TerminalNode, 5308.0, 0.0);
 
 			/* ---------- 连线 ----------
 			 * 主干：Source → Frame → R1..R4 → Limits → Position → Attitude → Altitude → Allocator → Input
@@ -412,7 +429,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			 * 四个 LOD 分别进入 Terminal 的 CollectionLods[0..3]。
 			 */
 			TArray<UDataflowEdNode*> MainChain;
-			MainChain.Reserve(12);
+			MainChain.Reserve(15);
 			MainChain.Add(SourceNode.EdNode);
 			MainChain.Add(FrameNode.EdNode);
 			for (const FCreatedTemplateNode& AirscrewNode : AirscrewNodes)
@@ -425,6 +442,9 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			MainChain.Add(AltitudeNode.EdNode);
 			MainChain.Add(AllocatorNode.EdNode);
 			MainChain.Add(InputNode.EdNode);
+			MainChain.Add(PathNode.EdNode);
+			MainChain.Add(TimingNode.EdNode);
+			MainChain.Add(MpccNode.EdNode);
 
 			for (int32 ChainIndex = 0; ChainIndex + 1 < MainChain.Num(); ++ChainIndex)
 			{
@@ -437,15 +457,15 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			// 各 LOD 链的上游出口。
 			UDataflowEdNode* const LodChainUpstreams[] =
 			{
-				InputNode.EdNode,       // LOD0：完整飞控链
+				MpccNode.EdNode,        // LOD0：完整飞控链
 				ConstraintNode.EdNode,  // LOD1：机架 + 约束驱动配置
 				KinematicNode.EdNode,   // LOD2：机架 + 运动学驱动配置
-				InputNode.EdNode,       // LOD3：完整 Aircraft 配置，仅关闭驱动
+				MpccNode.EdNode,        // LOD3：完整 Aircraft 配置
 			};
 
-			ConnectTemplateNodes(DataflowAsset, InputNode.EdNode, TEXT("Collection"),
+			ConnectTemplateNodes(DataflowAsset, MpccNode.EdNode, TEXT("Collection"),
 				ConstraintNode.EdNode, TEXT("Collection"));
-			ConnectTemplateNodes(DataflowAsset, InputNode.EdNode, TEXT("Collection"),
+			ConnectTemplateNodes(DataflowAsset, MpccNode.EdNode, TEXT("Collection"),
 				KinematicNode.EdNode, TEXT("Collection"));
 
 			if (const FAircraftAssetTerminalNode* const TerminalDataflowNode =

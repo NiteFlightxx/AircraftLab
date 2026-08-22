@@ -14,7 +14,6 @@
 UENUM(BlueprintType)
 enum class EAircraftSimulationDriveMode : uint8
 {
-	None UMETA(DisplayName = "None"),
 	FlightController UMETA(DisplayName = "Flight Controller"),
 	PhysicsConstraint UMETA(DisplayName = "Physics Constraint"),
 	Kinematic UMETA(DisplayName = "Kinematic")
@@ -38,7 +37,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationLODSettings
 	FName Name = NAME_None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "驱动模式"))
-	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::None;
+	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
 
 	/** 距最近玩家的名义上限距离。数组最后一个 LOD 是无限距离兜底，不使用此参数。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (
@@ -60,23 +59,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationLODSettings
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "允许调试绘制"))
 	bool bAllowDebugDraw = false;
 };
-
-/** 活跃运动源发布的精确临时驱动请求。 */
-USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationDriveOverride
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::None;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	int32 Priority = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bValid = false;
-};
-
 /** Gameplay 重要性刻意与飞控/AI 类型解耦。 */
 USTRUCT(BlueprintType)
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationImportance
@@ -129,8 +111,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationSnapshot
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	FAircraftSimulationImportance Importance;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	FAircraftSimulationDriveOverride DriveOverride;
 };
 
 /** 可选飞机特性消费的通用预算。 */
@@ -143,7 +123,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationBudget
 	int32 LODIndex = INDEX_NONE;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::None;
+	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	bool bRunSlowLogic = false;
@@ -164,43 +144,3 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationBudget
 	bool bAllowDebugDraw = false;
 };
 
-/** 位置驱动后端如何解释 PositionCm/RotationDegrees。 */
-UENUM(BlueprintType)
-enum class EAircraftMotionTargetMode : uint8
-{
-	/** 按目标速度预测，并用位置/旋转误差连续校正。 */
-	Tracked UMETA(DisplayName = "Tracked"),
-	/** 已执行 FTrajectoryMotionConstraints 全部平移、升降与偏航约束的世界空间轨迹点。 */
-	ConstrainedTrajectory UMETA(DisplayName = "Constrained Trajectory")
-};
-
-/** 由制导、Root Motion、动画或 Gameplay 发布的共享运动目标。 */
-USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMotionTarget
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	FVector PositionCm = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	FVector VelocityCmPerSec = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	FVector AccelerationCmPerSecSq = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	FRotator RotationDegrees = FRotator::ZeroRotator;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	FVector AngularVelocityWorldDegPerSec = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	EAircraftMotionTargetMode Mode = EAircraftMotionTargetMode::Tracked;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	int32 Priority = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bValid = false;
-};

@@ -10,7 +10,6 @@
 UENUM()
 enum class EAircraftProfileDriveMode : uint8
 {
-	None UMETA(DisplayName = "No Drive"),
 	FlightController UMETA(DisplayName = "Flight Controller"),
 	PhysicsConstraint UMETA(DisplayName = "Physics Constraint"),
 	Kinematic UMETA(DisplayName = "Kinematic"),

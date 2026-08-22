@@ -227,26 +227,55 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			FailurePolicy.DegradedFlightMode = static_cast<uint8>(FMath::Clamp(
 				Properties.GetValue<int32>(TEXT("FlightController.Failure.DegradedFlightMode"), static_cast<int32>(FailurePolicy.DegradedFlightMode)), 0, 8));
 
-			/* Autopilot（AircraftAutopilotConfigNode 写入） */
+			/* Autopilot：空间路径、动力学重定时和 MPCC 各自只有一个配置来源。 */
 			FAircraftAutopilotRuntimeConfig& Autopilot = OutModel.Autopilot;
-			Autopilot.bEnableCoordinatedTurns = Properties.GetValue<bool>(TEXT("Autopilot.EnableCoordinatedTurns"), Autopilot.bEnableCoordinatedTurns);
-			Autopilot.CoordinatedTurnSpeedThresholdCmPerSec = Properties.GetValue<float>(TEXT("Autopilot.Turn.CoordinatedTurnSpeedThresholdCmPerSec"), Autopilot.CoordinatedTurnSpeedThresholdCmPerSec);
-			Autopilot.MaxBankAngleDegrees = Properties.GetValue<float>(TEXT("Autopilot.Turn.MaxBankAngleDegrees"), Autopilot.MaxBankAngleDegrees);
-			Autopilot.MaxLateralAccelCmPerSecSq = Properties.GetValue<float>(TEXT("Autopilot.Turn.MaxLateralAccelCmPerSecSq"), Autopilot.MaxLateralAccelCmPerSecSq);
-			Autopilot.GuidanceStrategy = static_cast<uint8>(FMath::Clamp(
-				Properties.GetValue<int32>(TEXT("Autopilot.Path.GuidanceStrategy"), static_cast<int32>(Autopilot.GuidanceStrategy)), 0, 2));
-			Autopilot.PurePursuitLookAheadGain = Properties.GetValue<float>(TEXT("Autopilot.Path.PurePursuitLookAheadGain"), Autopilot.PurePursuitLookAheadGain);
-			Autopilot.PurePursuitMinLookAheadCm = Properties.GetValue<float>(TEXT("Autopilot.Path.PurePursuitMinLookAheadCm"), Autopilot.PurePursuitMinLookAheadCm);
-			Autopilot.PurePursuitMaxLookAheadCm = Properties.GetValue<float>(TEXT("Autopilot.Path.PurePursuitMaxLookAheadCm"), Autopilot.PurePursuitMaxLookAheadCm);
-			Autopilot.VectorFieldCrossTrackGain = Properties.GetValue<float>(TEXT("Autopilot.Path.VectorFieldCrossTrackGain"), Autopilot.VectorFieldCrossTrackGain);
-			Autopilot.VectorFieldMaxCrossTrackCorrectionCm = Properties.GetValue<float>(TEXT("Autopilot.Path.VectorFieldMaxCrossTrackCorrectionCm"), Autopilot.VectorFieldMaxCrossTrackCorrectionCm);
-			Autopilot.bEnableHoverThrustEstimator = Properties.GetValue<bool>(TEXT("Autopilot.HoverThrust.EnableEstimator"), Autopilot.bEnableHoverThrustEstimator);
-			Autopilot.HoverThrustInitialStateVariance = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.InitialStateVariance"), Autopilot.HoverThrustInitialStateVariance);
-			Autopilot.HoverThrustProcessNoiseVariance = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.ProcessNoiseVariance"), Autopilot.HoverThrustProcessNoiseVariance);
-			Autopilot.HoverThrustAccelNoiseVariance = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.AccelNoiseVariance"), Autopilot.HoverThrustAccelNoiseVariance);
-			Autopilot.HoverThrustGateSize = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.GateSize"), Autopilot.HoverThrustGateSize);
-			Autopilot.MinHoverThrust = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.MinHoverThrust"), Autopilot.MinHoverThrust);
-			Autopilot.MaxHoverThrust = Properties.GetValue<float>(TEXT("Autopilot.HoverThrust.MaxHoverThrust"), Autopilot.MaxHoverThrust);
+			Autopilot.Path.ResampleSpacingCm = Properties.GetValue<float>(TEXT("Autopilot.Path.ResampleSpacingCm"), Autopilot.Path.ResampleSpacingCm);
+			Autopilot.Path.MinimumSegmentLengthCm = Properties.GetValue<float>(TEXT("Autopilot.Path.MinimumSegmentLengthCm"), Autopilot.Path.MinimumSegmentLengthCm);
+			Autopilot.Path.CorridorSafetyMarginCm = Properties.GetValue<float>(TEXT("Autopilot.Path.CorridorSafetyMarginCm"), Autopilot.Path.CorridorSafetyMarginCm);
+			Autopilot.Path.CenterlineWeight = Properties.GetValue<float>(TEXT("Autopilot.Path.CenterlineWeight"), Autopilot.Path.CenterlineWeight);
+			Autopilot.Path.CurvatureWeight = Properties.GetValue<float>(TEXT("Autopilot.Path.CurvatureWeight"), Autopilot.Path.CurvatureWeight);
+			Autopilot.Path.SnapWeight = Properties.GetValue<float>(TEXT("Autopilot.Path.SnapWeight"), Autopilot.Path.SnapWeight);
+			Autopilot.Path.MaxIterations = Properties.GetValue<int32>(TEXT("Autopilot.Path.MaxIterations"), Autopilot.Path.MaxIterations);
+			Autopilot.Path.ConvergenceToleranceCm = Properties.GetValue<float>(TEXT("Autopilot.Path.ConvergenceToleranceCm"), Autopilot.Path.ConvergenceToleranceCm);
+
+			Autopilot.Timing.SampleSpacingCm = Properties.GetValue<float>(TEXT("Autopilot.Timing.SampleSpacingCm"), Autopilot.Timing.SampleSpacingCm);
+			Autopilot.Timing.ThrustReserveFraction = Properties.GetValue<float>(TEXT("Autopilot.Timing.ThrustReserveFraction"), Autopilot.Timing.ThrustReserveFraction);
+			Autopilot.Timing.TorqueReserveFraction = Properties.GetValue<float>(TEXT("Autopilot.Timing.TorqueReserveFraction"), Autopilot.Timing.TorqueReserveFraction);
+			Autopilot.Timing.BrakingReserveFraction = Properties.GetValue<float>(TEXT("Autopilot.Timing.BrakingReserveFraction"), Autopilot.Timing.BrakingReserveFraction);
+			Autopilot.Timing.MaxIterations = Properties.GetValue<int32>(TEXT("Autopilot.Timing.MaxIterations"), Autopilot.Timing.MaxIterations);
+			Autopilot.Timing.FeasibilityTolerance = Properties.GetValue<float>(TEXT("Autopilot.Timing.FeasibilityTolerance"), Autopilot.Timing.FeasibilityTolerance);
+
+#define READ_MPCC(Name) Autopilot.Mpcc.Name = Properties.GetValue<decltype(Autopilot.Mpcc.Name)>(TEXT("Autopilot.Mpcc." #Name), Autopilot.Mpcc.Name)
+			READ_MPCC(UpdateRateHz);
+			READ_MPCC(HorizonSeconds);
+			READ_MPCC(HorizonSteps);
+			READ_MPCC(MaxOptimizationIterations);
+			READ_MPCC(SolveTimeBudgetMilliseconds);
+			READ_MPCC(ContourErrorWeight);
+			READ_MPCC(LagErrorWeight);
+			READ_MPCC(ProgressWeight);
+			READ_MPCC(SpeedTrackingWeight);
+			READ_MPCC(AccelerationWeight);
+			READ_MPCC(JerkWeight);
+			READ_MPCC(YawTrackingWeight);
+			READ_MPCC(TerminalPositionWeight);
+			READ_MPCC(TerminalVelocityWeight);
+			READ_MPCC(Regularization);
+			READ_MPCC(MaxConsecutiveFailures);
+			READ_MPCC(MaximumReferenceAgeSeconds);
+#undef READ_MPCC
+
+			/* 节点存在性就是空气动力开关；无节点时完全保留 Chaos 的阻尼。 */
+			OutModel.bHasAerodynamics = Properties.GetValue<bool>(TEXT("Aerodynamics.Configured"), false);
+			if (OutModel.bHasAerodynamics)
+			{
+				OutModel.Aerodynamics.AirDensityKgPerM3 = Properties.GetValue<float>(TEXT("Aerodynamics.AirDensityKgPerM3"), OutModel.Aerodynamics.AirDensityKgPerM3);
+				OutModel.Aerodynamics.LinearDragNsPerM = FVector3fToVector(Properties.GetValue<FVector3f>(TEXT("Aerodynamics.LinearDragNsPerM"), FVector3f(OutModel.Aerodynamics.LinearDragNsPerM)));
+				OutModel.Aerodynamics.DragAreaCoefficientM2 = FVector3fToVector(Properties.GetValue<FVector3f>(TEXT("Aerodynamics.DragAreaCoefficientM2"), FVector3f(OutModel.Aerodynamics.DragAreaCoefficientM2)));
+				OutModel.Aerodynamics.AngularDragNmPerRadPerSec = FVector3fToVector(Properties.GetValue<FVector3f>(TEXT("Aerodynamics.AngularDragNmPerRadPerSec"), FVector3f(OutModel.Aerodynamics.AngularDragNmPerRadPerSec)));
+				OutModel.Aerodynamics.QuadraticAngularDragNmPerRadPerSecSq = FVector3fToVector(Properties.GetValue<FVector3f>(TEXT("Aerodynamics.QuadraticAngularDragNmPerRadPerSecSq"), FVector3f(OutModel.Aerodynamics.QuadraticAngularDragNmPerRadPerSecSq)));
+				OutModel.Aerodynamics.MaxRelativeAirspeedCmPerSec = Properties.GetValue<float>(TEXT("Aerodynamics.MaxRelativeAirspeedCmPerSec"), OutModel.Aerodynamics.MaxRelativeAirspeedCmPerSec);
+			}
 		}
 
 		/* Motors → 临时 map（按 Name 索引），供 Propeller 解析时关联 */
@@ -346,7 +375,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 
 		Settings.Name = *Properties.GetStringValue(TEXT("SimulationLOD.Name"), Settings.Name.ToString());
 		Settings.DriveMode = static_cast<EAircraftSimulationDriveMode>(FMath::Clamp(
-			Properties.GetValue<int32>(TEXT("SimulationLOD.DriveMode"), static_cast<int32>(Settings.DriveMode)), 0, 3));
+			Properties.GetValue<int32>(TEXT("SimulationLOD.DriveMode"), static_cast<int32>(Settings.DriveMode)), 0, 2));
 		Settings.CollisionMode = static_cast<EAircraftSimulationCollisionMode>(FMath::Clamp(
 			Properties.GetValue<int32>(TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Settings.CollisionMode)), 0, 2));
 		Settings.MaxDistanceCm = Properties.GetValue<float>(TEXT("SimulationLOD.MaxDistanceCm"), Settings.MaxDistanceCm);

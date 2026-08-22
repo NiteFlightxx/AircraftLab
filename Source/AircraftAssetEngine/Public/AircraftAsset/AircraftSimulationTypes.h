@@ -32,36 +32,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftPilotInput
 };
 
 USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FAircraftPositionSetpoint
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Setpoint")
-	bool bEnabled = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Setpoint")
-	FVector PositionCm = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Setpoint")
-	float YawDegrees = 0.0f;
-};
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FAircraftVelocitySetpoint
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Setpoint")
-	bool bEnabled = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Setpoint")
-	FVector VelocityCmPerSec = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Setpoint")
-	float YawRateDegreesPerSec = 0.0f;
-};
-
-USTRUCT(BlueprintType)
 struct AIRCRAFTASSETENGINE_API FAircraftAttitudeSetpoint
 {
 	GENERATED_BODY()
@@ -91,16 +61,11 @@ struct AIRCRAFTASSETENGINE_API FAircraftRateSetpoint
 	float CollectiveThrust = 0.0f;
 };
 
+/** Manual/Acro/Angle only. Translational commands must use FAircraftMovementIntent. */
 USTRUCT(BlueprintType)
-struct AIRCRAFTASSETENGINE_API FAircraftControlTargets
+struct AIRCRAFTASSETENGINE_API FAircraftLowLevelControlTargets
 {
 	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Control")
-	FAircraftPositionSetpoint Position;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Control")
-	FAircraftVelocitySetpoint Velocity;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Control")
 	FAircraftAttitudeSetpoint Attitude;

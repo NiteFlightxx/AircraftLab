@@ -175,15 +175,15 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 		PidStates.VerticalVelocity.Reset();
 	}
 
-	// ---- 路径 C：Autopilot 注入 ----
-	if (Context.bUseAutopilotSetpoint && Context.AutopilotInjection.bValid)
+	// ---- 统一轨迹参考 ----
+	if (Context.bUseTrajectoryReference && Context.TrajectoryReference.bValid)
 	{
 		Context.Runtime.HoldTargets.bVerticalBrakeBeforeHold = false;
-		const FAutopilotInjection& AI = Context.AutopilotInjection;
+		const FAircraftTrajectoryReference& Reference = Context.TrajectoryReference;
 		// 高度外环：设定值=AltitudeSetpointCm，前馈=垂直速度设定值（Kff 通道）
 		OutDesiredVerticalVelocity = PidStates.Altitude.UpdateFromMeasurement(
-			AI.AltitudeSetpointCm, CurrentAltitude, DeltaSeconds,
-			Config.GetAltitudePidGains(), AI.VerticalVelocitySetpointCmPerSec);
+			Reference.PositionCm.Z, CurrentAltitude, DeltaSeconds,
+			Config.GetAltitudePidGains(), Reference.VelocityCmPerSec.Z);
 		OutDesiredVerticalVelocity = FMath::Clamp(OutDesiredVerticalVelocity,
 			-Config.MaxDescentRateCmPerSec, Config.MaxClimbRateCmPerSec);
 		OutDesiredVerticalVelocity = SlewVerticalVelocitySetpoint(OutDesiredVerticalVelocity);
@@ -193,12 +193,14 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 				Context.PhysicsCache.GravityMagnitudeCmPerSecSq,
 				Config.HoverCollectiveCommand,
 				Config.VerticalDampingFeedForwardScale);
-		// 垂直速度内环；轨迹推力前馈作为基准，阻尼前馈补偿稳态阻力。
+		// 垂直速度内环；轨迹加速度换算为总距基准，阻尼前馈补偿稳态阻力。
 		const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
 			OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds,
 			Config.GetVerticalVelocityPidGains());
-		// 推力前馈作总距基准（含重力补偿），替代 HoverCollective
-		return FMath::Clamp(AI.ThrustFeedForward + LastVerticalDampingCollectiveFeedForward
+		const float Gravity = FMath::Max(Context.PhysicsCache.GravityMagnitudeCmPerSecSq, 1.0f);
+		const float TrajectoryCollective = Config.HoverCollectiveCommand
+			* FMath::Max(0.0f, (Gravity + Reference.AccelerationCmPerSecSq.Z) / Gravity);
+		return FMath::Clamp(TrajectoryCollective + LastVerticalDampingCollectiveFeedForward
 			+ CollectiveOffset, MinCollective, MaxCollective);
 	}
 
@@ -288,12 +290,6 @@ FRotator FAircraftFlightControlSolver::ComputeDesiredAttitude(FAircraftFlightCon
 	float DesiredPitchDegrees = -FMath::RadiansToDegrees(FMath::Atan2(ForwardAcceleration, GravityMagnitude));
 	float DesiredRollDegrees = FMath::RadiansToDegrees(FMath::Atan2(RightAcceleration, GravityMagnitude));
 
-	// Autopilot 协调转弯滚转叠加（叠加在悬停倾斜方程之上）
-	if (Context.bUseAutopilotSetpoint && Context.AutopilotInjection.bValid)
-	{
-		DesiredRollDegrees += Context.AutopilotInjection.TurnRollDegrees;
-	}
-
 	// 限制最大倾角——超出此角度可能推力不足以抵消重力分量
 	DesiredRollDegrees = FMath::Clamp(DesiredRollDegrees, -Config.MaxTiltAngleDegrees, Config.MaxTiltAngleDegrees);
 	DesiredPitchDegrees = FMath::Clamp(DesiredPitchDegrees, -Config.MaxTiltAngleDegrees, Config.MaxTiltAngleDegrees);
@@ -311,17 +307,17 @@ FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(FAircraftF
 	Result.TargetYawDegrees = CurrentYawDegrees;
 	Result.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
 
-	// ---- 路径 C：Autopilot 注入 ----
-	if (Context.bUseAutopilotSetpoint && Context.AutopilotInjection.bValid)
+	// ---- 统一轨迹参考 ----
+	if (Context.bUseTrajectoryReference && Context.TrajectoryReference.bValid)
 	{
-		const FAutopilotInjection& AI = Context.AutopilotInjection;
-		const float IntentYawRateLimit = AI.YawRateLimitDegPerSec > UE_SMALL_NUMBER
-			? AI.YawRateLimitDegPerSec
+		const FAircraftTrajectoryReference& Reference = Context.TrajectoryReference;
+		const float IntentYawRateLimit = Reference.YawRateLimitDegPerSec > UE_SMALL_NUMBER
+			? Reference.YawRateLimitDegPerSec
 			: Config.MaxYawRateDegreesPerSec;
 		Result.MaxRateDegPerSec = FMath::Min(Config.MaxYawRateDegreesPerSec, IntentYawRateLimit);
-		Result.TargetYawDegrees = FRotator::NormalizeAxis(AI.YawSetpointDegrees);
+		Result.TargetYawDegrees = FRotator::NormalizeAxis(Reference.YawDegrees);
 		Result.FeedForwardRateDegPerSec = FMath::Clamp(
-			AI.YawRateSetpointDegPerSec, -Result.MaxRateDegPerSec, Result.MaxRateDegPerSec);
+			Reference.YawRateDegPerSec, -Result.MaxRateDegPerSec, Result.MaxRateDegPerSec);
 		return Result;
 	}
 
@@ -576,11 +572,11 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 	}
 
 	// ======================================================================
-	// Autopilot 注入路径
+	// 统一轨迹参考路径
 	// ======================================================================
-	if (Context.bUseAutopilotSetpoint && Context.AutopilotInjection.bValid)
+	if (Context.bUseTrajectoryReference && Context.TrajectoryReference.bValid)
 	{
-		const FAutopilotInjection& AI = Context.AutopilotInjection;
+		const FAircraftTrajectoryReference& Reference = Context.TrajectoryReference;
 
 		FVector DesiredVelocity = FVector::ZeroVector;
 		FVector DesiredAcceleration = FVector::ZeroVector;
@@ -589,16 +585,16 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 		{
 			// 位置环：设定值 = PositionSetpointCm.XY，前馈 = VelocitySetpointCmPerSec.XY
 			DesiredVelocity = FVector(
-				PidStates.Position.X.UpdateFromMeasurement(AI.PositionSetpointCm.X, CurrentPosition.X, DeltaSeconds, Config.GetPositionPidGains(0), AI.VelocitySetpointCmPerSec.X),
-				PidStates.Position.Y.UpdateFromMeasurement(AI.PositionSetpointCm.Y, CurrentPosition.Y, DeltaSeconds, Config.GetPositionPidGains(1), AI.VelocitySetpointCmPerSec.Y),
+				PidStates.Position.X.UpdateFromMeasurement(Reference.PositionCm.X, CurrentPosition.X, DeltaSeconds, Config.GetPositionPidGains(0), Reference.VelocityCmPerSec.X),
+				PidStates.Position.Y.UpdateFromMeasurement(Reference.PositionCm.Y, CurrentPosition.Y, DeltaSeconds, Config.GetPositionPidGains(1), Reference.VelocityCmPerSec.Y),
 				0.0f);
 
 			Context.Runtime.ControlOutput.bPositionTargetEnabled = true;
-			Context.Runtime.ControlOutput.PositionTargetCm = FVector(AI.PositionSetpointCm.X, AI.PositionSetpointCm.Y, AI.AltitudeSetpointCm);
+			Context.Runtime.ControlOutput.PositionTargetCm = Reference.PositionCm;
 		}
 		else
 		{
-			DesiredVelocity = AI.VelocitySetpointCmPerSec;
+			DesiredVelocity = Reference.VelocityCmPerSec;
 		}
 
 		// 速度限幅
@@ -617,7 +613,7 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 
 		// 速度 PID + 轨迹加速度前馈 + 维持目标速度所需的线性阻尼前馈。
 		DesiredAcceleration = ComputeVelocityPidAcceleration(
-			Context, DesiredVelocity, AI.AccelerationSetpointCmPerSecSq, DeltaSeconds);
+			Context, DesiredVelocity, Reference.AccelerationCmPerSecSq, DeltaSeconds);
 		return DesiredAcceleration;
 	}
 

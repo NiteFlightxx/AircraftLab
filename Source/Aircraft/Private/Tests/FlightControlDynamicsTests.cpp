@@ -126,10 +126,10 @@ bool FAircraftVelocityPidMaintainsTargetSpeedTest::RunTest(const FString& Parame
 	FAircraftModeCapabilities Capabilities;
 	FAircraftFlightControllerRuntimeConfig Config;
 	FAircraftManualCommand ManualCommand;
-	FAutopilotInjection Injection;
+	FAircraftTrajectoryReference Reference;
 	FAircraftControlAllocator Allocator;
 	FAircraftFlightControlSolverContext Context{
-		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Injection, Allocator, false };
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
 	FAircraftFlightControlSolver Solver;
 
 	const FVector Acceleration = Solver.ComputeVelocityPidAcceleration(
@@ -177,10 +177,10 @@ bool FAircraftVerticalVelocitySetpointSlewTest::RunTest(const FString& Parameter
 	FAircraftFlightControllerRuntimeConfig Config;
 	Config.MaxVerticalAccelerationCmPerSecSq = 1000.0f;
 	FAircraftManualCommand ManualCommand;
-	FAutopilotInjection Injection;
+	FAircraftTrajectoryReference Reference;
 	FAircraftControlAllocator Allocator;
 	FAircraftFlightControlSolverContext Context{
-		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Injection, Allocator, false };
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
 	FAircraftFlightControlSolver Solver;
 
 	float FirstDesiredVelocity = 0.0f;
@@ -216,10 +216,10 @@ bool FAircraftVerticalReleaseBrakesBeforeHoldingTest::RunTest(const FString& Par
 	Config.MaxVerticalAccelerationCmPerSecSq = 0.0f;
 	Config.VerticalBrakeToHoldSpeedCmPerSec = 20.0f;
 	FAircraftManualCommand ManualCommand;
-	FAutopilotInjection Injection;
+	FAircraftTrajectoryReference Reference;
 	FAircraftControlAllocator Allocator;
 	FAircraftFlightControlSolverContext Context{
-		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Injection, Allocator, false };
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
 	FAircraftFlightControlSolver Solver;
 
 	float DesiredVelocity = 0.0f;
@@ -282,10 +282,10 @@ bool FAircraftQuaternionAttitudeUsesRigidBodyRotationTest::RunTest(const FString
 	FAircraftModeCapabilities Capabilities;
 	FAircraftFlightControllerRuntimeConfig Config;
 	FAircraftManualCommand ManualCommand;
-	FAutopilotInjection Injection;
+	FAircraftTrajectoryReference Reference;
 	FAircraftControlAllocator Allocator;
 	FAircraftFlightControlSolverContext Context{
-		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Injection, Allocator, false };
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
 	FAircraftFlightControlSolver Solver;
 	FAircraftYawSetpoint YawSetpoint;
 	YawSetpoint.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
@@ -318,10 +318,10 @@ bool FAircraftQuaternionHeadingDoesNotLeakIntoTiltTest::RunTest(const FString& P
 	FAircraftFlightControllerRuntimeConfig Config;
 	Config.bEnableAttitudeReferenceModel = false;
 	FAircraftManualCommand ManualCommand;
-	FAutopilotInjection Injection;
+	FAircraftTrajectoryReference Reference;
 	FAircraftControlAllocator Allocator;
 	FAircraftFlightControlSolverContext Context{
-		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Injection, Allocator, false };
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
 	FAircraftFlightControlSolver Solver;
 	FAircraftYawSetpoint YawSetpoint;
 	YawSetpoint.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
@@ -362,10 +362,10 @@ bool FAircraftYawHoldInitializesFromRigidBodyQuaternionTest::RunTest(const FStri
 	FAircraftFlightControllerRuntimeConfig Config;
 	Config.bEnableAttitudeReferenceModel = false;
 	FAircraftManualCommand ManualCommand;
-	FAutopilotInjection Injection;
+	FAircraftTrajectoryReference Reference;
 	FAircraftControlAllocator Allocator;
 	FAircraftFlightControlSolverContext Context{
-		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Injection, Allocator, false };
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
 	FAircraftFlightControlSolver Solver;
 
 	const FAircraftYawSetpoint YawSetpoint = Solver.ComputeYawSetpoint(Context);
@@ -424,10 +424,10 @@ bool FAircraftManualReleaseBrakesBeforeHoldingTest::RunTest(const FString& Param
 	FAircraftFlightControllerRuntimeConfig Config;
 	Config.HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
 	FAircraftManualCommand ManualCommand;
-	FAutopilotInjection Injection;
+	FAircraftTrajectoryReference Reference;
 	FAircraftControlAllocator Allocator;
 	FAircraftFlightControlSolverContext Context{
-		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Injection, Allocator, false };
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
 	FAircraftFlightControlSolver Solver;
 
 	Solver.ComputeDesiredHorizontalAcceleration(Context, 0.004f);

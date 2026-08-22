@@ -140,7 +140,6 @@ const TCHAR* FAircraftDebug::GetDriveModeLabel(const EAircraftSimulationDriveMod
 	case EAircraftSimulationDriveMode::FlightController: return TEXT("FlightController");
 	case EAircraftSimulationDriveMode::PhysicsConstraint: return TEXT("PhysicsConstraint");
 	case EAircraftSimulationDriveMode::Kinematic: return TEXT("Kinematic");
-	case EAircraftSimulationDriveMode::None: return TEXT("None");
 	default: return TEXT("Unknown");
 	}
 }
@@ -246,18 +245,12 @@ void FAircraftDebug::TickConstraint(
 	const UAircraftComponent& Component,
 	FConstraintInstance& Constraint,
 	const FName RootBone,
-	const FAircraftPilotInput& PilotInput,
-	const FAircraftManualCommand& ManualCommand,
-	const FAircraftMotionTarget& Target,
+	const FAircraftTrajectoryReference& Target,
 	const FVector& WorldCenterOfMassTarget,
 	const FVector& WorldCenterOfMassVelocityTarget,
 	const FVector& WorldPositionFeedForward,
 	const FQuat& WorldOrientationTarget,
 	const FVector& WorldAngularVelocityTargetRevPerSec,
-	const TCHAR* const MotionPhaseX,
-	const TCHAR* const MotionPhaseY,
-	const TCHAR* const MotionPhaseZ,
-	const FVector& BrakeVelocityCmPerSec,
 	const float DeltaSeconds,
 	float& InOutLogAccumulatorSeconds,
 	float& InOutUnresponsiveSeconds)
@@ -277,7 +270,7 @@ void FAircraftDebug::TickConstraint(
 	FVector ConstraintForce = FVector::ZeroVector;
 	FVector ConstraintTorque = FVector::ZeroVector;
 	Constraint.GetConstraintForce(ConstraintForce, ConstraintTorque);
-	const bool bCommandedMotion = ManualCommand.DesiredVelocityCmPerSec.SizeSquared()
+	const bool bCommandedMotion = Target.VelocityCmPerSec.SizeSquared()
 		> FMath::Square(UE::AircraftLab::Debug::Private::MinimumCommandSpeedCmPerSec);
 	const bool bBodyResponding = BodyVelocity.SizeSquared()
 		> FMath::Square(UE::AircraftLab::Debug::Private::MinimumResponseSpeedCmPerSec);
@@ -289,8 +282,8 @@ void FAircraftDebug::TickConstraint(
 			UE_LOG(LogAircraft, Warning,
 				TEXT("[Aircraft.Constraint.Unresponsive] Owner=%s LOD=%d CommandVel=(%+.1f,%+.1f,%+.1f) TargetError=(%+.1f,%+.1f,%+.1f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) ConstraintValid=%d Broken=%d Simulating=%d"),
 				*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(),
-				ManualCommand.DesiredVelocityCmPerSec.X, ManualCommand.DesiredVelocityCmPerSec.Y,
-				ManualCommand.DesiredVelocityCmPerSec.Z,
+				Target.VelocityCmPerSec.X, Target.VelocityCmPerSec.Y,
+				Target.VelocityCmPerSec.Z,
 				PositionError.X, PositionError.Y, PositionError.Z,
 				bBodyAwake ? 1 : 0,
 				BodyVelocity.X, BodyVelocity.Y, BodyVelocity.Z,
@@ -315,14 +308,8 @@ void FAircraftDebug::TickConstraint(
 		{
 			InOutLogAccumulatorSeconds = 0.0f;
 			UE_LOG(LogAircraft, Log,
-				TEXT("[Aircraft.Constraint.Tick] Owner=%s LOD=%d Phase(X/Y/Z)=(%s/%s/%s) BrakeVel=(%+.1f,%+.1f,%+.1f) Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) ManualVel=(%+.1f,%+.1f,%+.1f) BodyPos=(%.1f,%.1f,%.1f) BodyCOM=(%.1f,%.1f,%.1f) ConstraintArm=(%+.2f,%+.2f,%+.2f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) WorldTargetPos=(%.1f,%.1f,%.1f) WorldTargetVel=(%+.1f,%+.1f,%+.1f) Error=(%+.1f,%+.1f,%+.1f) WorldTargetCOM=(%+.1f,%+.1f,%+.1f) WorldTargetCOMVel=(%+.1f,%+.1f,%+.1f) PositionFF=(%+.2f,%+.2f,%+.2f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) WorldTargetQuat=(%+.3f,%+.3f,%+.3f,%+.3f) WorldTargetAngVel=(%+.3f,%+.3f,%+.3f) Drive(P/V)=(%d%d%d/%d%d%d)"),
+				TEXT("[Aircraft.Constraint.Tick] Owner=%s LOD=%d BodyPos=(%.1f,%.1f,%.1f) BodyCOM=(%.1f,%.1f,%.1f) ConstraintArm=(%+.2f,%+.2f,%+.2f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) WorldTargetPos=(%.1f,%.1f,%.1f) WorldTargetVel=(%+.1f,%+.1f,%+.1f) Error=(%+.1f,%+.1f,%+.1f) WorldTargetCOM=(%+.1f,%+.1f,%+.1f) WorldTargetCOMVel=(%+.1f,%+.1f,%+.1f) PositionFF=(%+.2f,%+.2f,%+.2f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) WorldTargetQuat=(%+.3f,%+.3f,%+.3f,%+.3f) WorldTargetAngVel=(%+.3f,%+.3f,%+.3f) Drive(P/V)=(%d%d%d/%d%d%d)"),
 				*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(),
-				MotionPhaseX, MotionPhaseY, MotionPhaseZ,
-				BrakeVelocityCmPerSec.X, BrakeVelocityCmPerSec.Y,
-				BrakeVelocityCmPerSec.Z,
-				PilotInput.Throttle, PilotInput.Roll, PilotInput.Pitch, PilotInput.Yaw,
-				ManualCommand.DesiredVelocityCmPerSec.X, ManualCommand.DesiredVelocityCmPerSec.Y,
-				ManualCommand.DesiredVelocityCmPerSec.Z,
 				BodyPosition.X, BodyPosition.Y, BodyPosition.Z,
 				BodyCenterOfMass.X, BodyCenterOfMass.Y, BodyCenterOfMass.Z,
 				ConstraintArmFromCenterOfMass.X, ConstraintArmFromCenterOfMass.Y,

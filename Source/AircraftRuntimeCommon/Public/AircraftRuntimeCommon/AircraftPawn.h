@@ -4,13 +4,13 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "AircraftAutopilot/AutopilotComponent.h"
 
 #include "AircraftPawn.generated.h"
 
 class UAircraftComponent;
 class UAircraftInputComponent;
 class UAircraftSimulationLODComponent;
-class UAutopilotComponent;
 
 /**
  * 飞行器 Pawn —— 可操控的无人机实体。

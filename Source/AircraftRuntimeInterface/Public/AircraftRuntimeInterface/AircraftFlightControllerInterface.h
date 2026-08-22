@@ -7,8 +7,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Interface.h"
-#include "AircraftRuntimeInterface/AircraftAutopilotConfig.h"
-
+#include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftFlightControllerInterface.generated.h"
 
 /** 高层制导所需的最小飞行状态。 */
@@ -34,23 +33,8 @@ class AIRCRAFTRUNTIMEINTERFACE_API IAircraftFlightControllerInterface
 
 public:
 	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const = 0;
-	virtual void SetAircraftAutopilotProvider(UObject* Provider) = 0;
-	virtual uint8 ActivateAircraftAutopilotControl() = 0;
-	virtual void DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode) = 0;
-	virtual void GetAircraftAutopilotMotionLimits(
-		float RequestedCruiseSpeedCmPerSec,
-		float& OutMaxSpeedCmPerSec,
-		float& OutMaxAccelerationCmPerSecSq) const = 0;
-	virtual void GetAircraftAutopilotPhysicalState(
-		float& OutGravityCmPerSecSq,
-		float& OutHoverCollectiveCommand,
-		float& OutVerticalAccelerationMpsSq,
-		float& OutCollectiveThrustCommand) const = 0;
-	/** 飞控标准坐标（X=Forward）到模型局部坐标的固定旋转。 */
-	virtual FQuat GetAircraftControlToBodyRotation() const = 0;
-
-	/** 读取 Dataflow 编译的 Autopilot 运行时配置（当前 LOD）。 */
-	virtual bool GetAircraftAutopilotRuntimeConfig(FAircraftAutopilotRuntimeConfig& OutConfig) const = 0;
+	virtual bool GetAircraftAutopilotDiagnostics(FAircraftAutopilotDiagnostics& OutDiagnostics) const = 0;
+	virtual void SetAircraftMovementIntentProvider(UObject* Provider) = 0;
 
 	/** 输入组件窄通道：四通道摇杆（-1~+1）。 */
 	virtual void SetAircraftPilotInputAxes(float Throttle, float Roll, float Pitch, float Yaw) = 0;

@@ -1,4 +1,4 @@
-// 评估策略：重要性强制最高档 → 驱动覆盖 → 距离分档（滞回 + 最短驻留时间）。
+// 评估策略：重要性强制最高档 → 距离分档（滞回 + 最短驻留时间）。
 
 #include "AircraftRuntimeCommon/LOD/AircraftSimulationWorldSubsystem.h"
 
@@ -108,22 +108,9 @@ void UAircraftSimulationWorldSubsystem::EvaluateAircraft(UAircraftSimulationLODC
 	{
 		DesiredLOD = 0;
 	}
-	// 2) 驱动覆盖（运动源精确请求 / 手动覆盖）
-	else if (Snapshot.DriveOverride.bValid)
-	{
-		const int32 OverrideIndex = Settings.IndexOfByPredicate(
-			[&Snapshot](const FAircraftSimulationLODRuntimeSettingsLite& Entry)
-			{
-				return Entry.DriveMode == Snapshot.DriveOverride.DriveMode;
-			});
-		if (OverrideIndex != INDEX_NONE)
-		{
-			DesiredLOD = OverrideIndex;
-		}
-	}
 	else
 	{
-		// 3) 距离分档（数组顺序 = 最近/最高 → 最远；最后一个为无限距离兜底）
+		// 2) 距离分档（数组顺序 = 最近/最高 → 最远；最后一个为无限距离兜底）
 		for (int32 Index = 0; Index < Settings.Num(); ++Index)
 		{
 			const bool bIsLast = (Index == Settings.Num() - 1);

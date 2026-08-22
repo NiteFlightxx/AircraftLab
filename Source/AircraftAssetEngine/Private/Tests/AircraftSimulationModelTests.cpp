@@ -155,8 +155,10 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 		const int32 CollisionIndex = Properties.AddProperty(TEXT("SimulationLOD.CollisionMode"), EAircraftCollectionPropertyFlags::Enabled);
 		Properties.SetValue(CollisionIndex, 2);
 	};
-	SetLodSettings(Lod0Collection, TEXT("LOD0"), 2);
-	SetLodSettings(Lod1Collection, TEXT("LOD1"), 1);
+	SetLodSettings(Lod0Collection, TEXT("LOD0"),
+		static_cast<int32>(EAircraftSimulationDriveMode::PhysicsConstraint));
+	SetLodSettings(Lod1Collection, TEXT("LOD1"),
+		static_cast<int32>(EAircraftSimulationDriveMode::FlightController));
 	const TArray<TSharedRef<const FManagedArrayCollection>> TwoLodCollections = { Lod0Collection, Lod1Collection };
 	const FAircraftSimulationModel TwoLodModel(TwoLodCollections, TEXT("TwoLOD"));
 	TestEqual(TEXT("Each terminal collection compiles to one runtime LOD"), TwoLodModel.GetNumLods(), 2);
@@ -188,8 +190,10 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 	const FAircraftSimulationLodModel* const DefaultLOD = DefaultModel.GetLodModel(0);
 	TestNotNull(TEXT("A collection compiles one LOD model"), DefaultLOD);
 	TestFalse(TEXT("Failure policy is disabled by default"), DefaultLOD->FlightController.FailurePolicy.bEnabled);
-	TestTrue(TEXT("Coordinated turns default on"), DefaultLOD->Autopilot.bEnableCoordinatedTurns);
-	TestTrue(TEXT("Hover thrust estimator defaults on"), DefaultLOD->Autopilot.bEnableHoverThrustEstimator);
+	TestTrue(TEXT("Autopilot defaults form a valid complete configuration"),
+		DefaultLOD->Autopilot.IsValid());
+	TestFalse(TEXT("Aerodynamics remains absent without its Dataflow node"),
+		DefaultLOD->bHasAerodynamics);
 
 	FCollectionAircraftPropertyMutableFacade Properties(Collection);
 	Properties.DefineSchema();
@@ -211,11 +215,13 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 	SetInt(TEXT("FlightController.Failure.Action"), 2); // Failsafe
 	SetInt(TEXT("FlightController.Failure.DegradedFlightMode"), 2); // Angle
 
-	SetInt(TEXT("Autopilot.EnableCoordinatedTurns"), 0);
-	SetFloat(TEXT("Autopilot.Turn.MaxBankAngleDegrees"), 42.0f);
-	SetInt(TEXT("Autopilot.Path.GuidanceStrategy"), 1); // VectorField
-	SetFloat(TEXT("Autopilot.Path.VectorFieldCrossTrackGain"), 0.02f);
-	SetFloat(TEXT("Autopilot.HoverThrust.MinHoverThrust"), 0.15f);
+	SetFloat(TEXT("Autopilot.Path.ResampleSpacingCm"), 75.0f);
+	SetFloat(TEXT("Autopilot.Timing.ThrustReserveFraction"), 0.2f);
+	SetInt(TEXT("Autopilot.Mpcc.HorizonSteps"), 24);
+	SetInt(TEXT("Autopilot.Mpcc.MaxOptimizationIterations"), 4);
+	SetFloat(TEXT("Autopilot.Mpcc.ContourErrorWeight"), 12.0f);
+	SetInt(TEXT("Aerodynamics.Configured"), 1);
+	SetFloat(TEXT("Aerodynamics.AirDensityKgPerM3"), 1.1f);
 
 	const FAircraftSimulationModel ConfiguredModel(Collections, TEXT("Configured"));
 	const FAircraftSimulationLodModel* const LOD = ConfiguredModel.GetLodModel(0);
@@ -229,11 +235,14 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 	TestEqual(TEXT("Failsafe action reaches the runtime model"), Policy.Action, EAircraftFailurePolicyAction::Failsafe);
 	TestEqual(TEXT("Degraded flight mode reaches the runtime model"), Policy.DegradedFlightMode, uint8(2));
 
-	TestFalse(TEXT("Coordinated-turn disable reaches the runtime model"), LOD->Autopilot.bEnableCoordinatedTurns);
-	TestEqual(TEXT("Bank angle reaches the runtime model"), LOD->Autopilot.MaxBankAngleDegrees, 42.0f);
-	TestEqual(TEXT("Vector-field strategy reaches the runtime model"), LOD->Autopilot.GuidanceStrategy, uint8(1));
-	TestEqual(TEXT("Vector-field gain reaches the runtime model"), LOD->Autopilot.VectorFieldCrossTrackGain, 0.02f);
-	TestEqual(TEXT("Min hover thrust reaches the runtime model"), LOD->Autopilot.MinHoverThrust, 0.15f);
+	TestEqual(TEXT("Path spacing reaches the runtime model"), LOD->Autopilot.Path.ResampleSpacingCm, 75.0f);
+	TestEqual(TEXT("Thrust reserve reaches the runtime model"), LOD->Autopilot.Timing.ThrustReserveFraction, 0.2f);
+	TestEqual(TEXT("MPCC horizon reaches the runtime model"), LOD->Autopilot.Mpcc.HorizonSteps, 24);
+	TestEqual(TEXT("MPCC iteration budget reaches the runtime model"),
+		LOD->Autopilot.Mpcc.MaxOptimizationIterations, 4);
+	TestEqual(TEXT("MPCC contour weight reaches the runtime model"), LOD->Autopilot.Mpcc.ContourErrorWeight, 12.0f);
+	TestTrue(TEXT("Aerodynamics node presence reaches the runtime model"), LOD->bHasAerodynamics);
+	TestEqual(TEXT("Air density reaches the runtime model"), LOD->Aerodynamics.AirDensityKgPerM3, 1.1f);
 	return true;
 }
 

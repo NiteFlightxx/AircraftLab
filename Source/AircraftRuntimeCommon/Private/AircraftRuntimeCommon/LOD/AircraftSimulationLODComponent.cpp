@@ -219,35 +219,6 @@ void UAircraftSimulationLODComponent::ForceSimulationReevaluation()
 	LastEvaluationWorldTime = -1.0f;
 }
 
-bool UAircraftSimulationLODComponent::SetManualDriveModeOverride(EAircraftSimulationDriveMode DriveMode)
-{
-	TArray<FAircraftSimulationLODRuntimeSettingsLite> Settings;
-	if (!GetLODSettings(Settings))
-	{
-		return false;
-	}
-	const bool bFound = Settings.ContainsByPredicate(
-		[DriveMode](const FAircraftSimulationLODRuntimeSettingsLite& Entry)
-		{
-			return Entry.DriveMode == DriveMode;
-		});
-	if (!bFound)
-	{
-		return false;
-	}
-	ManualDriveModeOverride = DriveMode;
-	bManualDriveModeOverrideActive = true;
-	ForceSimulationReevaluation();
-	return true;
-}
-
-void UAircraftSimulationLODComponent::ClearManualDriveModeOverride()
-{
-	bManualDriveModeOverrideActive = false;
-	ManualDriveModeOverride = EAircraftSimulationDriveMode::None;
-	ForceSimulationReevaluation();
-}
-
 bool UAircraftSimulationLODComponent::IsEvaluationDue(float WorldTimeSeconds) const
 {
 	if (LastEvaluationWorldTime < 0.0f)
@@ -283,39 +254,7 @@ FAircraftSimulationSnapshot UAircraftSimulationLODComponent::BuildSnapshot(float
 	{
 		Snapshot.Importance.bRecentlyDamaged = true;
 	}
-	Snapshot.DriveOverride = ResolveDriveOverride();
 	return Snapshot;
-}
-
-FAircraftSimulationDriveOverride UAircraftSimulationLODComponent::ResolveDriveOverride() const
-{
-	// 手动覆盖优先
-	if (bManualDriveModeOverrideActive)
-	{
-		FAircraftSimulationDriveOverride Override;
-		Override.DriveMode = ManualDriveModeOverride;
-		Override.Priority = TNumericLimits<int32>::Max() / 2;
-		Override.bValid = true;
-		return Override;
-	}
-
-	// 运动源发布的精确临时驱动请求（取 Owner 各 LOD 消费者的最高优先级）
-	FAircraftSimulationDriveOverride Best;
-	for (const TWeakObjectPtr<UActorComponent>& Consumer : Consumers)
-	{
-		UActorComponent* const Component = Consumer.Get();
-		if (!Component)
-		{
-			continue;
-		}
-		const FAircraftSimulationDriveOverride Candidate =
-			IAircraftSimulationLODConsumer::Execute_GetAircraftSimulationDriveOverride(Component);
-		if (Candidate.bValid && (!Best.bValid || Candidate.Priority > Best.Priority))
-		{
-			Best = Candidate;
-		}
-	}
-	return Best;
 }
 
 void UAircraftSimulationLODComponent::ApplyLODFromSubsystem(int32 NewLODIndex, float WorldTimeSeconds)
@@ -399,10 +338,10 @@ void UAircraftSimulationLODComponent::OnRep_CurrentLODIndex(int32 PreviousLODInd
 void UAircraftSimulationLODComponent::RefreshConsumers()
 {
 	RefreshConsumerCache();
-	RefreshAircraftSimulationDrive_Implementation();
+	ApplyCurrentBudget();
 }
 
-void UAircraftSimulationLODComponent::RefreshAircraftSimulationDrive_Implementation()
+void UAircraftSimulationLODComponent::ApplyCurrentBudget()
 {
 	TArray<FAircraftSimulationLODRuntimeSettingsLite> Settings;
 	if (!GetLODSettings(Settings) || !Settings.IsValidIndex(CurrentLODIndex))
@@ -417,8 +356,7 @@ void UAircraftSimulationLODComponent::RefreshAircraftSimulationDrive_Implementat
 	FAircraftSimulationBudget Budget;
 	Budget.LODIndex = CurrentLODIndex;
 	Budget.bIsNetworkProxy = bNetworkProxyBudget;
-	Budget.DriveMode = bNetworkProxyBudget
-		? EAircraftSimulationDriveMode::None : Entry.DriveMode;
+	Budget.DriveMode = Entry.DriveMode;
 	Budget.bEnablePhysics = bNetworkProxyBudget
 		? bClientProxyUsesDefaultPhysicsReplication && bPhysicalDrive
 		: bPhysicalDrive;

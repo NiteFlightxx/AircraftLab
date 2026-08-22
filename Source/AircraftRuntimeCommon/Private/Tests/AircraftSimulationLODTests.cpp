@@ -45,22 +45,6 @@ bool FAircraftSimulationEvaluationScheduleTest::RunTest(const FString& Parameter
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftMotionTargetModeTest,
-	"AircraftLab.SimulationLOD.MotionTargetModeIsExplicit",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FAircraftMotionTargetModeTest::RunTest(const FString& Parameters)
-{
-	FAircraftMotionTarget Target;
-	TestEqual(TEXT("Streamed targets track their moving setpoint by default"),
-		Target.Mode, EAircraftMotionTargetMode::Tracked);
-	Target.Mode = EAircraftMotionTargetMode::ConstrainedTrajectory;
-	TestEqual(TEXT("Fully constrained trajectories have a distinct target semantic"),
-		Target.Mode, EAircraftMotionTargetMode::ConstrainedTrajectory);
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftCollisionBudgetStateTest,
 	"AircraftLab.SimulationLOD.CollisionBudgetPreservesOriginalState",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

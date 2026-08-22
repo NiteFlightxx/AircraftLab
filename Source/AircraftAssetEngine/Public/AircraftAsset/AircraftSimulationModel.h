@@ -14,8 +14,9 @@
 // FAircraftFlightControllerRuntimeConfig 已下沉到求解器模块
 // 名称与字段不变，此处 include 复用。
 #include "Aircraft/FlightControllerRuntimeConfig.h"
+#include "Aircraft/AircraftAerodynamics.h"
 
-// Autopilot 运行时配置契约（AircraftAutopilotConfigNode 写入的 Autopilot.* 键编译产物）。
+// Autopilot 运行时配置契约（Path/Timing/MPCC Dataflow 节点的编译产物）。
 #include "AircraftRuntimeInterface/AircraftAutopilotConfig.h"
 
 #include "AircraftSimulationModel.generated.h"
@@ -240,8 +241,12 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	/** 飞控运行时只读快照。 */
 	FAircraftFlightControllerRuntimeConfig FlightController;
 
-	/** Autopilot 运行时只读快照（AutopilotConfigNode 编译产物）。 */
+	/** Autopilot 运行时只读快照（Path/Timing/MPCC 节点编译产物）。 */
 	FAircraftAutopilotRuntimeConfig Autopilot;
+
+	/** 只有 Dataflow 分支包含 Aerodynamics 节点时为 true。 */
+	bool bHasAerodynamics = false;
+	FAircraftAerodynamicsRuntimeConfig Aerodynamics;
 
 	/** 旋翼定义（按机架顺序） */
 	TArray<FAircraftRotorDefinition> Rotors;
@@ -259,6 +264,8 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 		Mass = FAircraftMassProperties();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
 		Autopilot = FAircraftAutopilotRuntimeConfig();
+		bHasAerodynamics = false;
+		Aerodynamics = FAircraftAerodynamicsRuntimeConfig();
 		Rotors.Reset();
 	}
 
