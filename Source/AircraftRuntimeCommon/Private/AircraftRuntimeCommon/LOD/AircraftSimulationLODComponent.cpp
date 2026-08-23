@@ -109,8 +109,6 @@ bool UAircraftSimulationLODComponent::GetLODSettings(TArray<FAircraftSimulationL
 		Lite.DriveMode = Settings.DriveMode;
 		Lite.CollisionMode = Settings.CollisionMode;
 		Lite.MaxDistanceCm = Settings.MaxDistanceCm;
-		Lite.bRunSlowLogic = Settings.bRunSlowLogic;
-		Lite.SlowLogicIntervalSeconds = Settings.SlowLogicIntervalSeconds;
 		Lite.bAllowDebugDraw = Settings.bAllowDebugDraw;
 		OutSettings.Add(Lite);
 	}
@@ -360,8 +358,6 @@ void UAircraftSimulationLODComponent::ApplyCurrentBudget()
 	Budget.bEnablePhysics = bNetworkProxyBudget
 		? bClientProxyUsesDefaultPhysicsReplication && bPhysicalDrive
 		: bPhysicalDrive;
-	Budget.bRunSlowLogic = !bNetworkProxyBudget && Entry.bRunSlowLogic;
-	Budget.SlowLogicIntervalSeconds = Entry.SlowLogicIntervalSeconds;
 	Budget.CollisionMode = Entry.CollisionMode;
 	Budget.bAllowDebugDraw = Entry.bAllowDebugDraw;
 

@@ -24,7 +24,7 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 
 	FManagedArrayCollection InCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	if (!FMath::IsFinite(MassKg) || MassKg <= 0.0f
-		|| !FMath::IsFinite(CenterOfMassOffsetCm.X) || !FMath::IsFinite(CenterOfMassOffsetCm.Y) || !FMath::IsFinite(CenterOfMassOffsetCm.Z)
+		|| !FMath::IsFinite(CenterOfMassNudgeCm.X) || !FMath::IsFinite(CenterOfMassNudgeCm.Y) || !FMath::IsFinite(CenterOfMassNudgeCm.Z)
 		|| !FMath::IsFinite(InertiaTensorScale.X) || !FMath::IsFinite(InertiaTensorScale.Y) || !FMath::IsFinite(InertiaTensorScale.Z)
 		|| InertiaTensorScale.X <= 0.0f || InertiaTensorScale.Y <= 0.0f || InertiaTensorScale.Z <= 0.0f)
 	{
@@ -46,9 +46,9 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	{
 		MassArr[0] = MassKg;
 	}
-	if (TArrayView<FVector3f> ComArr = Facade.GetFrameCenterOfMassOffsetCm(); ComArr.Num() > 0)
+	if (TArrayView<FVector3f> ComArr = Facade.GetFrameCenterOfMassNudgeCm(); ComArr.Num() > 0)
 	{
-		ComArr[0] = CenterOfMassOffsetCm;
+		ComArr[0] = CenterOfMassNudgeCm;
 	}
 	if (TArrayView<FVector3f> InertiaScaleArr = Facade.GetFrameInertiaTensorScale(); InertiaScaleArr.Num() > 0)
 	{

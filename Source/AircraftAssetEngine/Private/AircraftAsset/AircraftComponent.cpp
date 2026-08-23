@@ -121,7 +121,7 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 
 	// 由 PhysicsAsset 几何计算基础质量属性，再覆盖质量、质心偏移和惯性张量缩放。
 	Body->SetMassOverride(Mass.MassKg, /*bNewOverrideMass=*/true);
-	Body->COMNudge = Mass.CenterOfMassOffsetCm;
+	Body->COMNudge = Mass.CenterOfMassNudgeCm;
 	Body->InertiaTensorScale = Mass.InertiaTensorScale;
 	Body->UpdateMassProperties();
 
@@ -129,9 +129,9 @@ void UAircraftComponent::ApplyMassPropertiesToBodyInstance()
 		TEXT("[AircraftDF.MassApply] Owner=%s LOD=%d ConfigMass=%.3fkg ActualMass=%.3fkg COMNudge=(%+.2f,%+.2f,%+.2f)cm InertiaScale=(%.3f,%.3f,%.3f) ActualInertia=(%.1f,%.1f,%.1f)kgcm2"),
 		*GetNameSafe(GetOwner()), CurrentSimulationLOD,
 		Mass.MassKg, Body->GetBodyMass(),
-		Mass.CenterOfMassOffsetCm.X,
-		Mass.CenterOfMassOffsetCm.Y,
-		Mass.CenterOfMassOffsetCm.Z,
+		Mass.CenterOfMassNudgeCm.X,
+		Mass.CenterOfMassNudgeCm.Y,
+		Mass.CenterOfMassNudgeCm.Z,
 		Mass.InertiaTensorScale.X,
 		Mass.InertiaTensorScale.Y,
 		Mass.InertiaTensorScale.Z,
@@ -737,10 +737,21 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
 	const FVector CurrentLocation = GetComponentLocation();
+	const FVector IntegratedLocation = CurrentLocation + Target.VelocityCmPerSec * DeltaSeconds;
+	const float PositionCorrectionAlpha = 1.0f - FMath::Exp(
+		-FMath::Max(Config.KinematicPositionCorrectionRate, 0.0f) * DeltaSeconds);
 	const FVector NewLocation = Target.bPositionTrackingEnabled
-		? Target.PositionCm
-		: CurrentLocation + Target.VelocityCmPerSec * DeltaSeconds;
-	const FRotator NewRotation(0.0f, Target.YawDegrees, 0.0f);
+		? FMath::Lerp(IntegratedLocation, Target.PositionCm, PositionCorrectionAlpha)
+		: IntegratedLocation;
+	const float CurrentYawDegrees = GetComponentRotation().Yaw;
+	const float IntegratedYawDegrees = FRotator::NormalizeAxis(
+		CurrentYawDegrees + Target.YawRateDegPerSec * DeltaSeconds);
+	const float RotationCorrectionAlpha = 1.0f - FMath::Exp(
+		-FMath::Max(Config.KinematicRotationInterpSpeed, 0.0f) * DeltaSeconds);
+	const float NewYawDegrees = FRotator::NormalizeAxis(IntegratedYawDegrees
+		+ FMath::FindDeltaAngleDegrees(IntegratedYawDegrees, Target.YawDegrees)
+			* RotationCorrectionAlpha);
+	const FRotator NewRotation(0.0f, NewYawDegrees, 0.0f);
 
 	FHitResult Hit;
 	SetWorldLocationAndRotation(NewLocation, NewRotation,
@@ -1153,7 +1164,7 @@ void UAircraftComponent::ApplyFailurePolicyActions()
 				SetFlightMode(static_cast<EAircraftFlightMode>(Model->FlightController.FailurePolicy.DegradedFlightMode));
 			}
 			break;
-		case EAircraftFailurePolicyAction::Failsafe:
+		case EAircraftFailurePolicyAction::ReturnToHome:
 			SetFlightMode(EAircraftFlightMode::ReturnToHome);
 			break;
 		case EAircraftFailurePolicyAction::EmergencyStop:

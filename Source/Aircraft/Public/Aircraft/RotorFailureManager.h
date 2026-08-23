@@ -47,6 +47,8 @@ struct AIRCRAFT_API FAircraftRotorFailureManager
 		EAircraftFailurePolicyAction& OutAction);
 
 	void ResetPolicyLatch();
+	/** 暂停评估时清除尚未确认的计时，避免解锁后续接停飞前的半段确认时间。 */
+	void ResetPolicyEvaluationTimers();
 
 	void ResetAuthority()
 	{

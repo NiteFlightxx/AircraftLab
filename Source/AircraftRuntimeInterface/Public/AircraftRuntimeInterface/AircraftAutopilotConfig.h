@@ -24,10 +24,12 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTrajectoryTimingRuntimeConfig
 
 	float SampleSpacingCm = 50.0f;
 	float ThrustReserveFraction = 0.15f;
-	float TorqueReserveFraction = 0.15f;
+	/** 曲率向心加速度之外保留给路径跟踪修正的水平加速度比例。 */
+	float CurvatureAccelerationReserveFraction = 0.15f;
 	float BrakingReserveFraction = 0.10f;
 	int32 MaxIterations = 12;
-	float FeasibilityTolerance = 1.0e-3f;
+	/** 相邻两轮速度上限收敛判定阈值（cm/s）。 */
+	float SpeedConvergenceToleranceCmPerSec = 1.0e-3f;
 };
 
 /** Dataflow 编译后的模型预测轮廓控制配置。 */
@@ -42,11 +44,13 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMpccRuntimeConfig
 	float SolveTimeBudgetMilliseconds = 2.0f;
 	float ContourErrorWeight = 8.0f;
 	float LagErrorWeight = 2.0f;
-	float ProgressWeight = 1.0f;
 	float SpeedTrackingWeight = 1.5f;
 	float AccelerationWeight = 0.05f;
 	float JerkWeight = 0.02f;
-	float YawTrackingWeight = 0.5f;
+	/** 偏航参考一阶响应时间常数（秒）。 */
+	float YawResponseTimeSeconds = 0.04f;
+	/** 轮廓误差减速 governor 的误差标度（厘米）。 */
+	float ContourErrorGovernorScaleCm = 100.0f;
 	float TerminalPositionWeight = 20.0f;
 	float TerminalVelocityWeight = 10.0f;
 	float Regularization = 1.0e-5f;

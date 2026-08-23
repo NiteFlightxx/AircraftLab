@@ -19,6 +19,31 @@ namespace
 		return Wrapped < 0.0f ? Wrapped + Duration : Wrapped;
 	}
 
+	void ApplyCapabilityLimits(
+		FAircraftRequestedMotionLimits& Limits,
+		const FAircraftDynamicCapabilitySnapshot& Capability)
+	{
+		if (!Capability.bValid)
+		{
+			return;
+		}
+		Limits.CruiseSpeedCmPerSec = PositiveMinimum(
+			Limits.CruiseSpeedCmPerSec, Capability.MaxHorizontalSpeedCmPerSec);
+		Limits.MaxAccelerationCmPerSecSq = PositiveMinimum(
+			Limits.MaxAccelerationCmPerSecSq, Capability.MaxHorizontalAccelerationCmPerSecSq);
+		Limits.MaxDecelerationCmPerSecSq = PositiveMinimum(
+			Limits.MaxDecelerationCmPerSecSq, Capability.MaxHorizontalAccelerationCmPerSecSq);
+		Limits.MaxVerticalAccelerationCmPerSecSq = PositiveMinimum(
+			Limits.MaxVerticalAccelerationCmPerSecSq, Capability.MaxVerticalAccelerationCmPerSecSq);
+		Limits.MaxClimbRateCmPerSec = PositiveMinimum(
+			Limits.MaxClimbRateCmPerSec, Capability.MaxClimbRateCmPerSec);
+		Limits.MaxDescentRateCmPerSec = PositiveMinimum(
+			Limits.MaxDescentRateCmPerSec, Capability.MaxDescentRateCmPerSec);
+		Limits.MaxYawRateDegPerSec = PositiveMinimum(
+			Limits.MaxYawRateDegPerSec,
+			FMath::RadiansToDegrees(Capability.MaxBodyRateRadPerSec.Z));
+	}
+
 	float ResolveHorizontalThrustAuthority(
 		const FAircraftDynamicCapabilitySnapshot& Capability)
 	{
@@ -208,7 +233,7 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 	const float AccelerationLimit = FMath::Min(RequestedAcceleration,
 		Capability.bValid ? UsableThrustAcceleration : RequestedAcceleration);
 	const float CurvatureAccelerationLimit = AccelerationLimit
-		* (1.0f - Config.Timing.TorqueReserveFraction);
+		* (1.0f - Config.Timing.CurvatureAccelerationReserveFraction);
 	const float DecelerationLimit = PositiveMinimum(RequestedDeceleration,
 		PhysicalHorizontalAcceleration) * (1.0f - Config.Timing.BrakingReserveFraction);
 
@@ -355,7 +380,7 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 			MaximumChange = FMath::Max(MaximumChange,
 				FMath::Abs(SpeedLimits[Index] - PreviousSpeedLimits[Index]));
 		}
-		if (MaximumChange <= Config.Timing.FeasibilityTolerance)
+		if (MaximumChange <= Config.Timing.SpeedConvergenceToleranceCmPerSec)
 		{
 			break;
 		}
@@ -410,17 +435,18 @@ bool FAircraftMotionPlan::Build(
 		return false;
 	}
 	SourceIntent = Intent;
-	switch (Intent.Type)
+	ApplyCapabilityLimits(SourceIntent.Limits, Capability);
+	switch (SourceIntent.Type)
 	{
 	case EAircraftMovementIntentType::Hold:
-		bValid = BuildHoldPlan(Intent, InitialState);
+		bValid = BuildHoldPlan(SourceIntent, InitialState);
 		break;
 	case EAircraftMovementIntentType::Route:
 	case EAircraftMovementIntentType::Orbit:
-		bValid = BuildSpatialPlan(Intent, Config, InitialState, Capability);
+		bValid = BuildSpatialPlan(SourceIntent, Config, InitialState, Capability);
 		break;
 	case EAircraftMovementIntentType::TimedTrajectory:
-		bValid = BuildTimedPlan(Intent);
+		bValid = BuildTimedPlan(SourceIntent);
 		break;
 	case EAircraftMovementIntentType::Velocity:
 		bContinuous = true;

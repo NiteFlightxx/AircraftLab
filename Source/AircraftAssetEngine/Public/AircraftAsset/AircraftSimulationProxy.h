@@ -129,8 +129,8 @@ protected:
 	}
 
 private:
-	/** 模型/几何变化后：展开旋翼分配描述并复位全部 PT 控制状态。 */
-	void RebuildRotorDescriptors_PhysicsThread();
+	/** 按 Chaos 当前真实质心展开旋翼分配描述，并复位全部 PT 控制状态。 */
+	void RebuildRotorDescriptors_PhysicsThread(const FVector& CenterOfMassBodyCm);
 	void ApplyPendingConfiguration_PhysicsThread();
 	/** 由飞行模式推导能力缓存与姿态模式。 */
 	void UpdateModeCapabilities(EAircraftFlightMode Mode);
@@ -219,6 +219,9 @@ private:
 	FAircraftFlightControlRuntimeState Runtime;
 	/** 物理缓存（刚体真值快照）。 */
 	FAircraftPhysicsCache PhysicsCache;
+	/** 当前分配矩阵使用的真实 Chaos 质心。 */
+	FVector RotorDescriptorCenterOfMassBodyCm = FVector::ZeroVector;
+	bool bHasRotorDescriptorCenterOfMass = false;
 	/** 模式能力缓存。 */
 	FAircraftModeCapabilities ModeCapabilities;
 	FAircraftPredictiveController PredictiveController;

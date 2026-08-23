@@ -23,7 +23,9 @@ public:
 
 	/**
 	 * Chaos 异步物理解算的固定时间步（秒）。
-	 * 节点存在时覆盖底盘 BodyInstance 的 SolverAsyncDeltaTime；删除节点时使用项目物理设置。
+	 * 节点存在时为当前机体请求该步长；若低于所属 Chaos Solver 当前异步步长，
+	 * 会降低该共享 Solver 的异步步长，因此同一 Solver 中的其他刚体也会受到影响。
+	 * 删除节点时完全使用项目物理设置。
 	 */
 	UPROPERTY(EditAnywhere, Category = "Solver", meta = (ClampMin = "0.001", ClampMax = "0.066667", Units = "s"))
 	float AsyncFixedTimeStepSize = 1.0f / 60.0f;

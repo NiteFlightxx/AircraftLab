@@ -29,7 +29,7 @@ void FAircraftAerodynamicsConfigNode::Evaluate(
 		return !Value.ContainsNaN() && Value.GetMin() >= 0.0;
 	};
 	const bool bInvalid = !FMath::IsFinite(Config.AirDensityKgPerM3)
-		|| Config.AirDensityKgPerM3 < 0.0f
+		|| Config.AirDensityKgPerM3 <= 0.0f
 		|| !IsNonNegativeVector(Config.LinearDragNsPerM)
 		|| !IsNonNegativeVector(Config.DragAreaCoefficientM2)
 		|| !IsNonNegativeVector(Config.AngularDragNmPerRadPerSec)

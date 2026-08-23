@@ -2,6 +2,7 @@
 
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
+#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 
 #include "Math/NumericLimits.h"
 #include "Misc/Crc.h"
@@ -93,7 +94,7 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	/* Frame：根骨骼 + 质量惯性是结构性的 */
 	AccumulateArray(Facade.GetFrameRootBone());
 	AccumulateArray(Facade.GetFrameMassKg());
-	AccumulateArray(Facade.GetFrameCenterOfMassOffsetCm());
+	AccumulateArray(Facade.GetFrameCenterOfMassNudgeCm());
 	AccumulateArray(Facade.GetFrameInertiaTensorScale());
 
 	/* Motors：电机数量 / 名字 / 一阶滞后参数都是结构性的 */
@@ -115,9 +116,7 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetPropellerThrustAxisLocal());
 	AccumulateArray(Facade.GetPropellerSpinDirection());
 	AccumulateArray(Facade.GetPropellerMaxThrustForce());
-	AccumulateArray(Facade.GetPropellerThrustCoefficient());
 	AccumulateArray(Facade.GetPropellerReactionTorqueCoefficient());
-	AccumulateArray(Facade.GetPropellerEfficiency());
 	AccumulateArray(Facade.GetPropellerControlAuthorityScale());
 
 	/* FlightController：PID 增益本身是属性而非结构，但限幅与分配阻尼会
@@ -207,8 +206,29 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 	}
 
 	// 不做静态 schema 校验：每级 LOD 需要哪些组由该 LOD 的 DriveMode 在运行时自行消费，
-	// 缺失组走默认值（Build/模型层本就容错）；图的正确性由作者人为控制。
-	// 这样 Frame→Constraint→LOD1 这类"按需求挂载"的精简支路拓扑不会被一刀切拒绝。
+	float PreviousMaximumDistanceCm = -1.0f;
+	for (int32 LodIndex = 0; LodIndex + 1 < Collections.Num(); ++LodIndex)
+	{
+		const UE::AircraftLab::AircraftAsset::FCollectionAircraftPropertyConstFacade Properties(
+			Collections[LodIndex]);
+		const FName DistanceKey(TEXT("SimulationLOD.MaxDistanceCm"));
+		if (!Properties.IsValid() || Properties.GetKeyNameIndex(DistanceKey) == INDEX_NONE)
+		{
+			Context.Error(FText::FromString(FString::Printf(
+				TEXT("Collection LOD %d is missing its Simulation LOD profile."), LodIndex)), this);
+			return;
+		}
+		const float MaximumDistanceCm = Properties.GetValue<float>(DistanceKey, -1.0f);
+		if (!FMath::IsFinite(MaximumDistanceCm) || MaximumDistanceCm < 0.0f
+			|| (LodIndex > 0 && MaximumDistanceCm <= PreviousMaximumDistanceCm))
+		{
+			Context.Error(FText::FromString(FString::Printf(
+				TEXT("Collection LOD maximum distances must be finite, non-negative and strictly increasing; LOD %d is invalid."),
+				LodIndex)), this);
+			return;
+		}
+		PreviousMaximumDistanceCm = MaximumDistanceCm;
+	}
 
 	const uint32 NewChecksum = ComputeCollectionsChecksum(Collections);
 	if (NewChecksum == CollectionChecksum && !bPropertyStructureChanged

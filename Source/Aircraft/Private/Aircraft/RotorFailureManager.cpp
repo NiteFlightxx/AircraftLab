@@ -144,3 +144,10 @@ void FAircraftRotorFailureManager::ResetPolicyLatch()
 	PolicyStatus = FAircraftFailurePolicyStatus();
 	PolicyStatus.bHasAuthoritySample = bHadAuthoritySample;
 }
+
+void FAircraftRotorFailureManager::ResetPolicyEvaluationTimers()
+{
+	PolicyStatus.bViolationActive = false;
+	PolicyStatus.ViolationDurationSeconds = 0.0f;
+	PolicyStatus.RecoveryDurationSeconds = 0.0f;
+}

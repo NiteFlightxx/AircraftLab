@@ -2,24 +2,8 @@
 
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAirscrewProfileNode)
-
-namespace
-{
-	using namespace UE::AircraftLab::AircraftAsset;
-
-	void SetFloatProperty(FCollectionAircraftPropertyMutableFacade& Properties, const FName Key, const float Value)
-	{
-		int32 Index = Properties.GetKeyNameIndex(Key);
-		if (Index == INDEX_NONE)
-		{
-			Index = Properties.AddProperty(Key, EAircraftCollectionPropertyFlags::Enabled);
-		}
-		Properties.SetValue(Index, Value);
-	}
-}
 
 FAircraftAirscrewProfileNode::FAircraftAirscrewProfileNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
 	: FDataflowNode(InParam, InGuid)
@@ -59,17 +43,16 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 		return FMath::IsFinite(Value.X) && FMath::IsFinite(Value.Y) && FMath::IsFinite(Value.Z);
 	};
 	if (!IsFiniteVector(Profile.PositionLocalCm) || !IsFiniteVector(Profile.ThrustAxisLocal)
-		|| !FMath::IsFinite(Profile.MaxThrustForce) || !FMath::IsFinite(Profile.ThrustCoefficient)
-		|| !FMath::IsFinite(Profile.ReactionTorqueCoefficient) || !FMath::IsFinite(Profile.Efficiency)
-		|| !FMath::IsFinite(Profile.ControlAuthorityScale) || !FMath::IsFinite(Profile.CommandScale)
+		|| !FMath::IsFinite(Profile.MaxThrustForce)
+		|| !FMath::IsFinite(Profile.ReactionTorqueCoefficient)
+		|| !FMath::IsFinite(Profile.ControlAuthorityScale)
 		|| !FMath::IsFinite(Profile.Motor.IdleRpm) || !FMath::IsFinite(Profile.Motor.MaxRpm)
 		|| !FMath::IsFinite(Profile.Motor.SpinUpTimeSeconds) || !FMath::IsFinite(Profile.Motor.SpinDownTimeSeconds)
 		|| !FMath::IsFinite(Profile.Motor.CommandExponent) || !FMath::IsFinite(Profile.Motor.MaxCommandSlewPerSecond)
 		|| Profile.ThrustAxisLocal.IsNearlyZero() || Profile.MaxThrustForce <= 0.0f
-		|| Profile.ThrustCoefficient <= 0.0f || Profile.ReactionTorqueCoefficient < 0.0f
-		|| Profile.Efficiency < 0.0f || Profile.Efficiency > 1.0f
+		|| Profile.ReactionTorqueCoefficient < 0.0f
 		|| Profile.ControlAuthorityScale < 0.0f || Profile.ControlAuthorityScale > 1.0f
-		|| Profile.CommandScale < 0.0f || Profile.Motor.MaxRpm <= Profile.Motor.IdleRpm
+		|| Profile.Motor.MaxRpm <= Profile.Motor.IdleRpm
 		|| Profile.Motor.IdleRpm < 0.0f || Profile.Motor.SpinUpTimeSeconds <= 0.0f
 		|| Profile.Motor.SpinDownTimeSeconds <= 0.0f || Profile.Motor.CommandExponent <= 0.0f
 		|| Profile.Motor.MaxCommandSlewPerSecond < 0.0f)
@@ -133,13 +116,8 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 	TArrayView<FVector3f> ThrustAxes = WriteFacade.GetPropellerThrustAxisLocal();
 	TArrayView<uint8> SpinDirections = WriteFacade.GetPropellerSpinDirection();
 	TArrayView<float> MaxThrust = WriteFacade.GetPropellerMaxThrustForce();
-	TArrayView<float> ThrustCoefficient = WriteFacade.GetPropellerThrustCoefficient();
 	TArrayView<float> ReactionTorqueCoefficient = WriteFacade.GetPropellerReactionTorqueCoefficient();
-	TArrayView<float> Efficiency = WriteFacade.GetPropellerEfficiency();
 	TArrayView<float> Authority = WriteFacade.GetPropellerControlAuthorityScale();
-
-	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
-	Properties.DefineSchema();
 	MotorNames[Index] = MotorName;
 	(*MotorEnabled)[Index] = Profile.bEnabled;
 	MotorIdleRpm[Index] = Profile.Motor.IdleRpm;
@@ -157,11 +135,8 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 	ThrustAxes[Index] = Profile.ThrustAxisLocal.GetSafeNormal();
 	SpinDirections[Index] = static_cast<uint8>(Profile.SpinDirection);
 	MaxThrust[Index] = Profile.MaxThrustForce;
-	ThrustCoefficient[Index] = Profile.ThrustCoefficient;
 	ReactionTorqueCoefficient[Index] = Profile.ReactionTorqueCoefficient;
-	Efficiency[Index] = Profile.Efficiency;
 	Authority[Index] = Profile.ControlAuthorityScale;
-	SetFloatProperty(Properties, *FString::Printf(TEXT("Airscrew.%d.CommandScale"), Index), Profile.CommandScale);
 
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

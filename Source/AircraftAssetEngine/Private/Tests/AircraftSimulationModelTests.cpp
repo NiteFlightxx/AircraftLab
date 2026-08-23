@@ -212,14 +212,20 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 	SetInt(TEXT("FlightController.Failure.MinimumHealthyRotorCount"), 3);
 	SetFloat(TEXT("FlightController.Failure.MinimumRollAuthority"), 0.4f);
 	SetFloat(TEXT("FlightController.Failure.ConfirmationTimeSeconds"), 0.25f);
-	SetInt(TEXT("FlightController.Failure.Action"), 2); // Failsafe
+	SetInt(TEXT("FlightController.Failure.Action"), 2); // ReturnToHome
 	SetInt(TEXT("FlightController.Failure.DegradedFlightMode"), 2); // Angle
 
 	SetFloat(TEXT("Autopilot.Path.ResampleSpacingCm"), 75.0f);
 	SetFloat(TEXT("Autopilot.Timing.ThrustReserveFraction"), 0.2f);
+	SetFloat(TEXT("Autopilot.Timing.CurvatureAccelerationReserveFraction"), 0.22f);
+	SetFloat(TEXT("Autopilot.Timing.SpeedConvergenceToleranceCmPerSec"), 0.75f);
 	SetInt(TEXT("Autopilot.Mpcc.HorizonSteps"), 24);
 	SetInt(TEXT("Autopilot.Mpcc.MaxOptimizationIterations"), 4);
 	SetFloat(TEXT("Autopilot.Mpcc.ContourErrorWeight"), 12.0f);
+	SetFloat(TEXT("Autopilot.Mpcc.YawResponseTimeSeconds"), 0.08f);
+	SetFloat(TEXT("Autopilot.Mpcc.ContourErrorGovernorScaleCm"), 240.0f);
+	SetFloat(TEXT("FlightController.Kinematic.PositionCorrectionRate"), 6.0f);
+	SetFloat(TEXT("FlightController.Kinematic.RotationInterpSpeed"), 7.0f);
 	SetInt(TEXT("Aerodynamics.Configured"), 1);
 	SetFloat(TEXT("Aerodynamics.AirDensityKgPerM3"), 1.1f);
 
@@ -232,15 +238,25 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 	TestEqual(TEXT("Minimum healthy rotor count reaches the runtime model"), Policy.MinimumHealthyRotorCount, 3);
 	TestEqual(TEXT("Minimum roll authority reaches the runtime model"), Policy.MinimumRollAuthority, 0.4f);
 	TestEqual(TEXT("Confirmation time reaches the runtime model"), Policy.ConfirmationTimeSeconds, 0.25f);
-	TestEqual(TEXT("Failsafe action reaches the runtime model"), Policy.Action, EAircraftFailurePolicyAction::Failsafe);
+	TestEqual(TEXT("Return-to-home action reaches the runtime model"), Policy.Action, EAircraftFailurePolicyAction::ReturnToHome);
 	TestEqual(TEXT("Degraded flight mode reaches the runtime model"), Policy.DegradedFlightMode, uint8(2));
 
 	TestEqual(TEXT("Path spacing reaches the runtime model"), LOD->Autopilot.Path.ResampleSpacingCm, 75.0f);
 	TestEqual(TEXT("Thrust reserve reaches the runtime model"), LOD->Autopilot.Timing.ThrustReserveFraction, 0.2f);
+	TestEqual(TEXT("Curvature acceleration reserve reaches the runtime model"),
+		LOD->Autopilot.Timing.CurvatureAccelerationReserveFraction, 0.22f);
+	TestEqual(TEXT("Speed convergence tolerance reaches the runtime model"),
+		LOD->Autopilot.Timing.SpeedConvergenceToleranceCmPerSec, 0.75f);
 	TestEqual(TEXT("MPCC horizon reaches the runtime model"), LOD->Autopilot.Mpcc.HorizonSteps, 24);
 	TestEqual(TEXT("MPCC iteration budget reaches the runtime model"),
 		LOD->Autopilot.Mpcc.MaxOptimizationIterations, 4);
 	TestEqual(TEXT("MPCC contour weight reaches the runtime model"), LOD->Autopilot.Mpcc.ContourErrorWeight, 12.0f);
+	TestEqual(TEXT("Yaw response time reaches the runtime model"), LOD->Autopilot.Mpcc.YawResponseTimeSeconds, 0.08f);
+	TestEqual(TEXT("Contour governor scale reaches the runtime model"), LOD->Autopilot.Mpcc.ContourErrorGovernorScaleCm, 240.0f);
+	TestEqual(TEXT("Kinematic position correction reaches the runtime model"),
+		LOD->FlightController.KinematicPositionCorrectionRate, 6.0f);
+	TestEqual(TEXT("Kinematic rotation correction reaches the runtime model"),
+		LOD->FlightController.KinematicRotationInterpSpeed, 7.0f);
 	TestTrue(TEXT("Aerodynamics node presence reaches the runtime model"), LOD->bHasAerodynamics);
 	TestEqual(TEXT("Air density reaches the runtime model"), LOD->Aerodynamics.AirDensityKgPerM3, 1.1f);
 	return true;

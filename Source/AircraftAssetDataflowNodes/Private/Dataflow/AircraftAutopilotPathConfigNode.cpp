@@ -25,7 +25,10 @@ void FAircraftAutopilotPathConfigNode::Evaluate(
 	}
 
 	const FManagedArrayCollection Input = GetValue<FManagedArrayCollection>(Context, &Collection);
-	const bool bInvalid = Config.ResampleSpacingCm <= 0.0f
+	const float Scalars[] = { Config.ResampleSpacingCm, Config.MinimumSegmentLengthCm,
+		Config.CorridorSafetyMarginCm, Config.CenterlineWeight, Config.CurvatureWeight,
+		Config.SnapWeight, Config.ConvergenceToleranceCm };
+	bool bInvalid = Config.ResampleSpacingCm <= 0.0f
 		|| Config.MinimumSegmentLengthCm <= 0.0f
 		|| Config.CorridorSafetyMarginCm < 0.0f
 		|| Config.CenterlineWeight < 0.0f
@@ -33,6 +36,10 @@ void FAircraftAutopilotPathConfigNode::Evaluate(
 		|| Config.SnapWeight < 0.0f
 		|| Config.MaxIterations <= 0
 		|| Config.ConvergenceToleranceCm <= 0.0f;
+	for (const float Value : Scalars)
+	{
+		bInvalid |= !FMath::IsFinite(Value);
+	}
 	if (bInvalid)
 	{
 		Context.Error(FText::FromString(TEXT("Spatial path optimization configuration is invalid.")), this);

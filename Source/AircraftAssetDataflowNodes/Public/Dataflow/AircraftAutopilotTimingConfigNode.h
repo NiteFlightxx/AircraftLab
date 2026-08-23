@@ -19,7 +19,7 @@ struct FAircraftAutopilotTimingConfig
 	float ThrustReserveFraction = 0.15f;
 
 	UPROPERTY(EditAnywhere, Category = "Reserve", meta = (ClampMin = "0.0", ClampMax = "0.9"))
-	float TorqueReserveFraction = 0.15f;
+	float CurvatureAccelerationReserveFraction = 0.15f;
 
 	UPROPERTY(EditAnywhere, Category = "Reserve", meta = (ClampMin = "0.0", ClampMax = "0.9"))
 	float BrakingReserveFraction = 0.10f;
@@ -27,8 +27,8 @@ struct FAircraftAutopilotTimingConfig
 	UPROPERTY(EditAnywhere, Category = "Solver", meta = (ClampMin = "1"))
 	int32 MaxIterations = 12;
 
-	UPROPERTY(EditAnywhere, Category = "Solver", meta = (ClampMin = "0.000001"))
-	float FeasibilityTolerance = 1.0e-3f;
+	UPROPERTY(EditAnywhere, Category = "Solver", meta = (ClampMin = "0.000001", Units = "cm/s"))
+	float SpeedConvergenceToleranceCmPerSec = 1.0e-3f;
 };
 
 USTRUCT(meta = (DataflowAircraft))

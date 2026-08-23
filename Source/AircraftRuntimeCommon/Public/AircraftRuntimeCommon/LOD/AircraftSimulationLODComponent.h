@@ -26,8 +26,6 @@ struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODRuntimeSettingsLite
 	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
 	float MaxDistanceCm = 6000.0f;
-	bool bRunSlowLogic = true;
-	float SlowLogicIntervalSeconds = 0.0f;
 	bool bAllowDebugDraw = false;
 };
 

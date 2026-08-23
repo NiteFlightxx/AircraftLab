@@ -10,11 +10,41 @@ namespace
 		if (Available <= 0.0f) return Requested;
 		return FMath::Min(Requested, Available);
 	}
+
+	bool PlanningCapabilityEquals(
+		const FAircraftDynamicCapabilitySnapshot& A,
+		const FAircraftDynamicCapabilitySnapshot& B)
+	{
+		return A.bValid == B.bValid
+			&& FMath::IsNearlyEqual(A.MassKg, B.MassKg)
+			&& A.InertiaKgM2.Equals(B.InertiaKgM2, 1.0e-3)
+			&& A.CenterOfMassBodyCm.Equals(B.CenterOfMassBodyCm, 0.01)
+			&& FMath::IsNearlyEqual(A.GravityCmPerSecSq, B.GravityCmPerSecSq)
+			&& FMath::IsNearlyEqual(A.MaxHorizontalSpeedCmPerSec, B.MaxHorizontalSpeedCmPerSec)
+			&& FMath::IsNearlyEqual(A.MaxHorizontalAccelerationCmPerSecSq, B.MaxHorizontalAccelerationCmPerSecSq)
+			&& FMath::IsNearlyEqual(A.MaxVerticalAccelerationCmPerSecSq, B.MaxVerticalAccelerationCmPerSecSq)
+			&& FMath::IsNearlyEqual(A.MaxClimbRateCmPerSec, B.MaxClimbRateCmPerSec)
+			&& FMath::IsNearlyEqual(A.MaxDescentRateCmPerSec, B.MaxDescentRateCmPerSec)
+			&& FMath::IsNearlyEqual(A.MaxTiltRadians, B.MaxTiltRadians)
+			&& A.MaxBodyRateRadPerSec.Equals(B.MaxBodyRateRadPerSec, 1.0e-4)
+			&& FMath::IsNearlyEqual(A.CollectiveAuthorityN, B.CollectiveAuthorityN)
+			&& A.PositiveTorqueAuthorityNm.Equals(B.PositiveTorqueAuthorityNm, 1.0e-3)
+			&& A.NegativeTorqueAuthorityNm.Equals(B.NegativeTorqueAuthorityNm, 1.0e-3)
+			&& A.LinearDampingPerSecond.Equals(B.LinearDampingPerSecond, 1.0e-4)
+			&& A.AngularDampingPerSecond.Equals(B.AngularDampingPerSecond, 1.0e-4)
+			&& A.bHasExplicitAerodynamics == B.bHasExplicitAerodynamics
+			&& FMath::IsNearlyEqual(A.AirDensityKgPerM3, B.AirDensityKgPerM3)
+			&& A.LinearDragBodyNsPerM.Equals(B.LinearDragBodyNsPerM, 1.0e-4)
+			&& A.DragAreaCoefficientBodyM2.Equals(B.DragAreaCoefficientBodyM2, 1.0e-4)
+			&& FMath::IsNearlyEqual(A.RotorResponseTimeSeconds, B.RotorResponseTimeSeconds);
+	}
 }
 
 void FAircraftPredictiveController::Reset()
 {
 	Plan.Reset();
+	RequestedIntent = {};
+	PlanningCapability = {};
 	RuntimeConfig = {};
 	Diagnostics = {};
 	LastReference = {};
@@ -43,6 +73,8 @@ bool FAircraftPredictiveController::SetIntent(
 		&& Plan.GetIntent().Type == EAircraftMovementIntentType::Velocity
 		&& Intent.Type == EAircraftMovementIntentType::Velocity;
 	RuntimeConfig = Config;
+	RequestedIntent = Intent;
+	PlanningCapability = Capability;
 	IntentRevision = InIntentRevision;
 	ActiveIntentId = InIntentId;
 	Diagnostics = {};
@@ -79,6 +111,42 @@ bool FAircraftPredictiveController::SetIntent(
 	}
 	Diagnostics.bPlanValid = bBuilt;
 	return bBuilt;
+}
+
+bool FAircraftPredictiveController::RefreshPlanForCapability(
+	const FAircraftVehicleStateSnapshot& State,
+	const FAircraftDynamicCapabilitySnapshot& Capability)
+{
+	if (PlanningCapabilityEquals(PlanningCapability, Capability))
+	{
+		return true;
+	}
+
+	FAircraftMotionPlan RebuiltPlan;
+	if (!RebuiltPlan.Build(RequestedIntent, RuntimeConfig, State, Capability))
+	{
+		Diagnostics.bPlanValid = false;
+		return false;
+	}
+	Plan = MoveTemp(RebuiltPlan);
+	PlanningCapability = Capability;
+	ControlCorrectionHorizon.Reset();
+	PathReferenceScale = 1.0f;
+	NextSolveTimeSeconds = -DBL_MAX;
+	++PlanRevision;
+	if (RequestedIntent.Type == EAircraftMovementIntentType::Route
+		|| RequestedIntent.Type == EAircraftMovementIntentType::Orbit)
+	{
+		FAircraftMotionPlanSample Projection;
+		if (Plan.Project(State.PositionCm, EstimatedDistanceCm, Projection))
+		{
+			EstimatedDistanceCm = Projection.DistanceCm;
+			EstimatedPlanTimeSeconds = Plan.TimeAtDistance(EstimatedDistanceCm);
+		}
+	}
+	Diagnostics.PlanRevision = PlanRevision;
+	Diagnostics.bPlanValid = true;
+	return true;
 }
 
 FVector FAircraftPredictiveController::ProjectAcceleration(
@@ -186,7 +254,7 @@ void FAircraftPredictiveController::ApplyYawConstraints(
 		? LastReference.YawAccelerationDegPerSecSq : 0.0f;
 	const float YawError = FMath::FindDeltaAngleDegrees(StartingYaw, DesiredYawDegrees);
 	const float TrackingAlpha = 1.0f - FMath::Exp(
-		-FMath::Max(RuntimeConfig.Mpcc.YawTrackingWeight, 0.0f));
+		-DeltaTime / FMath::Max(RuntimeConfig.Mpcc.YawResponseTimeSeconds, UE_SMALL_NUMBER));
 	const float RequestedRate = FMath::Clamp(
 		YawError * TrackingAlpha / FMath::Max(DeltaTime, UE_SMALL_NUMBER),
 		-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
@@ -365,7 +433,8 @@ bool FAircraftPredictiveController::SolveVelocityIntent(
 bool FAircraftPredictiveController::SolvePlan(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability,
-	FAircraftTrajectoryReference& OutReference)
+	FAircraftTrajectoryReference& OutReference,
+	const double SolveDeadlineSeconds)
 {
 	FAircraftMotionPlanSample Projection;
 	const float PlanLengthCm = Plan.GetLengthCm();
@@ -451,7 +520,7 @@ bool FAircraftPredictiveController::SolvePlan(
 		const float NominalSpeedCmPerSec = static_cast<float>(
 			CurrentNominalReference.VelocityCmPerSec.Size());
 		const float NormalizedContourError = ContourErrorCm
-			/ FMath::Max(RuntimeConfig.Path.ResampleSpacingCm, 1.0f);
+			/ FMath::Max(RuntimeConfig.Mpcc.ContourErrorGovernorScaleCm, 1.0f);
 		const float TargetReferenceScale = 1.0f
 			/ (1.0f + FMath::Square(NormalizedContourError));
 		if (NominalSpeedCmPerSec > UE_SMALL_NUMBER)
@@ -519,8 +588,13 @@ bool FAircraftPredictiveController::SolvePlan(
 	const float ResponseAlpha = Capability.RotorResponseTimeSeconds > UE_SMALL_NUMBER
 		? 1.0f - FMath::Exp(-Dt / Capability.RotorResponseTimeSeconds)
 		: 1.0f;
+	Diagnostics.SolverIterations = 0;
 	for (int32 Iteration = 0; Iteration < Mpcc.MaxOptimizationIterations; ++Iteration)
 	{
+		if (FPlatformTime::Seconds() >= SolveDeadlineSeconds)
+		{
+			break;
+		}
 		Positions[0] = State.PositionCm;
 		Velocities[0] = State.VelocityCmPerSec;
 		RealizedAccelerations[0] = State.AccelerationCmPerSecSq;
@@ -589,6 +663,7 @@ bool FAircraftPredictiveController::SolvePlan(
 		{
 			ControlCorrectionHorizon[Index] -= Gradient[Index] * StepSize;
 		}
+		++Diagnostics.SolverIterations;
 	}
 
 	// 最后一次梯度更新发生在约束投影之后；发布前必须重新滚动一次，
@@ -662,6 +737,10 @@ bool FAircraftPredictiveController::Update(
 	{
 		return false;
 	}
+	if (!RefreshPlanForCapability(State, Capability))
+	{
+		return false;
+	}
 	const double SolveInterval = 1.0 / RuntimeConfig.Mpcc.UpdateRateHz;
 	if (LastReference.IsFresh(State.TimeSeconds)
 		&& NextSolveTimeSeconds > -DBL_MAX
@@ -674,22 +753,30 @@ bool FAircraftPredictiveController::Update(
 	}
 
 	const double StartSeconds = FPlatformTime::Seconds();
+	const double SolveDeadlineSeconds = StartSeconds
+		+ RuntimeConfig.Mpcc.SolveTimeBudgetMilliseconds * 0.001;
 	FAircraftTrajectoryReference Candidate;
-	const bool bSolved = Plan.GetIntent().Type == EAircraftMovementIntentType::Velocity
-		? SolveVelocityIntent(State, Capability, Candidate)
-		: SolvePlan(State, Capability, Candidate);
+	bool bSolved = false;
+	if (Plan.GetIntent().Type == EAircraftMovementIntentType::Velocity)
+	{
+		Diagnostics.SolverIterations = 0;
+		bSolved = SolveVelocityIntent(State, Capability, Candidate);
+	}
+	else
+	{
+		bSolved = SolvePlan(State, Capability, Candidate, SolveDeadlineSeconds);
+	}
 	const double ElapsedMilliseconds = (FPlatformTime::Seconds() - StartSeconds) * 1000.0;
 	Diagnostics.LastSolveMilliseconds = ElapsedMilliseconds;
 	Diagnostics.MaximumSolveMilliseconds = FMath::Max(
 		Diagnostics.MaximumSolveMilliseconds, ElapsedMilliseconds);
-	Diagnostics.SolverIterations = RuntimeConfig.Mpcc.MaxOptimizationIterations;
-	if (!bSolved || ElapsedMilliseconds > RuntimeConfig.Mpcc.SolveTimeBudgetMilliseconds)
+	if (!bSolved)
 	{
 		++Diagnostics.ConsecutiveFailures;
 		Diagnostics.bReferenceFresh = false;
 		Diagnostics.bSolverFailed = Diagnostics.ConsecutiveFailures
 			>= RuntimeConfig.Mpcc.MaxConsecutiveFailures;
-		if (Diagnostics.ConsecutiveFailures <= RuntimeConfig.Mpcc.MaxConsecutiveFailures
+		if (Diagnostics.ConsecutiveFailures < RuntimeConfig.Mpcc.MaxConsecutiveFailures
 			&& LastReference.IsFresh(State.TimeSeconds))
 		{
 			OutReference = LastReference;

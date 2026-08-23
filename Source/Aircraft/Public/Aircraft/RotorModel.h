@@ -1,12 +1,12 @@
-// （UpdateRotorState / ComputeTargetRpm / GetEffectiveTargetCommand），
+// （UpdateRotorState / ComputeTargetRpm），
 // 剥离 USceneComponent 身份后成为纯运行时模型：PT 零 UObject。
 //
 // 物理模拟流程：
 //   1. 指令平滑（Slew Rate Limiter）：|dc/dt| ≤ MaxCommandSlewPerSecond
 //   2. 目标转速：ω_target = ω_idle + (ω_max − ω_idle) × Command^exp
 //   3. 电机一阶响应：τ·dω/dt + ω = ω_target（加/减速不对称时间常数）
-//   4. 推力：T = T_max × (ω/ω_max)² × C_T × η
-//   5. 反扭矩：τ = T × k_τ_eff（方向由旋向符号决定）
+//   4. 推力：T = T_max × (ω/ω_max)²
+//   5. 反扭矩：τ = T × k_τ（方向由旋向符号决定）
 
 #pragma once
 
@@ -47,9 +47,6 @@ struct AIRCRAFT_API FAircraftRotorRuntimeState
 		bForceStopped = false;
 	}
 
-	/** 目标指令 × CommandScale 后的有效指令。 */
-	float GetEffectiveTargetCommand(const FAircraftRotorAllocationInfo& Info, float CommandScale) const;
-
 	/** ω_target = ω_idle + (ω_max − ω_idle) × Command^exp。 */
 	static float ComputeTargetRpm(const FAircraftMotorModelParams& Motor, float EffectiveCommand);
 
@@ -57,10 +54,9 @@ struct AIRCRAFT_API FAircraftRotorRuntimeState
 	 * 推进电机模型一个物理子步。
 	 * @param DeltaTime   物理子步长
 	 * @param Info        分配描述（最大物理推力/电机参数）
-	 * @param CommandScale 型号级统一标定缩放
 	 * @param bEnabled    旋翼启用状态
 	 */
-	void Update(float DeltaTime, const FAircraftRotorAllocationInfo& Info, float CommandScale, bool bEnabled);
+	void Update(float DeltaTime, const FAircraftRotorAllocationInfo& Info, bool bEnabled);
 
 	void Reset()
 	{

@@ -36,7 +36,7 @@ namespace UE::AircraftLab::AircraftAsset
 		/* Frame attributes */
 		const FName FrameRootBone(TEXT("RootBone"));
 		const FName FrameMassKg(TEXT("MassKg"));
-		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
+		const FName FrameCenterOfMassNudgeCm(TEXT("CenterOfMassNudgeCm"));
 		const FName FrameInertiaTensorScale(TEXT("InertiaTensorScale"));
 
 		/* Motors attributes */
@@ -58,9 +58,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PropellerThrustAxisLocal(TEXT("ThrustAxisLocal"));
 		const FName PropellerSpinDirection(TEXT("SpinDirection"));
 		const FName PropellerMaxThrustForce(TEXT("MaxThrustForce"));
-		const FName PropellerThrustCoefficient(TEXT("ThrustCoefficient"));
 		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
-		const FName PropellerEfficiency(TEXT("Efficiency"));
 		const FName PropellerControlAuthorityScale(TEXT("ControlAuthorityScale"));
 
 		/* FlightController attributes */
@@ -126,7 +124,7 @@ namespace UE::AircraftLab::AircraftAsset
 		/* Frame */
 		FrameRootBone = Collection.FindAttributeTyped<FName>(Private::FrameRootBone, Private::FrameGroup);
 		FrameMassKg = Collection.FindAttributeTyped<float>(Private::FrameMassKg, Private::FrameGroup);
-		FrameCenterOfMassOffsetCm = Collection.FindAttributeTyped<FVector3f>(Private::FrameCenterOfMassOffsetCm, Private::FrameGroup);
+		FrameCenterOfMassNudgeCm = Collection.FindAttributeTyped<FVector3f>(Private::FrameCenterOfMassNudgeCm, Private::FrameGroup);
 		FrameInertiaTensorScale = Collection.FindAttributeTyped<FVector3f>(Private::FrameInertiaTensorScale, Private::FrameGroup);
 
 		/* Motors */
@@ -148,9 +146,7 @@ namespace UE::AircraftLab::AircraftAsset
 		PropellerThrustAxisLocal = Collection.FindAttributeTyped<FVector3f>(Private::PropellerThrustAxisLocal, Private::PropellersGroup);
 		PropellerSpinDirection = Collection.FindAttributeTyped<uint8>(Private::PropellerSpinDirection, Private::PropellersGroup);
 		PropellerMaxThrustForce = Collection.FindAttributeTyped<float>(Private::PropellerMaxThrustForce, Private::PropellersGroup);
-		PropellerThrustCoefficient = Collection.FindAttributeTyped<float>(Private::PropellerThrustCoefficient, Private::PropellersGroup);
 		PropellerReactionTorqueCoefficient = Collection.FindAttributeTyped<float>(Private::PropellerReactionTorqueCoefficient, Private::PropellersGroup);
-		PropellerEfficiency = Collection.FindAttributeTyped<float>(Private::PropellerEfficiency, Private::PropellersGroup);
 		PropellerControlAuthorityScale = Collection.FindAttributeTyped<float>(Private::PropellerControlAuthorityScale, Private::PropellersGroup);
 
 		/* FlightController */
@@ -235,7 +231,7 @@ namespace UE::AircraftLab::AircraftAsset
 		EnsureSingleElement(Private::FrameGroup);
 		AddAttribute(Private::FrameGroup, Private::FrameRootBone, FName());
 		AddAttribute(Private::FrameGroup, Private::FrameMassKg, float(0));
-		AddAttribute(Private::FrameGroup, Private::FrameCenterOfMassOffsetCm, FVector3f::ZeroVector);
+		AddAttribute(Private::FrameGroup, Private::FrameCenterOfMassNudgeCm, FVector3f::ZeroVector);
 		AddAttribute(Private::FrameGroup, Private::FrameInertiaTensorScale, FVector3f::OneVector);
 
 		/* Motors */
@@ -259,9 +255,7 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::PropellersGroup, Private::PropellerThrustAxisLocal, FVector3f(0.f, 0.f, 1.f));
 		AddAttribute(Private::PropellersGroup, Private::PropellerSpinDirection, uint8(0));
 		AddAttribute(Private::PropellersGroup, Private::PropellerMaxThrustForce, float(0));
-		AddAttribute(Private::PropellersGroup, Private::PropellerThrustCoefficient, float(0));
 		AddAttribute(Private::PropellersGroup, Private::PropellerReactionTorqueCoefficient, float(0));
-		AddAttribute(Private::PropellersGroup, Private::PropellerEfficiency, float(1));
 		AddAttribute(Private::PropellersGroup, Private::PropellerControlAuthorityScale, float(1));
 
 		/* FlightController */

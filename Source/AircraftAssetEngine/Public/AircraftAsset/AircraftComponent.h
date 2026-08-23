@@ -257,7 +257,7 @@ private:
 	 * 把 SimulationModel.Mass（FrameConfig 中的质量/质心/惯性缩放参数）
 	 * 写入底盘 BodyInstance + Component（GT 标准 setter 路径）：
 	 *   * MassKg                → BodyInstance->SetMassOverride(true) + UpdateMassProperties()
-	 *   * CenterOfMassOffsetCm  → BodyInstance->COMNudge（局部 cm 偏移）+ UpdateMassProperties()
+	 *   * CenterOfMassNudgeCm   → BodyInstance->COMNudge（相对 PhysicsAsset 质心的局部 cm 偏移）+ UpdateMassProperties()
 	 *   * InertiaTensorScale    → BodyInstance->InertiaTensorScale
 	 *
 	 * 调用时机：

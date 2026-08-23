@@ -91,7 +91,8 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	ActiveMovementIntentId = 0;
 	ControlAllocator.Reset();
 	RotorFailureManager.ResetAuthority();
-	RebuildRotorDescriptors_PhysicsThread();
+	RebuildRotorDescriptors_PhysicsThread(FVector::ZeroVector);
+	bHasRotorDescriptorCenterOfMass = false;
 	Runtime.HoldTargets.ResetHoldFlags();
 	Runtime.PreviousLinearVelocityCmPerSec = FVector::ZeroVector;
 	Runtime.bHasPreviousLinearVelocity = false;
@@ -156,14 +157,14 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 	{
 		double TotalMaxThrustN = 0.0;
 		UE_LOG(LogAircraft, Log,
-			TEXT("[AircraftDF.Config] Owner=%s LOD=%d Drive=%s Arm=%d Controller=%d Rotors=%d ForwardAxis=%d AssetMass=%.3fkg AssetCOM=(%+.2f,%+.2f,%+.2f)cm InertiaScale=(%.3f,%.3f,%.3f) ChaosMass=%.3fkg ChaosCOM=(%+.2f,%+.2f,%+.2f)cm ChaosInertia=(%.4f,%.4f,%.4f)kgm2 DampingL=(%.3f,%.3f,%.3f) DampingA=(%.3f,%.3f,%.3f)"),
+			TEXT("[AircraftDF.Config] Owner=%s LOD=%d Drive=%s Arm=%d Controller=%d Rotors=%d ForwardAxis=%d AssetMass=%.3fkg AssetCOMNudge=(%+.2f,%+.2f,%+.2f)cm InertiaScale=(%.3f,%.3f,%.3f) ChaosMass=%.3fkg ChaosCOM=(%+.2f,%+.2f,%+.2f)cm ChaosInertia=(%.4f,%.4f,%.4f)kgm2 DampingL=(%.3f,%.3f,%.3f) DampingA=(%.3f,%.3f,%.3f)"),
 			*AircraftOwnerName, ActiveLodIndex, FAircraftDebug::GetDriveModeLabel(ActiveDriveMode),
 			static_cast<int32>(ArmState), bControllerIsEnabled ? 1 : 0,
 			ControlAllocator.RotorInfoBuffer.Num(), static_cast<int32>(Config.ForwardAxis),
 			ActiveLodModel->Mass.MassKg,
-			ActiveLodModel->Mass.CenterOfMassOffsetCm.X,
-			ActiveLodModel->Mass.CenterOfMassOffsetCm.Y,
-			ActiveLodModel->Mass.CenterOfMassOffsetCm.Z,
+			ActiveLodModel->Mass.CenterOfMassNudgeCm.X,
+			ActiveLodModel->Mass.CenterOfMassNudgeCm.Y,
+			ActiveLodModel->Mass.CenterOfMassNudgeCm.Z,
 			ActiveLodModel->Mass.InertiaTensorScale.X,
 			ActiveLodModel->Mass.InertiaTensorScale.Y,
 			ActiveLodModel->Mass.InertiaTensorScale.Z,
@@ -410,23 +411,23 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 	bHasPreviousDebugSample = true;
 }
 
-void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
+void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread(
+	const FVector& CenterOfMassBodyCm)
 {
 	TArray<FAircraftRotorAllocationInfo> Infos;
 	if (ActiveLodModel)
 	{
-		const FVector ComOffsetCm = ActiveLodModel->Mass.CenterOfMassOffsetCm;
 		Infos.Reserve(ActiveLodModel->Rotors.Num());
 		for (const FAircraftRotorDefinition& Rotor : ActiveLodModel->Rotors)
 		{
 			FAircraftRotorAllocationInfo Info;
 			Info.RotorName = Rotor.RotorName;
 			Info.bEnabled = Rotor.IsEnabled();
-			Info.PositionFromCenterOfMassBodyCm = Rotor.PositionLocalCm - ComOffsetCm;
+			Info.PositionFromCenterOfMassBodyCm = Rotor.PositionLocalCm - CenterOfMassBodyCm;
 			Info.ThrustAxisBody = Rotor.GetNormalizedThrustAxisLocal();
-			Info.MaxPhysicalThrustN = Rotor.GetEffectiveMaxThrust() * FMath::Max(Rotor.ThrustCoefficient, 0.0f);
+			Info.MaxPhysicalThrustN = FMath::Max(Rotor.MaxThrustForce, 0.0f);
 			Info.MaxAllocatedThrustN = Info.MaxPhysicalThrustN * FMath::Clamp(Rotor.ControlAuthorityScale, 0.0f, 1.0f);
-			Info.ReactionTorqueCoefficientM = Rotor.GetEffectiveReactionTorqueCoefficient();
+			Info.ReactionTorqueCoefficientM = FMath::Max(Rotor.ReactionTorqueCoefficient, 0.0f);
 			Info.SpinDirectionSign = Rotor.GetSpinDirectionSign();
 			Info.Motor.IdleRpm = Rotor.Motor.IdleRpm;
 			Info.Motor.MaxRpm = Rotor.Motor.MaxRpm;
@@ -438,6 +439,9 @@ void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread()
 		}
 	}
 	ControlAllocator.SetRotorDescriptors(Infos);
+	RotorDescriptorCenterOfMassBodyCm = CenterOfMassBodyCm;
+	bHasRotorDescriptorCenterOfMass = true;
+	bDebugConfigurationPending = true;
 
 	RotorStates.SetNum(Infos.Num());
 	for (FAircraftRotorRuntimeState& State : RotorStates)
@@ -597,7 +601,11 @@ void FAircraftSimulationProxy::TickKinematicPlanner_GameThread(
 		Capability.TimeSeconds = TimeSeconds;
 		Capability.Revision = State.Sequence;
 		Capability.MassKg = Model.Mass.MassKg;
-		Capability.CenterOfMassBodyCm = Model.Mass.CenterOfMassOffsetCm;
+		if (const FBodyInstance* const Body = AircraftBodyInstance.load(std::memory_order_acquire))
+		{
+			Capability.CenterOfMassBodyCm = BodyTransform.InverseTransformPosition(
+				Body->GetCOMPosition());
+		}
 		Capability.GravityCmPerSecSq = GravityMagnitudeCmPerSecSq.load(std::memory_order_relaxed);
 		Capability.MaxHorizontalSpeedCmPerSec = Config.MaxHorizontalSpeedCmPerSec;
 		Capability.MaxHorizontalAccelerationCmPerSecSq = Config.MaxHorizontalAccelerationCmPerSecSq;
@@ -877,7 +885,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	}
 	if (RotorStates.Num() != ActiveLodModel->Rotors.Num())
 	{
-		RebuildRotorDescriptors_PhysicsThread();
+		RebuildRotorDescriptors_PhysicsThread(
+			bHasRotorDescriptorCenterOfMass ? RotorDescriptorCenterOfMassBodyCm : FVector::ZeroVector);
 	}
 
 	FBodyInstance* Body = AircraftBodyInstance.load(std::memory_order_acquire);
@@ -1058,6 +1067,11 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	PhysicsCache.LinearDampingPerSecond = FVector(static_cast<float>(Handle->LinearEtherDrag()));
 	PhysicsCache.AngularDampingPerSecond = FVector(static_cast<float>(Handle->AngularEtherDrag()));
 	PhysicsCache.CenterOfMassOffsetBodyCm = FVector(Handle->CenterOfMass());
+	if (!bHasRotorDescriptorCenterOfMass
+		|| !RotorDescriptorCenterOfMassBodyCm.Equals(PhysicsCache.CenterOfMassOffsetBodyCm, 0.01))
+	{
+		RebuildRotorDescriptors_PhysicsThread(PhysicsCache.CenterOfMassOffsetBodyCm);
+	}
 
 	// 刷新估计状态（控制循环读取 Runtime.EstimatedState）
 	{
@@ -1087,6 +1101,12 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	 * ---------------------------------------------------------------------- */
 	if (!bMotorsOn)
 	{
+		if (!Config.FailurePolicy.bEnabled
+			|| (Config.FailurePolicy.bEvaluateOnlyWhenArmed
+				&& ArmState != EAircraftArmState::Armed))
+		{
+			RotorFailureManager.ResetPolicyEvaluationTimers();
+		}
 		LogDriveGate(ArmState != EAircraftArmState::Armed
 			? TEXT("MotorsOffNotArmed") : TEXT("MotorsOffControllerDisabled"));
 		ControlSolver.Reset();
@@ -1098,8 +1118,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 			if (ControlAllocator.RotorInfoBuffer.IsValidIndex(i))
 			{
 				const FAircraftRotorDefinition& Rotor = ActiveLodModel->Rotors[i];
-				RotorStates[i].Update(DeltaTime, ControlAllocator.RotorInfoBuffer[i],
-					Rotor.CommandScale, Rotor.IsEnabled());
+				RotorStates[i].Update(
+					DeltaTime, ControlAllocator.RotorInfoBuffer[i], Rotor.IsEnabled());
 			}
 		}
 		CurrentCollectiveThrustCommand.store(0.0f, std::memory_order_relaxed);
@@ -1310,7 +1330,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	 * 9) 失效策略评估（触发动作经原子回传 GT 由组件执行）
 	 * ---------------------------------------------------------------------- */
 	if (Config.FailurePolicy.bEnabled
-		&& (!Config.FailurePolicy.bEvaluateOnlyWhenArmed || bMotorsOn))
+		&& (!Config.FailurePolicy.bEvaluateOnlyWhenArmed
+			|| ArmState == EAircraftArmState::Armed))
 	{
 		EAircraftFailurePolicyAction TriggeredAction = EAircraftFailurePolicyAction::WarningOnly;
 		if (RotorFailureManager.EvaluatePolicy(Config.FailurePolicy, DeltaTime, TriggeredAction))
@@ -1321,6 +1342,10 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 				TEXT("Aircraft failure policy triggered action %d on '%s'."),
 				static_cast<int32>(TriggeredAction), *AircraftOwnerName);
 		}
+	}
+	else
+	{
+		RotorFailureManager.ResetPolicyEvaluationTimers();
 	}
 
 	/* ----------------------------------------------------------------------
@@ -1336,7 +1361,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		const float Cmd = ControlAllocator.CommandBuffer.IsValidIndex(i)
 			? ControlAllocator.CommandBuffer[i] : 0.0f;
 		State.SetNormalizedCommand(Cmd);
-		State.Update(DeltaTime, Info, Rotor.CommandScale, Rotor.IsEnabled());
+		State.Update(DeltaTime, Info, Rotor.IsEnabled());
 
 		// 与权威组件边界一致：合力直接作用于刚体，偏心矩显式按真实 Chaos 质心计算。
 		// 这样物理施加值与分配器的 r×F 定义严格相同，也不会依赖高层位置施力接口的约定。

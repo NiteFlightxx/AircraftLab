@@ -41,12 +41,15 @@ bool FAircraftFailurePolicyConfirmationAndLatchTest::RunTest(const FString& Para
 	Policy.MinimumPitchAuthority = 0.0f;
 	Policy.MinimumYawAuthority = 0.0f;
 	Policy.ConfirmationTimeSeconds = 0.10f;
-	Policy.Action = EAircraftFailurePolicyAction::Failsafe;
+	Policy.Action = EAircraftFailurePolicyAction::ReturnToHome;
 
 	EAircraftFailurePolicyAction Action = EAircraftFailurePolicyAction::WarningOnly;
 	TestFalse(TEXT("Violation waits for confirmation"), Manager.EvaluatePolicy(Policy, 0.05f, Action));
+	Manager.ResetPolicyEvaluationTimers();
+	TestFalse(TEXT("A paused evaluation does not retain partial confirmation time"),
+		Manager.EvaluatePolicy(Policy, 0.05f, Action));
 	TestTrue(TEXT("Violation triggers at confirmation"), Manager.EvaluatePolicy(Policy, 0.05f, Action));
-	TestEqual(TEXT("Configured action is returned"), Action, EAircraftFailurePolicyAction::Failsafe);
+	TestEqual(TEXT("Configured action is returned"), Action, EAircraftFailurePolicyAction::ReturnToHome);
 	TestTrue(TEXT("Trigger is latched"), Manager.PolicyStatus.bTriggered);
 	TestFalse(TEXT("Latched policy does not repeat every tick"), Manager.EvaluatePolicy(Policy, 1.0f, Action));
 

@@ -24,6 +24,7 @@ struct FAircraftAirscrewMotorProfile
 	UPROPERTY(EditAnywhere, Category = "Motor", meta = (ClampMin = "0.0")) float MaxRpm = 12000.0f;
 	UPROPERTY(EditAnywhere, Category = "Motor", meta = (ClampMin = "0.001")) float SpinUpTimeSeconds = 0.06f;
 	UPROPERTY(EditAnywhere, Category = "Motor", meta = (ClampMin = "0.001")) float SpinDownTimeSeconds = 0.10f;
+	/** 归一化电机指令到目标转速的整形指数；控制分配会使用其反函数。 */
 	UPROPERTY(EditAnywhere, Category = "Motor", meta = (ClampMin = "0.1")) float CommandExponent = 2.0f;
 	UPROPERTY(EditAnywhere, Category = "Motor", meta = (ClampMin = "0.0")) float MaxCommandSlewPerSecond = 8.0f;
 };
@@ -42,11 +43,8 @@ struct FAircraftAirscrewProfileData
 	UPROPERTY(EditAnywhere, Category = "Installation") FVector3f PositionLocalCm = FVector3f::ZeroVector;
 	UPROPERTY(EditAnywhere, Category = "Profile") FVector3f ThrustAxisLocal = FVector3f(0.0f, 0.0f, 1.0f);
 	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ClampMin = "0.0", Units = "N")) float MaxThrustForce = 9.0f;
-	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ClampMin = "0.0")) float ThrustCoefficient = 1.0f;
 	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ClampMin = "0.0", Units = "m")) float ReactionTorqueCoefficient = 0.03f;
-	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ClampMin = "0.0", ClampMax = "1.0")) float Efficiency = 1.0f;
 	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ClampMin = "0.0", ClampMax = "1.0")) float ControlAuthorityScale = 1.0f;
-	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ClampMin = "0.0")) float CommandScale = 1.0f;
 	UPROPERTY(EditAnywhere, Category = "Profile") FAircraftAirscrewMotorProfile Motor;
 };
 

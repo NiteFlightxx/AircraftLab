@@ -11,7 +11,7 @@ struct AIRCRAFT_API FAircraftAerodynamicsRuntimeConfig
 	FVector DragAreaCoefficientM2 = FVector::ZeroVector;
 	FVector AngularDragNmPerRadPerSec = FVector::ZeroVector;
 	FVector QuadraticAngularDragNmPerRadPerSecSq = FVector::ZeroVector;
-	float MaxRelativeAirspeedCmPerSec = 20000.0f;
+	float MaxRelativeAirspeedCmPerSec = 10000.0f;
 
 	bool IsValid() const;
 };

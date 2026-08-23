@@ -19,6 +19,7 @@ namespace
 		Result.MaxClimbRateCmPerSec = 600.0f;
 		Result.MaxDescentRateCmPerSec = 500.0f;
 		Result.MaxTiltRadians = FMath::DegreesToRadians(25.0f);
+		Result.MaxBodyRateRadPerSec = FVector(FMath::DegreesToRadians(360.0f));
 		Result.bValid = true;
 		return Result;
 	}
@@ -158,7 +159,7 @@ bool FAircraftSpatialPathContinuityTest::RunTest(const FString& Parameters)
 	Corridor.StartDistanceCm = 0.0f;
 	Corridor.EndDistanceCm = 1200.0f;
 	Corridor.BoundaryPlanes = {
-		FPlane(FVector(0.0, 100.0, 0.0), FVector::RightVector),
+		FPlane(0.0, 2.0, 0.0, 200.0),
 		FPlane(FVector(0.0, -100.0, 0.0), -FVector::RightVector),
 		FPlane(FVector(0.0, 0.0, 100.0), FVector::UpVector),
 		FPlane(FVector(0.0, 0.0, -100.0), -FVector::UpVector)
@@ -172,8 +173,9 @@ bool FAircraftSpatialPathContinuityTest::RunTest(const FString& Parameters)
 		CorridorPath.Evaluate(Distance, Sample);
 		for (const FPlane& Plane : Corridor.BoundaryPlanes)
 		{
+			const double NormalLength = FVector(Plane.X, Plane.Y, Plane.Z).Size();
 			TestTrue(TEXT("Every sampled path point respects the corridor margin"),
-				Plane.PlaneDot(Sample.PositionCm) + Config.CorridorSafetyMarginCm
+				Plane.PlaneDot(Sample.PositionCm) / NormalLength + Config.CorridorSafetyMarginCm
 				<= Config.ConvergenceToleranceCm);
 		}
 	}
@@ -356,23 +358,68 @@ bool FAircraftPredictiveReferenceTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Terminal braking reaches zero reference speed"),
 		FMath::IsNearlyZero(TerminalReference.VelocityCmPerSec.X, UE_SMALL_NUMBER));
 
-	FAircraftAutopilotRuntimeConfig FailureConfig = Config;
-	FailureConfig.Mpcc.SolveTimeBudgetMilliseconds = 1.0e-9f;
-	FailureConfig.Mpcc.MaxConsecutiveFailures = 2;
-	FAircraftPredictiveController FailureController;
-	TestTrue(TEXT("Failure-threshold intent is accepted"),
-		FailureController.SetIntent(Intent, 8, 1, FailureConfig, State, Capability));
-	FAircraftTrajectoryReference FailedReference;
-	TestFalse(TEXT("First over-budget solve produces no reference"),
-		FailureController.Update(State, Capability, FailedReference));
-	TestFalse(TEXT("One transient failure is not terminal"),
-		FailureController.GetDiagnostics().bSolverFailed);
-	State.TimeSeconds += 1.0 / FailureConfig.Mpcc.UpdateRateHz;
-	++State.Sequence;
-	TestFalse(TEXT("Second over-budget solve still produces no reference"),
-		FailureController.Update(State, Capability, FailedReference));
-	TestTrue(TEXT("Configured consecutive failure threshold is terminal"),
-		FailureController.GetDiagnostics().bSolverFailed);
+	FAircraftAutopilotRuntimeConfig BudgetConfig = Config;
+	BudgetConfig.Mpcc.SolveTimeBudgetMilliseconds = 1.0e-9f;
+	FAircraftPredictiveController BudgetController;
+	const FAircraftMovementIntent BudgetIntent = MakeRouteIntent(5000.0f);
+	TestTrue(TEXT("Budget-limited route intent is accepted"),
+		BudgetController.SetIntent(BudgetIntent, 8, 1, BudgetConfig, State, Capability));
+	FAircraftTrajectoryReference BudgetReference;
+	TestTrue(TEXT("A cooperative deadline publishes a feasible partial solution"),
+		BudgetController.Update(State, Capability, BudgetReference));
+	TestTrue(TEXT("The deadline truncates optimization iterations"),
+		BudgetController.GetDiagnostics().SolverIterations
+		< BudgetConfig.Mpcc.MaxOptimizationIterations);
+	TestFalse(TEXT("Exhausting an optimization budget is not a solver failure"),
+		BudgetController.GetDiagnostics().bSolverFailed);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftCapabilityHardLimitsTest,
+	"AircraftAutopilot.MPCC.CapabilityHardLimits",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftCapabilityHardLimitsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::Velocity;
+	Intent.Velocity.VelocityCmPerSec = FVector(800.0f, 0.0f, 300.0f);
+	Intent.Limits.CruiseSpeedCmPerSec = 800.0f;
+	Intent.Limits.MaxAccelerationCmPerSecSq = 600.0f;
+	Intent.Limits.MaxDecelerationCmPerSecSq = 700.0f;
+	Intent.Limits.MaxVerticalAccelerationCmPerSecSq = 500.0f;
+	Intent.Limits.MaxClimbRateCmPerSec = 300.0f;
+	Intent.Limits.MaxDescentRateCmPerSec = 250.0f;
+	Intent.Limits.MaxYawRateDegPerSec = 120.0f;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	Capability.MaxHorizontalSpeedCmPerSec = 350.0f;
+	Capability.MaxHorizontalAccelerationCmPerSecSq = 220.0f;
+	Capability.MaxVerticalAccelerationCmPerSecSq = 180.0f;
+	Capability.MaxClimbRateCmPerSec = 140.0f;
+	Capability.MaxDescentRateCmPerSec = 110.0f;
+	Capability.MaxBodyRateRadPerSec.Z = FMath::DegreesToRadians(45.0f);
+	FAircraftVehicleStateSnapshot State;
+	FAircraftPredictiveController Controller;
+	const FAircraftAutopilotRuntimeConfig Config;
+	TestTrue(TEXT("Capability-limited intent is accepted"),
+		Controller.SetIntent(Intent, 9, 1, Config, State, Capability));
+	const FAircraftRequestedMotionLimits& Limits = Controller.GetPlan().GetIntent().Limits;
+	TestEqual(TEXT("Vehicle speed capability is authoritative"), Limits.CruiseSpeedCmPerSec, 350.0f);
+	TestEqual(TEXT("Vehicle acceleration capability is authoritative"), Limits.MaxAccelerationCmPerSecSq, 220.0f);
+	TestEqual(TEXT("Vehicle braking capability is authoritative"), Limits.MaxDecelerationCmPerSecSq, 220.0f);
+	TestEqual(TEXT("Vehicle vertical acceleration capability is authoritative"), Limits.MaxVerticalAccelerationCmPerSecSq, 180.0f);
+	TestEqual(TEXT("Vehicle climb capability is authoritative"), Limits.MaxClimbRateCmPerSec, 140.0f);
+	TestEqual(TEXT("Vehicle descent capability is authoritative"), Limits.MaxDescentRateCmPerSec, 110.0f);
+	TestEqual(TEXT("Vehicle yaw capability is authoritative"), Limits.MaxYawRateDegPerSec, 45.0f);
+	Capability.MaxHorizontalSpeedCmPerSec = 200.0f;
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("A changed capability rebuilds the plan"),
+		Controller.Update(State, Capability, Reference));
+	TestEqual(TEXT("The rebuilt plan consumes the current hard speed limit"),
+		Controller.GetPlan().GetIntent().Limits.CruiseSpeedCmPerSec, 200.0f);
 	return true;
 }
 

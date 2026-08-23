@@ -63,7 +63,7 @@ namespace UE::AircraftLab::AircraftAsset
 		/* ------------------------- Frame group (1 element) ------------------------- */
 		const TManagedArray<FName>* GetFrameRootBone() const { return FrameRootBone; }
 		const TManagedArray<float>* GetFrameMassKg() const { return FrameMassKg; }
-		const TManagedArray<FVector3f>* GetFrameCenterOfMassOffsetCm() const { return FrameCenterOfMassOffsetCm; }
+		const TManagedArray<FVector3f>* GetFrameCenterOfMassNudgeCm() const { return FrameCenterOfMassNudgeCm; }
 		const TManagedArray<FVector3f>* GetFrameInertiaTensorScale() const { return FrameInertiaTensorScale; }
 
 		/* ------------------------- Motors group (N elements) ------------------------- */
@@ -85,9 +85,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FVector3f>* GetPropellerThrustAxisLocal() const { return PropellerThrustAxisLocal; }
 		const TManagedArray<uint8>* GetPropellerSpinDirection() const { return PropellerSpinDirection; }
 		const TManagedArray<float>* GetPropellerMaxThrustForce() const { return PropellerMaxThrustForce; }
-		const TManagedArray<float>* GetPropellerThrustCoefficient() const { return PropellerThrustCoefficient; }
 		const TManagedArray<float>* GetPropellerReactionTorqueCoefficient() const { return PropellerReactionTorqueCoefficient; }
-		const TManagedArray<float>* GetPropellerEfficiency() const { return PropellerEfficiency; }
 		const TManagedArray<float>* GetPropellerControlAuthorityScale() const { return PropellerControlAuthorityScale; }
 
 		/* ------------------------- FlightController group (1 element) ------------------------- */
@@ -139,7 +137,7 @@ namespace UE::AircraftLab::AircraftAsset
 		/* Frame */
 		const TManagedArray<FName>* FrameRootBone = nullptr;
 		const TManagedArray<float>* FrameMassKg = nullptr;
-		const TManagedArray<FVector3f>* FrameCenterOfMassOffsetCm = nullptr;
+		const TManagedArray<FVector3f>* FrameCenterOfMassNudgeCm = nullptr;
 		const TManagedArray<FVector3f>* FrameInertiaTensorScale = nullptr;
 
 		/* Motors */
@@ -161,9 +159,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FVector3f>* PropellerThrustAxisLocal = nullptr;
 		const TManagedArray<uint8>* PropellerSpinDirection = nullptr;
 		const TManagedArray<float>* PropellerMaxThrustForce = nullptr;
-		const TManagedArray<float>* PropellerThrustCoefficient = nullptr;
 		const TManagedArray<float>* PropellerReactionTorqueCoefficient = nullptr;
-		const TManagedArray<float>* PropellerEfficiency = nullptr;
 		const TManagedArray<float>* PropellerControlAuthorityScale = nullptr;
 
 		/* FlightController */
@@ -256,7 +252,7 @@ namespace UE::AircraftLab::AircraftAsset
 
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, FrameRootBone)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, FrameMassKg)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameCenterOfMassOffsetCm)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameCenterOfMassNudgeCm)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FrameInertiaTensorScale)
 
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FName, MotorName)
@@ -276,9 +272,7 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, PropellerThrustAxisLocal)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(uint8, PropellerSpinDirection)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerMaxThrustForce)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerThrustCoefficient)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerReactionTorqueCoefficient)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerEfficiency)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerControlAuthorityScale)
 
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcPositionKp)

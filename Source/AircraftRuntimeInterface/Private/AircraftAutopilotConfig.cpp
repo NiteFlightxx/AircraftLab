@@ -7,35 +7,47 @@ FAircraftAutopilotRuntimeConfig::FAircraftAutopilotRuntimeConfig() = default;
 
 bool FAircraftAutopilotRuntimeConfig::IsValid() const
 {
-	return FMath::IsFinite(Path.ResampleSpacingCm) && Path.ResampleSpacingCm > 0.0f
-		&& Path.MinimumSegmentLengthCm > 0.0f
-		&& Path.CorridorSafetyMarginCm >= 0.0f
-		&& Path.CenterlineWeight >= 0.0f
-		&& Path.CurvatureWeight >= 0.0f
-		&& Path.SnapWeight >= 0.0f
+	const auto IsPositive = [](const float Value)
+	{
+		return FMath::IsFinite(Value) && Value > 0.0f;
+	};
+	const auto IsNonNegative = [](const float Value)
+	{
+		return FMath::IsFinite(Value) && Value >= 0.0f;
+	};
+	const auto IsReserve = [&IsNonNegative](const float Value)
+	{
+		return IsNonNegative(Value) && Value < 1.0f;
+	};
+	return IsPositive(Path.ResampleSpacingCm)
+		&& IsPositive(Path.MinimumSegmentLengthCm)
+		&& IsNonNegative(Path.CorridorSafetyMarginCm)
+		&& IsNonNegative(Path.CenterlineWeight)
+		&& IsNonNegative(Path.CurvatureWeight)
+		&& IsNonNegative(Path.SnapWeight)
 		&& Path.MaxIterations > 0
-		&& Path.ConvergenceToleranceCm > 0.0f
-		&& Timing.SampleSpacingCm > 0.0f
-		&& Timing.ThrustReserveFraction >= 0.0f && Timing.ThrustReserveFraction < 1.0f
-		&& Timing.TorqueReserveFraction >= 0.0f && Timing.TorqueReserveFraction < 1.0f
-		&& Timing.BrakingReserveFraction >= 0.0f && Timing.BrakingReserveFraction < 1.0f
+		&& IsPositive(Path.ConvergenceToleranceCm)
+		&& IsPositive(Timing.SampleSpacingCm)
+		&& IsReserve(Timing.ThrustReserveFraction)
+		&& IsReserve(Timing.CurvatureAccelerationReserveFraction)
+		&& IsReserve(Timing.BrakingReserveFraction)
 		&& Timing.MaxIterations > 0
-		&& Timing.FeasibilityTolerance > 0.0f
-		&& Mpcc.UpdateRateHz > 0.0f
-		&& Mpcc.HorizonSeconds > 0.0f
+		&& IsPositive(Timing.SpeedConvergenceToleranceCmPerSec)
+		&& IsPositive(Mpcc.UpdateRateHz)
+		&& IsPositive(Mpcc.HorizonSeconds)
 		&& Mpcc.HorizonSteps >= 2
 		&& Mpcc.MaxOptimizationIterations > 0
-		&& Mpcc.SolveTimeBudgetMilliseconds > 0.0f
-		&& Mpcc.ContourErrorWeight >= 0.0f
-		&& Mpcc.LagErrorWeight >= 0.0f
-		&& Mpcc.ProgressWeight >= 0.0f
-		&& Mpcc.SpeedTrackingWeight >= 0.0f
-		&& Mpcc.AccelerationWeight >= 0.0f
-		&& Mpcc.JerkWeight >= 0.0f
-		&& Mpcc.YawTrackingWeight >= 0.0f
-		&& Mpcc.TerminalPositionWeight >= 0.0f
-		&& Mpcc.TerminalVelocityWeight >= 0.0f
-		&& Mpcc.Regularization > 0.0f
+		&& IsPositive(Mpcc.SolveTimeBudgetMilliseconds)
+		&& IsNonNegative(Mpcc.ContourErrorWeight)
+		&& IsNonNegative(Mpcc.LagErrorWeight)
+		&& IsNonNegative(Mpcc.SpeedTrackingWeight)
+		&& IsNonNegative(Mpcc.AccelerationWeight)
+		&& IsNonNegative(Mpcc.JerkWeight)
+		&& IsPositive(Mpcc.YawResponseTimeSeconds)
+		&& IsPositive(Mpcc.ContourErrorGovernorScaleCm)
+		&& IsNonNegative(Mpcc.TerminalPositionWeight)
+		&& IsNonNegative(Mpcc.TerminalVelocityWeight)
+		&& IsPositive(Mpcc.Regularization)
 		&& Mpcc.MaxConsecutiveFailures > 0
-		&& Mpcc.MaximumReferenceAgeSeconds > 0.0f;
+		&& IsPositive(Mpcc.MaximumReferenceAgeSeconds);
 }

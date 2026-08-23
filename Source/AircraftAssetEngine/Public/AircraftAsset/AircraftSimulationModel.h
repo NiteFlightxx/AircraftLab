@@ -32,8 +32,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODRuntimeSettings
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
 	/** 距最近玩家的名义上限距离；最后一个 LOD 是无限距离兜底。 */
 	float MaxDistanceCm = 6000.0f;
-	bool bRunSlowLogic = true;
-	float SlowLogicIntervalSeconds = 0.0f;
 	bool bAllowDebugDraw = false;
 };
 
@@ -72,9 +70,9 @@ struct AIRCRAFTASSETENGINE_API FAircraftMassProperties
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Body", meta = (ClampMin = "0.01"))
 	float MassKg = 1.2f;
 
-	/** 质心相对于骨骼原点的偏移（厘米） */
+	/** 在 PhysicsAsset 计算质心基础上施加的局部偏移（厘米）。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Body")
-	FVector CenterOfMassOffsetCm = FVector::ZeroVector;
+	FVector CenterOfMassNudgeCm = FVector::ZeroVector;
 
 	/** PhysicsAsset 计算出的惯性张量逐轴缩放；(1,1,1) 保持原始惯性。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Body", meta = (ClampMin = "0.0"))
@@ -112,7 +110,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftMotorModelConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Motor", meta = (ClampMin = "0.001"))
 	float SpinDownTimeSeconds = 0.10f;
 
-	/** 指令到推力的指数（≈2.0 模拟推力∝转速²） */
+	/** 归一化电机指令到目标转速的整形指数；分配器使用其严格反函数。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Motor", meta = (ClampMin = "0.1"))
 	float CommandExponent = 2.0f;
 
@@ -124,10 +122,9 @@ struct AIRCRAFTASSETENGINE_API FAircraftMotorModelConfig
 /**
  * 单个旋翼的定义（位置、方向、物理参数）
  *
- * 推力与反扭矩模型（基于螺旋桨气动经验关系）：
- *     F_thrust = kT · ω²
- *     τ_drag   = kQ · ω²
- * ThrustCoefficient 对应 kT；ReactionTorqueCoefficient 等价于 kQ/kT 比值（基于推力归一化）。
+ * 推力与反扭矩模型：
+ *     F_thrust = MaxThrustForce · (RPM / MaxRpm)²
+ *     τ_drag   = ReactionTorqueCoefficient · F_thrust
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
@@ -164,27 +161,15 @@ struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
 
 	/** 最大推力（牛顿） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
-	float MaxThrustForce = 900.0f;
-
-	/** 推力系数 kT */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
-	float ThrustCoefficient = 1.0f;
+	float MaxThrustForce = 9.0f;
 
 	/** 反扭矩系数（τ_drag = 系数 · F_thrust，等价于 kQ/kT 比值） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
 	float ReactionTorqueCoefficient = 0.03f;
 
-	/** 效率（0~1，影响实际推力和扭矩） */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
-	float Efficiency = 1.0f;
-
 	/** 控制分配可用推力缩放（0~1） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float ControlAuthorityScale = 1.0f;
-
-	/** 共享型号对最终电机指令的统一标定缩放。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
-	float CommandScale = 1.0f;
 
 	/** 电机动态模型参数 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
@@ -203,15 +188,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
 		return SpinDirection == EAircraftRotorSpinDirection::Clockwise ? -1.0f : 1.0f;
 	}
 
-	float GetEffectiveMaxThrust() const
-	{
-		return MaxThrustForce * FMath::Max(Efficiency, 0.0f);
-	}
-
-	float GetEffectiveReactionTorqueCoefficient() const
-	{
-		return ReactionTorqueCoefficient * FMath::Max(Efficiency, 0.0f);
-	}
 };
 
 /**

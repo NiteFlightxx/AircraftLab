@@ -106,7 +106,7 @@ enum class EAircraftFailurePolicyAction : uint8
 {
 	WarningOnly UMETA(DisplayName = "仅警告"),
 	SwitchFlightMode UMETA(DisplayName = "切换飞行模式"),
-	Failsafe UMETA(DisplayName = "故障保护 / 停桨"),
+	ReturnToHome UMETA(DisplayName = "返航"),
 	EmergencyStop UMETA(DisplayName = "紧急停止")
 };
 

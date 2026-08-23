@@ -1,17 +1,5 @@
 #include "Aircraft/RotorModel.h"
 
-float FAircraftRotorRuntimeState::GetEffectiveTargetCommand(const FAircraftRotorAllocationInfo& Info, float CommandScale) const
-{
-	if (!Info.bEnabled)
-	{
-		return 0.0f;
-	}
-
-	return FMath::Clamp(
-		TargetNormalizedCommand * FMath::Max(CommandScale, 0.0f),
-		0.0f, 1.0f);
-}
-
 float FAircraftRotorRuntimeState::ComputeTargetRpm(const FAircraftMotorModelParams& Motor, float EffectiveCommand)
 {
 	const float ClampedCommand = FMath::Clamp(EffectiveCommand, 0.0f, 1.0f);
@@ -31,7 +19,7 @@ float FAircraftRotorRuntimeState::ComputeTargetRpm(const FAircraftMotorModelPara
 }
 
 void FAircraftRotorRuntimeState::Update(
-	float DeltaTime, const FAircraftRotorAllocationInfo& Info, float CommandScale, bool bEnabled)
+	float DeltaTime, const FAircraftRotorAllocationInfo& Info, bool bEnabled)
 {
 	if (DeltaTime <= UE_SMALL_NUMBER || !bEnabled || bForceStopped)
 	{
@@ -43,7 +31,7 @@ void FAircraftRotorRuntimeState::Update(
 	}
 
 	// 步骤1: 指令平滑（Slew Rate Limiter）
-	const float EffectiveTargetCommand = GetEffectiveTargetCommand(Info, CommandScale);
+	const float EffectiveTargetCommand = Info.bEnabled ? TargetNormalizedCommand : 0.0f;
 	if (Info.Motor.MaxCommandSlewPerSecond > 0.0f)
 	{
 		CurrentNormalizedCommand = FMath::FInterpConstantTo(
@@ -67,11 +55,11 @@ void FAircraftRotorRuntimeState::Update(
 	const float ResponseAlpha = 1.0f - FMath::Exp(-DeltaTime / ResponseTime);
 	CurrentRpm = FMath::Lerp(CurrentRpm, TargetRpm, ResponseAlpha);
 
-	// 步骤4: 推力 T = T_max_phys × (ω/ω_max)²（T_max_phys 已含 C_T 与 η）
+	// 步骤4: 推力 T = T_max × (ω/ω_max)²
 	const float MaxRpm = FMath::Max(Info.Motor.MaxRpm, 1.0f);
 	const float ThrustRatio = FMath::Clamp(CurrentRpm / MaxRpm, 0.0f, 1.0f);
 	CurrentThrustForceN = static_cast<float>(Info.MaxPhysicalThrustN) * FMath::Square(ThrustRatio);
 
-	// 步骤5: 反扭矩 τ = T × k_τ_eff（方向由旋向符号在施力边界决定）
+	// 步骤5: 反扭矩 τ = T × k_τ（方向由旋向符号在施力边界决定）
 	CurrentReactionTorqueNm = CurrentThrustForceN * static_cast<float>(FMath::Max(Info.ReactionTorqueCoefficientM, 0.0));
 }

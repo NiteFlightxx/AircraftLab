@@ -47,10 +47,9 @@ void FAircraftSimulationLODProfileNode::Evaluate(UE::Dataflow::FContext& Context
 	}
 
 	FManagedArrayCollection InCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
-	if (Profile.Name.IsNone() || !FMath::IsFinite(Profile.MaxDistanceCm) || Profile.MaxDistanceCm < 0.0f
-		|| !FMath::IsFinite(Profile.SlowLogicIntervalSeconds) || Profile.SlowLogicIntervalSeconds < 0.0f)
+	if (Profile.Name.IsNone() || !FMath::IsFinite(Profile.MaxDistanceCm) || Profile.MaxDistanceCm < 0.0f)
 	{
-		Context.Error(FText::FromString(TEXT("Simulation LOD requires a name and valid distance and timing values.")), this);
+		Context.Error(FText::FromString(TEXT("Simulation LOD requires a name and a valid distance.")), this);
 		SetValue(Context, MoveTemp(InCollection), &Collection);
 		return;
 	}
@@ -63,8 +62,6 @@ void FAircraftSimulationLODProfileNode::Evaluate(UE::Dataflow::FContext& Context
 	SetLODProperty(Properties, TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Profile.CollisionMode));
 
 	SetLODProperty(Properties, TEXT("SimulationLOD.MaxDistanceCm"), Profile.MaxDistanceCm);
-	SetLODProperty(Properties, TEXT("SimulationLOD.RunSlowLogic"), Profile.bRunSlowLogic);
-	SetLODProperty(Properties, TEXT("SimulationLOD.SlowLogicIntervalSeconds"), Profile.SlowLogicIntervalSeconds);
 	SetLODProperty(Properties, TEXT("SimulationLOD.AllowDebugDraw"), Profile.bAllowDebugDraw);
 
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);

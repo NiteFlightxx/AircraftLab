@@ -55,8 +55,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 
 		/* Frame */
 		OutModel.Mass.MassKg = ReadFirst<float>(ConstCollection.GetFrameMassKg(), 1.2f);
-		OutModel.Mass.CenterOfMassOffsetCm = FVector3fToVector(
-			ReadFirst<FVector3f>(ConstCollection.GetFrameCenterOfMassOffsetCm(), FVector3f::ZeroVector));
+		OutModel.Mass.CenterOfMassNudgeCm = FVector3fToVector(
+			ReadFirst<FVector3f>(ConstCollection.GetFrameCenterOfMassNudgeCm(), FVector3f::ZeroVector));
 		OutModel.Mass.InertiaTensorScale = FVector3fToVector(
 			ReadFirst<FVector3f>(ConstCollection.GetFrameInertiaTensorScale(), FVector3f::OneVector));
 
@@ -240,10 +240,10 @@ namespace UE::AircraftLab::AircraftAsset::Private
 
 			Autopilot.Timing.SampleSpacingCm = Properties.GetValue<float>(TEXT("Autopilot.Timing.SampleSpacingCm"), Autopilot.Timing.SampleSpacingCm);
 			Autopilot.Timing.ThrustReserveFraction = Properties.GetValue<float>(TEXT("Autopilot.Timing.ThrustReserveFraction"), Autopilot.Timing.ThrustReserveFraction);
-			Autopilot.Timing.TorqueReserveFraction = Properties.GetValue<float>(TEXT("Autopilot.Timing.TorqueReserveFraction"), Autopilot.Timing.TorqueReserveFraction);
+			Autopilot.Timing.CurvatureAccelerationReserveFraction = Properties.GetValue<float>(TEXT("Autopilot.Timing.CurvatureAccelerationReserveFraction"), Autopilot.Timing.CurvatureAccelerationReserveFraction);
 			Autopilot.Timing.BrakingReserveFraction = Properties.GetValue<float>(TEXT("Autopilot.Timing.BrakingReserveFraction"), Autopilot.Timing.BrakingReserveFraction);
 			Autopilot.Timing.MaxIterations = Properties.GetValue<int32>(TEXT("Autopilot.Timing.MaxIterations"), Autopilot.Timing.MaxIterations);
-			Autopilot.Timing.FeasibilityTolerance = Properties.GetValue<float>(TEXT("Autopilot.Timing.FeasibilityTolerance"), Autopilot.Timing.FeasibilityTolerance);
+			Autopilot.Timing.SpeedConvergenceToleranceCmPerSec = Properties.GetValue<float>(TEXT("Autopilot.Timing.SpeedConvergenceToleranceCmPerSec"), Autopilot.Timing.SpeedConvergenceToleranceCmPerSec);
 
 #define READ_MPCC(Name) Autopilot.Mpcc.Name = Properties.GetValue<decltype(Autopilot.Mpcc.Name)>(TEXT("Autopilot.Mpcc." #Name), Autopilot.Mpcc.Name)
 			READ_MPCC(UpdateRateHz);
@@ -253,11 +253,11 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			READ_MPCC(SolveTimeBudgetMilliseconds);
 			READ_MPCC(ContourErrorWeight);
 			READ_MPCC(LagErrorWeight);
-			READ_MPCC(ProgressWeight);
 			READ_MPCC(SpeedTrackingWeight);
 			READ_MPCC(AccelerationWeight);
 			READ_MPCC(JerkWeight);
-			READ_MPCC(YawTrackingWeight);
+			READ_MPCC(YawResponseTimeSeconds);
+			READ_MPCC(ContourErrorGovernorScaleCm);
 			READ_MPCC(TerminalPositionWeight);
 			READ_MPCC(TerminalVelocityWeight);
 			READ_MPCC(Regularization);
@@ -317,9 +317,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		const TManagedArray<FVector3f>* PropAxes = ConstCollection.GetPropellerThrustAxisLocal();
 		const TManagedArray<uint8>* PropSpins = ConstCollection.GetPropellerSpinDirection();
 		const TManagedArray<float>* PropMaxThr = ConstCollection.GetPropellerMaxThrustForce();
-		const TManagedArray<float>* PropKT = ConstCollection.GetPropellerThrustCoefficient();
 		const TManagedArray<float>* PropKQ = ConstCollection.GetPropellerReactionTorqueCoefficient();
-		const TManagedArray<float>* PropEff = ConstCollection.GetPropellerEfficiency();
 		const TManagedArray<float>* PropAuth = ConstCollection.GetPropellerControlAuthorityScale();
 
 		const int32 PropCount = PropNames ? PropNames->Num() : 0;
@@ -337,13 +335,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			Rotor.SpinDirection = static_cast<EAircraftRotorSpinDirection>(
 				(PropSpins && i < PropSpins->Num()) ? (*PropSpins)[i] : 0);
 			Rotor.MaxThrustForce = (PropMaxThr && i < PropMaxThr->Num()) ? (*PropMaxThr)[i] : 9.f;
-			Rotor.ThrustCoefficient = (PropKT && i < PropKT->Num()) ? (*PropKT)[i] : 1.f;
 			Rotor.ReactionTorqueCoefficient = (PropKQ && i < PropKQ->Num()) ? (*PropKQ)[i] : 0.03f;
-			Rotor.Efficiency = (PropEff && i < PropEff->Num()) ? (*PropEff)[i] : 1.f;
 			Rotor.ControlAuthorityScale = (PropAuth && i < PropAuth->Num()) ? (*PropAuth)[i] : 1.f;
-			Rotor.CommandScale = Properties.IsValid()
-				? Properties.GetValue<float>(*FString::Printf(TEXT("Airscrew.%d.CommandScale"), i), 1.0f)
-				: 1.0f;
 
 			// 关联同名 Motor；若未指定或找不到，则用默认电机参数。
 			const FName MotorName = (PropMotorNames && i < PropMotorNames->Num()) ? (*PropMotorNames)[i] : NAME_None;
@@ -379,8 +372,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		Settings.CollisionMode = static_cast<EAircraftSimulationCollisionMode>(FMath::Clamp(
 			Properties.GetValue<int32>(TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Settings.CollisionMode)), 0, 2));
 		Settings.MaxDistanceCm = Properties.GetValue<float>(TEXT("SimulationLOD.MaxDistanceCm"), Settings.MaxDistanceCm);
-		Settings.bRunSlowLogic = Properties.GetValue<bool>(TEXT("SimulationLOD.RunSlowLogic"), Settings.bRunSlowLogic);
-		Settings.SlowLogicIntervalSeconds = Properties.GetValue<float>(TEXT("SimulationLOD.SlowLogicIntervalSeconds"), Settings.SlowLogicIntervalSeconds);
 		Settings.bAllowDebugDraw = Properties.GetValue<bool>(TEXT("SimulationLOD.AllowDebugDraw"), Settings.bAllowDebugDraw);
 		return Settings;
 	}

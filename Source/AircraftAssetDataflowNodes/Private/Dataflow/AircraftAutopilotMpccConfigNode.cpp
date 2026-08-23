@@ -24,13 +24,18 @@ void FAircraftAutopilotMpccConfigNode::Evaluate(
 	}
 
 	const FManagedArrayCollection Input = GetValue<FManagedArrayCollection>(Context, &Collection);
-	const float Weights[] = { Config.ContourErrorWeight, Config.LagErrorWeight, Config.ProgressWeight,
+	const float Weights[] = { Config.ContourErrorWeight, Config.LagErrorWeight,
 		Config.SpeedTrackingWeight, Config.AccelerationWeight, Config.JerkWeight,
-		Config.YawTrackingWeight, Config.TerminalPositionWeight, Config.TerminalVelocityWeight };
-	bool bInvalid = Config.UpdateRateHz <= 0.0f || Config.HorizonSeconds <= 0.0f
+		Config.TerminalPositionWeight, Config.TerminalVelocityWeight };
+	bool bInvalid = !FMath::IsFinite(Config.UpdateRateHz) || Config.UpdateRateHz <= 0.0f
+		|| !FMath::IsFinite(Config.HorizonSeconds) || Config.HorizonSeconds <= 0.0f
 		|| Config.HorizonSteps < 2 || Config.MaxOptimizationIterations <= 0
-		|| Config.SolveTimeBudgetMilliseconds <= 0.0f || Config.Regularization <= 0.0f
-		|| Config.MaxConsecutiveFailures <= 0 || Config.MaximumReferenceAgeSeconds <= 0.0f;
+		|| !FMath::IsFinite(Config.SolveTimeBudgetMilliseconds) || Config.SolveTimeBudgetMilliseconds <= 0.0f
+		|| !FMath::IsFinite(Config.Regularization) || Config.Regularization <= 0.0f
+		|| !FMath::IsFinite(Config.YawResponseTimeSeconds) || Config.YawResponseTimeSeconds <= 0.0f
+		|| !FMath::IsFinite(Config.ContourErrorGovernorScaleCm) || Config.ContourErrorGovernorScaleCm <= 0.0f
+		|| Config.MaxConsecutiveFailures <= 0
+		|| !FMath::IsFinite(Config.MaximumReferenceAgeSeconds) || Config.MaximumReferenceAgeSeconds <= 0.0f;
 	for (const float Weight : Weights)
 	{
 		bInvalid |= !FMath::IsFinite(Weight) || Weight < 0.0f;
@@ -53,11 +58,11 @@ void FAircraftAutopilotMpccConfigNode::Evaluate(
 	SET_MPCC(SolveTimeBudgetMilliseconds);
 	SET_MPCC(ContourErrorWeight);
 	SET_MPCC(LagErrorWeight);
-	SET_MPCC(ProgressWeight);
 	SET_MPCC(SpeedTrackingWeight);
 	SET_MPCC(AccelerationWeight);
 	SET_MPCC(JerkWeight);
-	SET_MPCC(YawTrackingWeight);
+	SET_MPCC(YawResponseTimeSeconds);
+	SET_MPCC(ContourErrorGovernorScaleCm);
 	SET_MPCC(TerminalPositionWeight);
 	SET_MPCC(TerminalVelocityWeight);
 	SET_MPCC(Regularization);

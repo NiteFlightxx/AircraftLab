@@ -131,6 +131,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftAutopilotDiagnostics
 	float ProgressScale = 1.0f;
 	bool bPlanValid = false;
 	bool bReferenceFresh = false;
-	/** 求解器连续失败超过配置阈值且已无可复用参考。 */
+	/** 求解器连续失败达到配置阈值且已无可复用参考。 */
 	bool bSolverFailed = false;
 };

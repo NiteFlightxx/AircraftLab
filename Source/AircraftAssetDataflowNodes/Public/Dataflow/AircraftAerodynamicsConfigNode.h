@@ -12,7 +12,8 @@ struct FAircraftAerodynamicsConfig
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category = "Atmosphere", meta = (ClampMin = "0.0"))
+	/** 空气密度（kg/m³）。 */
+	UPROPERTY(EditAnywhere, Category = "Atmosphere", meta = (ClampMin = "0.0001"))
 	float AirDensityKgPerM3 = 1.225f;
 
 	UPROPERTY(EditAnywhere, Category = "Body")

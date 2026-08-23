@@ -22,6 +22,8 @@ public:
 
 private:
 	FAircraftMotionPlan Plan;
+	FAircraftMovementIntent RequestedIntent;
+	FAircraftDynamicCapabilitySnapshot PlanningCapability;
 	FAircraftAutopilotRuntimeConfig RuntimeConfig;
 	FAircraftAutopilotDiagnostics Diagnostics;
 	FAircraftTrajectoryReference LastReference;
@@ -38,12 +40,16 @@ private:
 	double LastPlanSolveTimeSeconds = 0.0;
 	double NextSolveTimeSeconds = -DBL_MAX;
 
+	bool RefreshPlanForCapability(const FAircraftVehicleStateSnapshot& State,
+		const FAircraftDynamicCapabilitySnapshot& Capability);
+
 	bool SolveVelocityIntent(const FAircraftVehicleStateSnapshot& State,
 		const FAircraftDynamicCapabilitySnapshot& Capability,
 		FAircraftTrajectoryReference& OutReference);
 	bool SolvePlan(const FAircraftVehicleStateSnapshot& State,
 		const FAircraftDynamicCapabilitySnapshot& Capability,
-		FAircraftTrajectoryReference& OutReference);
+		FAircraftTrajectoryReference& OutReference,
+		double SolveDeadlineSeconds);
 	static FVector ProjectAcceleration(const FVector& Acceleration,
 		const FAircraftRequestedMotionLimits& Limits,
 		const FAircraftDynamicCapabilitySnapshot& Capability,

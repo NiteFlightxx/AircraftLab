@@ -31,7 +31,7 @@ namespace UE::AircraftLab::AircraftAsset
 
 		const FName FrameRootBone(TEXT("RootBone"));
 		const FName FrameMassKg(TEXT("MassKg"));
-		const FName FrameCenterOfMassOffsetCm(TEXT("CenterOfMassOffsetCm"));
+		const FName FrameCenterOfMassNudgeCm(TEXT("CenterOfMassNudgeCm"));
 		const FName FrameInertiaTensorScale(TEXT("InertiaTensorScale"));
 
 		const FName MotorName(TEXT("Name"));
@@ -51,9 +51,7 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PropellerThrustAxisLocal(TEXT("ThrustAxisLocal"));
 		const FName PropellerSpinDirection(TEXT("SpinDirection"));
 		const FName PropellerMaxThrustForce(TEXT("MaxThrustForce"));
-		const FName PropellerThrustCoefficient(TEXT("ThrustCoefficient"));
 		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
-		const FName PropellerEfficiency(TEXT("Efficiency"));
 		const FName PropellerControlAuthorityScale(TEXT("ControlAuthorityScale"));
 
 		const FName FcPositionKp(TEXT("PositionKp"));

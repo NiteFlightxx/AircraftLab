@@ -48,9 +48,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (ClampMin = "0.01"))
 	float MassKg = 1.2f;
 
-	/** 质心相对于根骨骼原点的偏移（厘米）。 */
+	/** 在 PhysicsAsset 计算质心基础上施加的局部偏移（厘米）。 */
 	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia")
-	FVector3f CenterOfMassOffsetCm = FVector3f::ZeroVector;
+	FVector3f CenterOfMassNudgeCm = FVector3f::ZeroVector;
 
 	/** PhysicsAsset 计算出的惯性张量逐轴缩放；(1,1,1) 保持原始惯性。 */
 	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (ClampMin = "0.01"))

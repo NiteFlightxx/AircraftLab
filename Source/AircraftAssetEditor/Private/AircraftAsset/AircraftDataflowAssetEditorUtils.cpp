@@ -260,7 +260,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					Node.RootBone = RootBoneName;
 					Node.ForwardAxis = EAircraftForwardAxisNode::PositiveY;
 					Node.MassKg = 100.0f;
-					Node.CenterOfMassOffsetCm = FVector3f::ZeroVector;
+					Node.CenterOfMassNudgeCm = FVector3f::ZeroVector;
 					Node.InertiaTensorScale = FVector3f::OneVector;
 				});
 
@@ -288,14 +288,11 @@ namespace UE::AircraftDataflowAssetEditor::Private
 						Node.Profile.bUseSocketTransform = false;
 						Node.Profile.PositionLocalCm = EntryCopy.Position;
 						Node.Profile.ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
-						// 单旋翼最大推力需满足 Σ(MaxThrust×系数×效率) > MassKg×g：
+						// 单旋翼最大推力需满足 ΣMaxThrust > MassKg×g：
 						// 100 kg 四旋翼单电机需 >245 N；取 350 N → 总推力 1400 N，悬停油门约 70%。
 						Node.Profile.MaxThrustForce = 350.f;
-						Node.Profile.ThrustCoefficient = 1.f;
 						Node.Profile.ReactionTorqueCoefficient = 0.03f;
-						Node.Profile.Efficiency = 1.f;
 						Node.Profile.ControlAuthorityScale = 1.f;
-						Node.Profile.CommandScale = 1.f;
 					}));
 			}
 
@@ -335,18 +332,16 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				EAircraftProfileDriveMode DriveMode;
 				EAircraftProfileCollisionMode CollisionMode;
 				float MaxDistanceCm;
-				bool bRunSlowLogic;
-				float SlowLogicIntervalSeconds;
 				bool bAllowDebugDraw;
 			};
 			// 仅是新资产模板的初始值；运行时直接读取每个表项的 DriveMode，
 			// 不存在 LOD 索引到驱动类型的固定映射。
 			const FDefaultLodEntry DefaultLods[] =
 			{
-				{ TEXT("LOD0"), EAircraftProfileDriveMode::FlightController, EAircraftProfileCollisionMode::QueryAndPhysics, 6000.0f, true, 0.0f, false },
-				{ TEXT("LOD1"), EAircraftProfileDriveMode::PhysicsConstraint, EAircraftProfileCollisionMode::QueryAndPhysics, 15000.0f, true, 0.05f, false },
-				{ TEXT("LOD2"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::QueryOnly, 50000.0f, true, 0.10f, false },
-				{ TEXT("LOD3"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::Disabled, 0.0f, false, 0.0f, false },
+				{ TEXT("LOD0"), EAircraftProfileDriveMode::FlightController, EAircraftProfileCollisionMode::QueryAndPhysics, 6000.0f, false },
+				{ TEXT("LOD1"), EAircraftProfileDriveMode::PhysicsConstraint, EAircraftProfileCollisionMode::QueryAndPhysics, 15000.0f, false },
+				{ TEXT("LOD2"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::QueryOnly, 50000.0f, false },
+				{ TEXT("LOD3"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::Disabled, 0.0f, false },
 			};
 			TArray<FCreatedTemplateNode> SimulationLODNodes;
 			SimulationLODNodes.Reserve(UE_ARRAY_COUNT(DefaultLods));
@@ -363,8 +358,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 						Node.Profile.DriveMode = EntryCopy.DriveMode;
 						Node.Profile.CollisionMode = EntryCopy.CollisionMode;
 						Node.Profile.MaxDistanceCm = EntryCopy.MaxDistanceCm;
-						Node.Profile.bRunSlowLogic = EntryCopy.bRunSlowLogic;
-						Node.Profile.SlowLogicIntervalSeconds = EntryCopy.SlowLogicIntervalSeconds;
 						Node.Profile.bAllowDebugDraw = EntryCopy.bAllowDebugDraw;
 					}));
 			}

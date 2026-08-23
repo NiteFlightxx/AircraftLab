@@ -146,11 +146,15 @@ void FAircraftSpatialPath::OptimizeKnots(
 				for (const FPlane& Plane : Corridor[CorridorIndex].BoundaryPlanes)
 				{
 					const FVector Normal(Plane.X, Plane.Y, Plane.Z);
-					const double NormalSquared = Normal.SizeSquared();
-					const double Violation = Plane.PlaneDot(Candidate) + Config.CorridorSafetyMarginCm;
-					if (Violation > 0.0 && NormalSquared > UE_DOUBLE_SMALL_NUMBER)
+					const double NormalLength = Normal.Size();
+					if (NormalLength > UE_DOUBLE_SMALL_NUMBER)
 					{
-						Candidate -= Normal * (Violation / NormalSquared);
+						const double Violation = Plane.PlaneDot(Candidate) / NormalLength
+							+ Config.CorridorSafetyMarginCm;
+						if (Violation > 0.0)
+						{
+							Candidate -= Normal / NormalLength * Violation;
+						}
 					}
 				}
 			}
@@ -279,8 +283,11 @@ bool FAircraftSpatialPath::Build(
 				static_cast<float>(SampleIndex) / static_cast<float>(ArcTableSubdivisions));
 			for (const FPlane& Plane : Route.Corridor[CorridorIndex].BoundaryPlanes)
 			{
-				if (Plane.PlaneDot(Position) + Config.CorridorSafetyMarginCm
-					> Config.ConvergenceToleranceCm)
+				const FVector Normal(Plane.X, Plane.Y, Plane.Z);
+				const double NormalLength = Normal.Size();
+				if (NormalLength <= UE_DOUBLE_SMALL_NUMBER
+					|| Plane.PlaneDot(Position) / NormalLength + Config.CorridorSafetyMarginCm
+						> Config.ConvergenceToleranceCm)
 				{
 					Reset();
 					return false;

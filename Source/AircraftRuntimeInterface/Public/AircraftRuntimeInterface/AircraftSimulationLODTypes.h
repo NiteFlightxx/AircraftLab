@@ -46,13 +46,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationLODSettings
 		ClampMin = "0.0", Units = "cm"))
 	float MaxDistanceCm = 6000.0f;
 
-	/** 慢速制导/Gameplay 节拍。0 表示每个游戏帧都跑。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "运行慢速逻辑"))
-	bool bRunSlowLogic = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "慢速逻辑更新间隔", ClampMin = "0.0", Units = "s"))
-	float SlowLogicIntervalSeconds = 0.0f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "碰撞模式"))
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
 
@@ -126,16 +119,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationBudget
 	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	bool bRunSlowLogic = false;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	bool bEnablePhysics = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	bool bIsNetworkProxy = false;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	float SlowLogicIntervalSeconds = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::Disabled;

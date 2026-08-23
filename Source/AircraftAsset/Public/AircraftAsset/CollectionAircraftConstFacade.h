@@ -46,7 +46,7 @@ namespace UE::AircraftLab::AircraftAsset
 		/* Frame */
 		extern AIRCRAFTASSET_API const FName FrameRootBone;
 		extern AIRCRAFTASSET_API const FName FrameMassKg;
-		extern AIRCRAFTASSET_API const FName FrameCenterOfMassOffsetCm;
+		extern AIRCRAFTASSET_API const FName FrameCenterOfMassNudgeCm;
 		extern AIRCRAFTASSET_API const FName FrameInertiaTensorScale;
 
 		/* Motors */
@@ -68,9 +68,7 @@ namespace UE::AircraftLab::AircraftAsset
 		extern AIRCRAFTASSET_API const FName PropellerThrustAxisLocal;
 		extern AIRCRAFTASSET_API const FName PropellerSpinDirection;
 		extern AIRCRAFTASSET_API const FName PropellerMaxThrustForce;
-		extern AIRCRAFTASSET_API const FName PropellerThrustCoefficient;
 		extern AIRCRAFTASSET_API const FName PropellerReactionTorqueCoefficient;
-		extern AIRCRAFTASSET_API const FName PropellerEfficiency;
 		extern AIRCRAFTASSET_API const FName PropellerControlAuthorityScale;
 
 		/* FlightController */
@@ -166,7 +164,7 @@ namespace UE::AircraftLab::AircraftAsset
 		/* ------------------------- Frame ------------------------- */
 		TConstArrayView<FName> GetFrameRootBone() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameRootBone()); }
 		TConstArrayView<float> GetFrameMassKg() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameMassKg()); }
-		TConstArrayView<FVector3f> GetFrameCenterOfMassOffsetCm() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameCenterOfMassOffsetCm()); }
+		TConstArrayView<FVector3f> GetFrameCenterOfMassNudgeCm() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameCenterOfMassNudgeCm()); }
 		TConstArrayView<FVector3f> GetFrameInertiaTensorScale() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetFrameInertiaTensorScale()); }
 
 		/* ------------------------- Motors ------------------------- */
@@ -188,9 +186,7 @@ namespace UE::AircraftLab::AircraftAsset
 		TConstArrayView<FVector3f> GetPropellerThrustAxisLocal() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerThrustAxisLocal()); }
 		TConstArrayView<uint8> GetPropellerSpinDirection() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerSpinDirection()); }
 		TConstArrayView<float> GetPropellerMaxThrustForce() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerMaxThrustForce()); }
-		TConstArrayView<float> GetPropellerThrustCoefficient() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerThrustCoefficient()); }
 		TConstArrayView<float> GetPropellerReactionTorqueCoefficient() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerReactionTorqueCoefficient()); }
-		TConstArrayView<float> GetPropellerEfficiency() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerEfficiency()); }
 		TConstArrayView<float> GetPropellerControlAuthorityScale() const { return FConstAircraftCollection::GetElements(AircraftCollection->GetPropellerControlAuthorityScale()); }
 
 		/* ------------------------- FlightController ------------------------- */
@@ -299,7 +295,7 @@ namespace UE::AircraftLab::AircraftAsset
 		/* Frame */
 		TArrayView<FName> GetFrameRootBone()                  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameRootBone()); }
 		TArrayView<float> GetFrameMassKg()                    { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameMassKg()); }
-		TArrayView<FVector3f> GetFrameCenterOfMassOffsetCm()  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameCenterOfMassOffsetCm()); }
+		TArrayView<FVector3f> GetFrameCenterOfMassNudgeCm()   { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameCenterOfMassNudgeCm()); }
 		TArrayView<FVector3f> GetFrameInertiaTensorScale() { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetFrameInertiaTensorScale()); }
 
 		/* Motors */
@@ -321,9 +317,7 @@ namespace UE::AircraftLab::AircraftAsset
 		TArrayView<FVector3f> GetPropellerThrustAxisLocal()        { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerThrustAxisLocal()); }
 		TArrayView<uint8> GetPropellerSpinDirection()              { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerSpinDirection()); }
 		TArrayView<float> GetPropellerMaxThrustForce()             { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerMaxThrustForce()); }
-		TArrayView<float> GetPropellerThrustCoefficient()          { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerThrustCoefficient()); }
 		TArrayView<float> GetPropellerReactionTorqueCoefficient()  { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerReactionTorqueCoefficient()); }
-		TArrayView<float> GetPropellerEfficiency()                 { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerEfficiency()); }
 		TArrayView<float> GetPropellerControlAuthorityScale()      { return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetPropellerControlAuthorityScale()); }
 
 		/* FlightController */

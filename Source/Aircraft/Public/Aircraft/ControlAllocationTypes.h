@@ -30,7 +30,7 @@ struct FAircraftRotorAllocationInfo
 	FVector PositionFromCenterOfMassBodyCm = FVector::ZeroVector;
 	/** 机体系推力轴（归一化）。 */
 	FVector ThrustAxisBody = FVector::UpVector;
-	/** 最大物理推力 T_max × max(C_T,0) × max(η,0)（牛顿）。 */
+	/** 最大物理推力 T_max（牛顿）。 */
 	double MaxPhysicalThrustN = 0.0;
 	/** 最大可分配推力 = MaxPhysicalThrustN × clamp(ControlAuthorityScale,0,1)（牛顿）。 */
 	double MaxAllocatedThrustN = 0.0;
