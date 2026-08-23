@@ -33,6 +33,7 @@ private:
 	uint64 PlanRevision = 0;
 	float EstimatedPlanTimeSeconds = 0.0f;
 	float EstimatedDistanceCm = 0.0f;
+	double PlanStartTimeSeconds = 0.0;
 	double NextSolveTimeSeconds = -DBL_MAX;
 
 	bool SolveVelocityIntent(const FAircraftVehicleStateSnapshot& State,
@@ -45,6 +46,8 @@ private:
 		const FAircraftRequestedMotionLimits& Limits,
 		const FAircraftDynamicCapabilitySnapshot& Capability,
 		const FVector& VelocityCmPerSec);
+	static FVector ProjectControlAcceleration(const FVector& Acceleration,
+		const FAircraftDynamicCapabilitySnapshot& Capability);
 	static FVector ApplyJerkLimit(const FVector& PreviousAcceleration,
 		const FVector& DesiredAcceleration, float DeltaTime,
 		const FAircraftRequestedMotionLimits& Limits);

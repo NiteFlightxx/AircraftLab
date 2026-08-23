@@ -394,24 +394,37 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 	}
 	const FVector Error = Target - State.PositionCm;
 	const float DistanceToTargetCm = static_cast<float>(Error.Size());
+	FAircraftTrajectoryReference Reference;
+	const bool bHasReference = Controller->GetAircraftTrajectoryReference(Reference)
+		&& Reference.bValid;
 	if (InitialDistanceToTargetCm < 0.0f)
 	{
 		InitialDistanceToTargetCm = FMath::Max(DistanceToTargetCm, 1.0f);
 	}
-	CurrentResult.Progress = ResolvedIntent.Type == EAircraftMovementIntentType::TimedTrajectory
-		? FMath::Clamp(ElapsedSeconds / FMath::Max(
-			ResolvedIntent.TimedTrajectory.Samples.Last().TimeSeconds, UE_SMALL_NUMBER), 0.0f, 1.0f)
-		: FMath::Clamp(1.0f - DistanceToTargetCm / InitialDistanceToTargetCm, 0.0f, 1.0f);
+	if (ResolvedIntent.Type == EAircraftMovementIntentType::Route)
+	{
+		CurrentResult.Progress = bHasReference ? Reference.PathProgress : 0.0f;
+	}
+	else if (ResolvedIntent.Type == EAircraftMovementIntentType::TimedTrajectory)
+	{
+		CurrentResult.Progress = FMath::Clamp(ElapsedSeconds / FMath::Max(
+			ResolvedIntent.TimedTrajectory.Samples.Last().TimeSeconds, UE_SMALL_NUMBER), 0.0f, 1.0f);
+	}
+	else
+	{
+		CurrentResult.Progress = FMath::Clamp(
+			1.0f - DistanceToTargetCm / InitialDistanceToTargetCm, 0.0f, 1.0f);
+	}
+	const bool bPathComplete = ResolvedIntent.Type != EAircraftMovementIntentType::Route
+		|| CurrentResult.Progress >= 0.999f;
 	const bool bWithinPosition = FVector2D(Error.X, Error.Y).Size()
 		<= ResolvedIntent.Completion.HorizontalToleranceCm
 		&& FMath::Abs(Error.Z) <= ResolvedIntent.Completion.VerticalToleranceCm;
 	if (ResolvedIntent.Completion.ArrivalMode == EAircraftArrivalMode::PassThrough)
 	{
-		if (bWithinPosition || CurrentResult.Progress >= 0.999f)
+		if (bWithinPosition && bPathComplete)
 		{
-			FAircraftTrajectoryReference Reference;
-			const FVector ExitVelocityCmPerSec =
-				Controller->GetAircraftTrajectoryReference(Reference) && Reference.bValid
+			const FVector ExitVelocityCmPerSec = bHasReference
 				? Reference.VelocityCmPerSec
 				: State.VelocityCmPerSec;
 			CurrentResult.Progress = 1.0f;
@@ -442,7 +455,7 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 		ResolvedIntent.Heading, State.PositionCm, HeadingVelocity, State.AttitudeDegrees.Yaw);
 	const bool bWithinYaw = FMath::Abs(FMath::FindDeltaAngleDegrees(
 		State.AttitudeDegrees.Yaw, DesiredYaw)) <= ResolvedIntent.Completion.YawToleranceDegrees;
-	StableTimeSeconds = bWithinPosition && bWithinSpeed && bWithinYaw
+	StableTimeSeconds = bPathComplete && bWithinPosition && bWithinSpeed && bWithinYaw
 		? StableTimeSeconds + DeltaTime : 0.0f;
 	if (StableTimeSeconds >= ResolvedIntent.Completion.StableTimeSeconds)
 	{

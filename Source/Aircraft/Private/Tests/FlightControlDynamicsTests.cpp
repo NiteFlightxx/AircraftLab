@@ -164,6 +164,7 @@ bool FAircraftTrajectoryDynamicsFeedForwardOwnershipTest::RunTest(const FString&
 	Reference.PositionCm = FVector(100000.0f, 0.0f, 0.0f);
 	Reference.VelocityCmPerSec = FVector(100.0f, 0.0f, 0.0f);
 	Reference.AccelerationCmPerSecSq = FVector(10.0f, 0.0f, 0.0f);
+	Reference.ControlAccelerationCmPerSecSq = FVector(10.0f, 0.0f, 0.0f);
 	Reference.DynamicsFeedForwardAccelerationCmPerSecSq = FVector(30.0f, 0.0f, 0.0f);
 	FAircraftControlAllocator Allocator;
 	FAircraftFlightControlSolverContext Context{

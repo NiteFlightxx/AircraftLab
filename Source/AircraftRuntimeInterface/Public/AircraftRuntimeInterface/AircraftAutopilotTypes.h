@@ -43,7 +43,8 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftDynamicCapabilitySnapshot
 	float AirDensityKgPerM3 = 0.0f;
 	FVector LinearDragBodyNsPerM = FVector::ZeroVector;
 	FVector DragAreaCoefficientBodyM2 = FVector::ZeroVector;
-	float MinimumRotorTimeConstantSeconds = 0.0f;
+	/** 当前有效旋翼中最慢的推力响应时间常数。 */
+	float RotorResponseTimeSeconds = 0.0f;
 	bool bValid = false;
 };
 
@@ -79,6 +80,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTrajectoryReference
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot", meta = (Units = "cm/s^2"))
 	FVector AccelerationCmPerSecSq = FVector::ZeroVector;
+
+	/** 预测控制器求得的控制加速度；轨迹加速度保持描述参考轨迹本身。 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot", meta = (Units = "cm/s^2"))
+	FVector ControlAccelerationCmPerSecSq = FVector::ZeroVector;
 
 	/** 维持参考速度所需的阻尼/空气动力学补偿；与轨迹运动学加速度分开，避免飞控重复前馈。 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot", meta = (Units = "cm/s^2"))

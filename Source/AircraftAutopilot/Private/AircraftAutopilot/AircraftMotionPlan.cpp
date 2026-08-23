@@ -18,6 +18,56 @@ namespace
 		const float Wrapped = FMath::Fmod(Time, Duration);
 		return Wrapped < 0.0f ? Wrapped + Duration : Wrapped;
 	}
+
+	float ResolveHorizontalThrustAuthority(
+		const FAircraftDynamicCapabilitySnapshot& Capability)
+	{
+		float Result = Capability.MaxHorizontalAccelerationCmPerSecSq;
+		if (Capability.MaxTiltRadians > UE_SMALL_NUMBER)
+		{
+			Result = PositiveMinimum(Result, Capability.GravityCmPerSecSq
+				* FMath::Tan(Capability.MaxTiltRadians));
+		}
+		if (Capability.CollectiveAuthorityN > UE_SMALL_NUMBER
+			&& Capability.MassKg > UE_SMALL_NUMBER)
+		{
+			const float SpecificThrustCmPerSecSq =
+				Capability.CollectiveAuthorityN * 100.0f / Capability.MassKg;
+			const float HorizontalAuthority = FMath::Sqrt(FMath::Max(0.0f,
+				FMath::Square(SpecificThrustCmPerSecSq)
+				- FMath::Square(Capability.GravityCmPerSecSq)));
+			Result = Result > 0.0f
+				? FMath::Min(Result, HorizontalAuthority) : HorizontalAuthority;
+		}
+		return FMath::Max(Result, 0.0f);
+	}
+
+	float ComputeWorstCaseDragAcceleration(
+		float SpeedCmPerSec, const FAircraftDynamicCapabilitySnapshot& Capability)
+	{
+		const float Damping = FMath::Max(
+			Capability.LinearDampingPerSecond.X,
+			Capability.LinearDampingPerSecond.Y);
+		float Result = FMath::Max(Damping, 0.0f) * SpeedCmPerSec;
+		if (!Capability.bHasExplicitAerodynamics
+			|| Capability.MassKg <= UE_SMALL_NUMBER)
+		{
+			return Result;
+		}
+		const float SpeedMps = SpeedCmPerSec * 0.01f;
+		const float LinearDrag = FMath::Max3(
+			Capability.LinearDragBodyNsPerM.X,
+			Capability.LinearDragBodyNsPerM.Y,
+			Capability.LinearDragBodyNsPerM.Z);
+		const float AreaCoefficient = FMath::Max3(
+			Capability.DragAreaCoefficientBodyM2.X,
+			Capability.DragAreaCoefficientBodyM2.Y,
+			Capability.DragAreaCoefficientBodyM2.Z);
+		const float DragForceN = FMath::Max(LinearDrag, 0.0f) * SpeedMps
+			+ 0.5f * Capability.AirDensityKgPerM3
+				* FMath::Max(AreaCoefficient, 0.0f) * FMath::Square(SpeedMps);
+		return Result + DragForceN * 100.0f / Capability.MassKg;
+	}
 }
 
 void FAircraftMotionPlan::Reset()
@@ -128,16 +178,39 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 	SpeedLimits.SetNum(Count);
 	const float RequestedAcceleration = Intent.Limits.MaxAccelerationCmPerSecSq;
 	const float RequestedDeceleration = Intent.Limits.MaxDecelerationCmPerSecSq;
+	float CruiseSpeed = PositiveMinimum(Intent.Limits.CruiseSpeedCmPerSec,
+		Capability.bValid ? Capability.MaxHorizontalSpeedCmPerSec : 0.0f);
 	const float PhysicalHorizontalAcceleration = Capability.bValid
-		? Capability.MaxHorizontalAccelerationCmPerSecSq : RequestedAcceleration;
-	const float AccelerationLimit = PositiveMinimum(RequestedAcceleration,
-		PhysicalHorizontalAcceleration) * (1.0f - Config.Timing.ThrustReserveFraction);
+		? ResolveHorizontalThrustAuthority(Capability) : RequestedAcceleration;
+	const float UsableThrustAcceleration = PhysicalHorizontalAcceleration
+		* (1.0f - Config.Timing.ThrustReserveFraction);
+	if (Capability.bValid && PhysicalHorizontalAcceleration > UE_SMALL_NUMBER
+		&& ComputeWorstCaseDragAcceleration(CruiseSpeed, Capability)
+			> UsableThrustAcceleration)
+	{
+		float LowSpeed = 0.0f;
+		float HighSpeed = CruiseSpeed;
+		for (int32 Iteration = 0; Iteration < 24; ++Iteration)
+		{
+			const float CandidateSpeed = 0.5f * (LowSpeed + HighSpeed);
+			if (ComputeWorstCaseDragAcceleration(CandidateSpeed, Capability)
+				<= UsableThrustAcceleration)
+			{
+				LowSpeed = CandidateSpeed;
+			}
+			else
+			{
+				HighSpeed = CandidateSpeed;
+			}
+		}
+		CruiseSpeed = LowSpeed;
+	}
+	const float AccelerationLimit = FMath::Min(RequestedAcceleration,
+		Capability.bValid ? UsableThrustAcceleration : RequestedAcceleration);
 	const float CurvatureAccelerationLimit = AccelerationLimit
 		* (1.0f - Config.Timing.TorqueReserveFraction);
 	const float DecelerationLimit = PositiveMinimum(RequestedDeceleration,
 		PhysicalHorizontalAcceleration) * (1.0f - Config.Timing.BrakingReserveFraction);
-	const float CruiseSpeed = PositiveMinimum(Intent.Limits.CruiseSpeedCmPerSec,
-		Capability.bValid ? Capability.MaxHorizontalSpeedCmPerSec : 0.0f);
 
 	for (int32 Index = 0; Index < Count; ++Index)
 	{
@@ -151,7 +224,49 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		float Limit = CruiseSpeed;
 		if (Curvature > UE_SMALL_NUMBER && CurvatureAccelerationLimit > 0.0f)
 		{
-			Limit = FMath::Min(Limit, FMath::Sqrt(CurvatureAccelerationLimit / Curvature));
+			float LowSpeed = 0.0f;
+			float HighSpeed = Limit;
+			for (int32 Iteration = 0; Iteration < 20; ++Iteration)
+			{
+				const float CandidateSpeed = 0.5f * (LowSpeed + HighSpeed);
+				const FVector NormalAcceleration = PathState.CurvaturePerCm
+					* FMath::Square(CandidateSpeed);
+				const float DragAcceleration = Capability.bValid
+					? ComputeWorstCaseDragAcceleration(CandidateSpeed, Capability) : 0.0f;
+				const FVector RequiredNetAcceleration = NormalAcceleration
+					+ PathState.Tangent * DragAcceleration;
+				const FVector RequiredSpecificThrust = RequiredNetAcceleration
+					+ FVector(0.0, 0.0, Capability.GravityCmPerSecSq);
+				const float MaximumSpecificThrust = Capability.CollectiveAuthorityN > UE_SMALL_NUMBER
+					&& Capability.MassKg > UE_SMALL_NUMBER
+					? Capability.CollectiveAuthorityN * 100.0f / Capability.MassKg
+						* (1.0f - Config.Timing.ThrustReserveFraction)
+					: TNumericLimits<float>::Max();
+				const float TiltLimitedHorizontalAcceleration = Capability.MaxTiltRadians > UE_SMALL_NUMBER
+					? FMath::Max(RequiredSpecificThrust.Z, 0.0f)
+						* FMath::Tan(Capability.MaxTiltRadians)
+					: TNumericLimits<float>::Max();
+				const bool bFeasible = NormalAcceleration.SizeSquared()
+					<= FMath::Square(CurvatureAccelerationLimit)
+					&& FVector2D(RequiredNetAcceleration.X, RequiredNetAcceleration.Y).SizeSquared()
+						<= FMath::Square(UsableThrustAcceleration)
+					&& (Capability.MaxVerticalAccelerationCmPerSecSq <= 0.0f
+						|| FMath::Abs(NormalAcceleration.Z)
+							<= Capability.MaxVerticalAccelerationCmPerSecSq)
+					&& RequiredSpecificThrust.SizeSquared()
+						<= FMath::Square(MaximumSpecificThrust)
+					&& FVector2D(RequiredSpecificThrust.X, RequiredSpecificThrust.Y).SizeSquared()
+						<= FMath::Square(TiltLimitedHorizontalAcceleration);
+				if (bFeasible)
+				{
+					LowSpeed = CandidateSpeed;
+				}
+				else
+				{
+					HighSpeed = CandidateSpeed;
+				}
+			}
+			Limit = LowSpeed;
 		}
 		const float AbsVerticalTangent = FMath::Abs(static_cast<float>(PathState.Tangent.Z));
 		if (AbsVerticalTangent > UE_SMALL_NUMBER)
@@ -163,6 +278,35 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		SpeedLimits[Index] = FMath::Max(0.0f, Limit);
 		Sample.VelocityCmPerSec = PathState.Tangent;
 		Sample.AccelerationCmPerSecSq = PathState.CurvaturePerCm;
+	}
+
+	// 航向是轨迹可达性的一部分。高速通过急转弯但同时把偏航速率截断，
+	// 会让机体朝向、阻力方向和控制轴全部脱离空间路径。
+	if (Intent.Limits.MaxYawRateDegPerSec > UE_SMALL_NUMBER)
+	{
+		TArray<float> PathYawDegrees;
+		PathYawDegrees.SetNum(Count);
+		float PreviousYaw = InitialState.ControlRotation.Rotator().Yaw;
+		for (int32 Index = 0; Index < Count; ++Index)
+		{
+			PathYawDegrees[Index] = ResolveYaw(Intent.Heading, Samples[Index].PositionCm,
+				Samples[Index].VelocityCmPerSec, PreviousYaw);
+			PreviousYaw = PathYawDegrees[Index];
+		}
+		for (int32 Index = 1; Index < Count; ++Index)
+		{
+			const float DistanceDelta = Samples[Index].DistanceCm
+				- Samples[Index - 1].DistanceCm;
+			const float YawDelta = FMath::Abs(FMath::FindDeltaAngleDegrees(
+				PathYawDegrees[Index - 1], PathYawDegrees[Index]));
+			if (DistanceDelta > UE_SMALL_NUMBER && YawDelta > UE_SMALL_NUMBER)
+			{
+				const float YawLimitedSpeed = Intent.Limits.MaxYawRateDegPerSec
+					* DistanceDelta / YawDelta;
+				SpeedLimits[Index - 1] = FMath::Min(SpeedLimits[Index - 1], YawLimitedSpeed);
+				SpeedLimits[Index] = FMath::Min(SpeedLimits[Index], YawLimitedSpeed);
+			}
+		}
 	}
 
 	const float InitialAlongTrackSpeed = FMath::Max(0.0f,
@@ -181,8 +325,17 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		for (int32 Index = 1; Index < Count; ++Index)
 		{
 			const float Ds = Samples[Index].DistanceCm - Samples[Index - 1].DistanceCm;
+			const float DragAcceleration = Capability.bValid
+				? ComputeWorstCaseDragAcceleration(SpeedLimits[Index - 1], Capability) : 0.0f;
+			const float NormalAcceleration = Samples[Index - 1].AccelerationCmPerSecSq.Size()
+				* FMath::Square(SpeedLimits[Index - 1]);
+			const float RemainingTangentialAuthority = FMath::Sqrt(FMath::Max(0.0f,
+				FMath::Square(UsableThrustAcceleration)
+				- FMath::Square(NormalAcceleration)));
+			const float AvailableAcceleration = FMath::Min(AccelerationLimit,
+				FMath::Max(RemainingTangentialAuthority - DragAcceleration, 0.0f));
 			SpeedLimits[Index] = FMath::Min(SpeedLimits[Index], FMath::Sqrt(FMath::Max(0.0f,
-				FMath::Square(SpeedLimits[Index - 1]) + 2.0f * AccelerationLimit * Ds)));
+				FMath::Square(SpeedLimits[Index - 1]) + 2.0f * AvailableAcceleration * Ds)));
 		}
 		for (int32 Index = Count - 2; Index >= 0; --Index)
 		{
@@ -348,5 +501,13 @@ bool FAircraftMotionPlan::Project(
 	{
 		return false;
 	}
-	return Evaluate(TimeAtDistance(Projection.DistanceCm), OutSample);
+	if (!Evaluate(TimeAtDistance(Projection.DistanceCm), OutSample))
+	{
+		return false;
+	}
+	OutSample.DistanceCm = Projection.DistanceCm;
+	OutSample.PositionCm = Projection.PositionCm;
+	OutSample.VelocityCmPerSec = Projection.Tangent
+		* static_cast<float>(OutSample.VelocityCmPerSec.Size());
+	return true;
 }

@@ -335,8 +335,9 @@ bool FAircraftSpatialPath::Project(
 		return false;
 	}
 	const float SearchRadius = FMath::Max(500.0f, TotalLengthCm * 0.1f);
-	float BestDistance = bClosed ? WrapDistance(InitialDistanceCm, TotalLengthCm)
+	const float SearchCenter = bClosed ? WrapDistance(InitialDistanceCm, TotalLengthCm)
 		: FMath::Clamp(InitialDistanceCm, 0.0f, TotalLengthCm);
+	float BestDistance = SearchCenter;
 	double BestErrorSquared = TNumericLimits<double>::Max();
 	constexpr int32 Samples = 32;
 	for (int32 Index = 0; Index <= Samples; ++Index)
@@ -344,7 +345,7 @@ bool FAircraftSpatialPath::Project(
 		const float Offset = FMath::Lerp(-SearchRadius, SearchRadius,
 			static_cast<float>(Index) / static_cast<float>(Samples));
 		FAircraftSpatialPathState Candidate;
-		Evaluate(BestDistance + Offset, Candidate);
+		Evaluate(SearchCenter + Offset, Candidate);
 		const double ErrorSquared = FVector::DistSquared(PositionCm, Candidate.PositionCm);
 		if (ErrorSquared < BestErrorSquared)
 		{

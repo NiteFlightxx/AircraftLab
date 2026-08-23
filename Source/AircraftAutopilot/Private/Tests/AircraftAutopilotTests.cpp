@@ -12,11 +12,13 @@ namespace
 	{
 		FAircraftDynamicCapabilitySnapshot Result;
 		Result.MassKg = 100.0f;
+		Result.GravityCmPerSecSq = 980.0f;
 		Result.MaxHorizontalSpeedCmPerSec = 2000.0f;
 		Result.MaxHorizontalAccelerationCmPerSecSq = 1000.0f;
 		Result.MaxVerticalAccelerationCmPerSecSq = 800.0f;
 		Result.MaxClimbRateCmPerSec = 600.0f;
 		Result.MaxDescentRateCmPerSec = 500.0f;
+		Result.MaxTiltRadians = FMath::DegreesToRadians(25.0f);
 		Result.bValid = true;
 		return Result;
 	}
@@ -405,6 +407,119 @@ bool FAircraftYawReferenceUsesControlFrameTest::RunTest(const FString& Parameter
 		Reference.YawDegrees, 25.0f, 1.e-4f);
 	TestEqual(TEXT("Matching control heading produces no artificial yaw-rate feed-forward"),
 		Reference.YawRateDegPerSec, 0.0f, 1.e-4f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftPathProgressTracksVehicleProjectionTest,
+	"AircraftAutopilot.MPCC.PathProgressTracksVehicleProjection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftPathProgressTracksVehicleProjectionTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(5000.0f);
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftPredictiveController Controller;
+	TestTrue(TEXT("Route intent is accepted"),
+		Controller.SetIntent(Intent, 30, 1, Config, State, Capability));
+
+	FAircraftTrajectoryReference Reference;
+	for (int32 Index = 0; Index < 20; ++Index)
+	{
+		State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+		++State.Sequence;
+		TestTrue(TEXT("Stationary route reference remains solvable"),
+			Controller.Update(State, Capability, Reference));
+	}
+	TestTrue(TEXT("Reference progress does not run ahead of a stationary aircraft"),
+		Reference.PathProgress < 0.01f);
+	TestTrue(TEXT("Position reference remains anchored to the projected path point"),
+		Reference.PositionCm.IsNearlyZero(1.0f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftVelocityReferenceRespectsDragAndTiltAuthorityTest,
+	"AircraftAutopilot.MPCC.VelocityReferenceRespectsDragAndTiltAuthority",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftVelocityReferenceRespectsDragAndTiltAuthorityTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::Velocity;
+	Intent.Velocity.VelocityCmPerSec = FVector(800.0f, 0.0f, 0.0f);
+	Intent.Limits.CruiseSpeedCmPerSec = 800.0f;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	Capability.LinearDampingPerSecond = FVector(2.0f);
+	FAircraftPredictiveController Controller;
+	TestTrue(TEXT("Drag-limited velocity intent is accepted"),
+		Controller.SetIntent(Intent, 31, 1, Config, State, Capability));
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Drag-limited velocity reference is solved"),
+		Controller.Update(State, Capability, Reference));
+
+	const FVector TotalControlAcceleration = Reference.ControlAccelerationCmPerSecSq
+		+ Reference.DynamicsFeedForwardAccelerationCmPerSecSq;
+	const float TiltAuthority = Capability.GravityCmPerSecSq
+		* FMath::Tan(Capability.MaxTiltRadians);
+	TestTrue(TEXT("Sustainable speed is reduced by the configured damping"),
+		Reference.VelocityCmPerSec.X < 800.0f);
+	TestTrue(TEXT("Control plus dynamics feed-forward stays inside tilt authority"),
+		FVector2D(TotalControlAcceleration.X, TotalControlAcceleration.Y).Size()
+			<= TiltAuthority + 0.1f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftTimedTrajectoryUsesExplicitClockTest,
+	"AircraftAutopilot.MPCC.TimedTrajectoryUsesExplicitClock",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftTimedTrajectoryUsesExplicitClockTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::TimedTrajectory;
+	FAircraftTimedTrajectorySample Start;
+	Start.TimeSeconds = 0.0f;
+	Start.PositionCm = FVector::ZeroVector;
+	Start.VelocityCmPerSec = FVector(100.0f, 0.0f, 0.0f);
+	FAircraftTimedTrajectorySample Finish;
+	Finish.TimeSeconds = 2.0f;
+	Finish.PositionCm = FVector(200.0f, 0.0f, 0.0f);
+	Finish.VelocityCmPerSec = FVector(100.0f, 0.0f, 0.0f);
+	Intent.TimedTrajectory.Samples = { Start, Finish };
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 10.0;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftPredictiveController Controller;
+	TestTrue(TEXT("Timed trajectory intent is accepted"),
+		Controller.SetIntent(Intent, 32, 1, Config, State, Capability));
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Timed trajectory initial reference is solved"),
+		Controller.Update(State, Capability, Reference));
+	State.TimeSeconds = 11.0;
+	++State.Sequence;
+	State.PositionCm = FVector(100.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector(100.0f, 0.0f, 0.0f);
+	TestTrue(TEXT("Timed trajectory midpoint reference is solved"),
+		Controller.Update(State, Capability, Reference));
+	TestEqual(TEXT("Explicit trajectory clock reaches the midpoint"),
+		Reference.PositionCm.X, 100.0, 1.0);
+	TestEqual(TEXT("Timed trajectory reports half progress"),
+		Reference.PathProgress, 0.5f, 0.01f);
 	return true;
 }
 

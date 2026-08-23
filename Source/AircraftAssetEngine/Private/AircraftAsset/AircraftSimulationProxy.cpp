@@ -247,17 +247,21 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 		Runtime.HoldTargets.HeldPositionCm.Z);
 
 	UE_LOG(LogAircraft, Log,
-		TEXT("[AircraftDF.Reference] Valid=%d Intent=%lld Revision=%lld PositionTracking=%d RefVel=(%+.1f,%+.1f,%+.1f) KinematicAccel=(%+.1f,%+.1f,%+.1f) DynamicsFF=(%+.1f,%+.1f,%+.1f) YawRef=%+.2f YawRateRef=%+.2f"),
+		TEXT("[AircraftDF.Reference] Valid=%d Intent=%lld Revision=%lld PositionTracking=%d Progress=%.3f RefVel=(%+.1f,%+.1f,%+.1f) TrajectoryAccel=(%+.1f,%+.1f,%+.1f) ControlAccel=(%+.1f,%+.1f,%+.1f) DynamicsFF=(%+.1f,%+.1f,%+.1f) YawRef=%+.2f YawRateRef=%+.2f"),
 		TrajectoryReference.bValid ? 1 : 0,
 		TrajectoryReference.IntentId,
 		TrajectoryReference.IntentRevision,
 		TrajectoryReference.bPositionTrackingEnabled ? 1 : 0,
+		TrajectoryReference.PathProgress,
 		TrajectoryReference.VelocityCmPerSec.X,
 		TrajectoryReference.VelocityCmPerSec.Y,
 		TrajectoryReference.VelocityCmPerSec.Z,
 		TrajectoryReference.AccelerationCmPerSecSq.X,
 		TrajectoryReference.AccelerationCmPerSecSq.Y,
 		TrajectoryReference.AccelerationCmPerSecSq.Z,
+		TrajectoryReference.ControlAccelerationCmPerSecSq.X,
+		TrajectoryReference.ControlAccelerationCmPerSecSq.Y,
+		TrajectoryReference.ControlAccelerationCmPerSecSq.Z,
 		TrajectoryReference.DynamicsFeedForwardAccelerationCmPerSecSq.X,
 		TrajectoryReference.DynamicsFeedForwardAccelerationCmPerSecSq.Y,
 		TrajectoryReference.DynamicsFeedForwardAccelerationCmPerSecSq.Z,
@@ -1153,18 +1157,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		Capability.LinearDragBodyNsPerM = ActiveLodModel->Aerodynamics.LinearDragNsPerM;
 		Capability.DragAreaCoefficientBodyM2 = ActiveLodModel->Aerodynamics.DragAreaCoefficientM2;
 	}
-	Capability.MinimumRotorTimeConstantSeconds = TNumericLimits<float>::Max();
+	Capability.RotorResponseTimeSeconds = 0.0f;
 	for (const FAircraftRotorAllocationInfo& Rotor : ControlAllocator.RotorInfoBuffer)
 	{
 		if (Rotor.bEnabled)
 		{
-			Capability.MinimumRotorTimeConstantSeconds = FMath::Min(
-				Capability.MinimumRotorTimeConstantSeconds, Rotor.Motor.SpinUpTimeSeconds);
+			Capability.RotorResponseTimeSeconds = FMath::Max(
+				Capability.RotorResponseTimeSeconds, Rotor.Motor.SpinUpTimeSeconds);
 		}
-	}
-	if (Capability.MinimumRotorTimeConstantSeconds == TNumericLimits<float>::Max())
-	{
-		Capability.MinimumRotorTimeConstantSeconds = 0.0f;
 	}
 	Capability.bValid = Capability.MassKg > UE_SMALL_NUMBER
 		&& Capability.MaxHorizontalAccelerationCmPerSecSq > 0.0f;

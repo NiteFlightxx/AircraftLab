@@ -202,7 +202,7 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 			OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds,
 			Config.GetVerticalVelocityPidGains());
 		const float Gravity = FMath::Max(Context.PhysicsCache.GravityMagnitudeCmPerSecSq, 1.0f);
-		const float ReferenceAcceleration = Reference.AccelerationCmPerSecSq.Z
+		const float ReferenceAcceleration = Reference.ControlAccelerationCmPerSecSq.Z
 			+ Reference.DynamicsFeedForwardAccelerationCmPerSecSq.Z;
 		const float TrajectoryCollective = Config.HoverCollectiveCommand
 			* FMath::Max(0.0f, (Gravity + ReferenceAcceleration) / Gravity);
@@ -636,7 +636,7 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 		// 预测参考已经分别给出轨迹运动学与动力学前馈，此处只合并一次。
 		DesiredAcceleration = ComputeVelocityPidAcceleration(
 			Context, DesiredVelocity,
-			Reference.AccelerationCmPerSecSq
+			Reference.ControlAccelerationCmPerSecSq
 				+ Reference.DynamicsFeedForwardAccelerationCmPerSecSq,
 			DeltaSeconds, false);
 		return DesiredAcceleration;

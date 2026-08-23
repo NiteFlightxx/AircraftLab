@@ -1019,7 +1019,7 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 				<= Config.HorizontalBrakeToHoldSpeedCmPerSec
 			&& FMath::Abs(BrakeReference.VelocityCmPerSec.Z)
 				<= Config.VerticalBrakeToHoldSpeedCmPerSec
-			&& BrakeReference.AccelerationCmPerSecSq.IsNearlyZero(1.0f);
+			&& BrakeReference.ControlAccelerationCmPerSecSq.IsNearlyZero(1.0f);
 		bManualMovementBraking = !bReferenceStopped
 			|| HorizontalSpeedCmPerSec
 			> Config.HorizontalBrakeToHoldSpeedCmPerSec
