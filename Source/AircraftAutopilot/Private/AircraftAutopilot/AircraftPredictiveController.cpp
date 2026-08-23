@@ -26,6 +26,7 @@ void FAircraftPredictiveController::Reset()
 	PlanRevision = 0;
 	EstimatedPlanTimeSeconds = 0.0f;
 	EstimatedDistanceCm = 0.0f;
+	PathReferenceScale = 1.0f;
 	PlanStartTimeSeconds = 0.0;
 	LastPlanSolveTimeSeconds = 0.0;
 	NextSolveTimeSeconds = -DBL_MAX;
@@ -50,6 +51,7 @@ bool FAircraftPredictiveController::SetIntent(
 	ControlCorrectionHorizon.Reset();
 	EstimatedPlanTimeSeconds = 0.0f;
 	EstimatedDistanceCm = 0.0f;
+	PathReferenceScale = 1.0f;
 	PlanStartTimeSeconds = State.TimeSeconds;
 	LastPlanSolveTimeSeconds = State.TimeSeconds;
 	if (!bPreserveVelocityProfile)
@@ -448,20 +450,33 @@ bool FAircraftPredictiveController::SolvePlan(
 		}
 		const float NominalSpeedCmPerSec = static_cast<float>(
 			CurrentNominalReference.VelocityCmPerSec.Size());
-		const FVector NominalTangent = CurrentNominalReference.VelocityCmPerSec.GetSafeNormal();
-		const float AlongTrackSpeedCmPerSec = FMath::Max(0.0f,
-			static_cast<float>(FVector::DotProduct(State.VelocityCmPerSec, NominalTangent)));
-		const float AccelerationAuthority = ResolvePositiveLimit(
-			Plan.GetIntent().Limits.MaxAccelerationCmPerSecSq,
-			Capability.MaxHorizontalAccelerationCmPerSecSq);
-		const float SpeedTrackingScale = NominalSpeedCmPerSec > UE_SMALL_NUMBER
-			? FMath::Clamp((AlongTrackSpeedCmPerSec
-				+ AccelerationAuthority * SolveDeltaTime) / NominalSpeedCmPerSec, 0.0f, 1.0f)
-			: 1.0f;
-		const float ContourTrackingScale = 1.0f / (1.0f + ContourErrorCm
-			/ FMath::Max(RuntimeConfig.Path.ResampleSpacingCm, 1.0f));
-		ProgressScale = FMath::Clamp(RuntimeConfig.Mpcc.ProgressWeight, 0.0f, 1.0f)
-			* FMath::Min(SpeedTrackingScale, ContourTrackingScale);
+		const float NormalizedContourError = ContourErrorCm
+			/ FMath::Max(RuntimeConfig.Path.ResampleSpacingCm, 1.0f);
+		const float TargetReferenceScale = 1.0f
+			/ (1.0f + FMath::Square(NormalizedContourError));
+		if (NominalSpeedCmPerSec > UE_SMALL_NUMBER)
+		{
+			const FAircraftRequestedMotionLimits& Limits = Plan.GetIntent().Limits;
+			const float RequestedRate = TargetReferenceScale >= PathReferenceScale
+				? ResolvePositiveLimit(Limits.MaxAccelerationCmPerSecSq,
+					Capability.MaxHorizontalAccelerationCmPerSecSq)
+				: ResolvePositiveLimit(Limits.MaxDecelerationCmPerSecSq,
+					Capability.MaxHorizontalAccelerationCmPerSecSq);
+			const float MaximumScaleStep = RequestedRate * SolveDeltaTime
+				/ NominalSpeedCmPerSec;
+			PathReferenceScale = FMath::Clamp(TargetReferenceScale,
+				PathReferenceScale - MaximumScaleStep,
+				PathReferenceScale + MaximumScaleStep);
+		}
+		else
+		{
+			PathReferenceScale = TargetReferenceScale;
+		}
+		ProgressScale = PathReferenceScale;
+	}
+	else
+	{
+		PathReferenceScale = 1.0f;
 	}
 	for (int32 Index = 0; Index <= Steps; ++Index)
 	{

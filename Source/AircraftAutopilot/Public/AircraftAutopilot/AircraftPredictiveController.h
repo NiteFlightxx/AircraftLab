@@ -33,6 +33,7 @@ private:
 	uint64 PlanRevision = 0;
 	float EstimatedPlanTimeSeconds = 0.0f;
 	float EstimatedDistanceCm = 0.0f;
+	float PathReferenceScale = 1.0f;
 	double PlanStartTimeSeconds = 0.0;
 	double LastPlanSolveTimeSeconds = 0.0;
 	double NextSolveTimeSeconds = -DBL_MAX;

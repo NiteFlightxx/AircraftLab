@@ -567,6 +567,40 @@ bool FAircraftPathProgressIsMonotonicTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftPathReferenceGovernorDoesNotSelfThrottleTest,
+	"AircraftAutopilot.MPCC.PathReferenceGovernorDoesNotSelfThrottle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftPathReferenceGovernorDoesNotSelfThrottleTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(5000.0f);
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftPredictiveController Controller;
+	TestTrue(TEXT("Slow-tracking route is accepted"),
+		Controller.SetIntent(Intent, 43, 1, Config, State, Capability));
+
+	FAircraftTrajectoryReference Reference;
+	const float DeltaTime = 1.0f / Config.Mpcc.UpdateRateHz + 0.001f;
+	for (int32 Index = 0; Index < 80; ++Index)
+	{
+		State.TimeSeconds += DeltaTime;
+		++State.Sequence;
+		State.VelocityCmPerSec = FVector(50.0f, 0.0f, 0.0f);
+		State.PositionCm += State.VelocityCmPerSec * DeltaTime;
+		TestTrue(TEXT("Slow but on-path reference remains solvable"),
+			Controller.Update(State, Capability, Reference));
+	}
+	TestTrue(TEXT("Low measured speed cannot recursively throttle an on-path reference"),
+		Controller.GetDiagnostics().ProgressScale > 0.95f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftNominalBrakingSurvivesVelocityErrorTest,
 	"AircraftAutopilot.MPCC.NominalBrakingSurvivesVelocityError",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
