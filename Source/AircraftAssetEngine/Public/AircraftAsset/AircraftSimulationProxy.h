@@ -131,6 +131,8 @@ protected:
 private:
 	/** 按 Chaos 当前真实质心展开旋翼分配描述，并复位全部 PT 控制状态。 */
 	void RebuildRotorDescriptors_PhysicsThread(const FVector& CenterOfMassBodyCm);
+	void RefreshControlAuthority_PhysicsThread(
+		const FAircraftFlightControllerRuntimeConfig& Config);
 	void ApplyPendingConfiguration_PhysicsThread();
 	/** 由飞行模式推导能力缓存与姿态模式。 */
 	void UpdateModeCapabilities(EAircraftFlightMode Mode);

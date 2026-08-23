@@ -200,7 +200,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			OutModel.FlightController.ConstraintLinearExtraDamping = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearExtraDamping"), OutModel.FlightController.ConstraintLinearExtraDamping);
 			OutModel.FlightController.ConstraintLinearForceLimit = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearForceLimit"), OutModel.FlightController.ConstraintLinearForceLimit);
 			OutModel.FlightController.ConstraintGravityFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.GravityFeedForwardScale"), OutModel.FlightController.ConstraintGravityFeedForwardScale);
-			OutModel.FlightController.ConstraintLinearDampingFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearDampingFeedForwardScale"), OutModel.FlightController.ConstraintLinearDampingFeedForwardScale);
+			OutModel.FlightController.ConstraintDynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.DynamicsFeedForwardScale"), OutModel.FlightController.ConstraintDynamicsFeedForwardScale);
 			OutModel.FlightController.ConstraintAngularStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularStrength"), OutModel.FlightController.ConstraintAngularStrength);
 			OutModel.FlightController.ConstraintAngularDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularDampingRatio"), OutModel.FlightController.ConstraintAngularDampingRatio);
 			OutModel.FlightController.ConstraintAngularExtraDamping = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularExtraDamping"), OutModel.FlightController.ConstraintAngularExtraDamping);

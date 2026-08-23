@@ -74,7 +74,7 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Constraint simulation fully compensates gravity by default"),
 		Constraint.GravityFeedForwardScale, 1.0f);
 	TestEqual(TEXT("Constraint simulation fully compensates rigid-body linear damping by default"),
-		Constraint.LinearDampingFeedForwardScale, 1.0f);
+		Constraint.DynamicsFeedForwardScale, 1.0f);
 
 	const FAircraftAirscrewProfileData Airscrew;
 	TestFalse(TEXT("A single airscrew profile has an identity"), Airscrew.Name.IsNone());

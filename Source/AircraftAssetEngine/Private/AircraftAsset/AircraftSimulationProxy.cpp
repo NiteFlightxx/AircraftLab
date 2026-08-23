@@ -465,6 +465,45 @@ void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread(
 	RotorFailureManager.ResetAuthority();
 }
 
+void FAircraftSimulationProxy::RefreshControlAuthority_PhysicsThread(
+	const FAircraftFlightControllerRuntimeConfig& Config)
+{
+	const int32 NumRotors = ControlAllocator.RotorInfoBuffer.Num();
+	ControlAllocator.RotorHealthBuffer.SetNum(NumRotors);
+	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
+	{
+		const FName RotorName = ControlAllocator.RotorInfoBuffer[RotorIndex].RotorName;
+		if (const FAircraftRotorHealthState* const Health =
+			RotorFailureManager.HealthStatesByName.Find(RotorName))
+		{
+			ControlAllocator.RotorHealthBuffer[RotorIndex] = *Health;
+		}
+		else
+		{
+			ControlAllocator.RotorHealthBuffer[RotorIndex] = FAircraftRotorHealthState();
+		}
+	}
+
+	if (!ControlAllocator.bCacheDirty
+		&& ControlAllocator.Cache.bIsValid
+		&& ControlAllocator.Cache.JacobianColumns.Num() == NumRotors)
+	{
+		return;
+	}
+
+	ControlAllocator.RebuildAllocationCache(Config);
+	double BaselineCollective = 0.0;
+	double BaselineRoll = 0.0;
+	double BaselinePitch = 0.0;
+	double BaselineYaw = 0.0;
+	FAircraftControlAllocator::ComputeBaselineAuthorities(
+		ControlAllocator.RotorInfoBuffer, Config,
+		BaselineCollective, BaselineRoll, BaselinePitch, BaselineYaw);
+	RotorFailureManager.UpdateAuthority(ControlAllocator.Cache,
+		BaselineCollective, BaselineRoll, BaselinePitch, BaselineYaw,
+		AircraftAllocation::AuthorityEpsilon);
+}
+
 void FAircraftSimulationProxy::UpdateModeCapabilities(EAircraftFlightMode Mode)
 {
 	ModeCapabilities.Reset();
@@ -1072,6 +1111,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	{
 		RebuildRotorDescriptors_PhysicsThread(PhysicsCache.CenterOfMassOffsetBodyCm);
 	}
+	RefreshControlAuthority_PhysicsThread(Config);
 
 	// 刷新估计状态（控制循环读取 Runtime.EstimatedState）
 	{
@@ -1229,6 +1269,24 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		FScopeLock PlannerLock(&PlannerCriticalSection);
 		AutopilotDiagnostics = PredictiveController.GetDiagnostics();
 	}
+	if (Config.FailurePolicy.bEnabled
+		&& (!Config.FailurePolicy.bEvaluateOnlyWhenArmed
+			|| ArmState == EAircraftArmState::Armed))
+	{
+		EAircraftFailurePolicyAction TriggeredAction = EAircraftFailurePolicyAction::WarningOnly;
+		if (RotorFailureManager.EvaluatePolicy(Config.FailurePolicy, DeltaTime, TriggeredAction))
+		{
+			PendingFailureAction.store(static_cast<uint8>(TriggeredAction), std::memory_order_relaxed);
+			bFailureActionPending.store(true, std::memory_order_release);
+			UE_LOG(LogAircraft, Warning,
+				TEXT("Aircraft failure policy triggered action %d on '%s'."),
+				static_cast<int32>(TriggeredAction), *AircraftOwnerName);
+		}
+	}
+	else
+	{
+		RotorFailureManager.ResetPolicyEvaluationTimers();
+	}
 	// 显式气动力属于物理模型，在飞控和物理约束两种物理驱动中使用同一次施加。
 	if (ActiveLodModel->bHasAerodynamics)
 	{
@@ -1289,67 +1347,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		SolverContext, DesiredBodyRatesDegPerSec, DeltaTime);
 
 	/* ----------------------------------------------------------------------
-	 * 8) 控制分配（缓存重建 + 权限评估 + 主动集求解）
+	 * 7) 控制分配（阻尼伪逆 + 主动集求解）
 	 * ---------------------------------------------------------------------- */
-	{
-		const int32 NumRotors = ControlAllocator.RotorInfoBuffer.Num();
-		ControlAllocator.RotorHealthBuffer.SetNum(NumRotors);
-		for (int32 i = 0; i < NumRotors; ++i)
-		{
-			if (const FAircraftRotorHealthState* State =
-				RotorFailureManager.HealthStatesByName.Find(ControlAllocator.RotorInfoBuffer[i].RotorName))
-			{
-				ControlAllocator.RotorHealthBuffer[i] = *State;
-			}
-			else
-			{
-				ControlAllocator.RotorHealthBuffer[i] = FAircraftRotorHealthState();
-			}
-		}
-
-		if (ControlAllocator.bCacheDirty
-			|| !ControlAllocator.Cache.bIsValid
-			|| ControlAllocator.Cache.JacobianColumns.Num() != NumRotors)
-		{
-			ControlAllocator.RebuildAllocationCache(Config);
-			double BaselineCollective = 0.0, BaselineRoll = 0.0, BaselinePitch = 0.0, BaselineYaw = 0.0;
-			FAircraftControlAllocator::ComputeBaselineAuthorities(
-				ControlAllocator.RotorInfoBuffer, Config,
-				BaselineCollective, BaselineRoll, BaselinePitch, BaselineYaw);
-			RotorFailureManager.UpdateAuthority(ControlAllocator.Cache,
-				BaselineCollective, BaselineRoll, BaselinePitch, BaselineYaw,
-				AircraftAllocation::AuthorityEpsilon);
-		}
-
-		ControlAllocator.Allocate(Config, WorldQuat, ControlAllocator.RotorHealthBuffer,
-			CollectiveCommand, AxisCommands, Runtime.ControlOutput);
-	}
+	ControlAllocator.Allocate(Config, WorldQuat, ControlAllocator.RotorHealthBuffer,
+		CollectiveCommand, AxisCommands, Runtime.ControlOutput);
 	CurrentCollectiveThrustCommand.store(CollectiveCommand, std::memory_order_relaxed);
 
 	/* ----------------------------------------------------------------------
-	 * 9) 失效策略评估（触发动作经原子回传 GT 由组件执行）
-	 * ---------------------------------------------------------------------- */
-	if (Config.FailurePolicy.bEnabled
-		&& (!Config.FailurePolicy.bEvaluateOnlyWhenArmed
-			|| ArmState == EAircraftArmState::Armed))
-	{
-		EAircraftFailurePolicyAction TriggeredAction = EAircraftFailurePolicyAction::WarningOnly;
-		if (RotorFailureManager.EvaluatePolicy(Config.FailurePolicy, DeltaTime, TriggeredAction))
-		{
-			PendingFailureAction.store(static_cast<uint8>(TriggeredAction), std::memory_order_relaxed);
-			bFailureActionPending.store(true, std::memory_order_release);
-			UE_LOG(LogAircraft, Warning,
-				TEXT("Aircraft failure policy triggered action %d on '%s'."),
-				static_cast<int32>(TriggeredAction), *AircraftOwnerName);
-		}
-	}
-	else
-	{
-		RotorFailureManager.ResetPolicyEvaluationTimers();
-	}
-
-	/* ----------------------------------------------------------------------
-	 * 10) 电机一阶滞后 + Chaos 力/扭矩注入
+	 * 8) 电机一阶滞后 + Chaos 力/扭矩注入
 	 * ---------------------------------------------------------------------- */
 	Runtime.ControlOutput.RotorCommands.SetNum(RotorStates.Num());
 	for (int32 i = 0; i < RotorStates.Num(); ++i)
@@ -1400,7 +1405,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	LogDriveGate(TEXT("ForcesApplied"));
 
 	/* ----------------------------------------------------------------------
-	 * 11) 估计状态与诊断写回 GT
+	 * 9) 估计状态与诊断写回 GT
 	 * ---------------------------------------------------------------------- */
 	{
 		FScopeLock Lock(&OutputCriticalSection);

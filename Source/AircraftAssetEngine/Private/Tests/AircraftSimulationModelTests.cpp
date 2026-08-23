@@ -70,7 +70,7 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Constraint gravity feed-forward defaults to full compensation"),
 		RuntimeDefaults.ConstraintGravityFeedForwardScale, 1.0f);
 	TestEqual(TEXT("Constraint linear-damping feed-forward defaults to full compensation"),
-		RuntimeDefaults.ConstraintLinearDampingFeedForwardScale, 1.0f);
+		RuntimeDefaults.ConstraintDynamicsFeedForwardScale, 1.0f);
 	const double VelocityTrackingTarget =
 		UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
 			100.0, 200.0, 800.0, 2.0);
@@ -294,7 +294,7 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	Set(TEXT("FlightController.Altitude.VerticalVelocityFreezeIntegralWhenSaturated"), false);
 	Set(TEXT("FlightController.Execution.ControllerEnabledByDefault"), false);
 	Set(TEXT("FlightController.Constraint.GravityFeedForwardScale"), 0.8f);
-	Set(TEXT("FlightController.Constraint.LinearDampingFeedForwardScale"), 0.6f);
+	Set(TEXT("FlightController.Constraint.DynamicsFeedForwardScale"), 0.6f);
 
 	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = { Collection };
 	const FAircraftSimulationModel Model(Collections, TEXT("CompletePid"));
@@ -312,7 +312,7 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	TestEqual(TEXT("Constraint gravity feed-forward compiles"),
 		Config.ConstraintGravityFeedForwardScale, 0.8f);
 	TestEqual(TEXT("Constraint linear-damping feed-forward compiles"),
-		Config.ConstraintLinearDampingFeedForwardScale, 0.6f);
+		Config.ConstraintDynamicsFeedForwardScale, 0.6f);
 	return true;
 }
 

@@ -673,13 +673,13 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		0.0f, 0.0f, Target.YawRateDegPerSec / 360.0f);
 	const FVector GravityAccelerationCmPerSecSq(
 		0.0, 0.0, GetWorld() ? GetWorld()->GetGravityZ() : -980.0f);
-	const FVector DynamicsFeedForwardPositionOffset =
-		UE::AircraftLab::ConstraintDrive::ComputeDynamicsFeedForwardPositionOffset(
+	const FVector AccelerationFeedForwardPositionOffset =
+		UE::AircraftLab::ConstraintDrive::ComputeAccelerationFeedForwardPositionOffset(
+			Target.ControlAccelerationCmPerSecSq,
+			Target.DynamicsFeedForwardAccelerationCmPerSecSq,
 			GravityAccelerationCmPerSecSq,
-			TargetCenterOfMassVelocity,
-			ChassisBody->LinearDamping,
 			Model->FlightController.ConstraintGravityFeedForwardScale,
-			Model->FlightController.ConstraintLinearDampingFeedForwardScale,
+			Model->FlightController.ConstraintDynamicsFeedForwardScale,
 			Model->FlightController.ConstraintLinearStrength,
 			Model->FlightController.bConstraintAccelerationMode,
 			ChassisBody->GetBodyMass());
@@ -705,7 +705,7 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 				TargetCenterOfMassVelocity.Z, Strength));
 	}
 	const FVector ConstraintTargetCenterOfMass =
-		TargetCenterOfMass + DynamicsFeedForwardPositionOffset;
+		TargetCenterOfMass + AccelerationFeedForwardPositionOffset;
 	SimulationConstraint->SetLinearPositionTarget(ConstraintTargetCenterOfMass);
 	SimulationConstraint->SetLinearVelocityTarget(TargetCenterOfMassVelocity);
 	SimulationConstraint->SetAngularOrientationTarget(TargetRotation);
@@ -714,7 +714,7 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	FAircraftDebug::TickConstraint(
 		*this, *SimulationConstraint, Model->RootBone, Target,
 		ConstraintTargetCenterOfMass, TargetCenterOfMassVelocity,
-		DynamicsFeedForwardPositionOffset,
+		AccelerationFeedForwardPositionOffset,
 		TargetRotation, WorldAngularVelocityTargetRevPerSec,
 		DeltaSeconds,
 		ConstraintDebugLogAccumulatorSeconds, ConstraintDebugUnresponsiveSeconds);
@@ -737,7 +737,9 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
 	const FVector CurrentLocation = GetComponentLocation();
-	const FVector IntegratedLocation = CurrentLocation + Target.VelocityCmPerSec * DeltaSeconds;
+	const FVector IntegratedLocation = CurrentLocation
+		+ Target.VelocityCmPerSec * DeltaSeconds
+		+ 0.5f * Target.ControlAccelerationCmPerSecSq * FMath::Square(DeltaSeconds);
 	const float PositionCorrectionAlpha = 1.0f - FMath::Exp(
 		-FMath::Max(Config.KinematicPositionCorrectionRate, 0.0f) * DeltaSeconds);
 	const FVector NewLocation = Target.bPositionTrackingEnabled

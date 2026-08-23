@@ -26,7 +26,7 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	const float Values[] = { Config.LinearStrength, Config.LinearDampingRatio,
 		Config.LinearExtraDamping, Config.LinearForceLimit,
-		Config.GravityFeedForwardScale, Config.LinearDampingFeedForwardScale, Config.AngularStrength,
+		Config.GravityFeedForwardScale, Config.DynamicsFeedForwardScale, Config.AngularStrength,
 		Config.AngularDampingRatio, Config.AngularExtraDamping, Config.AngularTorqueLimit };
 	for (const float Value : Values)
 	{
@@ -48,7 +48,7 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearExtraDamping"), Config.LinearExtraDamping);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearForceLimit"), Config.LinearForceLimit);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.GravityFeedForwardScale"), Config.GravityFeedForwardScale);
-	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearDampingFeedForwardScale"), Config.LinearDampingFeedForwardScale);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.DynamicsFeedForwardScale"), Config.DynamicsFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularStrength"), Config.AngularStrength);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularDampingRatio"), Config.AngularDampingRatio);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularExtraDamping"), Config.AngularExtraDamping);

@@ -50,16 +50,13 @@ namespace UE::AircraftLab::ConstraintDrive
 			+ (DesiredVelocityCmPerSec - CurrentVelocityCmPerSec) / AngularFrequency;
 	}
 
-	/**
-	 * Convert gravity and rigid-body linear damping feed-forward into a position offset
-	 * for a Chaos linear spring drive. Inputs use Unreal units (cm, s, kg).
-	 */
-	inline FVector ComputeDynamicsFeedForwardPositionOffset(
+	/** Convert the predictive acceleration command into an equivalent Chaos spring target offset. */
+	inline FVector ComputeAccelerationFeedForwardPositionOffset(
+		const FVector& ControlAccelerationCmPerSecSq,
+		const FVector& DynamicsFeedForwardAccelerationCmPerSecSq,
 		const FVector& GravityAccelerationCmPerSecSq,
-		const FVector& DesiredVelocityCmPerSec,
-		const double LinearDampingPerSecond,
 		const double GravityFeedForwardScale,
-		const double LinearDampingFeedForwardScale,
+		const double DynamicsFeedForwardScale,
 		const double Strength,
 		const bool bAccelerationMode,
 		const double BodyMassKg)
@@ -70,11 +67,11 @@ namespace UE::AircraftLab::ConstraintDrive
 			return FVector::ZeroVector;
 		}
 
-		const FVector RequiredAcceleration = -GravityAccelerationCmPerSecSq
-			* FMath::Max(GravityFeedForwardScale, 0.0)
-			+ DesiredVelocityCmPerSec
-				* FMath::Max(LinearDampingPerSecond, 0.0)
-				* FMath::Max(LinearDampingFeedForwardScale, 0.0);
+		const FVector RequiredAcceleration = ControlAccelerationCmPerSecSq
+			+ DynamicsFeedForwardAccelerationCmPerSecSq
+				* FMath::Max(DynamicsFeedForwardScale, 0.0)
+			- GravityAccelerationCmPerSecSq
+				* FMath::Max(GravityFeedForwardScale, 0.0);
 		const double DriveMassScale = bAccelerationMode ? 1.0 : FMath::Max(BodyMassKg, 0.0);
 		return RequiredAcceleration * (DriveMassScale / Stiffness);
 	}

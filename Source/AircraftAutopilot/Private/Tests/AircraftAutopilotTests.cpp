@@ -487,6 +487,8 @@ bool FAircraftPathProgressTracksVehicleProjectionTest::RunTest(const FString& Pa
 		Reference.PathProgress < 0.01f);
 	TestTrue(TEXT("Position reference remains anchored to the projected path point"),
 		Reference.PositionCm.IsNearlyZero(1.0f));
+	TestTrue(TEXT("A stationary route publishes forward control acceleration for backend cold start"),
+		Reference.ControlAccelerationCmPerSecSq.X > 1.0f);
 	return true;
 }
 
