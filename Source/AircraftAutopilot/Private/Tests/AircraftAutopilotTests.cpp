@@ -523,4 +523,118 @@ bool FAircraftTimedTrajectoryUsesExplicitClockTest::RunTest(const FString& Param
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftPathProgressIsMonotonicTest,
+	"AircraftAutopilot.MPCC.PathProgressIsMonotonic",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftPathProgressIsMonotonicTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(5000.0f);
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftPredictiveController Controller;
+	TestTrue(TEXT("Monotonic-progress route is accepted"),
+		Controller.SetIntent(Intent, 40, 1, Config, State, Capability));
+
+	FAircraftTrajectoryReference Reference;
+	float PreviousProgress = 0.0f;
+	for (int32 Index = 0; Index < 30; ++Index)
+	{
+		State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+		++State.Sequence;
+		State.PositionCm.X += 8.0f;
+		State.VelocityCmPerSec.X = 400.0f;
+		TestTrue(TEXT("Forward route reference is solved"),
+			Controller.Update(State, Capability, Reference));
+		TestTrue(TEXT("Forward progress never regresses"),
+			Reference.PathProgress + UE_KINDA_SMALL_NUMBER >= PreviousProgress);
+		PreviousProgress = Reference.PathProgress;
+	}
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+	++State.Sequence;
+	State.PositionCm.X -= 100.0f;
+	State.VelocityCmPerSec.X = -400.0f;
+	TestTrue(TEXT("Off-course recovery reference is solved"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("Closest-point movement cannot reverse route progress"),
+		Reference.PathProgress + UE_KINDA_SMALL_NUMBER >= PreviousProgress);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNominalBrakingSurvivesVelocityErrorTest,
+	"AircraftAutopilot.MPCC.NominalBrakingSurvivesVelocityError",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNominalBrakingSurvivesVelocityErrorTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::TimedTrajectory;
+	FAircraftTimedTrajectorySample Start;
+	Start.TimeSeconds = 0.0f;
+	Start.PositionCm = FVector::ZeroVector;
+	Start.VelocityCmPerSec = FVector(500.0f, 0.0f, 0.0f);
+	Start.AccelerationCmPerSecSq = FVector(-300.0f, 0.0f, 0.0f);
+	FAircraftTimedTrajectorySample Finish = Start;
+	Finish.TimeSeconds = 2.0f;
+	Finish.PositionCm = FVector(700.0f, 0.0f, 0.0f);
+	Intent.TimedTrajectory.Samples = { Start, Finish };
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.VelocityCmPerSec = FVector(300.0f, 0.0f, 0.0f);
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftPredictiveController Controller;
+	TestTrue(TEXT("Braking trajectory is accepted"),
+		Controller.SetIntent(Intent, 41, 1, Config, State, Capability));
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Braking trajectory reference is solved"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("Positive velocity error cannot replace nominal braking with acceleration"),
+		Reference.ControlAccelerationCmPerSecSq.X < 0.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawReferenceRemainsAnchoredToMeasuredHeadingTest,
+	"AircraftAutopilot.MPCC.YawReferenceRemainsAnchoredToMeasuredHeading",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawReferenceRemainsAnchoredToMeasuredHeadingTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::Velocity;
+	Intent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+	Intent.Heading.FixedYawDegrees = 90.0f;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+	State.BodyRotation = FQuat::Identity;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftPredictiveController Controller;
+	TestTrue(TEXT("Yaw-governed intent is accepted"),
+		Controller.SetIntent(Intent, 42, 1, Config, State, Capability));
+	FAircraftTrajectoryReference Reference;
+	for (int32 Index = 0; Index < 20; ++Index)
+	{
+		State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+		++State.Sequence;
+		TestTrue(TEXT("Yaw-governed reference is solved"),
+			Controller.Update(State, Capability, Reference));
+	}
+	TestTrue(TEXT("Yaw reference cannot run away from a stationary measured heading"),
+		FMath::Abs(Reference.YawDegrees) < 5.0f);
+	return true;
+}
+
 #endif

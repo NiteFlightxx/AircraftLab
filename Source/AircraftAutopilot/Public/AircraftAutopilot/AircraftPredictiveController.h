@@ -27,13 +27,14 @@ private:
 	FAircraftTrajectoryReference LastReference;
 	FVector LastVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 	FVector CandidateVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
-	TArray<FVector> AccelerationHorizon;
+	TArray<FVector> ControlCorrectionHorizon;
 	uint64 IntentRevision = 0;
 	int64 ActiveIntentId = 0;
 	uint64 PlanRevision = 0;
 	float EstimatedPlanTimeSeconds = 0.0f;
 	float EstimatedDistanceCm = 0.0f;
 	double PlanStartTimeSeconds = 0.0;
+	double LastPlanSolveTimeSeconds = 0.0;
 	double NextSolveTimeSeconds = -DBL_MAX;
 
 	bool SolveVelocityIntent(const FAircraftVehicleStateSnapshot& State,

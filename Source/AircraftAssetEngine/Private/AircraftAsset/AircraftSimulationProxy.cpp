@@ -215,6 +215,8 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 	}
 
 	const FVector VelocityError = ControlSolver.LastDesiredHorizontalVelocityCmPerSec - State.VelocityCmPerSec;
+	const FAircraftAutopilotDiagnostics& AutopilotDiagnostics =
+		PredictiveController.GetDiagnostics();
 	UE_LOG(LogAircraft, Log,
 		TEXT("[AircraftDF.Flight] t=%.3f dt=%.5f Owner=%s LOD=%d Mode=%s Arm=%d Controller=%d Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) Pos=(%.1f,%.1f,%.1f) Vel=(%+.1f,%+.1f,%+.1f) Att(R/P/Y)=(%+.2f,%+.2f,%+.2f) DesiredAtt=(%+.2f,%+.2f,%+.2f)"),
 		State.TimeSeconds, DeltaTime, *AircraftOwnerName, ActiveLodIndex,
@@ -247,12 +249,18 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 		Runtime.HoldTargets.HeldPositionCm.Z);
 
 	UE_LOG(LogAircraft, Log,
-		TEXT("[AircraftDF.Reference] Valid=%d Intent=%lld Revision=%lld PositionTracking=%d Progress=%.3f RefVel=(%+.1f,%+.1f,%+.1f) TrajectoryAccel=(%+.1f,%+.1f,%+.1f) ControlAccel=(%+.1f,%+.1f,%+.1f) DynamicsFF=(%+.1f,%+.1f,%+.1f) YawRef=%+.2f YawRateRef=%+.2f"),
+		TEXT("[AircraftDF.Reference] Valid=%d Intent=%lld Revision=%lld PositionTracking=%d Progress=%.3f ProgressScale=%.3f Contour=%.1f Lag=%.1f RefPos=(%.1f,%.1f,%.1f) RefVel=(%+.1f,%+.1f,%+.1f) TrajectoryAccel=(%+.1f,%+.1f,%+.1f) ControlAccel=(%+.1f,%+.1f,%+.1f) DynamicsFF=(%+.1f,%+.1f,%+.1f) YawRef=%+.2f YawRateRef=%+.2f"),
 		TrajectoryReference.bValid ? 1 : 0,
 		TrajectoryReference.IntentId,
 		TrajectoryReference.IntentRevision,
 		TrajectoryReference.bPositionTrackingEnabled ? 1 : 0,
 		TrajectoryReference.PathProgress,
+		AutopilotDiagnostics.ProgressScale,
+		AutopilotDiagnostics.ContourErrorCm,
+		AutopilotDiagnostics.LagErrorCm,
+		TrajectoryReference.PositionCm.X,
+		TrajectoryReference.PositionCm.Y,
+		TrajectoryReference.PositionCm.Z,
 		TrajectoryReference.VelocityCmPerSec.X,
 		TrajectoryReference.VelocityCmPerSec.Y,
 		TrajectoryReference.VelocityCmPerSec.Z,

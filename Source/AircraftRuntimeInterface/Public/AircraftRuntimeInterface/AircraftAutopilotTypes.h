@@ -128,6 +128,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftAutopilotDiagnostics
 	double MaximumSolveMilliseconds = 0.0;
 	float ContourErrorCm = 0.0f;
 	float LagErrorCm = 0.0f;
+	float ProgressScale = 1.0f;
 	bool bPlanValid = false;
 	bool bReferenceFresh = false;
 	/** 求解器连续失败超过配置阈值且已无可复用参考。 */
