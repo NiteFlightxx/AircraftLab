@@ -80,6 +80,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTrajectoryReference
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot", meta = (Units = "cm/s^2"))
 	FVector AccelerationCmPerSecSq = FVector::ZeroVector;
 
+	/** 维持参考速度所需的阻尼/空气动力学补偿；与轨迹运动学加速度分开，避免飞控重复前馈。 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot", meta = (Units = "cm/s^2"))
+	FVector DynamicsFeedForwardAccelerationCmPerSecSq = FVector::ZeroVector;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot", meta = (Units = "deg"))
 	float YawDegrees = 0.0f;
 
@@ -94,6 +98,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTrajectoryReference
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot")
 	float PathProgress = 0.0f;
+
+	/** Velocity 意图只跟踪速度；路径、环绕与 Hold 才启用位置外环。 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot")
+	bool bPositionTrackingEnabled = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot")
 	bool bValid = false;
@@ -117,4 +125,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftAutopilotDiagnostics
 	float LagErrorCm = 0.0f;
 	bool bPlanValid = false;
 	bool bReferenceFresh = false;
+	/** 求解器连续失败超过配置阈值且已无可复用参考。 */
+	bool bSolverFailed = false;
 };

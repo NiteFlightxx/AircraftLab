@@ -180,28 +180,34 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 	{
 		Context.Runtime.HoldTargets.bVerticalBrakeBeforeHold = false;
 		const FAircraftTrajectoryReference& Reference = Context.TrajectoryReference;
-		// 高度外环：设定值=AltitudeSetpointCm，前馈=垂直速度设定值（Kff 通道）
-		OutDesiredVerticalVelocity = PidStates.Altitude.UpdateFromMeasurement(
-			Reference.PositionCm.Z, CurrentAltitude, DeltaSeconds,
-			Config.GetAltitudePidGains(), Reference.VelocityCmPerSec.Z);
+		if (Reference.bPositionTrackingEnabled)
+		{
+			// 路径/Hold：高度外环叠加轨迹速度前馈。
+			OutDesiredVerticalVelocity = PidStates.Altitude.UpdateFromMeasurement(
+				Reference.PositionCm.Z, CurrentAltitude, DeltaSeconds,
+				Config.GetAltitudePidGains(), Reference.VelocityCmPerSec.Z);
+		}
+		else
+		{
+			// Velocity 意图没有位置目标，不允许虚构一个逐帧位置点进入高度环。
+			PidStates.Altitude.Reset();
+			OutDesiredVerticalVelocity = Reference.VelocityCmPerSec.Z;
+		}
 		OutDesiredVerticalVelocity = FMath::Clamp(OutDesiredVerticalVelocity,
 			-Config.MaxDescentRateCmPerSec, Config.MaxClimbRateCmPerSec);
 		OutDesiredVerticalVelocity = SlewVerticalVelocitySetpoint(OutDesiredVerticalVelocity);
-		LastVerticalDampingCollectiveFeedForward =
-			FlightControlDynamics::ComputeVerticalDampingCollectiveFeedForward(
-				OutDesiredVerticalVelocity, Context.PhysicsCache.LinearDampingPerSecond.Z,
-				Context.PhysicsCache.GravityMagnitudeCmPerSecSq,
-				Config.HoverCollectiveCommand,
-				Config.VerticalDampingFeedForwardScale);
-		// 垂直速度内环；轨迹加速度换算为总距基准，阻尼前馈补偿稳态阻力。
+		// 预测参考拥有动力学补偿，飞控不再重复计算同一份阻尼前馈。
+		LastVerticalDampingCollectiveFeedForward = 0.0f;
 		const float CollectiveOffset = PidStates.VerticalVelocity.UpdateFromMeasurement(
 			OutDesiredVerticalVelocity, CurrentVerticalVelocity, DeltaSeconds,
 			Config.GetVerticalVelocityPidGains());
 		const float Gravity = FMath::Max(Context.PhysicsCache.GravityMagnitudeCmPerSecSq, 1.0f);
+		const float ReferenceAcceleration = Reference.AccelerationCmPerSecSq.Z
+			+ Reference.DynamicsFeedForwardAccelerationCmPerSecSq.Z;
 		const float TrajectoryCollective = Config.HoverCollectiveCommand
-			* FMath::Max(0.0f, (Gravity + Reference.AccelerationCmPerSecSq.Z) / Gravity);
-		return FMath::Clamp(TrajectoryCollective + LastVerticalDampingCollectiveFeedForward
-			+ CollectiveOffset, MinCollective, MaxCollective);
+			* FMath::Max(0.0f, (Gravity + ReferenceAcceleration) / Gravity);
+		return FMath::Clamp(TrajectoryCollective + CollectiveOffset,
+			MinCollective, MaxCollective);
 	}
 
 	// ---- 路径 B（手动）：高度保持 ----
@@ -311,6 +317,17 @@ FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(FAircraftF
 	if (Context.bUseTrajectoryReference && Context.TrajectoryReference.bValid)
 	{
 		const FAircraftTrajectoryReference& Reference = Context.TrajectoryReference;
+		if (!bTrajectoryPositionTrackingInitialized
+			|| bLastTrajectoryPositionTrackingEnabled != Reference.bPositionTrackingEnabled)
+		{
+			// Hold/Path 与纯 Velocity 的外环语义不同；切换时不得继承上一语义的积分状态。
+			PidStates.Position.X.Reset();
+			PidStates.Position.Y.Reset();
+			PidStates.Velocity.X.Reset();
+			PidStates.Velocity.Y.Reset();
+			bTrajectoryPositionTrackingInitialized = true;
+			bLastTrajectoryPositionTrackingEnabled = Reference.bPositionTrackingEnabled;
+		}
 		const float IntentYawRateLimit = Reference.YawRateLimitDegPerSec > UE_SMALL_NUMBER
 			? Reference.YawRateLimitDegPerSec
 			: Config.MaxYawRateDegreesPerSec;
@@ -502,14 +519,16 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalVelocity(const FAi
 
 FVector FAircraftFlightControlSolver::ComputeVelocityPidAcceleration(
 	FAircraftFlightControlSolverContext& Context, const FVector& DesiredVelocityCmPerSec,
-	const FVector& TrajectoryAccelerationFeedForwardCmPerSecSq, float DeltaSeconds)
+	const FVector& TrajectoryAccelerationFeedForwardCmPerSecSq, float DeltaSeconds,
+	bool bIncludeLinearDampingFeedForward)
 {
 	const FAircraftFlightControllerRuntimeConfig& Config = Context.Config;
 	const FVector CurrentVelocity = Context.Runtime.EstimatedState.State.VelocityCmPerSec;
-	const FVector DragFeedForward =
-		FlightControlDynamics::ComputeLinearDampingFeedForward(
+	const FVector DragFeedForward = bIncludeLinearDampingFeedForward
+		? FlightControlDynamics::ComputeLinearDampingFeedForward(
 			DesiredVelocityCmPerSec, Context.PhysicsCache.LinearDampingPerSecond,
-			Config.LinearDampingFeedForwardScale);
+			Config.LinearDampingFeedForwardScale)
+		: FVector::ZeroVector;
 	const FVector TrajectoryFeedForward(
 		TrajectoryAccelerationFeedForwardCmPerSecSq.X,
 		TrajectoryAccelerationFeedForwardCmPerSecSq.Y,
@@ -581,7 +600,8 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 		FVector DesiredVelocity = FVector::ZeroVector;
 		FVector DesiredAcceleration = FVector::ZeroVector;
 
-		if (Context.ModeCapabilities.CanUsePositionControl)
+		if (Reference.bPositionTrackingEnabled
+			&& Context.ModeCapabilities.CanUsePositionControl)
 		{
 			// 位置环：设定值 = PositionSetpointCm.XY，前馈 = VelocitySetpointCmPerSec.XY
 			DesiredVelocity = FVector(
@@ -594,6 +614,8 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 		}
 		else
 		{
+			PidStates.Position.X.Reset();
+			PidStates.Position.Y.Reset();
 			DesiredVelocity = Reference.VelocityCmPerSec;
 		}
 
@@ -611,15 +633,19 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 		Context.Runtime.ControlOutput.VelocityTargetCmPerSec.X = DesiredVelocity.X;
 		Context.Runtime.ControlOutput.VelocityTargetCmPerSec.Y = DesiredVelocity.Y;
 
-		// 速度 PID + 轨迹加速度前馈 + 维持目标速度所需的线性阻尼前馈。
+		// 预测参考已经分别给出轨迹运动学与动力学前馈，此处只合并一次。
 		DesiredAcceleration = ComputeVelocityPidAcceleration(
-			Context, DesiredVelocity, Reference.AccelerationCmPerSecSq, DeltaSeconds);
+			Context, DesiredVelocity,
+			Reference.AccelerationCmPerSecSq
+				+ Reference.DynamicsFeedForwardAccelerationCmPerSecSq,
+			DeltaSeconds, false);
 		return DesiredAcceleration;
 	}
 
 	// ======================================================================
 	// 手动摇杆路径
 	// ======================================================================
+	bTrajectoryPositionTrackingInitialized = false;
 
 	// 先计算摇杆对应的期望速度
 	FVector DesiredVelocity = ComputeDesiredHorizontalVelocity(Context);

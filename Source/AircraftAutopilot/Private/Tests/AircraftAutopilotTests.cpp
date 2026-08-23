@@ -44,6 +44,7 @@ bool FAircraftAutopilotTypedIntentApiTest::RunTest(const FString& Parameters)
 	(void)Parameters;
 	UAutopilotComponent* Autopilot = NewObject<UAutopilotComponent>();
 	TestNotNull(TEXT("Autopilot component is created"), Autopilot);
+	Autopilot->SetAutopilotActive(true);
 
 	FAircraftMovementIntentSettings Settings;
 	Settings.Limits.CruiseSpeedCmPerSec = 725.0f;
@@ -294,12 +295,15 @@ bool FAircraftPredictiveReferenceTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("A fresh reference is solved"), Controller.Update(State, Capability, First));
 	TestTrue(TEXT("Reference carries identity"),
 		First.bValid && First.IntentId == 7 && First.IntentRevision == 3);
-	TestTrue(TEXT("Velocity command is preserved"),
-		First.VelocityCmPerSec.Equals(Intent.Velocity.VelocityCmPerSec, 0.1f));
+	TestTrue(TEXT("Velocity reference ramps instead of stepping to cruise speed"),
+		First.VelocityCmPerSec.X > 0.0f
+		&& First.VelocityCmPerSec.X < Intent.Velocity.VelocityCmPerSec.X);
 	TestTrue(TEXT("Acceleration remains inside requested horizontal authority"),
 		FVector2D(First.AccelerationCmPerSecSq.X, First.AccelerationCmPerSecSq.Y).Size() <= 400.1f);
 	TestTrue(TEXT("Aerodynamic feed-forward acts in the commanded direction"),
-		First.AccelerationCmPerSecSq.X > 0.0f);
+		First.DynamicsFeedForwardAccelerationCmPerSecSq.X > 0.0f);
+	TestFalse(TEXT("Velocity intent does not invent a position target"),
+		First.bPositionTrackingEnabled);
 
 	State.TimeSeconds += 0.001;
 	State.Sequence = 11;
@@ -310,6 +314,97 @@ bool FAircraftPredictiveReferenceTest::RunTest(const FString& Parameters)
 		Reused.StateSequence, First.StateSequence);
 	TestTrue(TEXT("Reference expires at its declared deadline"),
 		!First.IsFresh(First.ValidUntilSeconds + 0.001));
+
+	FAircraftMovementIntent BrakeIntent = Intent;
+	BrakeIntent.Velocity.VelocityCmPerSec = FVector::ZeroVector;
+	State.TimeSeconds = 2.0;
+	State.Sequence = 12;
+	State.VelocityCmPerSec = FVector(800.0, 0.0, 0.0);
+	State.AccelerationCmPerSecSq = FVector::ZeroVector;
+	TestTrue(TEXT("Zero velocity braking intent is accepted"),
+		Controller.SetIntent(BrakeIntent, 7, 4, Config, State, Capability));
+	FAircraftTrajectoryReference Braking;
+	TestTrue(TEXT("A braking reference is solved"),
+		Controller.Update(State, Capability, Braking));
+	TestTrue(TEXT("Release command decelerates without an instantaneous stop"),
+		Braking.VelocityCmPerSec.X > 0.0f
+		&& Braking.VelocityCmPerSec.X < State.VelocityCmPerSec.X);
+	TestTrue(TEXT("Braking feed-forward remains inside requested authority"),
+		FMath::Abs(Braking.AccelerationCmPerSecSq.X)
+		<= FMath::Max(Intent.Limits.MaxAccelerationCmPerSecSq,
+			Intent.Limits.MaxDecelerationCmPerSecSq) + 0.1f);
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+	++State.Sequence;
+	FAircraftTrajectoryReference ContinuedBraking;
+	TestTrue(TEXT("The next braking reference is solved"),
+		Controller.Update(State, Capability, ContinuedBraking));
+	TestTrue(TEXT("Drag feed-forward does not reverse the braking profile"),
+		ContinuedBraking.VelocityCmPerSec.X < Braking.VelocityCmPerSec.X);
+
+	FAircraftTrajectoryReference TerminalReference = ContinuedBraking;
+	for (int32 Step = 0; Step < 100 && TerminalReference.VelocityCmPerSec.X > UE_SMALL_NUMBER; ++Step)
+	{
+		State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz;
+		++State.Sequence;
+		TestTrue(TEXT("Terminal braking reference remains solvable"),
+			Controller.Update(State, Capability, TerminalReference));
+		TestTrue(TEXT("Terminal braking never commands reverse velocity"),
+			TerminalReference.VelocityCmPerSec.X >= -UE_SMALL_NUMBER);
+	}
+	TestTrue(TEXT("Terminal braking reaches zero reference speed"),
+		FMath::IsNearlyZero(TerminalReference.VelocityCmPerSec.X, UE_SMALL_NUMBER));
+
+	FAircraftAutopilotRuntimeConfig FailureConfig = Config;
+	FailureConfig.Mpcc.SolveTimeBudgetMilliseconds = 1.0e-9f;
+	FailureConfig.Mpcc.MaxConsecutiveFailures = 2;
+	FAircraftPredictiveController FailureController;
+	TestTrue(TEXT("Failure-threshold intent is accepted"),
+		FailureController.SetIntent(Intent, 8, 1, FailureConfig, State, Capability));
+	FAircraftTrajectoryReference FailedReference;
+	TestFalse(TEXT("First over-budget solve produces no reference"),
+		FailureController.Update(State, Capability, FailedReference));
+	TestFalse(TEXT("One transient failure is not terminal"),
+		FailureController.GetDiagnostics().bSolverFailed);
+	State.TimeSeconds += 1.0 / FailureConfig.Mpcc.UpdateRateHz;
+	++State.Sequence;
+	TestFalse(TEXT("Second over-budget solve still produces no reference"),
+		FailureController.Update(State, Capability, FailedReference));
+	TestTrue(TEXT("Configured consecutive failure threshold is terminal"),
+		FailureController.GetDiagnostics().bSolverFailed);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawReferenceUsesControlFrameTest,
+	"AircraftAutopilot.MPCC.YawReferenceUsesControlFrame",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawReferenceUsesControlFrameTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::Velocity;
+	Intent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+	Intent.Heading.FixedYawDegrees = 25.0f;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.Sequence = 1;
+	// 原始刚体轴可与 Dataflow 定义的控制机头不同；航向参考只能使用后者。
+	State.BodyRotation = FRotator(0.0f, -65.0f, 0.0f).Quaternion();
+	State.ControlRotation = FRotator(0.0f, 25.0f, 0.0f).Quaternion();
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftPredictiveController Controller;
+	TestTrue(TEXT("Control-frame yaw intent is accepted"),
+		Controller.SetIntent(Intent, 20, 1, Config, State, Capability));
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Control-frame yaw reference is solved"),
+		Controller.Update(State, Capability, Reference));
+	TestEqual(TEXT("Matching control heading produces no artificial yaw error"),
+		Reference.YawDegrees, 25.0f, 1.e-4f);
+	TestEqual(TEXT("Matching control heading produces no artificial yaw-rate feed-forward"),
+		Reference.YawRateDegPerSec, 0.0f, 1.e-4f);
 	return true;
 }
 

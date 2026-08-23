@@ -94,6 +94,8 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 	float LastVerticalDampingCollectiveFeedForward = 0.0f;
 	float LastDesiredVerticalVelocityCmPerSec = 0.0f;
 	bool bVerticalVelocitySetpointInitialized = false;
+	bool bTrajectoryPositionTrackingInitialized = false;
+	bool bLastTrajectoryPositionTrackingEnabled = false;
 
 	float ComputeVerticalControl(FAircraftFlightControlSolverContext& Context,
 		float DeltaSeconds, float& OutDesiredVerticalVelocity);
@@ -107,7 +109,7 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 	FVector ComputeDesiredHorizontalAcceleration(FAircraftFlightControlSolverContext& Context, float DeltaSeconds);
 	FVector ComputeVelocityPidAcceleration(FAircraftFlightControlSolverContext& Context,
 		const FVector& DesiredVelocityCmPerSec, const FVector& TrajectoryAccelerationFeedForwardCmPerSecSq,
-		float DeltaSeconds);
+		float DeltaSeconds, bool bIncludeLinearDampingFeedForward = true);
 	float MapCenteredThrottleToCollective(const FAircraftFlightControlSolverContext& Context, float ThrottleInput) const;
 
 	void Reset()
@@ -123,5 +125,7 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 		LastVerticalDampingCollectiveFeedForward = 0.0f;
 		LastDesiredVerticalVelocityCmPerSec = 0.0f;
 		bVerticalVelocitySetpointInitialized = false;
+		bTrajectoryPositionTrackingInitialized = false;
+		bLastTrajectoryPositionTrackingEnabled = false;
 	}
 };

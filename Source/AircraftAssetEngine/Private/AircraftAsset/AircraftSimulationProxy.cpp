@@ -127,7 +127,8 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 	const float DesiredVerticalVelocityCmPerSec,
 	const FRotator& DesiredAttitude,
 	const FVector& DesiredBodyRatesDegPerSec,
-	const FVector& AxisCommands)
+	const FVector& AxisCommands,
+	const FAircraftTrajectoryReference& TrajectoryReference)
 {
 	if (!FAircraftDebug::IsFlightLogEnabled() || !ActiveLodModel)
 	{
@@ -244,6 +245,24 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 		Runtime.HoldTargets.HeldPositionCm.X,
 		Runtime.HoldTargets.HeldPositionCm.Y,
 		Runtime.HoldTargets.HeldPositionCm.Z);
+
+	UE_LOG(LogAircraft, Log,
+		TEXT("[AircraftDF.Reference] Valid=%d Intent=%lld Revision=%lld PositionTracking=%d RefVel=(%+.1f,%+.1f,%+.1f) KinematicAccel=(%+.1f,%+.1f,%+.1f) DynamicsFF=(%+.1f,%+.1f,%+.1f) YawRef=%+.2f YawRateRef=%+.2f"),
+		TrajectoryReference.bValid ? 1 : 0,
+		TrajectoryReference.IntentId,
+		TrajectoryReference.IntentRevision,
+		TrajectoryReference.bPositionTrackingEnabled ? 1 : 0,
+		TrajectoryReference.VelocityCmPerSec.X,
+		TrajectoryReference.VelocityCmPerSec.Y,
+		TrajectoryReference.VelocityCmPerSec.Z,
+		TrajectoryReference.AccelerationCmPerSecSq.X,
+		TrajectoryReference.AccelerationCmPerSecSq.Y,
+		TrajectoryReference.AccelerationCmPerSecSq.Z,
+		TrajectoryReference.DynamicsFeedForwardAccelerationCmPerSecSq.X,
+		TrajectoryReference.DynamicsFeedForwardAccelerationCmPerSecSq.Y,
+		TrajectoryReference.DynamicsFeedForwardAccelerationCmPerSecSq.Z,
+		TrajectoryReference.YawDegrees,
+		TrajectoryReference.YawRateDegPerSec);
 
 	double CurrentTotalThrustN = 0.0;
 	FVector AppliedForceBodyN = FVector::ZeroVector;
@@ -558,7 +577,10 @@ void FAircraftSimulationProxy::TickKinematicPlanner_GameThread(
 			AngularVelocityWorldRadPerSec);
 
 		const FAircraftFlightControllerRuntimeConfig& Config = Model.FlightController;
-		State.ControlRotation = Config.GetControlWorldRotation(State.BodyRotation);
+		const float ControlHeadingDegrees = UE::AircraftLab::PilotInputMapping::GetPlanarHeadingDegrees(
+			State.BodyRotation, Config);
+		State.ControlRotation = FQuat(
+			FVector::UpVector, FMath::DegreesToRadians(ControlHeadingDegrees));
 		FAircraftDynamicCapabilitySnapshot Capability;
 		Capability.TimeSeconds = TimeSeconds;
 		Capability.Revision = State.Sequence;
@@ -1090,7 +1112,10 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	VehicleState.VelocityCmPerSec = LinearVelCmPerSec;
 	VehicleState.AccelerationCmPerSecSq = Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq;
 	VehicleState.BodyRotation = WorldQuat;
-	VehicleState.ControlRotation = Config.GetControlWorldRotation(WorldQuat);
+	const float ControlHeadingDegrees = UE::AircraftLab::PilotInputMapping::GetPlanarHeadingDegrees(
+		WorldQuat, Config);
+	VehicleState.ControlRotation = FQuat(
+		FVector::UpVector, FMath::DegreesToRadians(ControlHeadingDegrees));
 	VehicleState.AngularVelocityBodyRadPerSec = AngularVelBodyRadPerSec;
 
 	FAircraftDynamicCapabilitySnapshot Capability;
@@ -1338,7 +1363,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	MaybeEmitDebugLog_PhysicsThread(
 		DeltaTime, Pilot, ManualCommand, CollectiveCommand,
 		DesiredVerticalVelocityCmPerSec, DesiredAttitude,
-		DesiredBodyRatesDegPerSec, AxisCommands);
+		DesiredBodyRatesDegPerSec, AxisCommands, TrajectoryReference);
 	LogDriveGate(TEXT("ForcesApplied"));
 
 	/* ----------------------------------------------------------------------

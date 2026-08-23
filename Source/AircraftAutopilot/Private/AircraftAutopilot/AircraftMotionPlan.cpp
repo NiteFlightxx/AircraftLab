@@ -61,7 +61,7 @@ bool FAircraftMotionPlan::BuildHoldPlan(
 	Sample.PositionCm = Intent.Hold.bCaptureCurrentPosition
 		? InitialState.PositionCm : Intent.Hold.PositionCm;
 	Sample.YawDegrees = ResolveYaw(Intent.Heading, Sample.PositionCm,
-		FVector::ZeroVector, InitialState.BodyRotation.Rotator().Yaw);
+		FVector::ZeroVector, InitialState.ControlRotation.Rotator().Yaw);
 	Samples.Add(Sample);
 	bContinuous = true;
 	return true;
@@ -208,7 +208,7 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		}
 	}
 
-	float PreviousYaw = InitialState.BodyRotation.Rotator().Yaw;
+	float PreviousYaw = InitialState.ControlRotation.Rotator().Yaw;
 	for (int32 Index = 0; Index < Count; ++Index)
 	{
 		FAircraftMotionPlanSample& Sample = Samples[Index];

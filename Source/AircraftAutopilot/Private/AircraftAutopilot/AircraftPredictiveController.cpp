@@ -18,13 +18,15 @@ void FAircraftPredictiveController::Reset()
 	RuntimeConfig = {};
 	Diagnostics = {};
 	LastReference = {};
+	LastVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
+	CandidateVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 	AccelerationHorizon.Reset();
 	IntentRevision = 0;
 	ActiveIntentId = 0;
 	PlanRevision = 0;
 	EstimatedPlanTimeSeconds = 0.0f;
 	EstimatedDistanceCm = 0.0f;
-	LastSolveTimeSeconds = -DBL_MAX;
+	NextSolveTimeSeconds = -DBL_MAX;
 }
 
 bool FAircraftPredictiveController::SetIntent(
@@ -33,6 +35,10 @@ bool FAircraftPredictiveController::SetIntent(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
+	const bool bPreserveVelocityProfile = Plan.IsValid()
+		&& ActiveIntentId == InIntentId
+		&& Plan.GetIntent().Type == EAircraftMovementIntentType::Velocity
+		&& Intent.Type == EAircraftMovementIntentType::Velocity;
 	RuntimeConfig = Config;
 	IntentRevision = InIntentRevision;
 	ActiveIntentId = InIntentId;
@@ -42,8 +48,14 @@ bool FAircraftPredictiveController::SetIntent(
 	AccelerationHorizon.Reset();
 	EstimatedPlanTimeSeconds = 0.0f;
 	EstimatedDistanceCm = 0.0f;
-	LastReference = {};
-	LastSolveTimeSeconds = -DBL_MAX;
+	if (!bPreserveVelocityProfile)
+	{
+		LastReference = {};
+		LastVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
+		CandidateVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
+	}
+	// 新 revision 必须立即求解，但同一 Velocity handle 不丢弃速度/加速度连续状态。
+	NextSolveTimeSeconds = -DBL_MAX;
 	const bool bBuilt = Plan.Build(Intent, Config, State, Capability);
 	if (bBuilt)
 	{
@@ -103,32 +115,45 @@ FVector FAircraftPredictiveController::ApplyJerkLimit(
 void FAircraftPredictiveController::ApplyYawConstraints(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftRequestedMotionLimits& Limits, float DeltaTime,
-	float DesiredYawDegrees, float DesiredYawRateDegPerSec,
+	float DesiredYawDegrees,
 	FAircraftTrajectoryReference& InOutReference) const
 {
-	const float CurrentYaw = State.BodyRotation.Rotator().Yaw;
-	const float TrackingAlpha = 1.0f - FMath::Exp(-FMath::Max(
-		0.0f, RuntimeConfig.Mpcc.YawTrackingWeight));
-	InOutReference.YawDegrees = CurrentYaw + FMath::FindDeltaAngleDegrees(
-		CurrentYaw, DesiredYawDegrees) * TrackingAlpha;
-	const float CurrentYawRate = FMath::RadiansToDegrees(
-		static_cast<float>(State.AngularVelocityBodyRadPerSec.Z));
-	const float RequestedRate = FMath::Clamp(DesiredYawRateDegPerSec,
+	const float StartingYaw = LastReference.bValid
+		? LastReference.YawDegrees : State.ControlRotation.Rotator().Yaw;
+	const float PreviousYawRate = LastReference.bValid
+		? LastReference.YawRateDegPerSec : 0.0f;
+	const float PreviousYawAcceleration = LastReference.bValid
+		? LastReference.YawAccelerationDegPerSecSq : 0.0f;
+	const float YawError = FMath::FindDeltaAngleDegrees(StartingYaw, DesiredYawDegrees);
+	const float TrackingAlpha = 1.0f - FMath::Exp(
+		-FMath::Max(RuntimeConfig.Mpcc.YawTrackingWeight, 0.0f));
+	const float RequestedRate = FMath::Clamp(
+		YawError * TrackingAlpha / FMath::Max(DeltaTime, UE_SMALL_NUMBER),
 		-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
-	float YawAcceleration = (RequestedRate - CurrentYawRate) / FMath::Max(DeltaTime, UE_SMALL_NUMBER);
+	float YawAcceleration = (RequestedRate - PreviousYawRate)
+		/ FMath::Max(DeltaTime, UE_SMALL_NUMBER);
 	YawAcceleration = FMath::Clamp(YawAcceleration,
 		-Limits.MaxYawAccelerationDegPerSecSq, Limits.MaxYawAccelerationDegPerSecSq);
-	if (LastReference.bValid)
+	if (Limits.MaxYawJerkDegPerSecCubed > UE_SMALL_NUMBER)
 	{
 		const float MaximumAccelerationStep = Limits.MaxYawJerkDegPerSecCubed * DeltaTime;
 		YawAcceleration = FMath::Clamp(YawAcceleration,
-			LastReference.YawAccelerationDegPerSecSq - MaximumAccelerationStep,
-			LastReference.YawAccelerationDegPerSecSq + MaximumAccelerationStep);
+			PreviousYawAcceleration - MaximumAccelerationStep,
+			PreviousYawAcceleration + MaximumAccelerationStep);
 	}
 	InOutReference.YawAccelerationDegPerSecSq = YawAcceleration;
 	InOutReference.YawRateDegPerSec = FMath::Clamp(
-		CurrentYawRate + YawAcceleration * DeltaTime,
+		PreviousYawRate + YawAcceleration * DeltaTime,
 		-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
+	InOutReference.YawDegrees = FRotator::NormalizeAxis(StartingYaw
+		+ 0.5f * (PreviousYawRate + InOutReference.YawRateDegPerSec) * DeltaTime);
+	if (YawError * FMath::FindDeltaAngleDegrees(
+		InOutReference.YawDegrees, DesiredYawDegrees) <= 0.0f)
+	{
+		InOutReference.YawDegrees = FRotator::NormalizeAxis(DesiredYawDegrees);
+		InOutReference.YawRateDegPerSec = 0.0f;
+		InOutReference.YawAccelerationDegPerSecSq = 0.0f;
+	}
 }
 
 FVector FAircraftPredictiveController::ComputeDragCompensation(
@@ -173,25 +198,77 @@ bool FAircraftPredictiveController::SolveVelocityIntent(
 		-Intent.Limits.MaxDescentRateCmPerSec, Intent.Limits.MaxClimbRateCmPerSec);
 
 	const float Dt = 1.0f / RuntimeConfig.Mpcc.UpdateRateHz;
-	FVector Acceleration = ProjectAcceleration((TargetVelocity - State.VelocityCmPerSec) / Dt,
-		Intent.Limits, Capability, State.VelocityCmPerSec);
-	Acceleration = ApplyJerkLimit(
-		LastReference.bValid ? LastReference.AccelerationCmPerSecSq
-			: State.AccelerationCmPerSecSq,
-		Acceleration, Dt, Intent.Limits);
+	const FVector StartingVelocity = LastReference.bValid
+		? LastReference.VelocityCmPerSec
+		: State.VelocityCmPerSec;
+	const FVector PreviousProfileAcceleration = LastReference.bValid
+		? LastVelocityProfileAccelerationCmPerSecSq
+		: FVector::ZeroVector;
+	FVector ProfileAcceleration = ProjectAcceleration(
+		(TargetVelocity - StartingVelocity) / Dt,
+		Intent.Limits, Capability, StartingVelocity);
+	// S 曲线末端：当前加速度按最大 jerk 回到零仍会消耗一段速度增量。
+	// 提前在该增量范围内卸载加速度，避免到达目标速度后才硬截断。
+	const FVector2D HorizontalVelocityError(
+		TargetVelocity.X - StartingVelocity.X,
+		TargetVelocity.Y - StartingVelocity.Y);
+	const FVector2D HorizontalErrorDirection = HorizontalVelocityError.GetSafeNormal();
+	const float HorizontalAccelerationTowardTarget = FVector2D::DotProduct(
+		FVector2D(PreviousProfileAcceleration.X, PreviousProfileAcceleration.Y),
+		HorizontalErrorDirection);
+	if (Intent.Limits.MaxJerkCmPerSecCubed > UE_SMALL_NUMBER
+		&& HorizontalAccelerationTowardTarget > 0.0f
+		&& HorizontalVelocityError.Size()
+			<= FMath::Square(HorizontalAccelerationTowardTarget)
+				/ (2.0f * Intent.Limits.MaxJerkCmPerSecCubed))
+	{
+		ProfileAcceleration.X = 0.0f;
+		ProfileAcceleration.Y = 0.0f;
+	}
+	const float VerticalVelocityError = TargetVelocity.Z - StartingVelocity.Z;
+	const float VerticalAccelerationTowardTarget = PreviousProfileAcceleration.Z
+		* FMath::Sign(VerticalVelocityError);
+	if (Intent.Limits.MaxVerticalJerkCmPerSecCubed > UE_SMALL_NUMBER
+		&& VerticalAccelerationTowardTarget > 0.0f
+		&& FMath::Abs(VerticalVelocityError)
+			<= FMath::Square(VerticalAccelerationTowardTarget)
+				/ (2.0f * Intent.Limits.MaxVerticalJerkCmPerSecCubed))
+	{
+		ProfileAcceleration.Z = 0.0f;
+	}
+	ProfileAcceleration = ApplyJerkLimit(
+		PreviousProfileAcceleration,
+		ProfileAcceleration, Dt, Intent.Limits);
+	FVector CommandVelocity = StartingVelocity + ProfileAcceleration * Dt;
+	const FVector RequestedVelocityDelta = TargetVelocity - StartingVelocity;
+	if (FVector2D::DotProduct(
+		FVector2D(RequestedVelocityDelta.X, RequestedVelocityDelta.Y),
+		FVector2D(TargetVelocity.X - CommandVelocity.X,
+			TargetVelocity.Y - CommandVelocity.Y)) <= 0.0f)
+	{
+		CommandVelocity.X = TargetVelocity.X;
+		CommandVelocity.Y = TargetVelocity.Y;
+	}
+	if ((TargetVelocity.Z - StartingVelocity.Z)
+		* (TargetVelocity.Z - CommandVelocity.Z) <= 0.0f)
+	{
+		CommandVelocity.Z = TargetVelocity.Z;
+	}
+	// 限制命令越过目标后，加速度也必须与实际生成的速度步长一致。
+	// 否则参考速度已经为零却仍携带满幅制动前馈，会驱使飞机反向加速。
+	ProfileAcceleration = (CommandVelocity - StartingVelocity) / Dt;
+	CandidateVelocityProfileAccelerationCmPerSecSq = ProfileAcceleration;
 	const FVector DragCompensation = ComputeDragCompensation(
-		TargetVelocity, State.BodyRotation, Capability);
-	Acceleration = ProjectAcceleration(Acceleration + DragCompensation,
-		Intent.Limits, Capability, State.VelocityCmPerSec);
+		CommandVelocity, State.BodyRotation, Capability);
 
-	OutReference.PositionCm = State.PositionCm + TargetVelocity * Dt;
-	OutReference.VelocityCmPerSec = TargetVelocity;
-	OutReference.AccelerationCmPerSecSq = Acceleration;
+	OutReference.PositionCm = State.PositionCm + CommandVelocity * Dt;
+	OutReference.VelocityCmPerSec = CommandVelocity;
+	OutReference.AccelerationCmPerSecSq = ProfileAcceleration;
+	OutReference.DynamicsFeedForwardAccelerationCmPerSecSq = DragCompensation;
+	OutReference.bPositionTrackingEnabled = false;
 	const float DesiredYaw = FAircraftMotionPlan::ResolveYaw(Intent.Heading,
-		State.PositionCm, TargetVelocity, State.BodyRotation.Rotator().Yaw);
-	const float DesiredYawRate = FMath::FindDeltaAngleDegrees(
-		State.BodyRotation.Rotator().Yaw, DesiredYaw) / Dt;
-	ApplyYawConstraints(State, Intent.Limits, Dt, DesiredYaw, DesiredYawRate, OutReference);
+		State.PositionCm, TargetVelocity, State.ControlRotation.Rotator().Yaw);
+	ApplyYawConstraints(State, Intent.Limits, Dt, DesiredYaw, OutReference);
 	OutReference.PathProgress = 0.0f;
 	return true;
 }
@@ -293,10 +370,11 @@ bool FAircraftPredictiveController::SolvePlan(
 	const FVector DragCompensation = ComputeDragCompensation(
 		References[0].VelocityCmPerSec, State.BodyRotation, Capability);
 	OutReference.AccelerationCmPerSecSq = ProjectAcceleration(
-		AccelerationHorizon[0] + DragCompensation, Limits, Capability,
-		State.VelocityCmPerSec);
+		AccelerationHorizon[0], Limits, Capability, State.VelocityCmPerSec);
+	OutReference.DynamicsFeedForwardAccelerationCmPerSecSq = DragCompensation;
+	OutReference.bPositionTrackingEnabled = true;
 	ApplyYawConstraints(State, Limits, 1.0f / Mpcc.UpdateRateHz,
-		References[0].YawDegrees, References[0].YawRateDegPerSec, OutReference);
+		References[0].YawDegrees, OutReference);
 	OutReference.PathProgress = Plan.GetLengthCm() > UE_SMALL_NUMBER
 		? FMath::Clamp(EstimatedDistanceCm / Plan.GetLengthCm(), 0.0f, 1.0f) : 0.0f;
 	Diagnostics.ContourErrorCm = static_cast<float>((State.PositionCm - Projection.PositionCm
@@ -322,10 +400,12 @@ bool FAircraftPredictiveController::Update(
 	}
 	const double SolveInterval = 1.0 / RuntimeConfig.Mpcc.UpdateRateHz;
 	if (LastReference.IsFresh(State.TimeSeconds)
-		&& State.TimeSeconds - LastSolveTimeSeconds < SolveInterval)
+		&& NextSolveTimeSeconds > -DBL_MAX
+		&& State.TimeSeconds + UE_DOUBLE_SMALL_NUMBER < NextSolveTimeSeconds)
 	{
 		OutReference = LastReference;
 		Diagnostics.bReferenceFresh = true;
+		Diagnostics.bSolverFailed = false;
 		return true;
 	}
 
@@ -343,17 +423,21 @@ bool FAircraftPredictiveController::Update(
 	{
 		++Diagnostics.ConsecutiveFailures;
 		Diagnostics.bReferenceFresh = false;
+		Diagnostics.bSolverFailed = Diagnostics.ConsecutiveFailures
+			>= RuntimeConfig.Mpcc.MaxConsecutiveFailures;
 		if (Diagnostics.ConsecutiveFailures <= RuntimeConfig.Mpcc.MaxConsecutiveFailures
 			&& LastReference.IsFresh(State.TimeSeconds))
 		{
 			OutReference = LastReference;
 			Diagnostics.bReferenceFresh = true;
+			Diagnostics.bSolverFailed = false;
 			return true;
 		}
 		return false;
 	}
 
 	Diagnostics.ConsecutiveFailures = 0;
+	Diagnostics.bSolverFailed = false;
 	Candidate.IntentId = ActiveIntentId;
 	Candidate.IntentRevision = IntentRevision;
 	Candidate.PlanRevision = PlanRevision;
@@ -362,8 +446,24 @@ bool FAircraftPredictiveController::Update(
 	Candidate.ValidUntilSeconds = State.TimeSeconds + RuntimeConfig.Mpcc.MaximumReferenceAgeSeconds;
 	Candidate.YawRateLimitDegPerSec = Plan.GetIntent().Limits.MaxYawRateDegPerSec;
 	Candidate.bValid = true;
-	LastSolveTimeSeconds = State.TimeSeconds;
+	if (NextSolveTimeSeconds <= -DBL_MAX)
+	{
+		NextSolveTimeSeconds = State.TimeSeconds + SolveInterval;
+	}
+	else
+	{
+		do
+		{
+			NextSolveTimeSeconds += SolveInterval;
+		}
+		while (NextSolveTimeSeconds <= State.TimeSeconds + UE_DOUBLE_SMALL_NUMBER);
+	}
 	LastReference = Candidate;
+	if (Plan.GetIntent().Type == EAircraftMovementIntentType::Velocity)
+	{
+		LastVelocityProfileAccelerationCmPerSecSq =
+			CandidateVelocityProfileAccelerationCmPerSecSq;
+	}
 	OutReference = Candidate;
 	Diagnostics.PlanRevision = PlanRevision;
 	Diagnostics.bReferenceFresh = true;

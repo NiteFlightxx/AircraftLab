@@ -664,7 +664,6 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	const FQuat TargetRotation = FRotator(0.0f, Target.YawDegrees, 0.0f).Quaternion();
 	const FVector TargetCenterOfMassOffsetWorld = TargetRotation.RotateVector(
 		CenterOfMassOffsetLocal);
-	const FVector TargetCenterOfMass = Target.PositionCm + TargetCenterOfMassOffsetWorld;
 	const FVector TargetAngularVelocityWorldRadPerSec(
 		0.0f, 0.0f, FMath::DegreesToRadians(Target.YawRateDegPerSec));
 	const FVector TargetCenterOfMassVelocity = Target.VelocityCmPerSec
@@ -684,6 +683,27 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 			Model->FlightController.ConstraintLinearStrength,
 			Model->FlightController.bConstraintAccelerationMode,
 			ChassisBody->GetBodyMass());
+	FVector TargetCenterOfMass;
+	if (Target.bPositionTrackingEnabled)
+	{
+		TargetCenterOfMass = Target.PositionCm + TargetCenterOfMassOffsetWorld;
+	}
+	else
+	{
+		// Velocity 意图使用有限速度误差前置量，不累计世界位置误差，也不会把松杆点当锚点。
+		const FVector CurrentCenterOfMassVelocity = GetPhysicsLinearVelocity();
+		const float Strength = Model->FlightController.ConstraintLinearStrength;
+		TargetCenterOfMass = FVector(
+			UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
+				CurrentCenterOfMass.X, CurrentCenterOfMassVelocity.X,
+				TargetCenterOfMassVelocity.X, Strength),
+			UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
+				CurrentCenterOfMass.Y, CurrentCenterOfMassVelocity.Y,
+				TargetCenterOfMassVelocity.Y, Strength),
+			UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
+				CurrentCenterOfMass.Z, CurrentCenterOfMassVelocity.Z,
+				TargetCenterOfMassVelocity.Z, Strength));
+	}
 	const FVector ConstraintTargetCenterOfMass =
 		TargetCenterOfMass + DynamicsFeedForwardPositionOffset;
 	SimulationConstraint->SetLinearPositionTarget(ConstraintTargetCenterOfMass);
@@ -717,7 +737,9 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
 	const FVector CurrentLocation = GetComponentLocation();
-	FVector NewLocation = Target.PositionCm;
+	const FVector NewLocation = Target.bPositionTrackingEnabled
+		? Target.PositionCm
+		: CurrentLocation + Target.VelocityCmPerSec * DeltaSeconds;
 	const FRotator NewRotation(0.0f, Target.YawDegrees, 0.0f);
 
 	FHitResult Hit;
@@ -819,9 +841,33 @@ bool UAircraftComponent::GetAircraftAutopilotDiagnostics(
 	return true;
 }
 
+bool UAircraftComponent::GetAircraftTrajectoryReference(
+	FAircraftTrajectoryReference& OutReference) const
+{
+	return GetTrajectoryReference(OutReference);
+}
+
 void UAircraftComponent::SetAircraftMovementIntentProvider(UObject* Provider)
 {
 	SetMovementIntentProvider(Provider);
+}
+
+uint8 UAircraftComponent::ActivateAircraftAutopilotControl()
+{
+	const EAircraftFlightMode PreviousMode = GetFlightMode();
+	if (PreviousMode != EAircraftFlightMode::Mission)
+	{
+		SetFlightMode(EAircraftFlightMode::Mission);
+	}
+	return static_cast<uint8>(PreviousMode);
+}
+
+void UAircraftComponent::DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode)
+{
+	if (GetFlightMode() == EAircraftFlightMode::Mission)
+	{
+		RequestAircraftFlightMode(PreviousFlightMode);
+	}
 }
 
 void UAircraftComponent::SetAircraftPilotInputAxes(float Throttle, float Roll, float Pitch, float Yaw)
@@ -898,6 +944,9 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 		{
 			AircraftSimulationProxy->SetMovementIntent_GameThread(Intent, Handle, Revision);
 			bMovementIntentWasPushed = true;
+			bManualMovementIntentInitialized = false;
+			bManualMovementBraking = false;
+			bManualIntentYawInitialized = false;
 			return;
 		}
 	}
@@ -917,6 +966,7 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 			bMovementIntentWasPushed = false;
 		}
 		bManualMovementIntentInitialized = false;
+		bManualMovementBraking = false;
 		bManualIntentYawInitialized = false;
 		return;
 	}
@@ -924,28 +974,73 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
 	const FAircraftManualCommand Command = UE::AircraftLab::PilotInputMapping::BuildManualCommand(
 		PilotInput, GetComponentQuat(), Config);
+	const float ControlHeadingDegrees = UE::AircraftLab::PilotInputMapping::GetPlanarHeadingDegrees(
+		GetComponentQuat(), Config);
+	const FQuat ControlHeadingRotation(
+		FVector::UpVector, FMath::DegreesToRadians(ControlHeadingDegrees));
+	// MovementIntent 以稳定的航向局部坐标表达。世界坐标目标会随每一帧姿态微动，
+	// 造成 revision 连续变化并反复重置速度轨迹。
+	const FVector DesiredVelocityControlCmPerSec = ControlHeadingRotation.UnrotateVector(
+		Command.DesiredVelocityCmPerSec);
 	if (!bManualIntentYawInitialized)
 	{
-		ManualIntentYawDegrees = GetComponentRotation().Yaw;
+		ManualIntentYawDegrees = ControlHeadingDegrees;
 		bManualIntentYawInitialized = true;
 	}
 	ManualIntentYawDegrees = FRotator::NormalizeAxis(ManualIntentYawDegrees
 		+ Command.DesiredYawRateDegPerSec * DeltaSeconds);
+	const FQuat CommandHeadingRotation(
+		FVector::UpVector, FMath::DegreesToRadians(ManualIntentYawDegrees));
+	const FVector DesiredVelocityWorldCmPerSec = CommandHeadingRotation.RotateVector(
+		DesiredVelocityControlCmPerSec);
 
 	const bool bMoving = !Command.DesiredVelocityCmPerSec.IsNearlyZero(0.1f);
-	const EAircraftMovementIntentType DesiredType = bMoving
-		? EAircraftMovementIntentType::Velocity : EAircraftMovementIntentType::Hold;
+	EAircraftMovementIntentType DesiredType = EAircraftMovementIntentType::Hold;
+	FVector DesiredVelocityCmPerSec = DesiredVelocityWorldCmPerSec;
+	if (bMoving)
+	{
+		DesiredType = EAircraftMovementIntentType::Velocity;
+		bManualMovementBraking = false;
+	}
+	else if (bManualMovementBraking
+		|| (bManualMovementIntentInitialized
+			&& ManualMovementIntent.Type == EAircraftMovementIntentType::Velocity))
+	{
+		const FVector CurrentVelocityCmPerSec = IsSimulatingPhysics()
+			? GetPhysicsLinearVelocity()
+			: PreviousAlternativeVelocityCmPerSec;
+		const float HorizontalSpeedCmPerSec = FVector2D(
+			CurrentVelocityCmPerSec.X, CurrentVelocityCmPerSec.Y).Size();
+		const float VerticalSpeedCmPerSec = FMath::Abs(CurrentVelocityCmPerSec.Z);
+		FAircraftTrajectoryReference BrakeReference;
+		const bool bReferenceStopped = GetTrajectoryReference(BrakeReference)
+			&& FVector2D(BrakeReference.VelocityCmPerSec.X,
+				BrakeReference.VelocityCmPerSec.Y).Size()
+				<= Config.HorizontalBrakeToHoldSpeedCmPerSec
+			&& FMath::Abs(BrakeReference.VelocityCmPerSec.Z)
+				<= Config.VerticalBrakeToHoldSpeedCmPerSec
+			&& BrakeReference.AccelerationCmPerSecSq.IsNearlyZero(1.0f);
+		bManualMovementBraking = !bReferenceStopped
+			|| HorizontalSpeedCmPerSec
+			> Config.HorizontalBrakeToHoldSpeedCmPerSec
+			|| VerticalSpeedCmPerSec > Config.VerticalBrakeToHoldSpeedCmPerSec;
+		DesiredType = bManualMovementBraking
+			? EAircraftMovementIntentType::Velocity
+			: EAircraftMovementIntentType::Hold;
+		DesiredVelocityCmPerSec = FVector::ZeroVector;
+	}
 	const bool bChanged = !bManualMovementIntentInitialized
 		|| ManualMovementIntent.Type != DesiredType
 		|| !ManualMovementIntent.Velocity.VelocityCmPerSec.Equals(
-			Command.DesiredVelocityCmPerSec, 0.1f)
+			DesiredVelocityCmPerSec, 0.1f)
 		|| !FMath::IsNearlyEqual(ManualMovementIntent.Heading.FixedYawDegrees,
 			ManualIntentYawDegrees, 0.01f);
 	if (bChanged)
 	{
 		ManualMovementIntent = {};
 		ManualMovementIntent.Type = DesiredType;
-		ManualMovementIntent.Velocity.VelocityCmPerSec = Command.DesiredVelocityCmPerSec;
+		ManualMovementIntent.Velocity.VelocityCmPerSec = DesiredVelocityCmPerSec;
+		ManualMovementIntent.Velocity.Frame = EAircraftVelocityFrame::World;
 		ManualMovementIntent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
 		ManualMovementIntent.Heading.FixedYawDegrees = ManualIntentYawDegrees;
 		ManualMovementIntent.Limits.CruiseSpeedCmPerSec = Config.MaxHorizontalSpeedCmPerSec;

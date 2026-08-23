@@ -142,6 +142,45 @@ bool FAircraftVelocityPidMaintainsTargetSpeedTest::RunTest(const FString& Parame
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftTrajectoryDynamicsFeedForwardOwnershipTest,
+	"AircraftLab.Control.Velocity.TrajectoryDynamicsFeedForwardAppliedOnce",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftTrajectoryDynamicsFeedForwardOwnershipTest::RunTest(const FString& Parameters)
+{
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.EstimatedState.State.VelocityCmPerSec = FVector(100.0f, 0.0f, 0.0f);
+	FAircraftPhysicsCache PhysicsCache;
+	PhysicsCache.GravityMagnitudeCmPerSecSq = 980.0f;
+	PhysicsCache.LinearDampingPerSecond = FVector(0.3f);
+	FAircraftModeCapabilities Capabilities;
+	Capabilities.CanUsePositionControl = true;
+	Capabilities.CanUseVelocityControl = true;
+	FAircraftFlightControllerRuntimeConfig Config;
+	FAircraftManualCommand ManualCommand;
+	FAircraftTrajectoryReference Reference;
+	Reference.bValid = true;
+	Reference.bPositionTrackingEnabled = false;
+	Reference.PositionCm = FVector(100000.0f, 0.0f, 0.0f);
+	Reference.VelocityCmPerSec = FVector(100.0f, 0.0f, 0.0f);
+	Reference.AccelerationCmPerSecSq = FVector(10.0f, 0.0f, 0.0f);
+	Reference.DynamicsFeedForwardAccelerationCmPerSecSq = FVector(30.0f, 0.0f, 0.0f);
+	FAircraftControlAllocator Allocator;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, true };
+	FAircraftFlightControlSolver Solver;
+
+	const FVector Acceleration = Solver.ComputeDesiredHorizontalAcceleration(Context, 0.004f);
+	TestEqual(TEXT("Velocity reference bypasses the position outer loop"),
+		Solver.LastDesiredHorizontalVelocityCmPerSec.X, 100.0, 1.e-3);
+	TestEqual(TEXT("Trajectory owns damping feed-forward without a second flight-control copy"),
+		Solver.LastVelocityDragFeedForwardCmPerSecSq.X, 0.0, 1.e-3);
+	TestEqual(TEXT("Kinematic and dynamics reference accelerations are combined once"),
+		Acceleration.X, 40.0, 1.e-3);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftVerticalDampingFeedForwardTest,
 	"AircraftLab.Control.Damping.VerticalCollectiveFeedForward",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

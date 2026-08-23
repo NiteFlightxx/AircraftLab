@@ -34,7 +34,14 @@ class AIRCRAFTRUNTIMEINTERFACE_API IAircraftFlightControllerInterface
 public:
 	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const = 0;
 	virtual bool GetAircraftAutopilotDiagnostics(FAircraftAutopilotDiagnostics& OutDiagnostics) const = 0;
+	virtual bool GetAircraftTrajectoryReference(FAircraftTrajectoryReference& OutReference) const = 0;
 	virtual void SetAircraftMovementIntentProvider(UObject* Provider) = 0;
+
+	/** 自动驾驶取得控制权并进入任务飞行模式；返回停用时需要恢复的模式值。 */
+	virtual uint8 ActivateAircraftAutopilotControl() = 0;
+
+	/** 自动驾驶释放控制权；仅当飞控仍处于任务模式时恢复先前模式。 */
+	virtual void DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode) = 0;
 
 	/** 输入组件窄通道：四通道摇杆（-1~+1）。 */
 	virtual void SetAircraftPilotInputAxes(float Throttle, float Roll, float Pitch, float Yaw) = 0;

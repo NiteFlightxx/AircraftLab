@@ -101,14 +101,18 @@ private:
 
 	FAircraftMovementIntent SourceIntent;
 	FAircraftMovementIntent ResolvedIntent;
+	FAircraftMovementIntent PassThroughContinuationIntent;
 	FAircraftMovementIntentHandle ActiveHandle;
+	FAircraftMovementIntentHandle PassThroughContinuationHandle;
 	FAircraftMovementIntentResult CurrentResult;
 	uint64 IntentRevision = 0;
 	int64 NextIntentId = 1;
 	float StableTimeSeconds = 0.0f;
 	float ElapsedSeconds = 0.0f;
 	float InitialDistanceToTargetCm = -1.0f;
-	bool bActive = true;
+	uint8 FlightModeBeforeActivation = 0;
+	bool bActive = false;
+	bool bControlClaimed = false;
 
 	IAircraftFlightControllerInterface* GetFlightController() const;
 	static FAircraftMovementIntent BuildIntent(EAircraftMovementIntentType Type,
@@ -118,8 +122,11 @@ private:
 	bool UpdateIntent(FAircraftMovementIntentHandle Handle,
 		const FAircraftMovementIntent& Intent);
 	void ResolveFlightController();
+	bool AcquireFlightControl();
+	void ReleaseFlightControl();
 	void ResolveActorTargets();
 	void Finish(EAircraftMovementIntentStatus Status,
 		EAircraftMovementFailureReason FailureReason);
+	void BeginPassThroughContinuation(const FVector& ExitVelocityCmPerSec);
 	void UpdateCompletion(float DeltaTime);
 };

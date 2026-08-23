@@ -218,7 +218,10 @@ protected:
 	//~ Begin IAircraftFlightControllerInterface Interface（Autopilot 窄契约）
 	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const override;
 	virtual bool GetAircraftAutopilotDiagnostics(FAircraftAutopilotDiagnostics& OutDiagnostics) const override;
+	virtual bool GetAircraftTrajectoryReference(FAircraftTrajectoryReference& OutReference) const override;
 	virtual void SetAircraftMovementIntentProvider(UObject* Provider) override;
+	virtual uint8 ActivateAircraftAutopilotControl() override;
+	virtual void DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode) override;
 	virtual void SetAircraftPilotInputAxes(float Throttle, float Roll, float Pitch, float Yaw) override;
 	virtual void RequestAircraftArm(bool bArm) override;
 	virtual void RequestAircraftFlightMode(uint8 NewFlightMode) override;
@@ -339,6 +342,7 @@ private:
 	float ManualIntentYawDegrees = 0.0f;
 	bool bManualIntentYawInitialized = false;
 	bool bManualMovementIntentInitialized = false;
+	bool bManualMovementBraking = false;
 	bool bMovementIntentWasPushed = false;
 	FAircraftMovementIntent ManualMovementIntent;
 

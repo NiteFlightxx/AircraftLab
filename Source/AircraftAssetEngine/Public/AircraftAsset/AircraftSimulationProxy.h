@@ -143,7 +143,8 @@ private:
 		float DesiredVerticalVelocityCmPerSec,
 		const FRotator& DesiredAttitude,
 		const FVector& DesiredBodyRatesDegPerSec,
-		const FVector& AxisCommands);
+		const FVector& AxisCommands,
+		const FAircraftTrajectoryReference& TrajectoryReference);
 
 	const UAircraftComponent& AircraftComponent;
 
