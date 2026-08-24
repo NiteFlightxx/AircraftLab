@@ -661,8 +661,11 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	const FVector CurrentCenterOfMass = ChassisBody->GetCOMPosition();
 	const FVector CenterOfMassOffsetLocal = GetComponentQuat().UnrotateVector(
 		CurrentCenterOfMass - GetComponentLocation());
-	const FQuat TargetRotation = FRotator(0.0f, Target.YawDegrees, 0.0f).Quaternion();
-	const FVector TargetCenterOfMassOffsetWorld = TargetRotation.RotateVector(
+	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
+	const FQuat TargetControlRotation = FRotator(
+		0.0f, Target.YawDegrees, 0.0f).Quaternion();
+	const FQuat TargetBodyRotation = Config.GetBodyWorldRotation(TargetControlRotation);
+	const FVector TargetCenterOfMassOffsetWorld = TargetBodyRotation.RotateVector(
 		CenterOfMassOffsetLocal);
 	const FVector TargetAngularVelocityWorldRadPerSec(
 		0.0f, 0.0f, FMath::DegreesToRadians(Target.YawRateDegPerSec));
@@ -678,10 +681,10 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 			Target.ControlAccelerationCmPerSecSq,
 			Target.DynamicsFeedForwardAccelerationCmPerSecSq,
 			GravityAccelerationCmPerSecSq,
-			Model->FlightController.ConstraintGravityFeedForwardScale,
-			Model->FlightController.ConstraintDynamicsFeedForwardScale,
-			Model->FlightController.ConstraintLinearStrength,
-			Model->FlightController.bConstraintAccelerationMode,
+			Config.ConstraintGravityFeedForwardScale,
+			Config.ConstraintDynamicsFeedForwardScale,
+			Config.ConstraintLinearStrength,
+			Config.bConstraintAccelerationMode,
 			ChassisBody->GetBodyMass());
 	FVector TargetCenterOfMass;
 	if (Target.bPositionTrackingEnabled)
@@ -692,7 +695,7 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	{
 		// Velocity 意图使用有限速度误差前置量，不累计世界位置误差，也不会把松杆点当锚点。
 		const FVector CurrentCenterOfMassVelocity = GetPhysicsLinearVelocity();
-		const float Strength = Model->FlightController.ConstraintLinearStrength;
+		const float Strength = Config.ConstraintLinearStrength;
 		TargetCenterOfMass = FVector(
 			UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
 				CurrentCenterOfMass.X, CurrentCenterOfMassVelocity.X,
@@ -708,14 +711,14 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		TargetCenterOfMass + AccelerationFeedForwardPositionOffset;
 	SimulationConstraint->SetLinearPositionTarget(ConstraintTargetCenterOfMass);
 	SimulationConstraint->SetLinearVelocityTarget(TargetCenterOfMassVelocity);
-	SimulationConstraint->SetAngularOrientationTarget(TargetRotation);
+	SimulationConstraint->SetAngularOrientationTarget(TargetBodyRotation);
 	SimulationConstraint->SetAngularVelocityTarget(WorldAngularVelocityTargetRevPerSec);
 	WakeAllRigidBodies();
 	FAircraftDebug::TickConstraint(
 		*this, *SimulationConstraint, Model->RootBone, Target,
 		ConstraintTargetCenterOfMass, TargetCenterOfMassVelocity,
 		AccelerationFeedForwardPositionOffset,
-		TargetRotation, WorldAngularVelocityTargetRevPerSec,
+		TargetBodyRotation, WorldAngularVelocityTargetRevPerSec,
 		DeltaSeconds,
 		ConstraintDebugLogAccumulatorSeconds, ConstraintDebugUnresponsiveSeconds);
 }
@@ -745,7 +748,8 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	const FVector NewLocation = Target.bPositionTrackingEnabled
 		? FMath::Lerp(IntegratedLocation, Target.PositionCm, PositionCorrectionAlpha)
 		: IntegratedLocation;
-	const float CurrentYawDegrees = GetComponentRotation().Yaw;
+	const float CurrentYawDegrees = Config.GetControlWorldRotation(
+		GetComponentQuat()).Rotator().Yaw;
 	const float IntegratedYawDegrees = FRotator::NormalizeAxis(
 		CurrentYawDegrees + Target.YawRateDegPerSec * DeltaSeconds);
 	const float RotationCorrectionAlpha = 1.0f - FMath::Exp(
@@ -753,10 +757,12 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	const float NewYawDegrees = FRotator::NormalizeAxis(IntegratedYawDegrees
 		+ FMath::FindDeltaAngleDegrees(IntegratedYawDegrees, Target.YawDegrees)
 			* RotationCorrectionAlpha);
-	const FRotator NewRotation(0.0f, NewYawDegrees, 0.0f);
+	const FQuat NewControlRotation = FRotator(
+		0.0f, NewYawDegrees, 0.0f).Quaternion();
+	const FQuat NewBodyRotation = Config.GetBodyWorldRotation(NewControlRotation);
 
 	FHitResult Hit;
-	SetWorldLocationAndRotation(NewLocation, NewRotation,
+	SetWorldLocationAndRotation(NewLocation, NewBodyRotation,
 		Config.bKinematicSweepMovement, &Hit, ETeleportType::None);
 	PreviousAlternativeVelocityCmPerSec = DeltaSeconds > UE_SMALL_NUMBER
 		? (GetComponentLocation() - CurrentLocation) / DeltaSeconds

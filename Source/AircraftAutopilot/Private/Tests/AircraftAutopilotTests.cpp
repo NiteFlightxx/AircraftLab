@@ -20,6 +20,8 @@ namespace
 		Result.MaxDescentRateCmPerSec = 500.0f;
 		Result.MaxTiltRadians = FMath::DegreesToRadians(25.0f);
 		Result.MaxBodyRateRadPerSec = FVector(FMath::DegreesToRadians(360.0f));
+		Result.PositiveTorqueAuthorityNm = FVector(1000.0f);
+		Result.NegativeTorqueAuthorityNm = FVector(1000.0f);
 		Result.bValid = true;
 		return Result;
 	}
@@ -458,6 +460,47 @@ bool FAircraftYawReferenceUsesControlFrameTest::RunTest(const FString& Parameter
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawReferenceRequiresPhysicalAuthorityTest,
+	"AircraftAutopilot.MPCC.YawReferenceRequiresPhysicalAuthority",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawReferenceRequiresPhysicalAuthorityTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::Hold;
+	Intent.Hold.bCaptureCurrentPosition = false;
+	Intent.Hold.PositionCm = FVector::ZeroVector;
+	Intent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+	Intent.Heading.FixedYawDegrees = 90.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+	State.BodyRotation = FQuat::Identity;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	Capability.PositiveTorqueAuthorityNm.Z = 0.0f;
+	Capability.NegativeTorqueAuthorityNm.Z = 0.0f;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftPredictiveController Controller;
+
+	TestTrue(TEXT("Intent remains valid without physical yaw authority"),
+		Controller.SetIntent(Intent, 21, 1, Config, State, Capability));
+	TestEqual(TEXT("Motion plan publishes zero effective yaw-rate limit"),
+		Controller.GetPlan().GetIntent().Limits.MaxYawRateDegPerSec, 0.0f);
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Translation reference remains solvable without yaw authority"),
+		Controller.Update(State, Capability, Reference));
+	TestEqual(TEXT("Unavailable yaw axis stays on measured heading"),
+		Reference.YawDegrees, 0.0f, 1.e-4f);
+	TestEqual(TEXT("Unavailable yaw axis publishes no yaw-rate command"),
+		Reference.YawRateDegPerSec, 0.0f, 1.e-4f);
+	TestEqual(TEXT("Unavailable yaw axis is explicit in the published reference"),
+		Reference.YawRateLimitDegPerSec, 0.0f, 1.e-4f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftPathProgressTracksVehicleProjectionTest,
 	"AircraftAutopilot.MPCC.PathProgressTracksVehicleProjection",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -717,6 +760,65 @@ bool FAircraftYawReferenceRemainsAnchoredToMeasuredHeadingTest::RunTest(const FS
 	}
 	TestTrue(TEXT("Yaw reference cannot run away from a stationary measured heading"),
 		FMath::Abs(Reference.YawDegrees) < 5.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawReferenceSurvivesSameIntentUpdatesTest,
+	"AircraftAutopilot.MPCC.YawReferenceSurvivesSameIntentUpdates",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawReferenceSurvivesSameIntentUpdatesTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::Hold;
+	Intent.Hold.bCaptureCurrentPosition = false;
+	Intent.Hold.PositionCm = FVector::ZeroVector;
+	Intent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+	State.BodyRotation = FQuat::Identity;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftPredictiveController Controller;
+	FAircraftTrajectoryReference Reference;
+	const float DeltaTime = 1.0f / Config.Mpcc.UpdateRateHz;
+
+	for (uint64 Revision = 1; Revision <= 30; ++Revision)
+	{
+		Intent.Heading.FixedYawDegrees = FRotator::NormalizeAxis(
+			90.0f * DeltaTime * static_cast<float>(Revision));
+		TestTrue(TEXT("Updated manual yaw intent remains accepted"),
+			Controller.SetIntent(Intent, 50, Revision, Config, State, Capability));
+		TestTrue(TEXT("Updated manual yaw reference remains solvable"),
+			Controller.Update(State, Capability, Reference));
+		State.TimeSeconds += DeltaTime;
+		++State.Sequence;
+	}
+
+	TestTrue(TEXT("Same-handle revisions retain yaw acceleration continuity"),
+		Reference.YawAccelerationDegPerSecSq > 100.0f);
+	TestTrue(TEXT("Yaw-rate reference can build before the rigid body responds"),
+		Reference.YawRateDegPerSec > 20.0f);
+	TestTrue(TEXT("Yaw reference lead remains bounded while the rigid body is stationary"),
+		FMath::Abs(Reference.YawDegrees)
+			<= Intent.Limits.MaxYawRateDegPerSec * Config.Mpcc.YawResponseTimeSeconds
+				+ UE_KINDA_SMALL_NUMBER);
+
+	State.TimeSeconds += DeltaTime;
+	++State.Sequence;
+	Intent.Heading.FixedYawDegrees = -90.0f;
+	TestTrue(TEXT("A new yaw command handle is accepted"),
+		Controller.SetIntent(Intent, 51, 1, Config, State, Capability));
+	TestTrue(TEXT("A new yaw command handle is solvable"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("A new handle starts a fresh yaw jerk profile"),
+		FMath::Abs(Reference.YawAccelerationDegPerSecSq)
+			<= Intent.Limits.MaxYawJerkDegPerSecCubed * DeltaTime
+				+ UE_KINDA_SMALL_NUMBER);
 	return true;
 }
 

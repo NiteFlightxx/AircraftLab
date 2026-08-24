@@ -78,8 +78,7 @@ bool FAircraftDefaultBodyAxesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Controller torque round-trips through the configured body axes"),
 		Config.BodyTorqueToController(PhysicalBodyTorque).Equals(ControllerTorque, 1.e-4f));
 	const FQuat DesiredControlWorld = FRotator(0.0f, 35.0f, 0.0f).Quaternion();
-	const FQuat DesiredBodyWorld =
-		DesiredControlWorld * Config.GetControlToBodyRotation().Inverse();
+	const FQuat DesiredBodyWorld = Config.GetBodyWorldRotation(DesiredControlWorld);
 	TestTrue(TEXT("Kinematic body rotation preserves the requested control heading"),
 		Config.GetControlWorldRotation(DesiredBodyWorld).Equals(DesiredControlWorld, 1.e-4f));
 
@@ -417,6 +416,56 @@ bool FAircraftYawHoldInitializesFromRigidBodyQuaternionTest::RunTest(const FStri
 		FMath::IsNearlyEqual(YawSetpoint.TargetYawDegrees, 163.0f, 1.e-4f));
 	TestTrue(TEXT("Matching initial heading produces no default Yaw rate"),
 		FMath::IsNearlyZero(DesiredRates.Z, 1.e-4));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawSetpointRequiresAllocatorAuthorityTest,
+	"AircraftLab.Control.Attitude.YawSetpointRequiresAllocatorAuthority",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawSetpointRequiresAllocatorAuthorityTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+	FAircraftPhysicsCache PhysicsCache;
+	PhysicsCache.BodyTransform.SetRotation(FQuat::Identity);
+	FAircraftModeCapabilities Capabilities;
+	Capabilities.CanHoldYaw = true;
+	FAircraftFlightControllerRuntimeConfig Config;
+	FAircraftManualCommand ManualCommand;
+	FAircraftTrajectoryReference Reference;
+	Reference.bValid = true;
+	Reference.YawDegrees = 0.0f;
+	Reference.YawRateDegPerSec = 45.0f;
+	Reference.YawRateLimitDegPerSec = 90.0f;
+	FAircraftControlAllocator Allocator;
+	Allocator.Cache.bIsValid = true;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, true };
+	FAircraftFlightControlSolver Solver;
+
+	const FAircraftYawSetpoint Unavailable = Solver.ComputeYawSetpoint(Context);
+	TestEqual(TEXT("Zero allocator authority disables yaw-rate limit"),
+		Unavailable.MaxRateDegPerSec, 0.0f, 1.e-4f);
+	TestEqual(TEXT("Zero allocator authority rejects yaw feed-forward"),
+		Unavailable.FeedForwardRateDegPerSec, 0.0f, 1.e-4f);
+	TestEqual(TEXT("Zero allocator authority holds measured control heading"),
+		Unavailable.TargetYawDegrees, 90.0f, 1.e-4f);
+	const FVector UnavailableTorqueCommand = Solver.ComputeBodyTorqueCommand(
+		Context, FVector(0.0f, 0.0f, 45.0f), 0.004f);
+	TestEqual(TEXT("Zero allocator authority publishes no normalized yaw command"),
+		UnavailableTorqueCommand.Z, 0.0, 1.e-4);
+
+	Allocator.Cache.PositiveTorqueAuthority[2] = 10.0;
+	Allocator.Cache.NegativeTorqueAuthority[2] = 10.0;
+	Reference.YawRateLimitDegPerSec = 0.0f;
+	const FAircraftYawSetpoint ExplicitZeroLimit = Solver.ComputeYawSetpoint(Context);
+	TestEqual(TEXT("Explicit zero trajectory limit cannot fall back to controller maximum"),
+		ExplicitZeroLimit.MaxRateDegPerSec, 0.0f, 1.e-4f);
+	TestEqual(TEXT("Explicit zero trajectory limit rejects yaw feed-forward"),
+		ExplicitZeroLimit.FeedForwardRateDegPerSec, 0.0f, 1.e-4f);
 	return true;
 }
 

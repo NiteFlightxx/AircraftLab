@@ -257,7 +257,7 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 		Runtime.HoldTargets.HeldPositionCm.Z);
 
 	UE_LOG(LogAircraft, Log,
-		TEXT("[AircraftDF.Reference] Valid=%d Intent=%lld Revision=%lld PositionTracking=%d Progress=%.3f ProgressScale=%.3f Contour=%.1f Lag=%.1f RefPos=(%.1f,%.1f,%.1f) RefVel=(%+.1f,%+.1f,%+.1f) TrajectoryAccel=(%+.1f,%+.1f,%+.1f) ControlAccel=(%+.1f,%+.1f,%+.1f) DynamicsFF=(%+.1f,%+.1f,%+.1f) YawRef=%+.2f YawRateRef=%+.2f"),
+		TEXT("[AircraftDF.Reference] Valid=%d Intent=%lld Revision=%lld PositionTracking=%d Progress=%.3f ProgressScale=%.3f Contour=%.1f Lag=%.1f RefPos=(%.1f,%.1f,%.1f) RefVel=(%+.1f,%+.1f,%+.1f) TrajectoryAccel=(%+.1f,%+.1f,%+.1f) ControlAccel=(%+.1f,%+.1f,%+.1f) DynamicsFF=(%+.1f,%+.1f,%+.1f) YawRef=%+.2f YawRateRef=%+.2f YawRateLimit=%.2f"),
 		TrajectoryReference.bValid ? 1 : 0,
 		TrajectoryReference.IntentId,
 		TrajectoryReference.IntentRevision,
@@ -282,7 +282,8 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 		TrajectoryReference.DynamicsFeedForwardAccelerationCmPerSecSq.Y,
 		TrajectoryReference.DynamicsFeedForwardAccelerationCmPerSecSq.Z,
 		TrajectoryReference.YawDegrees,
-		TrajectoryReference.YawRateDegPerSec);
+		TrajectoryReference.YawRateDegPerSec,
+		TrajectoryReference.YawRateLimitDegPerSec);
 
 	double CurrentTotalThrustN = 0.0;
 	FVector AppliedForceBodyN = FVector::ZeroVector;
@@ -307,13 +308,19 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 	const double WeightN = PhysicsCache.MassKg * PhysicsCache.GravityMagnitudeCmPerSecSq * 0.01;
 	const double MaxVerticalThrustN = ControlAllocator.Cache.RowScale[0];
 	UE_LOG(LogAircraft, Log,
-		TEXT("[AircraftDF.Thrust] Collective=%.4f Hover(Config/Used/Required)=%.4f/%.4f/%.4f DesiredVz=%+.1f VzFF=%+.5f Thrust(Current/Weight/Authority)=%.2f/%.2f/%.2fN AxisCmd=(%+.4f,%+.4f,%+.4f) Rate(Current/Desired)=(%+.2f,%+.2f,%+.2f)/(%+.2f,%+.2f,%+.2f)"),
+		TEXT("[AircraftDF.Thrust] Collective=%.4f Hover(Config/Used/Required)=%.4f/%.4f/%.4f DesiredVz=%+.1f VzFF=%+.5f Thrust(Current/Weight/Authority)=%.2f/%.2f/%.2fN TorqueAuthorityPos=(%.3f,%.3f,%.3f)Nm TorqueAuthorityNeg=(%.3f,%.3f,%.3f)Nm AxisCmd=(%+.4f,%+.4f,%+.4f) Rate(Current/Desired)=(%+.2f,%+.2f,%+.2f)/(%+.2f,%+.2f,%+.2f)"),
 		CollectiveCommand, Config.HoverCollectiveCommand,
 		ControlSolver.GetEffectiveHoverCollectiveCommand(Config),
 		MaxVerticalThrustN > UE_SMALL_NUMBER ? WeightN / MaxVerticalThrustN : 0.0,
 		DesiredVerticalVelocityCmPerSec,
 		ControlSolver.LastVerticalDampingCollectiveFeedForward,
 		CurrentTotalThrustN, WeightN, MaxVerticalThrustN,
+		ControlAllocator.Cache.PositiveTorqueAuthority[0],
+		ControlAllocator.Cache.PositiveTorqueAuthority[1],
+		ControlAllocator.Cache.PositiveTorqueAuthority[2],
+		ControlAllocator.Cache.NegativeTorqueAuthority[0],
+		ControlAllocator.Cache.NegativeTorqueAuthority[1],
+		ControlAllocator.Cache.NegativeTorqueAuthority[2],
 		AxisCommands.X, AxisCommands.Y, AxisCommands.Z,
 		State.AngularVelocityBodyDegreesPerSec.X,
 		State.AngularVelocityBodyDegreesPerSec.Y,

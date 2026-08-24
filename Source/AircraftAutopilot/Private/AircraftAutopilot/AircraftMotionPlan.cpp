@@ -39,9 +39,10 @@ namespace
 			Limits.MaxClimbRateCmPerSec, Capability.MaxClimbRateCmPerSec);
 		Limits.MaxDescentRateCmPerSec = PositiveMinimum(
 			Limits.MaxDescentRateCmPerSec, Capability.MaxDescentRateCmPerSec);
-		Limits.MaxYawRateDegPerSec = PositiveMinimum(
-			Limits.MaxYawRateDegPerSec,
-			FMath::RadiansToDegrees(Capability.MaxBodyRateRadPerSec.Z));
+		Limits.MaxYawRateDegPerSec = Capability.HasTorqueAuthority(2)
+			? PositiveMinimum(Limits.MaxYawRateDegPerSec,
+				FMath::RadiansToDegrees(Capability.MaxBodyRateRadPerSec.Z))
+			: 0.0f;
 	}
 
 	float ResolveHorizontalThrustAuthority(

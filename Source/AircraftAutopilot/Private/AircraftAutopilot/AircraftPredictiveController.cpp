@@ -68,9 +68,10 @@ bool FAircraftPredictiveController::SetIntent(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
-	const bool bPreserveVelocityProfile = Plan.IsValid()
+	const bool bPreserveReferenceState = Plan.IsValid()
 		&& ActiveIntentId == InIntentId
-		&& Plan.GetIntent().Type == EAircraftMovementIntentType::Velocity
+		&& Plan.GetIntent().Type == Intent.Type;
+	const bool bPreserveVelocityProfile = bPreserveReferenceState
 		&& Intent.Type == EAircraftMovementIntentType::Velocity;
 	RuntimeConfig = Config;
 	RequestedIntent = Intent;
@@ -86,13 +87,16 @@ bool FAircraftPredictiveController::SetIntent(
 	PathReferenceScale = 1.0f;
 	PlanStartTimeSeconds = State.TimeSeconds;
 	LastPlanSolveTimeSeconds = State.TimeSeconds;
-	if (!bPreserveVelocityProfile)
+	if (!bPreserveReferenceState)
 	{
 		LastReference = {};
+	}
+	if (!bPreserveVelocityProfile)
+	{
 		LastVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 		CandidateVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 	}
-	// 新 revision 必须立即求解，但同一 Velocity handle 不丢弃速度/加速度连续状态。
+	// 新 revision 必须立即求解；同一 handle、同一意图类型保留连续参考状态。
 	NextSolveTimeSeconds = -DBL_MAX;
 	const bool bBuilt = Plan.Build(Intent, Config, State, Capability);
 	if (bBuilt)
@@ -246,13 +250,24 @@ void FAircraftPredictiveController::ApplyYawConstraints(
 	float DesiredYawDegrees,
 	FAircraftTrajectoryReference& InOutReference) const
 {
-	const float StartingYaw = State.ControlRotation.Rotator().Yaw;
+	const float MeasuredYaw = State.ControlRotation.Rotator().Yaw;
+	if (Limits.MaxYawRateDegPerSec <= UE_SMALL_NUMBER)
+	{
+		InOutReference.YawDegrees = MeasuredYaw;
+		InOutReference.YawRateDegPerSec = 0.0f;
+		InOutReference.YawAccelerationDegPerSecSq = 0.0f;
+		return;
+	}
 	const FVector AngularVelocityWorld = State.BodyRotation.RotateVector(
 		State.AngularVelocityBodyRadPerSec);
-	const float PreviousYawRate = FMath::RadiansToDegrees(AngularVelocityWorld.Z);
+	const float MeasuredYawRate = FMath::RadiansToDegrees(AngularVelocityWorld.Z);
+	const float PreviousYaw = LastReference.bValid
+		? LastReference.YawDegrees : MeasuredYaw;
+	const float PreviousYawRate = LastReference.bValid
+		? LastReference.YawRateDegPerSec : MeasuredYawRate;
 	const float PreviousYawAcceleration = LastReference.bValid
 		? LastReference.YawAccelerationDegPerSecSq : 0.0f;
-	const float YawError = FMath::FindDeltaAngleDegrees(StartingYaw, DesiredYawDegrees);
+	const float YawError = FMath::FindDeltaAngleDegrees(PreviousYaw, DesiredYawDegrees);
 	const float TrackingAlpha = 1.0f - FMath::Exp(
 		-DeltaTime / FMath::Max(RuntimeConfig.Mpcc.YawResponseTimeSeconds, UE_SMALL_NUMBER));
 	const float RequestedRate = FMath::Clamp(
@@ -273,8 +288,19 @@ void FAircraftPredictiveController::ApplyYawConstraints(
 	InOutReference.YawRateDegPerSec = FMath::Clamp(
 		PreviousYawRate + YawAcceleration * DeltaTime,
 		-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
-	InOutReference.YawDegrees = FRotator::NormalizeAxis(StartingYaw
+	InOutReference.YawDegrees = FRotator::NormalizeAxis(PreviousYaw
 		+ 0.5f * (PreviousYawRate + InOutReference.YawRateDegPerSec) * DeltaTime);
+
+	// 偏航参考必须能领先于刚体，才能为姿态环和约束驱动建立控制误差；
+	// 同时按响应时间限制领先量，避免执行机构失效时参考无限远离实测航向。
+	const float MaximumTrackingLeadDegrees = FMath::Max(
+		Limits.MaxYawRateDegPerSec * RuntimeConfig.Mpcc.YawResponseTimeSeconds,
+		Limits.MaxYawAccelerationDegPerSecSq * FMath::Square(DeltaTime));
+	const float TrackingLeadDegrees = FMath::FindDeltaAngleDegrees(
+		MeasuredYaw, InOutReference.YawDegrees);
+	InOutReference.YawDegrees = FRotator::NormalizeAxis(MeasuredYaw
+		+ FMath::Clamp(TrackingLeadDegrees,
+			-MaximumTrackingLeadDegrees, MaximumTrackingLeadDegrees));
 	if (YawError * FMath::FindDeltaAngleDegrees(
 		InOutReference.YawDegrees, DesiredYawDegrees) <= 0.0f)
 	{

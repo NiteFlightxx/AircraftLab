@@ -215,6 +215,11 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 		return (BodyWorldRotation * GetControlToBodyRotation()).GetNormalized();
 	}
 
+	FQuat GetBodyWorldRotation(const FQuat& ControlWorldRotation) const
+	{
+		return (ControlWorldRotation * GetControlToBodyRotation().Inverse()).GetNormalized();
+	}
+
 	FVector BodyToControlVector(const FVector& BodyVector) const
 	{
 		return FVector(

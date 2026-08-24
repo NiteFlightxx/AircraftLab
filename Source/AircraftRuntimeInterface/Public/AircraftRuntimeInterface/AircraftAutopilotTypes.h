@@ -46,6 +46,13 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftDynamicCapabilitySnapshot
 	/** 当前有效旋翼中最慢的推力响应时间常数。 */
 	float RotorResponseTimeSeconds = 0.0f;
 	bool bValid = false;
+
+	bool HasTorqueAuthority(int32 Axis) const
+	{
+		return Axis >= 0 && Axis < 3
+			&& (PositiveTorqueAuthorityNm[Axis] > UE_SMALL_NUMBER
+				|| NegativeTorqueAuthorityNm[Axis] > UE_SMALL_NUMBER);
+	}
 };
 
 /** 预测控制器向全部驱动后端发布的唯一运动参考。 */

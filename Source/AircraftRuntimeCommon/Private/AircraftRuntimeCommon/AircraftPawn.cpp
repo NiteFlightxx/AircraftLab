@@ -16,7 +16,6 @@ AAircraftPawn::AAircraftPawn()
 	// 机身 = UAircraftComponent（骨骼网格 + 物理 + 飞控一体），作为根组件。
 	Aircraft = CreateDefaultSubobject<UAircraftComponent>(TEXT("Aircraft"));
 	SetRootComponent(Aircraft);
-	Aircraft->SetSimulatePhysics(true);
 	Aircraft->SetEnableGravity(true);
 	Aircraft->SetCollisionProfileName(TEXT("PhysicsActor"));
 

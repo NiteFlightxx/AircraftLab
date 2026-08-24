@@ -333,6 +333,18 @@ FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(FAircraftF
 		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized(), Config);
 	Result.TargetYawDegrees = CurrentYawDegrees;
 	Result.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
+	const bool bHasYawTorqueAuthority =
+		Context.AllocationFeedback.Cache.PositiveTorqueAuthority[2]
+			> AircraftAllocation::AuthorityEpsilon
+		|| Context.AllocationFeedback.Cache.NegativeTorqueAuthority[2]
+			> AircraftAllocation::AuthorityEpsilon;
+	if (!bHasYawTorqueAuthority)
+	{
+		Context.Runtime.HoldTargets.HeldYawDegrees = CurrentYawDegrees;
+		Context.Runtime.HoldTargets.bYawHoldInitialized = true;
+		Result.MaxRateDegPerSec = 0.0f;
+		return Result;
+	}
 
 	// ---- 统一轨迹参考 ----
 	if (Context.bUseTrajectoryReference && Context.TrajectoryReference.bValid)
@@ -349,10 +361,13 @@ FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(FAircraftF
 			bTrajectoryPositionTrackingInitialized = true;
 			bLastTrajectoryPositionTrackingEnabled = Reference.bPositionTrackingEnabled;
 		}
-		const float IntentYawRateLimit = Reference.YawRateLimitDegPerSec > UE_SMALL_NUMBER
-			? Reference.YawRateLimitDegPerSec
-			: Config.MaxYawRateDegreesPerSec;
+		const float IntentYawRateLimit = FMath::Max(
+			Reference.YawRateLimitDegPerSec, 0.0f);
 		Result.MaxRateDegPerSec = FMath::Min(Config.MaxYawRateDegreesPerSec, IntentYawRateLimit);
+		if (Result.MaxRateDegPerSec <= UE_SMALL_NUMBER)
+		{
+			return Result;
+		}
 		Result.TargetYawDegrees = FRotator::NormalizeAxis(Reference.YawDegrees);
 		Result.FeedForwardRateDegPerSec = FMath::Clamp(
 			Reference.YawRateDegPerSec, -Result.MaxRateDegPerSec, Result.MaxRateDegPerSec);
@@ -524,10 +539,26 @@ FVector FAircraftFlightControlSolver::ComputeBodyTorqueCommand(FAircraftFlightCo
 	YawGains.Kff = 1.0f;
 
 	// u = Kp·(ω_des − ω) + Ki·∫ + Kd·d(ω)/dt + normalized_damping_ff
-	return FVector(
+	FVector Result(
 		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.X, CurrentBodyRates.X, DeltaSeconds, RollGains, LastAngularDampingFeedForward.X),
 		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Y, CurrentBodyRates.Y, DeltaSeconds, PitchGains, LastAngularDampingFeedForward.Y),
 		PidStates.Rate.Yaw.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Z, CurrentBodyRates.Z, DeltaSeconds, YawGains, LastAngularDampingFeedForward.Z));
+	if (Context.AllocationFeedback.Cache.RowScale[1] <= AircraftAllocation::AuthorityEpsilon)
+	{
+		PidStates.Rate.Roll.Reset();
+		Result.X = 0.0f;
+	}
+	if (Context.AllocationFeedback.Cache.RowScale[2] <= AircraftAllocation::AuthorityEpsilon)
+	{
+		PidStates.Rate.Pitch.Reset();
+		Result.Y = 0.0f;
+	}
+	if (Context.AllocationFeedback.Cache.RowScale[3] <= AircraftAllocation::AuthorityEpsilon)
+	{
+		PidStates.Rate.Yaw.Reset();
+		Result.Z = 0.0f;
+	}
+	return Result;
 }
 
 
