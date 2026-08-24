@@ -39,6 +39,15 @@ void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Co
 	bInvalid |= Config.MinCollectiveCommand > Config.HoverCollectiveCommand
 		|| Config.HoverCollectiveCommand > Config.MaxCollectiveCommand
 		|| Config.MaxCollectiveCommand > 1.0f;
+	const float EstimatorValues[] = {
+		Config.HoverThrustInitialStateVariance, Config.HoverThrustProcessNoiseVariance,
+		Config.HoverThrustAccelNoiseVariance, Config.HoverThrustGateSize,
+		Config.HoverThrustMin, Config.HoverThrustMax };
+	for (const float Value : EstimatorValues)
+	{
+		bInvalid |= !FMath::IsFinite(Value) || Value < 0.0f;
+	}
+	bInvalid |= Config.HoverThrustMin >= Config.HoverThrustMax;
 	if (bInvalid)
 	{
 		Context.Error(FText::FromString(TEXT("Flight-control limits must be finite, non-negative, and satisfy 0 <= Min <= Hover <= Max <= 1.")), this);
@@ -68,6 +77,13 @@ void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Co
 	SetConfigProperty(Properties, TEXT("FlightController.MinCollectiveCommand"), Config.MinCollectiveCommand);
 	SetConfigProperty(Properties, TEXT("FlightController.HoverCollectiveCommand"), Config.HoverCollectiveCommand);
 	SetConfigProperty(Properties, TEXT("FlightController.MaxCollectiveCommand"), Config.MaxCollectiveCommand);
+	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.Enabled"), Config.bEnableHoverThrustEstimator);
+	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.InitialStateVariance"), Config.HoverThrustInitialStateVariance);
+	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.ProcessNoiseVariance"), Config.HoverThrustProcessNoiseVariance);
+	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.AccelNoiseVariance"), Config.HoverThrustAccelNoiseVariance);
+	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.GateSize"), Config.HoverThrustGateSize);
+	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.MinHoverThrust"), Config.HoverThrustMin);
+	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.MaxHoverThrust"), Config.HoverThrustMax);
 
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

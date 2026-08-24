@@ -118,11 +118,32 @@ FlightControlDynamics::ComputeDampingAwareHorizontalLimits(
 	return Result;
 }
 
+void FAircraftFlightControlSolver::UpdateHoverThrustEstimate(
+	const FAircraftFlightControllerRuntimeConfig& Config, float DeltaSeconds,
+	float AccZWorldCmPerSecSq, float LastCollectiveThrustCommand, float GravityCmPerSecSq)
+{
+	if (!Config.HoverThrustEstimator.bEnabled)
+	{
+		return;
+	}
+	// 输入换算 cm→m：加速度与重力统一到 EKF 的 SI 约定
+	HoverThrustEstimator.Update(DeltaSeconds, AccZWorldCmPerSecSq * 0.01f,
+		LastCollectiveThrustCommand, GravityCmPerSecSq * 0.01f);
+}
+
+float FAircraftFlightControlSolver::GetEffectiveHoverCollectiveCommand(
+	const FAircraftFlightControllerRuntimeConfig& Config) const
+{
+	return Config.HoverThrustEstimator.bEnabled && HoverThrustEstimator.IsInitialized()
+		? HoverThrustEstimator.GetHoverThrust()
+		: Config.HoverCollectiveCommand;
+}
+
 float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightControlSolverContext& Context, float DeltaSeconds, float& OutDesiredVerticalVelocity)
 {
 	const FAircraftFlightControllerRuntimeConfig& Config = Context.Config;
 	const float MinCollective = Config.MinCollectiveCommand;
-	const float HoverCollective = Config.HoverCollectiveCommand;
+	const float HoverCollective = GetEffectiveHoverCollectiveCommand(Config);
 	const float MaxCollective = Config.MaxCollectiveCommand;
 	const float CurrentAltitude = Context.Runtime.EstimatedState.State.PositionCm.Z;
 	const float CurrentVerticalVelocity = Context.Runtime.EstimatedState.State.VelocityCmPerSec.Z;
@@ -162,7 +183,7 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 		const float NormalizedVerticalCommand = OutDesiredVerticalVelocity >= 0.0f
 			? OutDesiredVerticalVelocity / FMath::Max(Config.MaxClimbRateCmPerSec, UE_SMALL_NUMBER)
 			: OutDesiredVerticalVelocity / FMath::Max(Config.MaxDescentRateCmPerSec, UE_SMALL_NUMBER);
-		return MapCenteredThrottleToCollective(Context, NormalizedVerticalCommand);
+		return MapCenteredThrottleToCollective(Context, NormalizedVerticalCommand, HoverCollective);
 	}
 
 	// 高度保持初始化（手动路径用；Autopilot 路径直接使用设定值，忽略此锁定值）
@@ -204,7 +225,7 @@ float FAircraftFlightControlSolver::ComputeVerticalControl(FAircraftFlightContro
 		const float Gravity = FMath::Max(Context.PhysicsCache.GravityMagnitudeCmPerSecSq, 1.0f);
 		const float ReferenceAcceleration = Reference.ControlAccelerationCmPerSecSq.Z
 			+ Reference.DynamicsFeedForwardAccelerationCmPerSecSq.Z;
-		const float TrajectoryCollective = Config.HoverCollectiveCommand
+		const float TrajectoryCollective = GetEffectiveHoverCollectiveCommand(Config)
 			* FMath::Max(0.0f, (Gravity + ReferenceAcceleration) / Gravity);
 		return FMath::Clamp(TrajectoryCollective + CollectiveOffset,
 			MinCollective, MaxCollective);
@@ -726,9 +747,9 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 }
 
 
-float FAircraftFlightControlSolver::MapCenteredThrottleToCollective(const FAircraftFlightControlSolverContext& Context, float ThrottleInput) const
+float FAircraftFlightControlSolver::MapCenteredThrottleToCollective(
+	const FAircraftFlightControlSolverContext& Context, float ThrottleInput, float HoverCollective) const
 {
-	const float HoverCollective = Context.Config.HoverCollectiveCommand;
 	const float MinCollective = Context.Config.MinCollectiveCommand;
 	const float MaxCollective = Context.Config.MaxCollectiveCommand;
 	const float ClampedThrottle = FMath::Clamp(ThrottleInput, -1.0f, 1.0f);

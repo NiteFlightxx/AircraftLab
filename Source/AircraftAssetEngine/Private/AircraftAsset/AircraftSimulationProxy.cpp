@@ -83,6 +83,13 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	ActiveLodIndex = NewLodIndex;
 	ActiveDriveMode = NewDriveMode;
 	ControlSolver.Reset();
+	// 资产重建 = 新机体：悬停推力估计重置为静态配置基准重新学习
+	if (ActiveLodModel)
+	{
+		ControlSolver.HoverThrustEstimator.Configure(
+			ActiveLodModel->FlightController.HoverThrustEstimator,
+			ActiveLodModel->FlightController.HoverCollectiveCommand);
+	}
 	{
 		FScopeLock PlannerLock(&PlannerCriticalSection);
 		PredictiveController.Reset();
@@ -300,8 +307,9 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 	const double WeightN = PhysicsCache.MassKg * PhysicsCache.GravityMagnitudeCmPerSecSq * 0.01;
 	const double MaxVerticalThrustN = ControlAllocator.Cache.RowScale[0];
 	UE_LOG(LogAircraft, Log,
-		TEXT("[AircraftDF.Thrust] Collective=%.4f Hover(Config/Required)=%.4f/%.4f DesiredVz=%+.1f VzFF=%+.5f Thrust(Current/Weight/Authority)=%.2f/%.2f/%.2fN AxisCmd=(%+.4f,%+.4f,%+.4f) Rate(Current/Desired)=(%+.2f,%+.2f,%+.2f)/(%+.2f,%+.2f,%+.2f)"),
+		TEXT("[AircraftDF.Thrust] Collective=%.4f Hover(Config/Used/Required)=%.4f/%.4f/%.4f DesiredVz=%+.1f VzFF=%+.5f Thrust(Current/Weight/Authority)=%.2f/%.2f/%.2fN AxisCmd=(%+.4f,%+.4f,%+.4f) Rate(Current/Desired)=(%+.2f,%+.2f,%+.2f)/(%+.2f,%+.2f,%+.2f)"),
 		CollectiveCommand, Config.HoverCollectiveCommand,
+		ControlSolver.GetEffectiveHoverCollectiveCommand(Config),
 		MaxVerticalThrustN > UE_SMALL_NUMBER ? WeightN / MaxVerticalThrustN : 0.0,
 		DesiredVerticalVelocityCmPerSec,
 		ControlSolver.LastVerticalDampingCollectiveFeedForward,
@@ -1329,6 +1337,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 			ManualCommand.DesiredBodyRatesDegPerSec = LowLevelTargets.Rate.BodyRatesDegreesPerSec;
 		}
 	}
+
+	/* ----------------------------------------------------------------------
+	 * 悬停推力 EKF：用上一子步总距与实测垂直加速度在线估计悬停基准
+	 * ---------------------------------------------------------------------- */
+	ControlSolver.UpdateHoverThrustEstimate(Config, DeltaTime,
+		Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq.Z,
+		CurrentCollectiveThrustCommand.load(std::memory_order_relaxed),
+		PhysicsCache.GravityMagnitudeCmPerSecSq);
 
 	/* ----------------------------------------------------------------------
 	 * ---------------------------------------------------------------------- */

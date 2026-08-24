@@ -7,6 +7,7 @@
 
 #include "CoreMinimal.h"
 #include "Aircraft/FlightControlPid.h"
+#include "Aircraft/HoverThrustEstimator.h"
 #include "Aircraft/RotorFailureTypes.h"
 
 /**
@@ -112,6 +113,10 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 
 	/** 旋翼失效与控制权限降级策略（属性键 FlightController.Failure.*）。 */
 	FAircraftFailurePolicyConfig FailurePolicy;
+
+	/** 悬停推力在线估计，替代静态 HoverCollectiveCommand 作为垂直通道基准
+	 *  （属性键 FlightController.HoverThrustEstimator.*）。 */
+	FAircraftHoverThrustEstimatorConfig HoverThrustEstimator;
 
 	// ------------------------------------------------------------------
 	// PID 增益装配（平铺字段 → 求解器消费的 FAircraftPidGains）

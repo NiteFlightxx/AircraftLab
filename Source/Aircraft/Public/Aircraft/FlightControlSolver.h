@@ -97,6 +97,18 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 	bool bTrajectoryPositionTrackingInitialized = false;
 	bool bLastTrajectoryPositionTrackingEnabled = false;
 
+	/** 悬停推力 EKF：估计值替代静态 HoverCollectiveCommand 作为垂直通道基准。
+	 *  刻意不参与 Reset()——模式切换/解锁循环中保留已学到的基准，
+	 *  仅在资产配置重建时由代理 Configure() 重置到静态配置值。 */
+	FAircraftHoverThrustEstimator HoverThrustEstimator;
+
+	/** 用上一子步施加的总距与实测垂直加速度推进悬停推力 EKF。 */
+	void UpdateHoverThrustEstimate(const FAircraftFlightControllerRuntimeConfig& Config,
+		float DeltaSeconds, float AccZWorldCmPerSecSq, float LastCollectiveThrustCommand,
+		float GravityCmPerSecSq);
+	/** EKF 启用且已完成首次更新时返回估计值，否则返回静态配置悬停总距。 */
+	float GetEffectiveHoverCollectiveCommand(const FAircraftFlightControllerRuntimeConfig& Config) const;
+
 	float ComputeVerticalControl(FAircraftFlightControlSolverContext& Context,
 		float DeltaSeconds, float& OutDesiredVerticalVelocity);
 	FRotator ComputeDesiredAttitude(FAircraftFlightControlSolverContext& Context, float DeltaSeconds);
@@ -110,7 +122,8 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 	FVector ComputeVelocityPidAcceleration(FAircraftFlightControlSolverContext& Context,
 		const FVector& DesiredVelocityCmPerSec, const FVector& TrajectoryAccelerationFeedForwardCmPerSecSq,
 		float DeltaSeconds, bool bIncludeLinearDampingFeedForward = true);
-	float MapCenteredThrottleToCollective(const FAircraftFlightControlSolverContext& Context, float ThrottleInput) const;
+	float MapCenteredThrottleToCollective(const FAircraftFlightControlSolverContext& Context,
+		float ThrottleInput, float HoverCollective) const;
 
 	void Reset()
 	{

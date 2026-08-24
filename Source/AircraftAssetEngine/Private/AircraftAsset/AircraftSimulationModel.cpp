@@ -126,6 +126,20 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.HoverCollectiveCommand"), OutModel.FlightController.HoverCollectiveCommand);
 			OutModel.FlightController.MaxCollectiveCommand = Properties.GetValue<float>(
 				TEXT("FlightController.MaxCollectiveCommand"), OutModel.FlightController.MaxCollectiveCommand);
+			OutModel.FlightController.HoverThrustEstimator.bEnabled = Properties.GetValue<bool>(
+				TEXT("FlightController.HoverThrustEstimator.Enabled"), OutModel.FlightController.HoverThrustEstimator.bEnabled);
+			OutModel.FlightController.HoverThrustEstimator.InitialStateVariance = Properties.GetValue<float>(
+				TEXT("FlightController.HoverThrustEstimator.InitialStateVariance"), OutModel.FlightController.HoverThrustEstimator.InitialStateVariance);
+			OutModel.FlightController.HoverThrustEstimator.ProcessNoiseVariance = Properties.GetValue<float>(
+				TEXT("FlightController.HoverThrustEstimator.ProcessNoiseVariance"), OutModel.FlightController.HoverThrustEstimator.ProcessNoiseVariance);
+			OutModel.FlightController.HoverThrustEstimator.AccelNoiseVariance = Properties.GetValue<float>(
+				TEXT("FlightController.HoverThrustEstimator.AccelNoiseVariance"), OutModel.FlightController.HoverThrustEstimator.AccelNoiseVariance);
+			OutModel.FlightController.HoverThrustEstimator.GateSize = Properties.GetValue<float>(
+				TEXT("FlightController.HoverThrustEstimator.GateSize"), OutModel.FlightController.HoverThrustEstimator.GateSize);
+			OutModel.FlightController.HoverThrustEstimator.MinHoverThrust = Properties.GetValue<float>(
+				TEXT("FlightController.HoverThrustEstimator.MinHoverThrust"), OutModel.FlightController.HoverThrustEstimator.MinHoverThrust);
+			OutModel.FlightController.HoverThrustEstimator.MaxHoverThrust = Properties.GetValue<float>(
+				TEXT("FlightController.HoverThrustEstimator.MaxHoverThrust"), OutModel.FlightController.HoverThrustEstimator.MaxHoverThrust);
 			OutModel.FlightController.PositionKff = Properties.GetValue<FVector3f>(TEXT("FlightController.Position.PositionKff"), OutModel.FlightController.PositionKff);
 			OutModel.FlightController.PositionIntegralLimit = Properties.GetValue<FVector3f>(
 				TEXT("FlightController.Position.PositionIntegralLimit"), OutModel.FlightController.PositionIntegralLimit);

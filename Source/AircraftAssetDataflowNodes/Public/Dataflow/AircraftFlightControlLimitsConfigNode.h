@@ -24,6 +24,15 @@ struct FAircraftFlightControlLimitsConfig
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0", ClampMax = "1.0")) float MinCollectiveCommand = 0.0f;
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0", ClampMax = "1.0")) float HoverCollectiveCommand = 0.5f;
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0", ClampMax = "1.0")) float MaxCollectiveCommand = 1.0f;
+
+	/** 悬停推力 EKF：默认开启，载荷/电压/旋翼效率变化时自动修正悬停基准。 */
+	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator") bool bEnableHoverThrustEstimator = true;
+	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (ClampMin = "0.0")) float HoverThrustInitialStateVariance = 0.01f;
+	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (ClampMin = "0.0")) float HoverThrustProcessNoiseVariance = 12.5e-6f;
+	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (ClampMin = "0.001")) float HoverThrustAccelNoiseVariance = 5.0f;
+	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (ClampMin = "1.0")) float HoverThrustGateSize = 3.0f;
+	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (ClampMin = "0.0", ClampMax = "1.0")) float HoverThrustMin = 0.1f;
+	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (ClampMin = "0.0", ClampMax = "1.0")) float HoverThrustMax = 0.9f;
 };
 
 USTRUCT(meta = (DataflowAircraft))
