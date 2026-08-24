@@ -10,6 +10,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftPathOptimizationRuntimeConfig
 	float ResampleSpacingCm = 100.0f;
 	float MinimumSegmentLengthCm = 1.0f;
 	float CorridorSafetyMarginCm = 20.0f;
+	/** 路径投影只允许在上次进度之前回看这段距离，避免自交路径跳段。 */
+	float ProjectionBacktrackToleranceCm = 25.0f;
+	/** 路径投影从上次进度向前搜索的最大距离。 */
+	float ProjectionSearchDistanceCm = 2000.0f;
 	float CenterlineWeight = 1.0f;
 	float CurvatureWeight = 0.25f;
 	float SnapWeight = 0.05f;
@@ -43,6 +47,8 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMpccRuntimeConfig
 	int32 MaxOptimizationIterations = 2;
 	float SolveTimeBudgetMilliseconds = 2.0f;
 	float ContourErrorWeight = 8.0f;
+	/** 对预测状态越出导航走廊的最高优先级二次惩罚。 */
+	float CorridorViolationWeight = 1000.0f;
 	float LagErrorWeight = 2.0f;
 	float SpeedTrackingWeight = 1.5f;
 	float AccelerationWeight = 0.05f;

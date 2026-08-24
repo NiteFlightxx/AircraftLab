@@ -85,9 +85,9 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 	const FAircraftSimulationLODProfileData SimulationLOD;
 	TestFalse(TEXT("A simulation LOD node has a name"), SimulationLOD.Name.IsNone());
 	TestEqual(TEXT("A standalone simulation LOD node defaults to flight-controller drive"),
-		SimulationLOD.DriveMode, EAircraftProfileDriveMode::FlightController);
+		SimulationLOD.DriveMode, EAircraftSimulationDriveMode::FlightController);
 	TestEqual(TEXT("A standalone simulation LOD node defaults to full collision"),
-		SimulationLOD.CollisionMode, EAircraftProfileCollisionMode::QueryAndPhysics);
+		SimulationLOD.CollisionMode, EAircraftSimulationCollisionMode::QueryAndPhysics);
 	return true;
 }
 

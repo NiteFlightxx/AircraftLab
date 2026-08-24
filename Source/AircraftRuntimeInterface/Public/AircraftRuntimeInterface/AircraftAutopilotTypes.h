@@ -4,6 +4,16 @@
 
 #include "AircraftAutopilotTypes.generated.h"
 
+UENUM(BlueprintType)
+enum class EAircraftPathTrackingState : uint8
+{
+	NotTracking,
+	Nominal,
+	ContourLimited,
+	CorridorConstrained,
+	CorridorRecovery
+};
+
 /** 同一物理子步采集的完整运动状态。 */
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftVehicleStateSnapshot
 {
@@ -29,11 +39,20 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftDynamicCapabilitySnapshot
 	float GravityCmPerSecSq = 980.0f;
 	float MaxHorizontalSpeedCmPerSec = 0.0f;
 	float MaxHorizontalAccelerationCmPerSecSq = 0.0f;
+	float MaxHorizontalDecelerationCmPerSecSq = 0.0f;
+	float MaxHorizontalJerkCmPerSecCubed = 0.0f;
 	float MaxVerticalAccelerationCmPerSecSq = 0.0f;
+	float MaxVerticalJerkCmPerSecCubed = 0.0f;
 	float MaxClimbRateCmPerSec = 0.0f;
 	float MaxDescentRateCmPerSec = 0.0f;
 	float MaxTiltRadians = 0.0f;
+	bool bHasTiltLimit = false;
 	FVector MaxBodyRateRadPerSec = FVector::ZeroVector;
+	FVector MaxBodyAngularAccelerationRadPerSecSq = FVector::ZeroVector;
+	FVector MaxBodyAngularJerkRadPerSecCubed = FVector::ZeroVector;
+	bool bCanControlRoll = false;
+	bool bCanControlPitch = false;
+	bool bCanControlYaw = false;
 	float CollectiveAuthorityN = 0.0f;
 	FVector PositiveTorqueAuthorityNm = FVector::ZeroVector;
 	FVector NegativeTorqueAuthorityNm = FVector::ZeroVector;
@@ -43,15 +62,22 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftDynamicCapabilitySnapshot
 	float AirDensityKgPerM3 = 0.0f;
 	FVector LinearDragBodyNsPerM = FVector::ZeroVector;
 	FVector DragAreaCoefficientBodyM2 = FVector::ZeroVector;
-	/** 当前有效旋翼中最慢的推力响应时间常数。 */
-	float RotorResponseTimeSeconds = 0.0f;
+	float MaxRelativeAirspeedCmPerSec = 0.0f;
+	/** 当前有效旋翼中最慢的增推力响应时间常数。 */
+	float ThrustRiseResponseTimeSeconds = 0.0f;
+	/** 当前有效旋翼中最慢的减推力响应时间常数。 */
+	float ThrustFallResponseTimeSeconds = 0.0f;
 	bool bValid = false;
 
-	bool HasTorqueAuthority(int32 Axis) const
+	bool HasAngularControlAuthority(int32 Axis) const
 	{
-		return Axis >= 0 && Axis < 3
-			&& (PositiveTorqueAuthorityNm[Axis] > UE_SMALL_NUMBER
-				|| NegativeTorqueAuthorityNm[Axis] > UE_SMALL_NUMBER);
+		switch (Axis)
+		{
+		case 0: return bCanControlRoll;
+		case 1: return bCanControlPitch;
+		case 2: return bCanControlYaw;
+		default: return false;
+		}
 	}
 };
 
@@ -135,9 +161,13 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftAutopilotDiagnostics
 	double MaximumSolveMilliseconds = 0.0;
 	float ContourErrorCm = 0.0f;
 	float LagErrorCm = 0.0f;
+	float CorridorViolationCm = 0.0f;
+	float PredictedCorridorViolationCm = 0.0f;
 	float ProgressScale = 1.0f;
 	bool bPlanValid = false;
 	bool bReferenceFresh = false;
 	/** 求解器连续失败达到配置阈值且已无可复用参考。 */
 	bool bSolverFailed = false;
+	bool bCorridorViolated = false;
+	EAircraftPathTrackingState PathTrackingState = EAircraftPathTrackingState::NotTracking;
 };

@@ -7,8 +7,8 @@
 
 #include "CoreMinimal.h"
 #include "Aircraft/FlightControlPid.h"
+#include "Aircraft/FlightControlStateTypes.h"
 #include "Aircraft/HoverThrustEstimator.h"
-#include "Aircraft/RotorFailureTypes.h"
 
 /**
  * Dataflow 编译后的飞控参数快照（平铺纯值）。
@@ -74,7 +74,12 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	float MaxDescentRateCmPerSec = 200.0f;
 	float MaxHorizontalSpeedCmPerSec = 800.0f;
 	float MaxHorizontalAccelerationCmPerSecSq = 600.0f;
+	float MaxHorizontalDecelerationCmPerSecSq = 600.0f;
+	float MaxHorizontalJerkCmPerSecCubed = 2000.0f;
 	float MaxVerticalAccelerationCmPerSecSq = 500.0f;
+	float MaxVerticalJerkCmPerSecCubed = 1500.0f;
+	float MaxYawAccelerationDegPerSecSq = 180.0f;
+	float MaxYawJerkDegPerSecCubed = 600.0f;
 	float MinCollectiveCommand = 0.0f;
 	float HoverCollectiveCommand = 0.5f;
 	float MaxCollectiveCommand = 1.0f;
@@ -98,21 +103,22 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	float ConstraintLinearStrength = 1.59154943f;
 	float ConstraintLinearDampingRatio = 1.0f;
 	float ConstraintLinearExtraDamping = 0.0f;
-	float ConstraintLinearForceLimit = 0.0f;
+	/** 线性约束驱动合力上限（N）；0 表示不限制。 */
+	float ConstraintLinearForceLimitN = 0.0f;
 	float ConstraintGravityFeedForwardScale = 1.0f;
 	float ConstraintDynamicsFeedForwardScale = 1.0f;
 	float ConstraintAngularStrength = 1.59154943f;
 	float ConstraintAngularDampingRatio = 1.0f;
 	float ConstraintAngularExtraDamping = 0.0f;
-	float ConstraintAngularTorqueLimit = 0.0f;
+	/** 角约束驱动力矩上限（N·m）；0 表示不限制。 */
+	float ConstraintAngularTorqueLimitNm = 0.0f;
 	bool bConstraintAccelerationMode = true;
 	bool bKinematicSweepMovement = true;
 	float KinematicPositionCorrectionRate = 8.0f;
 	float KinematicRotationInterpSpeed = 8.0f;
+	bool bStartArmed = true;
+	EAircraftFlightMode InitialFlightMode = EAircraftFlightMode::PositionHold;
 	bool bControllerEnabledByDefault = true;
-
-	/** 旋翼失效与控制权限降级策略（属性键 FlightController.Failure.*）。 */
-	FAircraftFailurePolicyConfig FailurePolicy;
 
 	/** 悬停推力在线估计，替代静态 HoverCollectiveCommand 作为垂直通道基准
 	 *  （属性键 FlightController.HoverThrustEstimator.*）。 */

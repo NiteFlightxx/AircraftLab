@@ -2,7 +2,7 @@
 
 namespace
 {
-	constexpr int32 ArcTableSubdivisions = 32;
+	constexpr int32 ArcTableSubdivisions = 64;
 
 	float WrapDistance(float Distance, float Length)
 	{
@@ -93,6 +93,12 @@ void FAircraftSpatialPath::Reset()
 	Segments.Reset();
 	TotalLengthCm = 0.0f;
 	bClosed = false;
+	Corridor.Reset();
+	CorridorDistanceScale = 1.0f;
+	CorridorSafetyMarginCm = 0.0f;
+	ProjectionBacktrackToleranceCm = 0.0f;
+	ProjectionSearchDistanceCm = 0.0f;
+	ProjectionSampleSpacingCm = 100.0f;
 }
 
 void FAircraftSpatialPath::OptimizeKnots(
@@ -231,6 +237,15 @@ bool FAircraftSpatialPath::Build(
 	}
 
 	ResamplePolyline(Points, Route.bClosed, Config.ResampleSpacingCm);
+	float CenterlineLengthCm = 0.0f;
+	for (int32 Index = 1; Index < Points.Num(); ++Index)
+	{
+		CenterlineLengthCm += FVector::Distance(Points[Index - 1], Points[Index]);
+	}
+	if (Route.bClosed)
+	{
+		CenterlineLengthCm += FVector::Distance(Points.Last(), Points[0]);
+	}
 	OptimizeKnots(Points, Route.bClosed, Route.Corridor, Config);
 	TArray<FVector> First;
 	TArray<FVector> Second;
@@ -268,13 +283,21 @@ bool FAircraftSpatialPath::Build(
 		Segment.LengthCm = Segment.ArcLengthsCm.Last();
 		TotalLengthCm += Segment.LengthCm;
 	}
+	Corridor = Route.Corridor;
+	CorridorDistanceScale = TotalLengthCm > UE_SMALL_NUMBER
+		? CenterlineLengthCm / TotalLengthCm : 1.0f;
+	CorridorSafetyMarginCm = Config.CorridorSafetyMarginCm;
+	ProjectionBacktrackToleranceCm = Config.ProjectionBacktrackToleranceCm;
+	ProjectionSearchDistanceCm = Config.ProjectionSearchDistanceCm;
+	ProjectionSampleSpacingCm = FMath::Max(Config.ResampleSpacingCm, 10.0f);
 	for (const FSegment& Segment : Segments)
 	{
 		for (int32 SampleIndex = 0; SampleIndex <= ArcTableSubdivisions; ++SampleIndex)
 		{
 			const float DistanceCm = Segment.StartDistanceCm
 				+ Segment.ArcLengthsCm[SampleIndex];
-			const int32 CorridorIndex = FindCorridorSegment(Route.Corridor, DistanceCm);
+			const int32 CorridorIndex = FindCorridorSegment(
+				Route.Corridor, DistanceCm * CorridorDistanceScale);
 			if (!Route.Corridor.IsValidIndex(CorridorIndex))
 			{
 				continue;
@@ -334,30 +357,35 @@ bool FAircraftSpatialPath::Evaluate(float DistanceCm, FAircraftSpatialPathState&
 }
 
 bool FAircraftSpatialPath::Project(
-	const FVector& PositionCm, float InitialDistanceCm, FAircraftSpatialPathState& OutState) const
+	const FVector& PositionCm, float InitialDistanceCm,
+	bool bGlobalSearch, FAircraftSpatialPathState& OutState) const
 {
 	if (!IsValid())
 	{
 		OutState = {};
 		return false;
 	}
-	const float SearchRadius = FMath::Max(500.0f, TotalLengthCm * 0.1f);
-	const float SearchCenter = bClosed ? WrapDistance(InitialDistanceCm, TotalLengthCm)
+	const float SearchCenter = bClosed ? InitialDistanceCm
 		: FMath::Clamp(InitialDistanceCm, 0.0f, TotalLengthCm);
+	const float SearchStart = bGlobalSearch ? 0.0f : FMath::Max(
+		SearchCenter - ProjectionBacktrackToleranceCm, bClosed ? -TotalLengthCm : 0.0f);
+	const float SearchEnd = bGlobalSearch ? TotalLengthCm : FMath::Min(
+		SearchCenter + ProjectionSearchDistanceCm, bClosed ? SearchCenter + TotalLengthCm : TotalLengthCm);
 	float BestDistance = SearchCenter;
 	double BestErrorSquared = TNumericLimits<double>::Max();
-	constexpr int32 Samples = 32;
+	const int32 Samples = FMath::Clamp(
+		FMath::CeilToInt((SearchEnd - SearchStart) / ProjectionSampleSpacingCm), 16, 512);
 	for (int32 Index = 0; Index <= Samples; ++Index)
 	{
-		const float Offset = FMath::Lerp(-SearchRadius, SearchRadius,
+		const float CandidateDistance = FMath::Lerp(SearchStart, SearchEnd,
 			static_cast<float>(Index) / static_cast<float>(Samples));
 		FAircraftSpatialPathState Candidate;
-		Evaluate(SearchCenter + Offset, Candidate);
+		Evaluate(CandidateDistance, Candidate);
 		const double ErrorSquared = FVector::DistSquared(PositionCm, Candidate.PositionCm);
 		if (ErrorSquared < BestErrorSquared)
 		{
 			BestErrorSquared = ErrorSquared;
-			BestDistance = Candidate.DistanceCm;
+			BestDistance = CandidateDistance;
 		}
 	}
 
@@ -367,12 +395,51 @@ bool FAircraftSpatialPath::Project(
 		Evaluate(BestDistance, Candidate);
 		const float Step = static_cast<float>(FVector::DotProduct(
 			PositionCm - Candidate.PositionCm, Candidate.Tangent));
-		BestDistance = bClosed ? WrapDistance(BestDistance + Step, TotalLengthCm)
-			: FMath::Clamp(BestDistance + Step, 0.0f, TotalLengthCm);
+		BestDistance = FMath::Clamp(BestDistance + Step, SearchStart, SearchEnd);
 		if (FMath::Abs(Step) < 0.01f)
 		{
 			break;
 		}
 	}
 	return Evaluate(BestDistance, OutState);
+}
+
+float FAircraftSpatialPath::ComputeCorridorViolationCm(
+	const FVector& PositionCm, float DistanceCm) const
+{
+	return static_cast<float>(ComputeCorridorCorrectionCm(PositionCm, DistanceCm).Size());
+}
+
+FVector FAircraftSpatialPath::ComputeCorridorCorrectionCm(
+	const FVector& PositionCm, float DistanceCm) const
+{
+	if (Corridor.IsEmpty())
+	{
+		return FVector::ZeroVector;
+	}
+	const float MappedDistanceCm = (bClosed ? WrapDistance(DistanceCm, TotalLengthCm)
+		: FMath::Clamp(DistanceCm, 0.0f, TotalLengthCm)) * CorridorDistanceScale;
+	const int32 CorridorIndex = FindCorridorSegment(Corridor, MappedDistanceCm);
+	if (!Corridor.IsValidIndex(CorridorIndex))
+	{
+		return FVector::ZeroVector;
+	}
+	float MaximumViolationCm = 0.0f;
+	FVector CorrectionCm = FVector::ZeroVector;
+	for (const FPlane& Plane : Corridor[CorridorIndex].BoundaryPlanes)
+	{
+		const FVector Normal(Plane.X, Plane.Y, Plane.Z);
+		const double NormalLength = Normal.Size();
+		if (NormalLength > UE_DOUBLE_SMALL_NUMBER)
+		{
+			const float ViolationCm = static_cast<float>(
+				Plane.PlaneDot(PositionCm) / NormalLength) + CorridorSafetyMarginCm;
+			if (ViolationCm > MaximumViolationCm)
+			{
+				MaximumViolationCm = ViolationCm;
+				CorrectionCm = -Normal / NormalLength * ViolationCm;
+			}
+		}
+	}
+	return CorrectionCm;
 }

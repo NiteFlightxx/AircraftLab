@@ -1,16 +1,16 @@
 //
 // FAircraftSimulationProxy：多旋翼飞控代理。控制律核心已下沉到 Aircraft 求解器模块
-// （FFlightControlSolver / FControlAllocator / 旋翼模型 / 失效管理器），本文件只做编排：
+// （FFlightControlSolver / FControlAllocator / 旋翼模型 / 执行器效能），本文件只做编排：
 //
 // 物理子步算法（FlightController 驱动模式下每个 AsyncPhysicsTick 子步调一次）：
-//   1. 取走 GT 写入的摇杆 / MovementIntent / 旋翼健康操作
+//   1. 取走 GT 写入的摇杆 / MovementIntent / 旋翼效率
 //   2. ARM 状态机
 //   3. 从 Chaos 刚体句柄读取真值 → FAircraftPhysicsCache + 估计状态
 //   4. 摇杆 → FAircraftManualCommand（含航向坐标系变换与保持死区）
 //   5. 串级控制：垂直通道 → 期望姿态 → 航向 → 期望角速率（四元数误差+参考模型）→ 归一化力矩
-//   6. 阻尼伪逆控制分配（失效感知 + 饱和回传抗 windup + 倾斜补偿）
+//   6. 阻尼伪逆控制分配（效能感知 + 饱和回传抗 windup + 倾斜补偿）
 //   7. 电机一阶滞后 → FChaosEngineInterface 力/扭矩注入（SI→Chaos 边界换算）
-//   8. 失效策略评估（触发动作经原子回传 GT）+ 估计状态写回
+//   8. 估计状态与诊断写回
 
 #include "AircraftAsset/AircraftSimulationProxy.h"
 
@@ -30,6 +30,31 @@
 
 DECLARE_CYCLE_STAT(TEXT("Aircraft Flight Control"), STAT_AircraftFlightControl, STATGROUP_Aircraft);
 
+namespace
+{
+	void PopulateConfiguredMotionLimits(
+		const FAircraftFlightControllerRuntimeConfig& Config,
+		FAircraftDynamicCapabilitySnapshot& OutCapability)
+	{
+		OutCapability.MaxHorizontalSpeedCmPerSec = Config.MaxHorizontalSpeedCmPerSec;
+		OutCapability.MaxHorizontalAccelerationCmPerSecSq = Config.MaxHorizontalAccelerationCmPerSecSq;
+		OutCapability.MaxHorizontalDecelerationCmPerSecSq = Config.MaxHorizontalDecelerationCmPerSecSq;
+		OutCapability.MaxHorizontalJerkCmPerSecCubed = Config.MaxHorizontalJerkCmPerSecCubed;
+		OutCapability.MaxVerticalAccelerationCmPerSecSq = Config.MaxVerticalAccelerationCmPerSecSq;
+		OutCapability.MaxVerticalJerkCmPerSecCubed = Config.MaxVerticalJerkCmPerSecCubed;
+		OutCapability.MaxClimbRateCmPerSec = Config.MaxClimbRateCmPerSec;
+		OutCapability.MaxDescentRateCmPerSec = Config.MaxDescentRateCmPerSec;
+		OutCapability.MaxBodyRateRadPerSec = FVector(
+			FMath::DegreesToRadians(Config.MaxRollRateDegreesPerSec),
+			FMath::DegreesToRadians(Config.MaxPitchRateDegreesPerSec),
+			FMath::DegreesToRadians(Config.MaxYawRateDegreesPerSec));
+		OutCapability.MaxBodyAngularAccelerationRadPerSecSq = FVector(
+			0.0f, 0.0f, FMath::DegreesToRadians(Config.MaxYawAccelerationDegPerSecSq));
+		OutCapability.MaxBodyAngularJerkRadPerSecCubed = FVector(
+			0.0f, 0.0f, FMath::DegreesToRadians(Config.MaxYawJerkDegPerSecCubed));
+	}
+}
+
 /* ===========================================================================
  *  FAircraftSimulationProxy
  * =========================================================================== */
@@ -42,7 +67,21 @@ FAircraftSimulationProxy::FAircraftSimulationProxy(const UAircraftComponent& InA
 
 FAircraftSimulationProxy::~FAircraftSimulationProxy() = default;
 
-void FAircraftSimulationProxy::PostConstructor()
+void FAircraftSimulationProxy::Initialize_GameThread()
+{
+	QueueConfiguration_GameThread(true);
+}
+
+void FAircraftSimulationProxy::ReconfigureForLod_GameThread()
+{
+	QueueConfiguration_GameThread(false);
+	// 下一次规划使用新 LOD 的 Autopilot 配置；控制器自身不 Reset，SetIntent 会按
+	// 同一 handle/type 保留路径进度并从旧进度做局部投影。
+	FScopeLock PlannerLock(&PlannerCriticalSection);
+	bMovementIntentActive = false;
+}
+
+void FAircraftSimulationProxy::QueueConfiguration_GameThread(bool bResetRuntime)
 {
 	TSharedPtr<const FAircraftSimulationModel> NewSimulationModel;
 	if (const UAircraftAssetBase* const Asset = AircraftComponent.GetAsset())
@@ -55,10 +94,42 @@ void FAircraftSimulationProxy::PostConstructor()
 	PendingLodIndex = AircraftComponent.GetCurrentSimulationLOD();
 	PendingDriveMode = AircraftComponent.GetCurrentSimulationDriveMode();
 	bPendingConfiguration = true;
-	PendingRotorHealthOps.Reset();
-	bArmRequest = true;
-	bEmergencyStop = false;
-	bRecoverAllRotors = false;
+	bPendingRuntimeReset |= bResetRuntime;
+	TMap<FName, float> NewEffectiveness;
+	if (PendingSimulationModel.IsValid())
+	{
+		for (int32 LodIndex = 0; LodIndex < PendingSimulationModel->GetNumLods(); ++LodIndex)
+		{
+			if (const FAircraftSimulationLodModel* const Lod = PendingSimulationModel->GetLodModel(LodIndex))
+			{
+				for (const FAircraftRotorDefinition& Rotor : Lod->Rotors)
+				{
+					const float* const Existing = PendingRotorEffectivenessByName.Find(Rotor.RotorName);
+					NewEffectiveness.FindOrAdd(Rotor.RotorName, Existing ? *Existing : 1.0f);
+				}
+			}
+		}
+	}
+	PendingRotorEffectivenessByName = MoveTemp(NewEffectiveness);
+	++PendingRotorEffectivenessRevision;
+	if (bResetRuntime)
+	{
+		const FAircraftSimulationLodModel* const InitialLod = PendingSimulationModel.IsValid()
+			? PendingSimulationModel->GetLodModel(PendingLodIndex) : nullptr;
+		const bool bInitialArmed = InitialLod && InitialLod->FlightController.bStartArmed;
+		const EAircraftFlightMode InitialMode = InitialLod
+			? InitialLod->FlightController.InitialFlightMode : EAircraftFlightMode::PositionHold;
+		bArmRequest = bInitialArmed;
+		bEmergencyStop = false;
+		CurrentArmState.store(static_cast<uint8>(
+			bInitialArmed ? EAircraftArmState::Armed : EAircraftArmState::Disarmed),
+			std::memory_order_relaxed);
+		CurrentFlightMode.store(static_cast<uint8>(InitialMode), std::memory_order_relaxed);
+		PendingFlightMode.store(static_cast<uint8>(InitialMode), std::memory_order_relaxed);
+		bControllerEnabled.store(
+			InitialLod ? InitialLod->FlightController.bControllerEnabledByDefault : true,
+			std::memory_order_relaxed);
+	}
 }
 
 void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
@@ -66,6 +137,7 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	TSharedPtr<const FAircraftSimulationModel> NewSimulationModel;
 	int32 NewLodIndex = INDEX_NONE;
 	EAircraftSimulationDriveMode NewDriveMode = EAircraftSimulationDriveMode::FlightController;
+	bool bResetRuntime = false;
 	{
 		FScopeLock Lock(&InputCriticalSection);
 		if (!bPendingConfiguration)
@@ -75,53 +147,55 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 		NewSimulationModel = MoveTemp(PendingSimulationModel);
 		NewLodIndex = PendingLodIndex;
 		NewDriveMode = PendingDriveMode;
+		bResetRuntime = bPendingRuntimeReset;
 		bPendingConfiguration = false;
+		bPendingRuntimeReset = false;
 	}
 
 	SimulationModel = MoveTemp(NewSimulationModel);
 	ActiveLodModel = SimulationModel.IsValid() ? SimulationModel->GetLodModel(NewLodIndex) : nullptr;
 	ActiveLodIndex = NewLodIndex;
 	ActiveDriveMode = NewDriveMode;
-	ControlSolver.Reset();
-	// 资产重建 = 新机体：悬停推力估计重置为静态配置基准重新学习
-	if (ActiveLodModel)
+	if (bResetRuntime)
 	{
-		ControlSolver.HoverThrustEstimator.Configure(
-			ActiveLodModel->FlightController.HoverThrustEstimator,
-			ActiveLodModel->FlightController.HoverCollectiveCommand);
+		ControlSolver.Reset();
+		if (ActiveLodModel)
+		{
+			ControlSolver.HoverThrustEstimator.Configure(
+				ActiveLodModel->FlightController.HoverThrustEstimator,
+				ActiveLodModel->FlightController.HoverCollectiveCommand);
+		}
+		{
+			FScopeLock PlannerLock(&PlannerCriticalSection);
+			PredictiveController.Reset();
+		}
+		ActiveMovementIntentRevision = 0;
+		ActiveMovementIntentId = 0;
+		ControlAllocator.Reset();
+		RotorEffectivenessManager.ResetAuthority();
+		Runtime.HoldTargets.ResetHoldFlags();
+		Runtime.PreviousLinearVelocityCmPerSec = FVector::ZeroVector;
+		Runtime.bHasPreviousLinearVelocity = false;
+		CurrentCollectiveThrustCommand.store(0.0f, std::memory_order_relaxed);
+		bPendingControllerReset.store(false, std::memory_order_relaxed);
+		bResetRotorRuntimeOnNextRebuild = true;
 	}
-	{
-		FScopeLock PlannerLock(&PlannerCriticalSection);
-		PredictiveController.Reset();
-	}
-	ActiveMovementIntentRevision = 0;
-	ActiveMovementIntentId = 0;
-	ControlAllocator.Reset();
-	RotorFailureManager.ResetAuthority();
 	RebuildRotorDescriptors_PhysicsThread(FVector::ZeroVector);
 	bHasRotorDescriptorCenterOfMass = false;
-	Runtime.HoldTargets.ResetHoldFlags();
-	Runtime.PreviousLinearVelocityCmPerSec = FVector::ZeroVector;
-	Runtime.bHasPreviousLinearVelocity = false;
-	CurrentCollectiveThrustCommand.store(0.0f, std::memory_order_relaxed);
-	bFailureActionPending.store(false, std::memory_order_relaxed);
-	bPendingControllerReset.store(false, std::memory_order_relaxed);
 	DebugLogAccumulatorSeconds = 0.0f;
 	DriveGateDebugLogAccumulatorSeconds = 0.0f;
 	bHasPreviousDebugSample = false;
 	bDebugConfigurationPending = true;
 
-	CurrentArmState.store(static_cast<uint8>(EAircraftArmState::Armed), std::memory_order_relaxed);
-	bControllerEnabled.store(
-		ActiveLodModel ? ActiveLodModel->FlightController.bControllerEnabledByDefault : true,
-		std::memory_order_relaxed);
 	if (FAircraftDebug::IsFlightLogEnabled())
 	{
 		UE_LOG(LogAircraft, Log,
-			TEXT("[AircraftDF.Rebuild] Owner=%s LOD=%d Drive=%s Model=%d Arm=Armed Controller=%d Rotors=%d"),
+			TEXT("[AircraftDF.Rebuild] Owner=%s LOD=%d Drive=%s Model=%d Reset=%d Arm=%d Controller=%d Rotors=%d"),
 			*AircraftOwnerName, ActiveLodIndex,
 			FAircraftDebug::GetDriveModeLabel(ActiveDriveMode),
 			ActiveLodModel ? 1 : 0,
+			bResetRuntime ? 1 : 0,
+			static_cast<int32>(CurrentArmState.load(std::memory_order_relaxed)),
 			bControllerEnabled.load(std::memory_order_relaxed) ? 1 : 0,
 			ActiveLodModel ? ActiveLodModel->Rotors.Num() : 0);
 	}
@@ -257,7 +331,7 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 		Runtime.HoldTargets.HeldPositionCm.Z);
 
 	UE_LOG(LogAircraft, Log,
-		TEXT("[AircraftDF.Reference] Valid=%d Intent=%lld Revision=%lld PositionTracking=%d Progress=%.3f ProgressScale=%.3f Contour=%.1f Lag=%.1f RefPos=(%.1f,%.1f,%.1f) RefVel=(%+.1f,%+.1f,%+.1f) TrajectoryAccel=(%+.1f,%+.1f,%+.1f) ControlAccel=(%+.1f,%+.1f,%+.1f) DynamicsFF=(%+.1f,%+.1f,%+.1f) YawRef=%+.2f YawRateRef=%+.2f YawRateLimit=%.2f"),
+		TEXT("[AircraftDF.Reference] Valid=%d Intent=%lld Revision=%lld PositionTracking=%d Progress=%.3f ProgressScale=%.3f Contour=%.1f Lag=%.1f CorridorViolation=%.1f PredictedCorridorViolation=%.1f CorridorViolated=%d RefPos=(%.1f,%.1f,%.1f) RefVel=(%+.1f,%+.1f,%+.1f) TrajectoryAccel=(%+.1f,%+.1f,%+.1f) ControlAccel=(%+.1f,%+.1f,%+.1f) DynamicsFF=(%+.1f,%+.1f,%+.1f) YawRef=%+.2f YawRateRef=%+.2f YawRateLimit=%.2f"),
 		TrajectoryReference.bValid ? 1 : 0,
 		TrajectoryReference.IntentId,
 		TrajectoryReference.IntentRevision,
@@ -266,6 +340,9 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 		AutopilotDiagnostics.ProgressScale,
 		AutopilotDiagnostics.ContourErrorCm,
 		AutopilotDiagnostics.LagErrorCm,
+		AutopilotDiagnostics.CorridorViolationCm,
+		AutopilotDiagnostics.PredictedCorridorViolationCm,
+		AutopilotDiagnostics.bCorridorViolated ? 1 : 0,
 		TrajectoryReference.PositionCm.X,
 		TrajectoryReference.PositionCm.Y,
 		TrajectoryReference.PositionCm.Z,
@@ -429,6 +506,19 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread(
 	const FVector& CenterOfMassBodyCm)
 {
+	TMap<FName, FAircraftRotorRuntimeState> PreviousStates;
+	if (!bResetRotorRuntimeOnNextRebuild)
+	{
+		for (int32 RotorIndex = 0; RotorIndex < ControlAllocator.RotorInfoBuffer.Num(); ++RotorIndex)
+		{
+			if (RotorStates.IsValidIndex(RotorIndex))
+			{
+				PreviousStates.Add(
+					ControlAllocator.RotorInfoBuffer[RotorIndex].RotorName,
+					RotorStates[RotorIndex]);
+			}
+		}
+	}
 	TArray<FAircraftRotorAllocationInfo> Infos;
 	if (ActiveLodModel)
 	{
@@ -440,9 +530,9 @@ void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread(
 			Info.bEnabled = Rotor.IsEnabled();
 			Info.PositionFromCenterOfMassBodyCm = Rotor.PositionLocalCm - CenterOfMassBodyCm;
 			Info.ThrustAxisBody = Rotor.GetNormalizedThrustAxisLocal();
-			Info.MaxPhysicalThrustN = FMath::Max(Rotor.MaxThrustForce, 0.0f);
+			Info.MaxPhysicalThrustN = FMath::Max(Rotor.MaxThrustN, 0.0f);
 			Info.MaxAllocatedThrustN = Info.MaxPhysicalThrustN * FMath::Clamp(Rotor.ControlAuthorityScale, 0.0f, 1.0f);
-			Info.ReactionTorqueCoefficientM = FMath::Max(Rotor.ReactionTorqueCoefficient, 0.0f);
+			Info.ReactionTorqueCoefficientM = FMath::Max(Rotor.ReactionTorqueCoefficientM, 0.0f);
 			Info.SpinDirectionSign = Rotor.GetSpinDirectionSign();
 			Info.Motor.IdleRpm = Rotor.Motor.IdleRpm;
 			Info.Motor.MaxRpm = Rotor.Motor.MaxRpm;
@@ -459,43 +549,46 @@ void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread(
 	bDebugConfigurationPending = true;
 
 	RotorStates.SetNum(Infos.Num());
-	for (FAircraftRotorRuntimeState& State : RotorStates)
+	for (int32 RotorIndex = 0; RotorIndex < Infos.Num(); ++RotorIndex)
 	{
-		State.Reset();
-	}
-
-	TMap<FName, FAircraftRotorHealthState> NewHealth;
-	for (const FAircraftRotorAllocationInfo& Info : Infos)
-	{
-		if (const FAircraftRotorHealthState* Existing = RotorFailureManager.HealthStatesByName.Find(Info.RotorName))
+		if (const FAircraftRotorRuntimeState* const Existing =
+			PreviousStates.Find(Infos[RotorIndex].RotorName))
 		{
-			NewHealth.Add(Info.RotorName, *Existing);
+			RotorStates[RotorIndex] = *Existing;
 		}
 		else
 		{
-			NewHealth.Add(Info.RotorName, FAircraftRotorHealthState());
+			RotorStates[RotorIndex].Reset();
 		}
 	}
-	RotorFailureManager.HealthStatesByName = MoveTemp(NewHealth);
-	RotorFailureManager.ResetAuthority();
+	bResetRotorRuntimeOnNextRebuild = false;
+
+	TArray<FName> RotorNames;
+	RotorNames.Reserve(Infos.Num());
+	for (const FAircraftRotorAllocationInfo& Info : Infos)
+	{
+		RotorNames.Add(Info.RotorName);
+	}
+	RotorEffectivenessManager.SetRotorNames(RotorNames);
+	RotorEffectivenessManager.ResetAuthority();
 }
 
 void FAircraftSimulationProxy::RefreshControlAuthority_PhysicsThread(
 	const FAircraftFlightControllerRuntimeConfig& Config)
 {
 	const int32 NumRotors = ControlAllocator.RotorInfoBuffer.Num();
-	ControlAllocator.RotorHealthBuffer.SetNum(NumRotors);
+	ControlAllocator.RotorEffectivenessBuffer.SetNum(NumRotors);
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
 		const FName RotorName = ControlAllocator.RotorInfoBuffer[RotorIndex].RotorName;
-		if (const FAircraftRotorHealthState* const Health =
-			RotorFailureManager.HealthStatesByName.Find(RotorName))
+		if (const FAircraftRotorEffectivenessState* const State =
+			RotorEffectivenessManager.StatesByName.Find(RotorName))
 		{
-			ControlAllocator.RotorHealthBuffer[RotorIndex] = *Health;
+			ControlAllocator.RotorEffectivenessBuffer[RotorIndex] = *State;
 		}
 		else
 		{
-			ControlAllocator.RotorHealthBuffer[RotorIndex] = FAircraftRotorHealthState();
+			ControlAllocator.RotorEffectivenessBuffer[RotorIndex] = FAircraftRotorEffectivenessState();
 		}
 	}
 
@@ -508,14 +601,13 @@ void FAircraftSimulationProxy::RefreshControlAuthority_PhysicsThread(
 
 	ControlAllocator.RebuildAllocationCache(Config);
 	double BaselineCollective = 0.0;
-	double BaselineRoll = 0.0;
-	double BaselinePitch = 0.0;
-	double BaselineYaw = 0.0;
+	FVector BaselinePositiveTorque = FVector::ZeroVector;
+	FVector BaselineNegativeTorque = FVector::ZeroVector;
 	FAircraftControlAllocator::ComputeBaselineAuthorities(
 		ControlAllocator.RotorInfoBuffer, Config,
-		BaselineCollective, BaselineRoll, BaselinePitch, BaselineYaw);
-	RotorFailureManager.UpdateAuthority(ControlAllocator.Cache,
-		BaselineCollective, BaselineRoll, BaselinePitch, BaselineYaw,
+		BaselineCollective, BaselinePositiveTorque, BaselineNegativeTorque);
+	RotorEffectivenessManager.UpdateAuthority(ControlAllocator.Cache,
+		BaselineCollective, BaselinePositiveTorque, BaselineNegativeTorque,
 		AircraftAllocation::AuthorityEpsilon);
 }
 
@@ -549,7 +641,6 @@ void FAircraftSimulationProxy::UpdateModeCapabilities(EAircraftFlightMode Mode)
 		break;
 	case EAircraftFlightMode::PositionHold:
 	case EAircraftFlightMode::Mission:
-	case EAircraftFlightMode::ReturnToHome:
 	case EAircraftFlightMode::AutoLand:
 	default:
 		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
@@ -557,7 +648,6 @@ void FAircraftSimulationProxy::UpdateModeCapabilities(EAircraftFlightMode Mode)
 		ModeCapabilities.CanHoldAltitude = true;
 		ModeCapabilities.CanUseVelocityControl = true;
 		ModeCapabilities.CanUsePositionControl = true;
-		ModeCapabilities.CanUseReturnHome = (Mode == EAircraftFlightMode::ReturnToHome);
 		break;
 	}
 
@@ -619,7 +709,6 @@ void FAircraftSimulationProxy::GetAutopilotDiagnostics_GameThread(
 void FAircraftSimulationProxy::TickKinematicPlanner_GameThread(
 	float DeltaTime, double TimeSeconds, const FTransform& BodyTransform,
 	const FVector& VelocityCmPerSec, const FVector& AngularVelocityWorldRadPerSec,
-	float LinearDampingPerSecond, float AngularDampingPerSecond,
 	const FAircraftSimulationLodModel& Model)
 {
 	FAircraftMovementIntent Intent;
@@ -654,30 +743,20 @@ void FAircraftSimulationProxy::TickKinematicPlanner_GameThread(
 		FAircraftDynamicCapabilitySnapshot Capability;
 		Capability.TimeSeconds = TimeSeconds;
 		Capability.Revision = State.Sequence;
-		Capability.MassKg = Model.Mass.MassKg;
-		if (const FBodyInstance* const Body = AircraftBodyInstance.load(std::memory_order_acquire))
-		{
-			Capability.CenterOfMassBodyCm = BodyTransform.InverseTransformPosition(
-				Body->GetCOMPosition());
-		}
-		Capability.GravityCmPerSecSq = GravityMagnitudeCmPerSecSq.load(std::memory_order_relaxed);
-		Capability.MaxHorizontalSpeedCmPerSec = Config.MaxHorizontalSpeedCmPerSec;
-		Capability.MaxHorizontalAccelerationCmPerSecSq = Config.MaxHorizontalAccelerationCmPerSecSq;
-		Capability.MaxVerticalAccelerationCmPerSecSq = Config.MaxVerticalAccelerationCmPerSecSq;
-		Capability.MaxClimbRateCmPerSec = Config.MaxClimbRateCmPerSec;
-		Capability.MaxDescentRateCmPerSec = Config.MaxDescentRateCmPerSec;
-		Capability.MaxTiltRadians = FMath::DegreesToRadians(Config.MaxTiltAngleDegrees);
-		Capability.MaxBodyRateRadPerSec = FVector(
-			FMath::DegreesToRadians(Config.MaxRollRateDegreesPerSec),
-			FMath::DegreesToRadians(Config.MaxPitchRateDegreesPerSec),
-			FMath::DegreesToRadians(Config.MaxYawRateDegreesPerSec));
-		Capability.LinearDampingPerSecond = FVector(LinearDampingPerSecond);
-		Capability.AngularDampingPerSecond = FVector(AngularDampingPerSecond);
-		Capability.bHasExplicitAerodynamics = Model.bHasAerodynamics;
-		Capability.AirDensityKgPerM3 = Model.Aerodynamics.AirDensityKgPerM3;
-		Capability.LinearDragBodyNsPerM = Model.Aerodynamics.LinearDragNsPerM;
-		Capability.DragAreaCoefficientBodyM2 = Model.Aerodynamics.DragAreaCoefficientM2;
-		Capability.bValid = Capability.MassKg > UE_SMALL_NUMBER;
+		Capability.MassKg = 0.0f;
+		Capability.CenterOfMassBodyCm = FVector::ZeroVector;
+		Capability.GravityCmPerSecSq = 0.0f;
+		PopulateConfiguredMotionLimits(Config, Capability);
+		Capability.MaxTiltRadians = 0.0f;
+		Capability.bHasTiltLimit = false;
+		Capability.bCanControlRoll = false;
+		Capability.bCanControlPitch = false;
+		Capability.bCanControlYaw = true;
+		Capability.LinearDampingPerSecond = FVector::ZeroVector;
+		Capability.AngularDampingPerSecond = FVector::ZeroVector;
+		Capability.bHasExplicitAerodynamics = false;
+		Capability.bValid = Capability.MaxHorizontalSpeedCmPerSec > 0.0f
+			&& Capability.MaxHorizontalAccelerationCmPerSecSq > 0.0f;
 
 		{
 			FScopeLock PlannerLock(&PlannerCriticalSection);
@@ -723,6 +802,25 @@ void FAircraftSimulationProxy::SetSimulationState_GameThread(bool bEnabled, bool
 	bSimulationSuspended.store(bSuspended, std::memory_order_relaxed);
 }
 
+bool FAircraftSimulationProxy::IsControlExecutionAllowed_GameThread() const
+{
+	return bSimulationEnabled.load(std::memory_order_relaxed)
+		&& !bSimulationSuspended.load(std::memory_order_relaxed)
+		&& bControllerEnabled.load(std::memory_order_relaxed)
+		&& static_cast<EAircraftArmState>(CurrentArmState.load(std::memory_order_relaxed))
+			== EAircraftArmState::Armed;
+}
+
+void FAircraftSimulationProxy::InvalidateTrajectoryReference_GameThread()
+{
+	{
+		FScopeLock PlannerLock(&PlannerCriticalSection);
+		bMovementIntentActive = false;
+	}
+	FScopeLock OutputLock(&OutputCriticalSection);
+	LatestTrajectoryReference = FAircraftTrajectoryReference();
+}
+
 void FAircraftSimulationProxy::SetFlightMode_GameThread(EAircraftFlightMode InMode)
 {
 	const uint8 NewMode = static_cast<uint8>(InMode);
@@ -752,6 +850,12 @@ void FAircraftSimulationProxy::SetEmergencyStop_GameThread(bool bStop)
 			static_cast<uint8>(EAircraftArmState::EmergencyStop),
 			std::memory_order_relaxed);
 	}
+	else
+	{
+		CurrentArmState.store(static_cast<uint8>(
+			bArmRequest ? EAircraftArmState::Armed : EAircraftArmState::Disarmed),
+			std::memory_order_relaxed);
+	}
 }
 
 void FAircraftSimulationProxy::SetControllerEnabled_GameThread(bool bEnabled)
@@ -773,38 +877,25 @@ void FAircraftSimulationProxy::SetGravity_GameThread(float GravityCmPerSecSq)
 	GravityMagnitudeCmPerSecSq.store(FMath::Max(GravityCmPerSecSq, 0.0f), std::memory_order_relaxed);
 }
 
-void FAircraftSimulationProxy::FailRotor_GameThread(FName RotorName)
+bool FAircraftSimulationProxy::SetRotorEffectiveness_GameThread(FName RotorName, float Effectiveness)
 {
+	if (RotorName.IsNone() || !FMath::IsFinite(Effectiveness)
+		|| Effectiveness < 0.0f || Effectiveness > 1.0f)
+	{
+		return false;
+	}
 	FScopeLock Lock(&InputCriticalSection);
-	FPendingRotorHealthOp Op;
-	Op.RotorName = RotorName;
-	Op.Op = 0;
-	PendingRotorHealthOps.Add(Op);
-}
-
-void FAircraftSimulationProxy::RecoverRotor_GameThread(FName RotorName)
-{
-	FScopeLock Lock(&InputCriticalSection);
-	FPendingRotorHealthOp Op;
-	Op.RotorName = RotorName;
-	Op.Op = 1;
-	PendingRotorHealthOps.Add(Op);
-}
-
-void FAircraftSimulationProxy::SetRotorEffectiveness_GameThread(FName RotorName, float Effectiveness)
-{
-	FScopeLock Lock(&InputCriticalSection);
-	FPendingRotorHealthOp Op;
-	Op.RotorName = RotorName;
-	Op.Op = 2;
-	Op.Effectiveness = Effectiveness;
-	PendingRotorHealthOps.Add(Op);
-}
-
-void FAircraftSimulationProxy::RecoverAllRotors_GameThread()
-{
-	FScopeLock Lock(&InputCriticalSection);
-	bRecoverAllRotors = true;
+	float* const Existing = PendingRotorEffectivenessByName.Find(RotorName);
+	if (!Existing)
+	{
+		return false;
+	}
+	if (!FMath::IsNearlyEqual(*Existing, Effectiveness))
+	{
+		*Existing = Effectiveness;
+		++PendingRotorEffectivenessRevision;
+	}
+	return true;
 }
 
 void FAircraftSimulationProxy::GetEstimatedState_GameThread(FAircraftEstimatedState& OutState) const
@@ -845,27 +936,6 @@ void FAircraftSimulationProxy::GetControlAuthorityInfo_GameThread(FAircraftContr
 {
 	FScopeLock Lock(&OutputCriticalSection);
 	OutInfo = LatestAuthorityInfo;
-}
-
-void FAircraftSimulationProxy::GetFailurePolicyStatus_GameThread(FAircraftFailurePolicyStatus& OutStatus) const
-{
-	FScopeLock Lock(&OutputCriticalSection);
-	OutStatus = LatestPolicyStatus;
-}
-
-bool FAircraftSimulationProxy::ConsumeFailurePolicyAction_GameThread(EAircraftFailurePolicyAction& OutAction)
-{
-	if (!bFailureActionPending.exchange(false, std::memory_order_acq_rel))
-	{
-		return false;
-	}
-	OutAction = static_cast<EAircraftFailurePolicyAction>(PendingFailureAction.load(std::memory_order_relaxed));
-	return true;
-}
-
-void FAircraftSimulationProxy::ResetFailurePolicyLatch_GameThread()
-{
-	bPendingPolicyLatchReset.store(true, std::memory_order_relaxed);
 }
 
 /* ---------------------------------------------------------------------------
@@ -961,10 +1031,10 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	FAircraftMovementIntentHandle MovementIntentHandle;
 	uint64 MovementIntentRevision = 0;
 	bool bHasMovementIntent = false;
-	TArray<FPendingRotorHealthOp> RotorHealthOps;
+	TMap<FName, float> RotorEffectivenessByName;
+	uint64 RotorEffectivenessRevision = 0;
 	bool bArmRequested = false;
 	bool bEmergencyRequested = false;
-	bool bRecoverAllRequested = false;
 	{
 		FScopeLock Lock(&InputCriticalSection);
 		Pilot = PendingPilotInput;
@@ -975,10 +1045,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		bHasMovementIntent = bPendingMovementIntentActive;
 		bArmRequested = bArmRequest;
 		bEmergencyRequested = bEmergencyStop;
-		bRecoverAllRequested = bRecoverAllRotors;
-		bRecoverAllRotors = false;
-		RotorHealthOps = MoveTemp(PendingRotorHealthOps);
-		PendingRotorHealthOps.Reset();
+		RotorEffectivenessByName = PendingRotorEffectivenessByName;
+		RotorEffectivenessRevision = PendingRotorEffectivenessRevision;
 	}
 
 	const EAircraftFlightMode Mode = static_cast<EAircraftFlightMode>(PendingFlightMode.load(std::memory_order_relaxed));
@@ -1006,60 +1074,28 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	const bool bMotorsOn = ArmState == EAircraftArmState::Armed
 		&& bControllerEnabled.load(std::memory_order_relaxed);
 
-	if (bPendingPolicyLatchReset.exchange(false, std::memory_order_relaxed))
+	if (RotorEffectivenessRevision != AppliedRotorEffectivenessRevision)
 	{
-		RotorFailureManager.ResetPolicyLatch();
-	}
-
-	// 旋翼健康操作（PT 消费，失效立即停转该旋翼并标记分配缓存脏）
-	if (bRecoverAllRequested)
-	{
-		RotorFailureManager.RecoverAllRotors();
-		for (FAircraftRotorRuntimeState& State : RotorStates)
+		RotorEffectivenessManager.ApplyEffectiveness(RotorEffectivenessByName);
+		for (int32 RotorIndex = 0; RotorIndex < ControlAllocator.RotorInfoBuffer.Num(); ++RotorIndex)
 		{
-			State.ClearForceStop();
+			if (RotorStates.IsValidIndex(RotorIndex))
+			{
+				const FName RotorName = ControlAllocator.RotorInfoBuffer[RotorIndex].RotorName;
+				const FAircraftRotorEffectivenessState* const State =
+					RotorEffectivenessManager.StatesByName.Find(RotorName);
+				if (State && State->Effectiveness <= AircraftAllocation::AuthorityEpsilon)
+				{
+					RotorStates[RotorIndex].ForceStopRotor();
+				}
+				else
+				{
+					RotorStates[RotorIndex].ClearForceStop();
+				}
+			}
 		}
 		ControlAllocator.bCacheDirty = true;
-	}
-	for (const FPendingRotorHealthOp& Op : RotorHealthOps)
-	{
-		FAircraftRotorHealthState* State = RotorFailureManager.HealthStatesByName.Find(Op.RotorName);
-		if (!State)
-		{
-			UE_LOG(LogAircraft, Warning,
-				TEXT("Rotor health op: unknown RotorName '%s'."), *Op.RotorName.ToString());
-			continue;
-		}
-		const int32 RotorIndex = ControlAllocator.RotorInfoBuffer.IndexOfByPredicate(
-			[&Op](const FAircraftRotorAllocationInfo& Info) { return Info.RotorName == Op.RotorName; });
-
-		switch (Op.Op)
-		{
-		case 0:
-			FAircraftRotorFailureManager::MarkRotorFailed(*State, SimTime);
-			if (RotorStates.IsValidIndex(RotorIndex))
-			{
-				RotorStates[RotorIndex].ForceStopRotor();
-			}
-			break;
-		case 1:
-			FAircraftRotorFailureManager::RecoverRotor(*State);
-			if (RotorStates.IsValidIndex(RotorIndex))
-			{
-				RotorStates[RotorIndex].ClearForceStop();
-			}
-			break;
-		default:
-			FAircraftRotorFailureManager::SetRotorEffectiveness(*State,
-				Op.Effectiveness, SimTime, AircraftAllocation::AuthorityEpsilon);
-			if (RotorStates.IsValidIndex(RotorIndex))
-			{
-				if (State->bIsFailed) RotorStates[RotorIndex].ForceStopRotor();
-				else RotorStates[RotorIndex].ClearForceStop();
-			}
-			break;
-		}
-		ControlAllocator.bCacheDirty = true;
+		AppliedRotorEffectivenessRevision = RotorEffectivenessRevision;
 	}
 
 	/* ----------------------------------------------------------------------
@@ -1127,6 +1163,19 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		RebuildRotorDescriptors_PhysicsThread(PhysicsCache.CenterOfMassOffsetBodyCm);
 	}
 	RefreshControlAuthority_PhysicsThread(Config);
+	const bool bRollAuthority = ControlAllocator.Cache.PositiveTorqueAuthority[0]
+		> AircraftAllocation::AuthorityEpsilon
+		&& ControlAllocator.Cache.NegativeTorqueAuthority[0]
+			> AircraftAllocation::AuthorityEpsilon;
+	const bool bPitchAuthority = ControlAllocator.Cache.PositiveTorqueAuthority[1]
+		> AircraftAllocation::AuthorityEpsilon
+		&& ControlAllocator.Cache.NegativeTorqueAuthority[1]
+			> AircraftAllocation::AuthorityEpsilon;
+	const bool bYawAuthority = ControlAllocator.Cache.PositiveTorqueAuthority[2]
+		> AircraftAllocation::AuthorityEpsilon
+		&& ControlAllocator.Cache.NegativeTorqueAuthority[2]
+			> AircraftAllocation::AuthorityEpsilon;
+	ModeCapabilities.CanHoldYaw &= bYawAuthority;
 
 	// 刷新估计状态（控制循环读取 Runtime.EstimatedState）
 	{
@@ -1156,12 +1205,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	 * ---------------------------------------------------------------------- */
 	if (!bMotorsOn)
 	{
-		if (!Config.FailurePolicy.bEnabled
-			|| (Config.FailurePolicy.bEvaluateOnlyWhenArmed
-				&& ArmState != EAircraftArmState::Armed))
-		{
-			RotorFailureManager.ResetPolicyEvaluationTimers();
-		}
 		LogDriveGate(ArmState != EAircraftArmState::Armed
 			? TEXT("MotorsOffNotArmed") : TEXT("MotorsOffControllerDisabled"));
 		ControlSolver.Reset();
@@ -1212,25 +1255,107 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	Capability.InertiaKgM2 = PhysicsCache.InertiaDiagonalKgM2;
 	Capability.CenterOfMassBodyCm = PhysicsCache.CenterOfMassOffsetBodyCm;
 	Capability.GravityCmPerSecSq = PhysicsCache.GravityMagnitudeCmPerSecSq;
-	Capability.MaxHorizontalSpeedCmPerSec = Config.MaxHorizontalSpeedCmPerSec;
-	Capability.MaxHorizontalAccelerationCmPerSecSq = Config.MaxHorizontalAccelerationCmPerSecSq;
-	Capability.MaxVerticalAccelerationCmPerSecSq = Config.MaxVerticalAccelerationCmPerSecSq;
-	Capability.MaxClimbRateCmPerSec = Config.MaxClimbRateCmPerSec;
-	Capability.MaxDescentRateCmPerSec = Config.MaxDescentRateCmPerSec;
-	Capability.MaxTiltRadians = FMath::DegreesToRadians(Config.MaxTiltAngleDegrees);
-	Capability.MaxBodyRateRadPerSec = FVector(
-		FMath::DegreesToRadians(Config.MaxRollRateDegreesPerSec),
-		FMath::DegreesToRadians(Config.MaxPitchRateDegreesPerSec),
-		FMath::DegreesToRadians(Config.MaxYawRateDegreesPerSec));
-	Capability.CollectiveAuthorityN = static_cast<float>(ControlAllocator.Cache.CollectiveAuthority);
-	Capability.PositiveTorqueAuthorityNm = FVector(
-		ControlAllocator.Cache.PositiveTorqueAuthority[0],
-		ControlAllocator.Cache.PositiveTorqueAuthority[1],
-		ControlAllocator.Cache.PositiveTorqueAuthority[2]);
-	Capability.NegativeTorqueAuthorityNm = FVector(
-		ControlAllocator.Cache.NegativeTorqueAuthority[0],
-		ControlAllocator.Cache.NegativeTorqueAuthority[1],
-		ControlAllocator.Cache.NegativeTorqueAuthority[2]);
+	PopulateConfiguredMotionLimits(Config, Capability);
+	if (ActiveDriveMode == EAircraftSimulationDriveMode::FlightController)
+	{
+		Capability.MaxTiltRadians = FMath::DegreesToRadians(Config.MaxTiltAngleDegrees);
+		Capability.bHasTiltLimit = true;
+		Capability.CollectiveAuthorityN = static_cast<float>(ControlAllocator.Cache.CollectiveAuthority);
+		const float MaximumSpecificThrustCmPerSecSq = Capability.MassKg > UE_SMALL_NUMBER
+			? Capability.CollectiveAuthorityN * 100.0f / Capability.MassKg : 0.0f;
+		Capability.MaxVerticalAccelerationCmPerSecSq = FMath::Min(
+			Capability.MaxVerticalAccelerationCmPerSecSq,
+			FMath::Max(MaximumSpecificThrustCmPerSecSq - Capability.GravityCmPerSecSq, 0.0f));
+		Capability.PositiveTorqueAuthorityNm = FVector(
+			ControlAllocator.Cache.PositiveTorqueAuthority[0],
+			ControlAllocator.Cache.PositiveTorqueAuthority[1],
+			ControlAllocator.Cache.PositiveTorqueAuthority[2]);
+		Capability.NegativeTorqueAuthorityNm = FVector(
+			ControlAllocator.Cache.NegativeTorqueAuthority[0],
+			ControlAllocator.Cache.NegativeTorqueAuthority[1],
+			ControlAllocator.Cache.NegativeTorqueAuthority[2]);
+		Capability.bCanControlRoll = Capability.PositiveTorqueAuthorityNm.X > AircraftAllocation::AuthorityEpsilon
+			&& Capability.NegativeTorqueAuthorityNm.X > AircraftAllocation::AuthorityEpsilon;
+		Capability.bCanControlPitch = Capability.PositiveTorqueAuthorityNm.Y > AircraftAllocation::AuthorityEpsilon
+			&& Capability.NegativeTorqueAuthorityNm.Y > AircraftAllocation::AuthorityEpsilon;
+		Capability.bCanControlYaw = Capability.PositiveTorqueAuthorityNm.Z > AircraftAllocation::AuthorityEpsilon
+			&& Capability.NegativeTorqueAuthorityNm.Z > AircraftAllocation::AuthorityEpsilon;
+	}
+	else
+	{
+		Capability.MaxTiltRadians = 0.0f;
+		Capability.bHasTiltLimit = false;
+		Capability.CollectiveAuthorityN = static_cast<float>(ControlAllocator.Cache.CollectiveAuthority);
+		Capability.PositiveTorqueAuthorityNm = FVector(
+			ControlAllocator.Cache.PositiveTorqueAuthority[0],
+			ControlAllocator.Cache.PositiveTorqueAuthority[1],
+			ControlAllocator.Cache.PositiveTorqueAuthority[2]);
+		Capability.NegativeTorqueAuthorityNm = FVector(
+			ControlAllocator.Cache.NegativeTorqueAuthority[0],
+			ControlAllocator.Cache.NegativeTorqueAuthority[1],
+			ControlAllocator.Cache.NegativeTorqueAuthority[2]);
+		if (Capability.MassKg > UE_SMALL_NUMBER)
+		{
+			const float SpecificThrustCmPerSecSq =
+				Capability.CollectiveAuthorityN * 100.0f / Capability.MassKg;
+			const float HorizontalThrustAccelerationCmPerSecSq = FMath::Sqrt(FMath::Max(
+				0.0f, FMath::Square(SpecificThrustCmPerSecSq)
+					- FMath::Square(Capability.GravityCmPerSecSq)));
+			const float UpwardAccelerationCmPerSecSq = FMath::Max(
+				SpecificThrustCmPerSecSq - Capability.GravityCmPerSecSq, 0.0f);
+			Capability.MaxHorizontalAccelerationCmPerSecSq = FMath::Min(
+				Capability.MaxHorizontalAccelerationCmPerSecSq,
+				HorizontalThrustAccelerationCmPerSecSq);
+			Capability.MaxHorizontalDecelerationCmPerSecSq = FMath::Min(
+				Capability.MaxHorizontalDecelerationCmPerSecSq,
+				HorizontalThrustAccelerationCmPerSecSq);
+			Capability.MaxVerticalAccelerationCmPerSecSq = FMath::Min(
+				Capability.MaxVerticalAccelerationCmPerSecSq,
+				UpwardAccelerationCmPerSecSq);
+		}
+		if (Config.ConstraintLinearForceLimitN > 0.0f && Capability.MassKg > UE_SMALL_NUMBER)
+		{
+			const float LinearAccelerationLimitCmPerSecSq =
+				Config.ConstraintLinearForceLimitN * 100.0f / Capability.MassKg;
+			Capability.MaxHorizontalAccelerationCmPerSecSq = FMath::Min(
+				Capability.MaxHorizontalAccelerationCmPerSecSq, LinearAccelerationLimitCmPerSecSq);
+			Capability.MaxHorizontalDecelerationCmPerSecSq = FMath::Min(
+				Capability.MaxHorizontalDecelerationCmPerSecSq, LinearAccelerationLimitCmPerSecSq);
+			Capability.MaxVerticalAccelerationCmPerSecSq = FMath::Min(
+				Capability.MaxVerticalAccelerationCmPerSecSq, LinearAccelerationLimitCmPerSecSq);
+		}
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			const float BidirectionalTorqueAuthorityNm = FMath::Min(
+				Capability.PositiveTorqueAuthorityNm[Axis],
+				Capability.NegativeTorqueAuthorityNm[Axis]);
+			if (Capability.InertiaKgM2[Axis] > UE_SMALL_NUMBER)
+			{
+				float TorqueLimitNm = BidirectionalTorqueAuthorityNm;
+				if (Config.ConstraintAngularTorqueLimitNm > 0.0f)
+				{
+					TorqueLimitNm = FMath::Min(
+						TorqueLimitNm, Config.ConstraintAngularTorqueLimitNm);
+				}
+				Capability.MaxBodyAngularAccelerationRadPerSecSq[Axis] = FMath::Min(
+					Capability.MaxBodyAngularAccelerationRadPerSecSq[Axis],
+					TorqueLimitNm / Capability.InertiaKgM2[Axis]);
+			}
+		}
+		const bool bAngularDriveEnabled = Config.ConstraintAngularStrength > UE_SMALL_NUMBER;
+		Capability.bCanControlRoll = bAngularDriveEnabled
+			&& Config.MaxRollRateDegreesPerSec > 0.0f
+			&& Capability.PositiveTorqueAuthorityNm.X > AircraftAllocation::AuthorityEpsilon
+			&& Capability.NegativeTorqueAuthorityNm.X > AircraftAllocation::AuthorityEpsilon;
+		Capability.bCanControlPitch = bAngularDriveEnabled
+			&& Config.MaxPitchRateDegreesPerSec > 0.0f
+			&& Capability.PositiveTorqueAuthorityNm.Y > AircraftAllocation::AuthorityEpsilon
+			&& Capability.NegativeTorqueAuthorityNm.Y > AircraftAllocation::AuthorityEpsilon;
+		Capability.bCanControlYaw = bAngularDriveEnabled
+			&& Config.MaxYawRateDegreesPerSec > 0.0f
+			&& Capability.PositiveTorqueAuthorityNm.Z > AircraftAllocation::AuthorityEpsilon
+			&& Capability.NegativeTorqueAuthorityNm.Z > AircraftAllocation::AuthorityEpsilon;
+	}
 	Capability.LinearDampingPerSecond = PhysicsCache.LinearDampingPerSecond;
 	Capability.AngularDampingPerSecond = PhysicsCache.AngularDampingPerSecond;
 	Capability.bHasExplicitAerodynamics = ActiveLodModel->bHasAerodynamics;
@@ -1239,14 +1364,22 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		Capability.AirDensityKgPerM3 = ActiveLodModel->Aerodynamics.AirDensityKgPerM3;
 		Capability.LinearDragBodyNsPerM = ActiveLodModel->Aerodynamics.LinearDragNsPerM;
 		Capability.DragAreaCoefficientBodyM2 = ActiveLodModel->Aerodynamics.DragAreaCoefficientM2;
+		Capability.MaxRelativeAirspeedCmPerSec =
+			ActiveLodModel->Aerodynamics.MaxRelativeAirspeedCmPerSec;
 	}
-	Capability.RotorResponseTimeSeconds = 0.0f;
-	for (const FAircraftRotorAllocationInfo& Rotor : ControlAllocator.RotorInfoBuffer)
+	Capability.ThrustRiseResponseTimeSeconds = 0.0f;
+	Capability.ThrustFallResponseTimeSeconds = 0.0f;
+	if (ActiveDriveMode == EAircraftSimulationDriveMode::FlightController)
 	{
-		if (Rotor.bEnabled)
+		for (const FAircraftRotorAllocationInfo& Rotor : ControlAllocator.RotorInfoBuffer)
 		{
-			Capability.RotorResponseTimeSeconds = FMath::Max(
-				Capability.RotorResponseTimeSeconds, Rotor.Motor.SpinUpTimeSeconds);
+			if (Rotor.bEnabled)
+			{
+				Capability.ThrustRiseResponseTimeSeconds = FMath::Max(
+					Capability.ThrustRiseResponseTimeSeconds, Rotor.Motor.SpinUpTimeSeconds);
+				Capability.ThrustFallResponseTimeSeconds = FMath::Max(
+					Capability.ThrustFallResponseTimeSeconds, Rotor.Motor.SpinDownTimeSeconds);
+			}
 		}
 	}
 	Capability.bValid = Capability.MassKg > UE_SMALL_NUMBER
@@ -1284,24 +1417,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		FScopeLock PlannerLock(&PlannerCriticalSection);
 		AutopilotDiagnostics = PredictiveController.GetDiagnostics();
 	}
-	if (Config.FailurePolicy.bEnabled
-		&& (!Config.FailurePolicy.bEvaluateOnlyWhenArmed
-			|| ArmState == EAircraftArmState::Armed))
-	{
-		EAircraftFailurePolicyAction TriggeredAction = EAircraftFailurePolicyAction::WarningOnly;
-		if (RotorFailureManager.EvaluatePolicy(Config.FailurePolicy, DeltaTime, TriggeredAction))
-		{
-			PendingFailureAction.store(static_cast<uint8>(TriggeredAction), std::memory_order_relaxed);
-			bFailureActionPending.store(true, std::memory_order_release);
-			UE_LOG(LogAircraft, Warning,
-				TEXT("Aircraft failure policy triggered action %d on '%s'."),
-				static_cast<int32>(TriggeredAction), *AircraftOwnerName);
-		}
-	}
-	else
-	{
-		RotorFailureManager.ResetPolicyEvaluationTimers();
-	}
 	// 显式气动力属于物理模型，在飞控和物理约束两种物理驱动中使用同一次施加。
 	if (ActiveLodModel->bHasAerodynamics)
 	{
@@ -1325,6 +1440,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
 		LatestTrajectoryReference = TrajectoryReference;
 		LatestAutopilotDiagnostics = AutopilotDiagnostics;
+		LatestAuthorityInfo = RotorEffectivenessManager.AuthorityInfo;
 		return;
 	}
 
@@ -1342,6 +1458,21 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		if (LowLevelTargets.Rate.bEnabled)
 		{
 			ManualCommand.DesiredBodyRatesDegPerSec = LowLevelTargets.Rate.BodyRatesDegreesPerSec;
+		}
+		if (!bRollAuthority)
+		{
+			ManualCommand.DesiredAttitudeDegrees.Roll = 0.0f;
+			ManualCommand.DesiredBodyRatesDegPerSec.X = 0.0f;
+		}
+		if (!bPitchAuthority)
+		{
+			ManualCommand.DesiredAttitudeDegrees.Pitch = 0.0f;
+			ManualCommand.DesiredBodyRatesDegPerSec.Y = 0.0f;
+		}
+		if (!bYawAuthority)
+		{
+			ManualCommand.DesiredYawRateDegPerSec = 0.0f;
+			ManualCommand.DesiredBodyRatesDegPerSec.Z = 0.0f;
 		}
 	}
 
@@ -1372,7 +1503,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	/* ----------------------------------------------------------------------
 	 * 7) 控制分配（阻尼伪逆 + 主动集求解）
 	 * ---------------------------------------------------------------------- */
-	ControlAllocator.Allocate(Config, WorldQuat, ControlAllocator.RotorHealthBuffer,
+	ControlAllocator.Allocate(Config, WorldQuat,
 		CollectiveCommand, AxisCommands, Runtime.ControlOutput);
 	CurrentCollectiveThrustCommand.store(CollectiveCommand, std::memory_order_relaxed);
 
@@ -1439,8 +1570,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
 		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
 		LatestControlOutput = Runtime.ControlOutput;
-		LatestAuthorityInfo = RotorFailureManager.AuthorityInfo;
-		LatestPolicyStatus = RotorFailureManager.PolicyStatus;
+		LatestAuthorityInfo = RotorEffectivenessManager.AuthorityInfo;
 		LatestTrajectoryReference = TrajectoryReference;
 		LatestAutopilotDiagnostics = AutopilotDiagnostics;
 	}

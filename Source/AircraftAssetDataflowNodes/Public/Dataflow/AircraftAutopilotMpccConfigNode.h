@@ -18,6 +18,7 @@ struct FAircraftAutopilotMpccConfig
 	UPROPERTY(EditAnywhere, Category = "Solver", meta = (ClampMin = "1")) int32 MaxOptimizationIterations = 2;
 	UPROPERTY(EditAnywhere, Category = "Solver", meta = (ClampMin = "0.01", Units = "ms")) float SolveTimeBudgetMilliseconds = 2.0f;
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0")) float ContourErrorWeight = 8.0f;
+	UPROPERTY(EditAnywhere, Category = "Safety", meta = (ClampMin = "0.0")) float CorridorViolationWeight = 1000.0f;
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0")) float LagErrorWeight = 2.0f;
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0")) float SpeedTrackingWeight = 1.5f;
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0")) float AccelerationWeight = 0.05f;

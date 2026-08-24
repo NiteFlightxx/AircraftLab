@@ -53,7 +53,7 @@ struct FAircraftAllocationDiagnostics
 	double AllocationResidual[4] = {};
 	double ResidualMagnitude = 0.0;
 	TArray<int32> SaturatedMotors;
-	TArray<int32> FailedMotors;
+	TArray<int32> ZeroEffectivenessRotors;
 	int32 ActiveConstraints = 0;
 	double RemainingAuthority[4] = {};
 
@@ -64,7 +64,7 @@ struct FAircraftAllocationDiagnostics
 		FMemory::Memzero(AllocationResidual);
 		ResidualMagnitude = 0.0;
 		SaturatedMotors.Reset();
-		FailedMotors.Reset();
+		ZeroEffectivenessRotors.Reset();
 		ActiveConstraints = 0;
 		FMemory::Memzero(RemainingAuthority);
 	}

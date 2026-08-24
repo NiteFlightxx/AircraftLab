@@ -22,9 +22,6 @@ enum class EAircraftArmState : uint8
 	/** 已解锁：飞行器可以起飞。 */
 	Armed UMETA(DisplayName = "Armed"),
 
-	/** 故障保护：自动切换为返航/降落。 */
-	Failsafe UMETA(DisplayName = "Failsafe"),
-
 	/** 紧急停止：立即切断电机动力。 */
 	EmergencyStop UMETA(DisplayName = "Emergency Stop")
 };
@@ -53,9 +50,6 @@ enum class EAircraftFlightMode : uint8
 
 	/** 任务模式：执行预设航点、航线或自动任务。 */
 	Mission UMETA(DisplayName = "Mission"),
-
-	/** 自动返航模式：自动返回起飞点（Home 点）。 */
-	ReturnToHome UMETA(DisplayName = "Return To Home"),
 
 	/** 自动降落模式：垂直下降到地面并锁桨。 */
 	AutoLand UMETA(DisplayName = "Auto Land")
@@ -113,14 +107,6 @@ struct AIRCRAFT_API FAircraftEstimatedState
 	FAircraftKinematicState State;
 };
 
-/** Home 起飞点状态。 */
-struct FAircraftHomeState
-{
-	bool bValid = false;
-	FVector PositionCm = FVector::ZeroVector;
-	float YawDegrees = 0.0f;
-};
-
 /** 统一管理所有 Hold 目标（位置、高度、偏航）。 */
 struct FAircraftHoldTargets
 {
@@ -156,7 +142,6 @@ struct FAircraftModeCapabilities
 	bool CanHoldYaw = false;
 	bool CanUseVelocityControl = false;
 	bool CanUsePositionControl = false;
-	bool CanUseReturnHome = false;
 
 	void Reset()
 	{
@@ -164,7 +149,6 @@ struct FAircraftModeCapabilities
 		CanHoldYaw = false;
 		CanUseVelocityControl = false;
 		CanUsePositionControl = false;
-		CanUseReturnHome = false;
 	}
 };
 
@@ -246,14 +230,12 @@ struct FAircraftFlightControlOutput
 	}
 };
 
-/** 飞控运行状态：估计状态、控制输出、保持目标、Home、解锁/飞行/姿态模式。 */
+/** 飞控运行状态：估计状态、控制输出、保持目标、解锁/飞行/姿态模式。 */
 struct FAircraftFlightControlRuntimeState
 {
 	FAircraftEstimatedState EstimatedState;
 	FAircraftFlightControlOutput ControlOutput;
 	FAircraftHoldTargets HoldTargets;
-	FAircraftHomeState HomeState;
-
 	EAircraftArmState ArmState = EAircraftArmState::Disarmed;
 	EAircraftFlightMode ActiveFlightMode = EAircraftFlightMode::PositionHold;
 	EAircraftAttitudeMode AttitudeMode = EAircraftAttitudeMode::Angle;

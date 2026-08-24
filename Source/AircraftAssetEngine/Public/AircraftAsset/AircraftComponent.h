@@ -27,6 +27,7 @@ class FAircraftVisualization;
 struct FConstraintInstance;
 struct FAircraftSimulationModel;
 struct FAircraftSimulationLodModel;
+struct FAircraftFlightControllerRuntimeConfig;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnAircraftSimulationLODChanged,
@@ -88,6 +89,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Mode")
 	void EmergencyStop();
+
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Mode")
+	void ClearEmergencyStop();
 
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Mode")
 	EAircraftArmState GetArmState() const;
@@ -154,26 +158,11 @@ public:
 	void SetMovementIntentProvider(UObject* Provider);
 
 
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
-	bool FailRotor(FName RotorName);
-
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
-	bool RecoverRotor(FName RotorName);
-
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
+	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorEffectiveness")
 	bool SetRotorEffectiveness(FName RotorName, float Effectiveness);
 
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
-	void RecoverAllRotors();
-
-	UFUNCTION(BlueprintPure, Category = "AircraftComponent|RotorHealth")
+	UFUNCTION(BlueprintPure, Category = "AircraftComponent|RotorEffectiveness")
 	FAircraftControlAuthorityInfo GetControlAuthorityInfo() const;
-
-	UFUNCTION(BlueprintPure, Category = "AircraftComponent|RotorHealth")
-	FAircraftFailurePolicyStatus GetFailurePolicyStatus() const;
-
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorHealth")
-	void ResetFailurePolicyLatch();
 
 	/* ------- 内部访问 ------- */
 
@@ -186,7 +175,6 @@ public:
 
 protected:
 	//~ Begin UObject Interface
-	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
@@ -240,6 +228,7 @@ private:
 
 	/** 创建 6-DOF 物理约束后端（约束参数取自当前 LOD 的 FlightController 配置）。 */
 	bool CreateSimulationConstraint();
+	void UpdateConstraintDriveAuthority(const FAircraftFlightControllerRuntimeConfig& Config);
 	void DestroySimulationConstraint();
 	void UpdateConstraintSimulation(float DeltaSeconds);
 	void UpdateKinematicSimulation(float DeltaSeconds);
@@ -249,9 +238,6 @@ private:
 	bool GetTrajectoryReference(FAircraftTrajectoryReference& OutReference) const;
 	void RefreshMovementIntentProvider();
 	void PushMovementIntentToProxy(float DeltaSeconds);
-
-	/** GT 消费代理回传的失效策略动作。 */
-	void ApplyFailurePolicyActions();
 
 	/**
 	 * 把 SimulationModel.Mass（FrameConfig 中的质量/质心/惯性缩放参数）

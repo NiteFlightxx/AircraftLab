@@ -22,6 +22,8 @@ bool FAircraftAutopilotRuntimeConfig::IsValid() const
 	return IsPositive(Path.ResampleSpacingCm)
 		&& IsPositive(Path.MinimumSegmentLengthCm)
 		&& IsNonNegative(Path.CorridorSafetyMarginCm)
+		&& IsNonNegative(Path.ProjectionBacktrackToleranceCm)
+		&& IsPositive(Path.ProjectionSearchDistanceCm)
 		&& IsNonNegative(Path.CenterlineWeight)
 		&& IsNonNegative(Path.CurvatureWeight)
 		&& IsNonNegative(Path.SnapWeight)
@@ -39,6 +41,7 @@ bool FAircraftAutopilotRuntimeConfig::IsValid() const
 		&& Mpcc.MaxOptimizationIterations > 0
 		&& IsPositive(Mpcc.SolveTimeBudgetMilliseconds)
 		&& IsNonNegative(Mpcc.ContourErrorWeight)
+		&& IsNonNegative(Mpcc.CorridorViolationWeight)
 		&& IsNonNegative(Mpcc.LagErrorWeight)
 		&& IsNonNegative(Mpcc.SpeedTrackingWeight)
 		&& IsNonNegative(Mpcc.AccelerationWeight)

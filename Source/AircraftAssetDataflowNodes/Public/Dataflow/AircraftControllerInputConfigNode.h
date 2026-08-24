@@ -4,6 +4,7 @@
 #include "Dataflow/DataflowEngine.h"
 #include "Dataflow/DataflowNode.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
+#include "Aircraft/FlightControlStateTypes.h"
 
 #include "AircraftControllerInputConfigNode.generated.h"
 
@@ -18,6 +19,8 @@ struct FAircraftControllerInputConfig
 	UPROPERTY(EditAnywhere, Category = "Hold", meta = (ClampMin = "0.0")) float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
 	UPROPERTY(EditAnywhere, Category = "Hold", meta = (ClampMin = "0.0")) float VerticalBrakeToHoldSpeedCmPerSec = 20.0f;
 	UPROPERTY(EditAnywhere, Category = "Execution") bool bControllerEnabledByDefault = true;
+	UPROPERTY(EditAnywhere, Category = "Execution") bool bStartArmed = true;
+	UPROPERTY(EditAnywhere, Category = "Execution") EAircraftFlightMode InitialFlightMode = EAircraftFlightMode::PositionHold;
 };
 
 USTRUCT(meta = (DataflowAircraft))

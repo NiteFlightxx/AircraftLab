@@ -43,14 +43,14 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 		return FMath::IsFinite(Value.X) && FMath::IsFinite(Value.Y) && FMath::IsFinite(Value.Z);
 	};
 	if (!IsFiniteVector(Profile.PositionLocalCm) || !IsFiniteVector(Profile.ThrustAxisLocal)
-		|| !FMath::IsFinite(Profile.MaxThrustForce)
-		|| !FMath::IsFinite(Profile.ReactionTorqueCoefficient)
+		|| !FMath::IsFinite(Profile.MaxThrustN)
+		|| !FMath::IsFinite(Profile.ReactionTorqueCoefficientM)
 		|| !FMath::IsFinite(Profile.ControlAuthorityScale)
 		|| !FMath::IsFinite(Profile.Motor.IdleRpm) || !FMath::IsFinite(Profile.Motor.MaxRpm)
 		|| !FMath::IsFinite(Profile.Motor.SpinUpTimeSeconds) || !FMath::IsFinite(Profile.Motor.SpinDownTimeSeconds)
 		|| !FMath::IsFinite(Profile.Motor.CommandExponent) || !FMath::IsFinite(Profile.Motor.MaxCommandSlewPerSecond)
-		|| Profile.ThrustAxisLocal.IsNearlyZero() || Profile.MaxThrustForce <= 0.0f
-		|| Profile.ReactionTorqueCoefficient < 0.0f
+		|| Profile.ThrustAxisLocal.IsNearlyZero() || Profile.MaxThrustN <= 0.0f
+		|| Profile.ReactionTorqueCoefficientM < 0.0f
 		|| Profile.ControlAuthorityScale < 0.0f || Profile.ControlAuthorityScale > 1.0f
 		|| Profile.Motor.MaxRpm <= Profile.Motor.IdleRpm
 		|| Profile.Motor.IdleRpm < 0.0f || Profile.Motor.SpinUpTimeSeconds <= 0.0f
@@ -115,8 +115,8 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 	TArrayView<FVector3f> Positions = WriteFacade.GetPropellerPositionLocalCm();
 	TArrayView<FVector3f> ThrustAxes = WriteFacade.GetPropellerThrustAxisLocal();
 	TArrayView<uint8> SpinDirections = WriteFacade.GetPropellerSpinDirection();
-	TArrayView<float> MaxThrust = WriteFacade.GetPropellerMaxThrustForce();
-	TArrayView<float> ReactionTorqueCoefficient = WriteFacade.GetPropellerReactionTorqueCoefficient();
+	TArrayView<float> MaxThrust = WriteFacade.GetPropellerMaxThrustN();
+	TArrayView<float> ReactionTorqueCoefficientM = WriteFacade.GetPropellerReactionTorqueCoefficientM();
 	TArrayView<float> Authority = WriteFacade.GetPropellerControlAuthorityScale();
 	MotorNames[Index] = MotorName;
 	(*MotorEnabled)[Index] = Profile.bEnabled;
@@ -134,8 +134,8 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 	Positions[Index] = Profile.PositionLocalCm;
 	ThrustAxes[Index] = Profile.ThrustAxisLocal.GetSafeNormal();
 	SpinDirections[Index] = static_cast<uint8>(Profile.SpinDirection);
-	MaxThrust[Index] = Profile.MaxThrustForce;
-	ReactionTorqueCoefficient[Index] = Profile.ReactionTorqueCoefficient;
+	MaxThrust[Index] = Profile.MaxThrustN;
+	ReactionTorqueCoefficientM[Index] = Profile.ReactionTorqueCoefficientM;
 	Authority[Index] = Profile.ControlAuthorityScale;
 
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);

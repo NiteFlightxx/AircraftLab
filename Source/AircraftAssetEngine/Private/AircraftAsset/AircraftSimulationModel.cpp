@@ -118,8 +118,18 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.MaxPitchRateDegreesPerSec"), OutModel.FlightController.MaxPitchRateDegreesPerSec);
 			OutModel.FlightController.MaxHorizontalAccelerationCmPerSecSq = Properties.GetValue<float>(
 				TEXT("FlightController.MaxHorizontalAccelerationCmPerSecSq"), OutModel.FlightController.MaxHorizontalAccelerationCmPerSecSq);
+			OutModel.FlightController.MaxHorizontalDecelerationCmPerSecSq = Properties.GetValue<float>(
+				TEXT("FlightController.MaxHorizontalDecelerationCmPerSecSq"), OutModel.FlightController.MaxHorizontalDecelerationCmPerSecSq);
+			OutModel.FlightController.MaxHorizontalJerkCmPerSecCubed = Properties.GetValue<float>(
+				TEXT("FlightController.MaxHorizontalJerkCmPerSecCubed"), OutModel.FlightController.MaxHorizontalJerkCmPerSecCubed);
 			OutModel.FlightController.MaxVerticalAccelerationCmPerSecSq = Properties.GetValue<float>(
 				TEXT("FlightController.MaxVerticalAccelerationCmPerSecSq"), OutModel.FlightController.MaxVerticalAccelerationCmPerSecSq);
+			OutModel.FlightController.MaxVerticalJerkCmPerSecCubed = Properties.GetValue<float>(
+				TEXT("FlightController.MaxVerticalJerkCmPerSecCubed"), OutModel.FlightController.MaxVerticalJerkCmPerSecCubed);
+			OutModel.FlightController.MaxYawAccelerationDegPerSecSq = Properties.GetValue<float>(
+				TEXT("FlightController.MaxYawAccelerationDegPerSecSq"), OutModel.FlightController.MaxYawAccelerationDegPerSecSq);
+			OutModel.FlightController.MaxYawJerkDegPerSecCubed = Properties.GetValue<float>(
+				TEXT("FlightController.MaxYawJerkDegPerSecCubed"), OutModel.FlightController.MaxYawJerkDegPerSecCubed);
 			OutModel.FlightController.MinCollectiveCommand = Properties.GetValue<float>(
 				TEXT("FlightController.MinCollectiveCommand"), OutModel.FlightController.MinCollectiveCommand);
 			OutModel.FlightController.HoverCollectiveCommand = Properties.GetValue<float>(
@@ -209,43 +219,34 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.Input.VerticalBrakeToHoldSpeedCmPerSec"), OutModel.FlightController.VerticalBrakeToHoldSpeedCmPerSec);
 			OutModel.FlightController.bControllerEnabledByDefault = Properties.GetValue<bool>(
 				TEXT("FlightController.Execution.ControllerEnabledByDefault"), OutModel.FlightController.bControllerEnabledByDefault);
+			OutModel.FlightController.bStartArmed = Properties.GetValue<bool>(
+				TEXT("Aircraft.Initial.StartArmed"), OutModel.FlightController.bStartArmed);
+			OutModel.FlightController.InitialFlightMode = static_cast<EAircraftFlightMode>(FMath::Clamp(
+				Properties.GetValue<int32>(TEXT("Aircraft.Initial.FlightMode"),
+					static_cast<int32>(OutModel.FlightController.InitialFlightMode)), 0,
+				static_cast<int32>(EAircraftFlightMode::AutoLand)));
 			OutModel.FlightController.ConstraintLinearStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearStrength"), OutModel.FlightController.ConstraintLinearStrength);
 			OutModel.FlightController.ConstraintLinearDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearDampingRatio"), OutModel.FlightController.ConstraintLinearDampingRatio);
 			OutModel.FlightController.ConstraintLinearExtraDamping = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearExtraDamping"), OutModel.FlightController.ConstraintLinearExtraDamping);
-			OutModel.FlightController.ConstraintLinearForceLimit = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearForceLimit"), OutModel.FlightController.ConstraintLinearForceLimit);
+			OutModel.FlightController.ConstraintLinearForceLimitN = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearForceLimitN"), OutModel.FlightController.ConstraintLinearForceLimitN);
 			OutModel.FlightController.ConstraintGravityFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.GravityFeedForwardScale"), OutModel.FlightController.ConstraintGravityFeedForwardScale);
 			OutModel.FlightController.ConstraintDynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.DynamicsFeedForwardScale"), OutModel.FlightController.ConstraintDynamicsFeedForwardScale);
 			OutModel.FlightController.ConstraintAngularStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularStrength"), OutModel.FlightController.ConstraintAngularStrength);
 			OutModel.FlightController.ConstraintAngularDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularDampingRatio"), OutModel.FlightController.ConstraintAngularDampingRatio);
 			OutModel.FlightController.ConstraintAngularExtraDamping = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularExtraDamping"), OutModel.FlightController.ConstraintAngularExtraDamping);
-			OutModel.FlightController.ConstraintAngularTorqueLimit = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularTorqueLimit"), OutModel.FlightController.ConstraintAngularTorqueLimit);
+			OutModel.FlightController.ConstraintAngularTorqueLimitNm = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularTorqueLimitNm"), OutModel.FlightController.ConstraintAngularTorqueLimitNm);
 			OutModel.FlightController.bConstraintAccelerationMode = Properties.GetValue<bool>(TEXT("FlightController.Constraint.AccelerationMode"), OutModel.FlightController.bConstraintAccelerationMode);
 			OutModel.FlightController.bKinematicSweepMovement = Properties.GetValue<bool>(TEXT("FlightController.Kinematic.SweepMovement"), OutModel.FlightController.bKinematicSweepMovement);
 			OutModel.FlightController.KinematicPositionCorrectionRate = Properties.GetValue<float>(TEXT("FlightController.Kinematic.PositionCorrectionRate"), OutModel.FlightController.KinematicPositionCorrectionRate);
 			OutModel.FlightController.KinematicRotationInterpSpeed = Properties.GetValue<float>(TEXT("FlightController.Kinematic.RotationInterpSpeed"), OutModel.FlightController.KinematicRotationInterpSpeed);
-
-			/* Rotor failure policy（AircraftRotorFailurePolicyConfigNode 写入） */
-			FAircraftFailurePolicyConfig& FailurePolicy = OutModel.FlightController.FailurePolicy;
-			FailurePolicy.bEnabled = Properties.GetValue<bool>(TEXT("FlightController.Failure.Enabled"), FailurePolicy.bEnabled);
-			FailurePolicy.bEvaluateOnlyWhenArmed = Properties.GetValue<bool>(TEXT("FlightController.Failure.EvaluateOnlyWhenArmed"), FailurePolicy.bEvaluateOnlyWhenArmed);
-			FailurePolicy.MinimumHealthyRotorCount = Properties.GetValue<int32>(TEXT("FlightController.Failure.MinimumHealthyRotorCount"), FailurePolicy.MinimumHealthyRotorCount);
-			FailurePolicy.MinimumCollectiveAuthority = Properties.GetValue<float>(TEXT("FlightController.Failure.MinimumCollectiveAuthority"), FailurePolicy.MinimumCollectiveAuthority);
-			FailurePolicy.MinimumRollAuthority = Properties.GetValue<float>(TEXT("FlightController.Failure.MinimumRollAuthority"), FailurePolicy.MinimumRollAuthority);
-			FailurePolicy.MinimumPitchAuthority = Properties.GetValue<float>(TEXT("FlightController.Failure.MinimumPitchAuthority"), FailurePolicy.MinimumPitchAuthority);
-			FailurePolicy.MinimumYawAuthority = Properties.GetValue<float>(TEXT("FlightController.Failure.MinimumYawAuthority"), FailurePolicy.MinimumYawAuthority);
-			FailurePolicy.ConfirmationTimeSeconds = Properties.GetValue<float>(TEXT("FlightController.Failure.ConfirmationTimeSeconds"), FailurePolicy.ConfirmationTimeSeconds);
-			FailurePolicy.RecoveryConfirmationTimeSeconds = Properties.GetValue<float>(TEXT("FlightController.Failure.RecoveryConfirmationTimeSeconds"), FailurePolicy.RecoveryConfirmationTimeSeconds);
-			FailurePolicy.bLatchTriggeredAction = Properties.GetValue<bool>(TEXT("FlightController.Failure.LatchTriggeredAction"), FailurePolicy.bLatchTriggeredAction);
-			FailurePolicy.Action = static_cast<EAircraftFailurePolicyAction>(FMath::Clamp(
-				Properties.GetValue<int32>(TEXT("FlightController.Failure.Action"), static_cast<int32>(FailurePolicy.Action)), 0, 3));
-			FailurePolicy.DegradedFlightMode = static_cast<uint8>(FMath::Clamp(
-				Properties.GetValue<int32>(TEXT("FlightController.Failure.DegradedFlightMode"), static_cast<int32>(FailurePolicy.DegradedFlightMode)), 0, 8));
 
 			/* Autopilot：空间路径、动力学重定时和 MPCC 各自只有一个配置来源。 */
 			FAircraftAutopilotRuntimeConfig& Autopilot = OutModel.Autopilot;
 			Autopilot.Path.ResampleSpacingCm = Properties.GetValue<float>(TEXT("Autopilot.Path.ResampleSpacingCm"), Autopilot.Path.ResampleSpacingCm);
 			Autopilot.Path.MinimumSegmentLengthCm = Properties.GetValue<float>(TEXT("Autopilot.Path.MinimumSegmentLengthCm"), Autopilot.Path.MinimumSegmentLengthCm);
 			Autopilot.Path.CorridorSafetyMarginCm = Properties.GetValue<float>(TEXT("Autopilot.Path.CorridorSafetyMarginCm"), Autopilot.Path.CorridorSafetyMarginCm);
+			Autopilot.Path.ProjectionBacktrackToleranceCm = Properties.GetValue<float>(TEXT("Autopilot.Path.ProjectionBacktrackToleranceCm"), Autopilot.Path.ProjectionBacktrackToleranceCm);
+			Autopilot.Path.ProjectionSearchDistanceCm = Properties.GetValue<float>(TEXT("Autopilot.Path.ProjectionSearchDistanceCm"), Autopilot.Path.ProjectionSearchDistanceCm);
 			Autopilot.Path.CenterlineWeight = Properties.GetValue<float>(TEXT("Autopilot.Path.CenterlineWeight"), Autopilot.Path.CenterlineWeight);
 			Autopilot.Path.CurvatureWeight = Properties.GetValue<float>(TEXT("Autopilot.Path.CurvatureWeight"), Autopilot.Path.CurvatureWeight);
 			Autopilot.Path.SnapWeight = Properties.GetValue<float>(TEXT("Autopilot.Path.SnapWeight"), Autopilot.Path.SnapWeight);
@@ -266,6 +267,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			READ_MPCC(MaxOptimizationIterations);
 			READ_MPCC(SolveTimeBudgetMilliseconds);
 			READ_MPCC(ContourErrorWeight);
+			READ_MPCC(CorridorViolationWeight);
 			READ_MPCC(LagErrorWeight);
 			READ_MPCC(SpeedTrackingWeight);
 			READ_MPCC(AccelerationWeight);
@@ -330,8 +332,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		const TManagedArray<FVector3f>* PropPos = ConstCollection.GetPropellerPositionLocalCm();
 		const TManagedArray<FVector3f>* PropAxes = ConstCollection.GetPropellerThrustAxisLocal();
 		const TManagedArray<uint8>* PropSpins = ConstCollection.GetPropellerSpinDirection();
-		const TManagedArray<float>* PropMaxThr = ConstCollection.GetPropellerMaxThrustForce();
-		const TManagedArray<float>* PropKQ = ConstCollection.GetPropellerReactionTorqueCoefficient();
+		const TManagedArray<float>* PropMaxThr = ConstCollection.GetPropellerMaxThrustN();
+		const TManagedArray<float>* PropKQ = ConstCollection.GetPropellerReactionTorqueCoefficientM();
 		const TManagedArray<float>* PropAuth = ConstCollection.GetPropellerControlAuthorityScale();
 
 		const int32 PropCount = PropNames ? PropNames->Num() : 0;
@@ -348,8 +350,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				(PropAxes && i < PropAxes->Num()) ? (*PropAxes)[i] : FVector3f(0.f, 0.f, 1.f));
 			Rotor.SpinDirection = static_cast<EAircraftRotorSpinDirection>(
 				(PropSpins && i < PropSpins->Num()) ? (*PropSpins)[i] : 0);
-			Rotor.MaxThrustForce = (PropMaxThr && i < PropMaxThr->Num()) ? (*PropMaxThr)[i] : 9.f;
-			Rotor.ReactionTorqueCoefficient = (PropKQ && i < PropKQ->Num()) ? (*PropKQ)[i] : 0.03f;
+			Rotor.MaxThrustN = (PropMaxThr && i < PropMaxThr->Num()) ? (*PropMaxThr)[i] : 9.f;
+			Rotor.ReactionTorqueCoefficientM = (PropKQ && i < PropKQ->Num()) ? (*PropKQ)[i] : 0.03f;
 			Rotor.ControlAuthorityScale = (PropAuth && i < PropAuth->Num()) ? (*PropAuth)[i] : 1.f;
 
 			// 关联同名 Motor；若未指定或找不到，则用默认电机参数。

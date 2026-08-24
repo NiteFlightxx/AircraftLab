@@ -10,7 +10,7 @@ void FAircraftControlAllocator::SetRotorDescriptors(const TArray<FAircraftRotorA
 	RotorInfoBuffer = InRotorInfos;
 	const int32 NumRotors = RotorInfoBuffer.Num();
 	CommandBuffer.SetNumZeroed(NumRotors);
-	RotorHealthBuffer.SetNum(NumRotors);
+	RotorEffectivenessBuffer.SetNum(NumRotors);
 	AllocatedThrustFractions.SetNumZeroed(NumRotors);
 	SolvedRotors.SetNumZeroed(NumRotors);
 	bCacheDirty = true;
@@ -47,9 +47,8 @@ void FAircraftControlAllocator::ComputeBaselineAuthorities(
 	const TArray<FAircraftRotorAllocationInfo>& RotorInfos,
 	const FAircraftFlightControllerRuntimeConfig& Config,
 	double& OutCollectiveAuthority,
-	double& OutRollAuthority,
-	double& OutPitchAuthority,
-	double& OutYawAuthority)
+	FVector& OutPositiveTorqueAuthority,
+	FVector& OutNegativeTorqueAuthority)
 {
 	// 基准 = 所有启用旋翼在 Effectiveness=1 时的权限（失效旋翼也计入基准）
 	double BaselineCollectiveAuthority = 0.0;
@@ -81,9 +80,10 @@ void FAircraftControlAllocator::ComputeBaselineAuthorities(
 	}
 
 	OutCollectiveAuthority = BaselineCollectiveAuthority;
-	OutRollAuthority = GetBalancedAuthority(BaselinePositiveTorque[0], BaselineNegativeTorque[0]);
-	OutPitchAuthority = GetBalancedAuthority(BaselinePositiveTorque[1], BaselineNegativeTorque[1]);
-	OutYawAuthority = GetBalancedAuthority(BaselinePositiveTorque[2], BaselineNegativeTorque[2]);
+	OutPositiveTorqueAuthority = FVector(
+		BaselinePositiveTorque[0], BaselinePositiveTorque[1], BaselinePositiveTorque[2]);
+	OutNegativeTorqueAuthority = FVector(
+		BaselineNegativeTorque[0], BaselineNegativeTorque[1], BaselineNegativeTorque[2]);
 }
 
 void FAircraftControlAllocator::RebuildAllocationCache(const FAircraftFlightControllerRuntimeConfig& Config)
@@ -111,15 +111,6 @@ void FAircraftControlAllocator::RebuildAllocationCache(const FAircraftFlightCont
 	{
 		const FAircraftRotorAllocationInfo& RotorInfo = RotorInfoBuffer[RotorIndex];
 		if (!RotorInfo.bEnabled)
-		{
-			continue;
-		}
-
-		const float Effectiveness = RotorHealthBuffer.IsValidIndex(RotorIndex)
-			? RotorHealthBuffer[RotorIndex].Effectiveness : 0.0f;
-
-		// 完全失效的旋翼不参与 RowScale 计算
-		if (Effectiveness <= AuthorityEpsilon)
 		{
 			continue;
 		}
@@ -164,8 +155,8 @@ void FAircraftControlAllocator::RebuildAllocationCache(const FAircraftFlightCont
 			continue;
 		}
 
-		const float Effectiveness = RotorHealthBuffer.IsValidIndex(RotorIndex)
-			? RotorHealthBuffer[RotorIndex].Effectiveness : 0.0f;
+		const float Effectiveness = RotorEffectivenessBuffer.IsValidIndex(RotorIndex)
+			? RotorEffectivenessBuffer[RotorIndex].Effectiveness : 0.0f;
 		if (Effectiveness <= AuthorityEpsilon)
 		{
 			continue;
@@ -217,7 +208,6 @@ void FAircraftControlAllocator::RebuildAllocationCache(const FAircraftFlightCont
 void FAircraftControlAllocator::Allocate(
 	const FAircraftFlightControllerRuntimeConfig& Config,
 	const FQuat& BodyRotation,
-	const TArray<FAircraftRotorHealthState>& RotorHealthByColumn,
 	float CollectiveCommand, const FVector& AxisCommands,
 	FAircraftFlightControlOutput& OutControlOutput)
 {
@@ -273,12 +263,14 @@ void FAircraftControlAllocator::Allocate(
 		Diagnostics.RemainingAuthority[Axis] = RowScale[Axis];
 	}
 
-	// 记录失效旋翼（已从自由列表中移除的）
+	// 记录零效能旋翼（已从自由列表中移除）。
 	for (int32 RotorIndex = 0; RotorIndex < NumRotors; ++RotorIndex)
 	{
-		if (!FreeRotors[RotorIndex] && RotorHealthByColumn.IsValidIndex(RotorIndex) && RotorHealthByColumn[RotorIndex].bIsFailed)
+		if (!FreeRotors[RotorIndex]
+			&& RotorEffectivenessBuffer.IsValidIndex(RotorIndex)
+			&& RotorEffectivenessBuffer[RotorIndex].Effectiveness <= AuthorityEpsilon)
 		{
-			Diagnostics.FailedMotors.Add(RotorIndex);
+			Diagnostics.ZeroEffectivenessRotors.Add(RotorIndex);
 		}
 	}
 

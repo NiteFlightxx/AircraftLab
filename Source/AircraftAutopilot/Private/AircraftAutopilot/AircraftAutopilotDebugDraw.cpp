@@ -145,8 +145,10 @@ void FAircraftAutopilotDebugDraw::Draw(
 			false, -1.0f, SDPG_Foreground);
 		DrawDashedLine(World, State.PositionCm, Reference.PositionCm, FColor::Red, Thickness);
 		DrawDebugString(World, State.PositionCm + FVector(0.0f, 0.0f, 80.0f),
-			FString::Printf(TEXT("Contour %.1f cm  Lag %.1f cm  Solve %.2f ms"),
+			FString::Printf(TEXT("Contour %.1f cm  Lag %.1f cm  Corridor %.1f/%.1f cm  Scale %.2f  Solve %.2f ms"),
 				Diagnostics.ContourErrorCm, Diagnostics.LagErrorCm,
+				Diagnostics.CorridorViolationCm,
+				Diagnostics.PredictedCorridorViolationCm, Diagnostics.ProgressScale,
 				Diagnostics.LastSolveMilliseconds),
 			nullptr, FColor::White, 0.0f, false, 1.0f);
 	}

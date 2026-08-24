@@ -50,8 +50,8 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PropellerPositionLocalCm(TEXT("PositionLocalCm"));
 		const FName PropellerThrustAxisLocal(TEXT("ThrustAxisLocal"));
 		const FName PropellerSpinDirection(TEXT("SpinDirection"));
-		const FName PropellerMaxThrustForce(TEXT("MaxThrustForce"));
-		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
+		const FName PropellerMaxThrustN(TEXT("MaxThrustN"));
+		const FName PropellerReactionTorqueCoefficientM(TEXT("ReactionTorqueCoefficientM"));
 		const FName PropellerControlAuthorityScale(TEXT("ControlAuthorityScale"));
 
 		const FName FcPositionKp(TEXT("PositionKp"));

@@ -29,7 +29,10 @@ void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Co
 		Config.MaxTiltAngleDegrees, Config.MaxYawRateDegreesPerSec, Config.MaxRollRateDegreesPerSec,
 		Config.MaxPitchRateDegreesPerSec, Config.MaxClimbRateCmPerSec, Config.MaxDescentRateCmPerSec,
 		Config.MaxHorizontalSpeedCmPerSec, Config.MaxHorizontalAccelerationCmPerSecSq,
-		Config.MaxVerticalAccelerationCmPerSecSq, Config.MinCollectiveCommand,
+		Config.MaxHorizontalDecelerationCmPerSecSq, Config.MaxHorizontalJerkCmPerSecCubed,
+		Config.MaxVerticalAccelerationCmPerSecSq, Config.MaxVerticalJerkCmPerSecCubed,
+		Config.MaxYawAccelerationDegPerSecSq, Config.MaxYawJerkDegPerSecCubed,
+		Config.MinCollectiveCommand,
 		Config.HoverCollectiveCommand, Config.MaxCollectiveCommand };
 	bool bInvalid = false;
 	for (const float Value : LimitValues)
@@ -73,7 +76,12 @@ void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Co
 	SetConfigProperty(Properties, TEXT("FlightController.MaxRollRateDegreesPerSec"), Config.MaxRollRateDegreesPerSec);
 	SetConfigProperty(Properties, TEXT("FlightController.MaxPitchRateDegreesPerSec"), Config.MaxPitchRateDegreesPerSec);
 	SetConfigProperty(Properties, TEXT("FlightController.MaxHorizontalAccelerationCmPerSecSq"), Config.MaxHorizontalAccelerationCmPerSecSq);
+	SetConfigProperty(Properties, TEXT("FlightController.MaxHorizontalDecelerationCmPerSecSq"), Config.MaxHorizontalDecelerationCmPerSecSq);
+	SetConfigProperty(Properties, TEXT("FlightController.MaxHorizontalJerkCmPerSecCubed"), Config.MaxHorizontalJerkCmPerSecCubed);
 	SetConfigProperty(Properties, TEXT("FlightController.MaxVerticalAccelerationCmPerSecSq"), Config.MaxVerticalAccelerationCmPerSecSq);
+	SetConfigProperty(Properties, TEXT("FlightController.MaxVerticalJerkCmPerSecCubed"), Config.MaxVerticalJerkCmPerSecCubed);
+	SetConfigProperty(Properties, TEXT("FlightController.MaxYawAccelerationDegPerSecSq"), Config.MaxYawAccelerationDegPerSecSq);
+	SetConfigProperty(Properties, TEXT("FlightController.MaxYawJerkDegPerSecCubed"), Config.MaxYawJerkDegPerSecCubed);
 	SetConfigProperty(Properties, TEXT("FlightController.MinCollectiveCommand"), Config.MinCollectiveCommand);
 	SetConfigProperty(Properties, TEXT("FlightController.HoverCollectiveCommand"), Config.HoverCollectiveCommand);
 	SetConfigProperty(Properties, TEXT("FlightController.MaxCollectiveCommand"), Config.MaxCollectiveCommand);

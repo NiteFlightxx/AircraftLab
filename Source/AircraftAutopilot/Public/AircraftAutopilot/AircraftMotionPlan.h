@@ -26,8 +26,16 @@ public:
 	void Reset();
 
 	bool Evaluate(float TimeSeconds, FAircraftMotionPlanSample& OutSample) const;
-	bool Project(const FVector& PositionCm, float InitialDistanceCm,
+	bool Project(const FVector& PositionCm, float InitialDistanceCm, bool bGlobalSearch,
 		FAircraftMotionPlanSample& OutSample) const;
+	float ComputeCorridorViolationCm(const FVector& PositionCm, float DistanceCm) const
+	{
+		return SpatialPath.ComputeCorridorViolationCm(PositionCm, DistanceCm);
+	}
+	FVector ComputeCorridorCorrectionCm(const FVector& PositionCm, float DistanceCm) const
+	{
+		return SpatialPath.ComputeCorridorCorrectionCm(PositionCm, DistanceCm);
+	}
 	float TimeAtDistance(float DistanceCm) const;
 
 	bool IsValid() const { return bValid; }

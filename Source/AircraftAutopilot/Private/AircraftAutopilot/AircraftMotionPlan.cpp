@@ -2,11 +2,9 @@
 
 namespace
 {
-	float PositiveMinimum(float A, float B)
+	float ApplySoftLimit(float Requested, float Available, bool bHasRequestedLimits)
 	{
-		if (A <= 0.0f) return B;
-		if (B <= 0.0f) return A;
-		return FMath::Min(A, B);
+		return bHasRequestedLimits ? FMath::Min(Requested, Available) : Available;
 	}
 
 	float WrapPlanTime(float Time, float Duration, bool bContinuous)
@@ -21,27 +19,40 @@ namespace
 
 	void ApplyCapabilityLimits(
 		FAircraftRequestedMotionLimits& Limits,
+		bool bHasRequestedLimits,
 		const FAircraftDynamicCapabilitySnapshot& Capability)
 	{
-		if (!Capability.bValid)
-		{
-			return;
-		}
-		Limits.CruiseSpeedCmPerSec = PositiveMinimum(
-			Limits.CruiseSpeedCmPerSec, Capability.MaxHorizontalSpeedCmPerSec);
-		Limits.MaxAccelerationCmPerSecSq = PositiveMinimum(
-			Limits.MaxAccelerationCmPerSecSq, Capability.MaxHorizontalAccelerationCmPerSecSq);
-		Limits.MaxDecelerationCmPerSecSq = PositiveMinimum(
-			Limits.MaxDecelerationCmPerSecSq, Capability.MaxHorizontalAccelerationCmPerSecSq);
-		Limits.MaxVerticalAccelerationCmPerSecSq = PositiveMinimum(
-			Limits.MaxVerticalAccelerationCmPerSecSq, Capability.MaxVerticalAccelerationCmPerSecSq);
-		Limits.MaxClimbRateCmPerSec = PositiveMinimum(
-			Limits.MaxClimbRateCmPerSec, Capability.MaxClimbRateCmPerSec);
-		Limits.MaxDescentRateCmPerSec = PositiveMinimum(
-			Limits.MaxDescentRateCmPerSec, Capability.MaxDescentRateCmPerSec);
-		Limits.MaxYawRateDegPerSec = Capability.HasTorqueAuthority(2)
-			? PositiveMinimum(Limits.MaxYawRateDegPerSec,
-				FMath::RadiansToDegrees(Capability.MaxBodyRateRadPerSec.Z))
+		Limits.CruiseSpeedCmPerSec = ApplySoftLimit(Limits.CruiseSpeedCmPerSec,
+			Capability.MaxHorizontalSpeedCmPerSec, bHasRequestedLimits);
+		Limits.MaxAccelerationCmPerSecSq = ApplySoftLimit(Limits.MaxAccelerationCmPerSecSq,
+			Capability.MaxHorizontalAccelerationCmPerSecSq, bHasRequestedLimits);
+		Limits.MaxDecelerationCmPerSecSq = ApplySoftLimit(Limits.MaxDecelerationCmPerSecSq,
+			Capability.MaxHorizontalDecelerationCmPerSecSq, bHasRequestedLimits);
+		Limits.MaxJerkCmPerSecCubed = ApplySoftLimit(Limits.MaxJerkCmPerSecCubed,
+			Capability.MaxHorizontalJerkCmPerSecCubed, bHasRequestedLimits);
+		Limits.MaxVerticalAccelerationCmPerSecSq = ApplySoftLimit(
+			Limits.MaxVerticalAccelerationCmPerSecSq,
+			Capability.MaxVerticalAccelerationCmPerSecSq, bHasRequestedLimits);
+		Limits.MaxVerticalJerkCmPerSecCubed = ApplySoftLimit(
+			Limits.MaxVerticalJerkCmPerSecCubed,
+			Capability.MaxVerticalJerkCmPerSecCubed, bHasRequestedLimits);
+		Limits.MaxClimbRateCmPerSec = ApplySoftLimit(Limits.MaxClimbRateCmPerSec,
+			Capability.MaxClimbRateCmPerSec, bHasRequestedLimits);
+		Limits.MaxDescentRateCmPerSec = ApplySoftLimit(Limits.MaxDescentRateCmPerSec,
+			Capability.MaxDescentRateCmPerSec, bHasRequestedLimits);
+		Limits.MaxYawRateDegPerSec = Capability.HasAngularControlAuthority(2)
+			? ApplySoftLimit(Limits.MaxYawRateDegPerSec,
+				FMath::RadiansToDegrees(Capability.MaxBodyRateRadPerSec.Z), bHasRequestedLimits)
+			: 0.0f;
+		Limits.MaxYawAccelerationDegPerSecSq = Capability.HasAngularControlAuthority(2)
+			? ApplySoftLimit(Limits.MaxYawAccelerationDegPerSecSq,
+				FMath::RadiansToDegrees(Capability.MaxBodyAngularAccelerationRadPerSecSq.Z),
+				bHasRequestedLimits)
+			: 0.0f;
+		Limits.MaxYawJerkDegPerSecCubed = Capability.HasAngularControlAuthority(2)
+			? ApplySoftLimit(Limits.MaxYawJerkDegPerSecCubed,
+				FMath::RadiansToDegrees(Capability.MaxBodyAngularJerkRadPerSecCubed.Z),
+				bHasRequestedLimits)
 			: 0.0f;
 	}
 
@@ -49,21 +60,23 @@ namespace
 		const FAircraftDynamicCapabilitySnapshot& Capability)
 	{
 		float Result = Capability.MaxHorizontalAccelerationCmPerSecSq;
-		if (Capability.MaxTiltRadians > UE_SMALL_NUMBER)
+		if (Capability.bHasTiltLimit)
 		{
-			Result = PositiveMinimum(Result, Capability.GravityCmPerSecSq
+			Result = FMath::Min(Result, Capability.GravityCmPerSecSq
 				* FMath::Tan(Capability.MaxTiltRadians));
 		}
-		if (Capability.CollectiveAuthorityN > UE_SMALL_NUMBER
-			&& Capability.MassKg > UE_SMALL_NUMBER)
+		if (Capability.bHasTiltLimit && Capability.MassKg > UE_SMALL_NUMBER)
 		{
+			if (Capability.CollectiveAuthorityN <= UE_SMALL_NUMBER)
+			{
+				return 0.0f;
+			}
 			const float SpecificThrustCmPerSecSq =
 				Capability.CollectiveAuthorityN * 100.0f / Capability.MassKg;
 			const float HorizontalAuthority = FMath::Sqrt(FMath::Max(0.0f,
 				FMath::Square(SpecificThrustCmPerSecSq)
 				- FMath::Square(Capability.GravityCmPerSecSq)));
-			Result = Result > 0.0f
-				? FMath::Min(Result, HorizontalAuthority) : HorizontalAuthority;
+			Result = FMath::Min(Result, HorizontalAuthority);
 		}
 		return FMath::Max(Result, 0.0f);
 	}
@@ -80,7 +93,10 @@ namespace
 		{
 			return Result;
 		}
-		const float SpeedMps = SpeedCmPerSec * 0.01f;
+		const float BoundedSpeedCmPerSec = Capability.MaxRelativeAirspeedCmPerSec > 0.0f
+			? FMath::Min(SpeedCmPerSec, Capability.MaxRelativeAirspeedCmPerSec)
+			: SpeedCmPerSec;
+		const float SpeedMps = BoundedSpeedCmPerSec * 0.01f;
 		const float LinearDrag = FMath::Max3(
 			Capability.LinearDragBodyNsPerM.X,
 			Capability.LinearDragBodyNsPerM.Y,
@@ -146,8 +162,60 @@ bool FAircraftMotionPlan::BuildHoldPlan(
 bool FAircraftMotionPlan::BuildTimedPlan(const FAircraftMovementIntent& Intent)
 {
 	Samples.Reserve(Intent.TimedTrajectory.Samples.Num());
-	for (const FAircraftTimedTrajectorySample& Input : Intent.TimedTrajectory.Samples)
+	float PreviousYawAccelerationDegPerSecSq = 0.0f;
+	for (int32 Index = 0; Index < Intent.TimedTrajectory.Samples.Num(); ++Index)
 	{
+		const FAircraftTimedTrajectorySample& Input = Intent.TimedTrajectory.Samples[Index];
+		const float HorizontalSpeedCmPerSec = FVector2D(
+			Input.VelocityCmPerSec.X, Input.VelocityCmPerSec.Y).Size();
+		const float VerticalRateLimitCmPerSec = Input.VelocityCmPerSec.Z >= 0.0
+			? Intent.Limits.MaxClimbRateCmPerSec
+			: Intent.Limits.MaxDescentRateCmPerSec;
+		const FVector2D HorizontalAcceleration(
+			Input.AccelerationCmPerSecSq.X, Input.AccelerationCmPerSecSq.Y);
+		const FVector2D HorizontalVelocity(
+			Input.VelocityCmPerSec.X, Input.VelocityCmPerSec.Y);
+		const float HorizontalAccelerationLimitCmPerSecSq =
+			FVector2D::DotProduct(HorizontalVelocity, HorizontalAcceleration) < 0.0f
+				? Intent.Limits.MaxDecelerationCmPerSecSq
+				: Intent.Limits.MaxAccelerationCmPerSecSq;
+		if (HorizontalSpeedCmPerSec > Intent.Limits.CruiseSpeedCmPerSec + UE_KINDA_SMALL_NUMBER
+			|| FMath::Abs(Input.VelocityCmPerSec.Z)
+				> VerticalRateLimitCmPerSec + UE_KINDA_SMALL_NUMBER
+			|| HorizontalAcceleration.Size()
+				> HorizontalAccelerationLimitCmPerSecSq + UE_KINDA_SMALL_NUMBER
+			|| FMath::Abs(Input.AccelerationCmPerSecSq.Z)
+				> Intent.Limits.MaxVerticalAccelerationCmPerSecSq + UE_KINDA_SMALL_NUMBER
+			|| FMath::Abs(Input.YawRateDegPerSec)
+				> Intent.Limits.MaxYawRateDegPerSec + UE_KINDA_SMALL_NUMBER)
+		{
+			return false;
+		}
+		if (Index > 0)
+		{
+			const FAircraftTimedTrajectorySample& Previous =
+				Intent.TimedTrajectory.Samples[Index - 1];
+			const float Dt = Input.TimeSeconds - Previous.TimeSeconds;
+			const FVector JerkCmPerSecCubed =
+				(Input.AccelerationCmPerSecSq - Previous.AccelerationCmPerSecSq) / Dt;
+			const float YawAccelerationDegPerSecSq =
+				(Input.YawRateDegPerSec - Previous.YawRateDegPerSec) / Dt;
+			const float YawJerkDegPerSecCubed = Index > 1
+				? (YawAccelerationDegPerSecSq - PreviousYawAccelerationDegPerSecSq) / Dt
+				: 0.0f;
+			if (FVector2D(JerkCmPerSecCubed.X, JerkCmPerSecCubed.Y).Size()
+					> Intent.Limits.MaxJerkCmPerSecCubed + UE_KINDA_SMALL_NUMBER
+				|| FMath::Abs(JerkCmPerSecCubed.Z)
+					> Intent.Limits.MaxVerticalJerkCmPerSecCubed + UE_KINDA_SMALL_NUMBER
+				|| FMath::Abs(YawAccelerationDegPerSecSq)
+					> Intent.Limits.MaxYawAccelerationDegPerSecSq + UE_KINDA_SMALL_NUMBER
+				|| FMath::Abs(YawJerkDegPerSecCubed)
+					> Intent.Limits.MaxYawJerkDegPerSecCubed + UE_KINDA_SMALL_NUMBER)
+			{
+				return false;
+			}
+			PreviousYawAccelerationDegPerSecSq = YawAccelerationDegPerSecSq;
+		}
 		FAircraftMotionPlanSample& Sample = Samples.AddDefaulted_GetRef();
 		Sample.TimeSeconds = Input.TimeSeconds;
 		Sample.PositionCm = Input.PositionCm;
@@ -204,10 +272,8 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 	SpeedLimits.SetNum(Count);
 	const float RequestedAcceleration = Intent.Limits.MaxAccelerationCmPerSecSq;
 	const float RequestedDeceleration = Intent.Limits.MaxDecelerationCmPerSecSq;
-	float CruiseSpeed = PositiveMinimum(Intent.Limits.CruiseSpeedCmPerSec,
-		Capability.bValid ? Capability.MaxHorizontalSpeedCmPerSec : 0.0f);
-	const float PhysicalHorizontalAcceleration = Capability.bValid
-		? ResolveHorizontalThrustAuthority(Capability) : RequestedAcceleration;
+	float CruiseSpeed = Intent.Limits.CruiseSpeedCmPerSec;
+	const float PhysicalHorizontalAcceleration = ResolveHorizontalThrustAuthority(Capability);
 	const float UsableThrustAcceleration = PhysicalHorizontalAcceleration
 		* (1.0f - Config.Timing.ThrustReserveFraction);
 	if (Capability.bValid && PhysicalHorizontalAcceleration > UE_SMALL_NUMBER
@@ -231,12 +297,12 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		}
 		CruiseSpeed = LowSpeed;
 	}
-	const float AccelerationLimit = FMath::Min(RequestedAcceleration,
-		Capability.bValid ? UsableThrustAcceleration : RequestedAcceleration);
+	const float AccelerationLimit = FMath::Min(RequestedAcceleration, UsableThrustAcceleration);
 	const float CurvatureAccelerationLimit = AccelerationLimit
 		* (1.0f - Config.Timing.CurvatureAccelerationReserveFraction);
-	const float DecelerationLimit = PositiveMinimum(RequestedDeceleration,
-		PhysicalHorizontalAcceleration) * (1.0f - Config.Timing.BrakingReserveFraction);
+	const float DecelerationLimit = FMath::Min(RequestedDeceleration,
+		Capability.MaxHorizontalDecelerationCmPerSecSq)
+		* (1.0f - Config.Timing.BrakingReserveFraction);
 
 	for (int32 Index = 0; Index < Count; ++Index)
 	{
@@ -268,7 +334,7 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 					? Capability.CollectiveAuthorityN * 100.0f / Capability.MassKg
 						* (1.0f - Config.Timing.ThrustReserveFraction)
 					: TNumericLimits<float>::Max();
-				const float TiltLimitedHorizontalAcceleration = Capability.MaxTiltRadians > UE_SMALL_NUMBER
+				const float TiltLimitedHorizontalAcceleration = Capability.bHasTiltLimit
 					? FMath::Max(RequiredSpecificThrust.Z, 0.0f)
 						* FMath::Tan(Capability.MaxTiltRadians)
 					: TNumericLimits<float>::Max();
@@ -387,6 +453,105 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		}
 	}
 
+	// 在速度包络上继续施加双向 jerk 可达性。前向约束加速度增长，反向约束
+	// 加速度下降（进入制动）；只允许降低既有速度，因此不会破坏曲率、推力或终端上限。
+	auto SegmentDeltaTime = [this, &SpeedLimits, AccelerationLimit, DecelerationLimit](int32 Index)
+	{
+		const float Ds = Samples[Index + 1].DistanceCm - Samples[Index].DistanceCm;
+		const float SumSpeed = SpeedLimits[Index] + SpeedLimits[Index + 1];
+		return SumSpeed > UE_SMALL_NUMBER
+			? 2.0f * Ds / SumSpeed
+			: FMath::Sqrt(2.0f * Ds
+				/ FMath::Max(FMath::Max(AccelerationLimit, DecelerationLimit), 1.0f));
+	};
+	auto SegmentAcceleration = [this, &SpeedLimits](int32 Index)
+	{
+		const float Ds = Samples[Index + 1].DistanceCm - Samples[Index].DistanceCm;
+		return Ds > UE_SMALL_NUMBER
+			? (FMath::Square(SpeedLimits[Index + 1])
+				- FMath::Square(SpeedLimits[Index])) / (2.0f * Ds)
+			: 0.0f;
+	};
+	auto TangentialJerkLimit = [this, &Intent](int32 Index)
+	{
+		const FVector Tangent = Samples[Index].VelocityCmPerSec;
+		float Limit = TNumericLimits<float>::Max();
+		const float HorizontalTangent = FVector2D(Tangent.X, Tangent.Y).Size();
+		if (HorizontalTangent > UE_SMALL_NUMBER)
+		{
+			Limit = FMath::Min(Limit,
+				Intent.Limits.MaxJerkCmPerSecCubed / HorizontalTangent);
+		}
+		if (FMath::Abs(Tangent.Z) > UE_SMALL_NUMBER)
+		{
+			Limit = FMath::Min(Limit,
+				Intent.Limits.MaxVerticalJerkCmPerSecCubed / FMath::Abs(Tangent.Z));
+		}
+		return Limit == TNumericLimits<float>::Max() ? 0.0f : FMath::Max(Limit, 0.0f);
+	};
+	const int32 SegmentCount = Count - 1;
+	const int32 MaximumJerkPropagationSweeps = Config.Timing.MaxIterations
+		* FMath::Max(SegmentCount, 1);
+	for (int32 Iteration = 0; Iteration < MaximumJerkPropagationSweeps; ++Iteration)
+	{
+		float MaximumSpeedChange = 0.0f;
+		float PreviousAcceleration = bContinuous
+			? SegmentAcceleration(SegmentCount - 1)
+			: FMath::Clamp(static_cast<float>(FVector::DotProduct(
+				InitialState.AccelerationCmPerSecSq, Samples[0].VelocityCmPerSec)),
+				-DecelerationLimit, AccelerationLimit);
+		for (int32 Index = 0; Index < SegmentCount; ++Index)
+		{
+			const float Ds = Samples[Index + 1].DistanceCm - Samples[Index].DistanceCm;
+			const float Dt = SegmentDeltaTime(Index);
+			const float CurrentAcceleration = SegmentAcceleration(Index);
+			const float MaximumAcceleration = PreviousAcceleration
+				+ TangentialJerkLimit(Index) * Dt;
+			if (CurrentAcceleration > MaximumAcceleration)
+			{
+				const float PreviousSpeed = SpeedLimits[Index + 1];
+				SpeedLimits[Index + 1] = FMath::Min(SpeedLimits[Index + 1],
+					FMath::Sqrt(FMath::Max(0.0f,
+						FMath::Square(SpeedLimits[Index]) + 2.0f * MaximumAcceleration * Ds)));
+				MaximumSpeedChange = FMath::Max(MaximumSpeedChange,
+					PreviousSpeed - SpeedLimits[Index + 1]);
+			}
+			PreviousAcceleration = SegmentAcceleration(Index);
+		}
+
+		float NextAcceleration = bContinuous ? SegmentAcceleration(0) : 0.0f;
+		for (int32 Index = SegmentCount - 1; Index >= 0; --Index)
+		{
+			const float Ds = Samples[Index + 1].DistanceCm - Samples[Index].DistanceCm;
+			const int32 JerkIntervalIndex = FMath::Min(Index + 1, SegmentCount - 1);
+			const float Dt = SegmentDeltaTime(JerkIntervalIndex);
+			const float CurrentAcceleration = SegmentAcceleration(Index);
+			const float MaximumAccelerationBeforeNext = NextAcceleration
+				+ TangentialJerkLimit(JerkIntervalIndex) * Dt;
+			if (CurrentAcceleration > MaximumAccelerationBeforeNext)
+			{
+				const float PreviousSpeed = SpeedLimits[Index + 1];
+				SpeedLimits[Index + 1] = FMath::Min(SpeedLimits[Index + 1],
+					FMath::Sqrt(FMath::Max(0.0f,
+						FMath::Square(SpeedLimits[Index])
+							+ 2.0f * MaximumAccelerationBeforeNext * Ds)));
+				MaximumSpeedChange = FMath::Max(MaximumSpeedChange,
+					PreviousSpeed - SpeedLimits[Index + 1]);
+			}
+			NextAcceleration = SegmentAcceleration(Index);
+		}
+		if (bContinuous)
+		{
+			const float SeamSpeed = FMath::Min(SpeedLimits[0], SpeedLimits.Last());
+			SpeedLimits[0] = SeamSpeed;
+			SpeedLimits.Last() = SeamSpeed;
+		}
+		if (MaximumSpeedChange <= Config.Timing.SpeedConvergenceToleranceCmPerSec)
+		{
+			break;
+		}
+	}
+
 	float PreviousYaw = InitialState.ControlRotation.Rotator().Yaw;
 	for (int32 Index = 0; Index < Count; ++Index)
 	{
@@ -431,12 +596,12 @@ bool FAircraftMotionPlan::Build(
 	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
 	Reset();
-	if (!Intent.IsValid() || !Config.IsValid())
+	if (!Intent.IsValid() || !Config.IsValid() || !Capability.bValid)
 	{
 		return false;
 	}
 	SourceIntent = Intent;
-	ApplyCapabilityLimits(SourceIntent.Limits, Capability);
+	ApplyCapabilityLimits(SourceIntent.Limits, SourceIntent.bHasRequestedMotionLimits, Capability);
 	switch (SourceIntent.Type)
 	{
 	case EAircraftMovementIntentType::Hold:
@@ -517,14 +682,15 @@ float FAircraftMotionPlan::TimeAtDistance(float DistanceCm) const
 }
 
 bool FAircraftMotionPlan::Project(
-	const FVector& PositionCm, float InitialDistanceCm, FAircraftMotionPlanSample& OutSample) const
+	const FVector& PositionCm, float InitialDistanceCm, bool bGlobalSearch,
+	FAircraftMotionPlanSample& OutSample) const
 {
 	if (!SpatialPath.IsValid())
 	{
 		return Evaluate(0.0f, OutSample);
 	}
 	FAircraftSpatialPathState Projection;
-	if (!SpatialPath.Project(PositionCm, InitialDistanceCm, Projection))
+	if (!SpatialPath.Project(PositionCm, InitialDistanceCm, bGlobalSearch, Projection))
 	{
 		return false;
 	}

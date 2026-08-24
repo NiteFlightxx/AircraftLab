@@ -17,7 +17,17 @@ namespace AircraftPhysicsUnits
 		return ForceNewtons * ChaosForceUnitsPerNewton;
 	}
 
+	FORCEINLINE float NewtonsToChaosForce(float ForceNewtons)
+	{
+		return ForceNewtons * ChaosForceUnitsPerNewton;
+	}
+
 	FORCEINLINE FVector NewtonMetersToChaosTorque(const FVector& TorqueNewtonMeters)
+	{
+		return TorqueNewtonMeters * ChaosTorqueUnitsPerNewtonMeter;
+	}
+
+	FORCEINLINE float NewtonMetersToChaosTorque(float TorqueNewtonMeters)
 	{
 		return TorqueNewtonMeters * ChaosTorqueUnitsPerNewtonMeter;
 	}

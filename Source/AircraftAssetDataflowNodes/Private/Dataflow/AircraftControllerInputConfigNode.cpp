@@ -53,5 +53,7 @@ void FAircraftControllerInputConfigNode::Evaluate(UE::Dataflow::FContext& Contex
 	SetConfigProperty(Properties, TEXT("FlightController.Input.HorizontalBrakeToHoldSpeedCmPerSec"), Config.HorizontalBrakeToHoldSpeedCmPerSec);
 	SetConfigProperty(Properties, TEXT("FlightController.Input.VerticalBrakeToHoldSpeedCmPerSec"), Config.VerticalBrakeToHoldSpeedCmPerSec);
 	SetConfigProperty(Properties, TEXT("FlightController.Execution.ControllerEnabledByDefault"), Config.bControllerEnabledByDefault);
+	SetConfigProperty(Properties, TEXT("Aircraft.Initial.StartArmed"), Config.bStartArmed);
+	SetConfigProperty(Properties, TEXT("Aircraft.Initial.FlightMode"), static_cast<int32>(Config.InitialFlightMode));
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

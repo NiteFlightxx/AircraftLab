@@ -84,8 +84,8 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FVector3f>* GetPropellerPositionLocalCm() const { return PropellerPositionLocalCm; }
 		const TManagedArray<FVector3f>* GetPropellerThrustAxisLocal() const { return PropellerThrustAxisLocal; }
 		const TManagedArray<uint8>* GetPropellerSpinDirection() const { return PropellerSpinDirection; }
-		const TManagedArray<float>* GetPropellerMaxThrustForce() const { return PropellerMaxThrustForce; }
-		const TManagedArray<float>* GetPropellerReactionTorqueCoefficient() const { return PropellerReactionTorqueCoefficient; }
+		const TManagedArray<float>* GetPropellerMaxThrustN() const { return PropellerMaxThrustN; }
+		const TManagedArray<float>* GetPropellerReactionTorqueCoefficientM() const { return PropellerReactionTorqueCoefficientM; }
 		const TManagedArray<float>* GetPropellerControlAuthorityScale() const { return PropellerControlAuthorityScale; }
 
 		/* ------------------------- FlightController group (1 element) ------------------------- */
@@ -158,8 +158,8 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FVector3f>* PropellerPositionLocalCm = nullptr;
 		const TManagedArray<FVector3f>* PropellerThrustAxisLocal = nullptr;
 		const TManagedArray<uint8>* PropellerSpinDirection = nullptr;
-		const TManagedArray<float>* PropellerMaxThrustForce = nullptr;
-		const TManagedArray<float>* PropellerReactionTorqueCoefficient = nullptr;
+		const TManagedArray<float>* PropellerMaxThrustN = nullptr;
+		const TManagedArray<float>* PropellerReactionTorqueCoefficientM = nullptr;
 		const TManagedArray<float>* PropellerControlAuthorityScale = nullptr;
 
 		/* FlightController */
@@ -271,8 +271,8 @@ namespace UE::AircraftLab::AircraftAsset
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, PropellerPositionLocalCm)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, PropellerThrustAxisLocal)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(uint8, PropellerSpinDirection)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerMaxThrustForce)
-		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerReactionTorqueCoefficient)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerMaxThrustN)
+		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerReactionTorqueCoefficientM)
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(float, PropellerControlAuthorityScale)
 
 		UE_AIRCRAFT_DEFINE_MUTABLE_GETTER(FVector3f, FcPositionKp)

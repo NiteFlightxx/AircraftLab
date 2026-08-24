@@ -21,7 +21,10 @@ public:
 	bool Build(const FAircraftRouteIntent& Route, const FAircraftPathOptimizationRuntimeConfig& Config);
 	void Reset();
 	bool Evaluate(float DistanceCm, FAircraftSpatialPathState& OutState) const;
-	bool Project(const FVector& PositionCm, float InitialDistanceCm, FAircraftSpatialPathState& OutState) const;
+	bool Project(const FVector& PositionCm, float InitialDistanceCm,
+		bool bGlobalSearch, FAircraftSpatialPathState& OutState) const;
+	float ComputeCorridorViolationCm(const FVector& PositionCm, float DistanceCm) const;
+	FVector ComputeCorridorCorrectionCm(const FVector& PositionCm, float DistanceCm) const;
 
 	float GetLengthCm() const { return TotalLengthCm; }
 	bool IsClosed() const { return bClosed; }
@@ -44,6 +47,12 @@ private:
 	TArray<FSegment> Segments;
 	float TotalLengthCm = 0.0f;
 	bool bClosed = false;
+	TArray<FAircraftSafeCorridorSegment> Corridor;
+	float CorridorDistanceScale = 1.0f;
+	float CorridorSafetyMarginCm = 0.0f;
+	float ProjectionBacktrackToleranceCm = 0.0f;
+	float ProjectionSearchDistanceCm = 0.0f;
+	float ProjectionSampleSpacingCm = 100.0f;
 
 	static void OptimizeKnots(TArray<FVector>& Points, bool bInClosed,
 		const TArray<FAircraftSafeCorridorSegment>& Corridor,

@@ -46,7 +46,6 @@ bool FAircraftCompleteDefaultDataflowTemplateTest::RunTest(const FString& Parame
 		TEXT("AircraftAltitudeControllerConfig"),
 		TEXT("AircraftControlAllocatorConfig"),
 		TEXT("AircraftControllerInputConfig"),
-		TEXT("AircraftRotorFailurePolicyConfig"),
 		TEXT("AircraftAutopilotPathConfig"),
 		TEXT("AircraftAutopilotTimingConfig"),
 		TEXT("AircraftAutopilotMpccConfig"),
@@ -68,7 +67,7 @@ bool FAircraftCompleteDefaultDataflowTemplateTest::RunTest(const FString& Parame
 	}
 
 	TestEqual(TEXT("The shared chain and four LOD branches are fully connected"),
-		Graph->GetConnections().Num(), 26);
+		Graph->GetConnections().Num(), 25);
 
 	const TSharedPtr<FDataflowNode> AerodynamicsNode =
 		Graph->FindBaseNode(TEXT("OptionalAircraftAerodynamicsConfig"));
@@ -86,12 +85,12 @@ bool FAircraftCompleteDefaultDataflowTemplateTest::RunTest(const FString& Parame
 
 	const TSharedPtr<FDataflowNode> KinematicNode =
 		Graph->FindBaseNode(TEXT("AircraftKinematicSimulationConfig"));
-	const EAircraftProfileDriveMode ExpectedDriveModes[] =
+	const EAircraftSimulationDriveMode ExpectedDriveModes[] =
 	{
-		EAircraftProfileDriveMode::FlightController,
-		EAircraftProfileDriveMode::PhysicsConstraint,
-		EAircraftProfileDriveMode::Kinematic,
-		EAircraftProfileDriveMode::Kinematic,
+		EAircraftSimulationDriveMode::FlightController,
+		EAircraftSimulationDriveMode::PhysicsConstraint,
+		EAircraftSimulationDriveMode::Kinematic,
+		EAircraftSimulationDriveMode::Kinematic,
 	};
 	for (int32 LodIndex = 0; LodIndex < UE_ARRAY_COUNT(ExpectedDriveModes); ++LodIndex)
 	{

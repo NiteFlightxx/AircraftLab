@@ -11,21 +11,22 @@ namespace
 bool FAircraftRequestedMotionLimits::IsValid() const
 {
 	return FMath::IsFinite(CruiseSpeedCmPerSec) && CruiseSpeedCmPerSec >= 0.0f
-		&& FMath::IsFinite(MaxAccelerationCmPerSecSq) && MaxAccelerationCmPerSecSq > 0.0f
-		&& FMath::IsFinite(MaxDecelerationCmPerSecSq) && MaxDecelerationCmPerSecSq > 0.0f
-		&& FMath::IsFinite(MaxJerkCmPerSecCubed) && MaxJerkCmPerSecCubed > 0.0f
+		&& FMath::IsFinite(MaxAccelerationCmPerSecSq) && MaxAccelerationCmPerSecSq >= 0.0f
+		&& FMath::IsFinite(MaxDecelerationCmPerSecSq) && MaxDecelerationCmPerSecSq >= 0.0f
+		&& FMath::IsFinite(MaxJerkCmPerSecCubed) && MaxJerkCmPerSecCubed >= 0.0f
 		&& FMath::IsFinite(MaxClimbRateCmPerSec) && MaxClimbRateCmPerSec >= 0.0f
 		&& FMath::IsFinite(MaxDescentRateCmPerSec) && MaxDescentRateCmPerSec >= 0.0f
-		&& FMath::IsFinite(MaxVerticalAccelerationCmPerSecSq) && MaxVerticalAccelerationCmPerSecSq > 0.0f
-		&& FMath::IsFinite(MaxVerticalJerkCmPerSecCubed) && MaxVerticalJerkCmPerSecCubed > 0.0f
+		&& FMath::IsFinite(MaxVerticalAccelerationCmPerSecSq) && MaxVerticalAccelerationCmPerSecSq >= 0.0f
+		&& FMath::IsFinite(MaxVerticalJerkCmPerSecCubed) && MaxVerticalJerkCmPerSecCubed >= 0.0f
 		&& FMath::IsFinite(MaxYawRateDegPerSec) && MaxYawRateDegPerSec >= 0.0f
-		&& FMath::IsFinite(MaxYawAccelerationDegPerSecSq) && MaxYawAccelerationDegPerSecSq > 0.0f
-		&& FMath::IsFinite(MaxYawJerkDegPerSecCubed) && MaxYawJerkDegPerSecCubed > 0.0f;
+		&& FMath::IsFinite(MaxYawAccelerationDegPerSecSq) && MaxYawAccelerationDegPerSecSq >= 0.0f
+		&& FMath::IsFinite(MaxYawJerkDegPerSecCubed) && MaxYawJerkDegPerSecCubed >= 0.0f;
 }
 
 bool FAircraftMovementIntent::IsValid() const
 {
-	if (!Limits.IsValid() || !FMath::IsFinite(TimeoutSeconds) || TimeoutSeconds < 0.0f)
+	if ((bHasRequestedMotionLimits && !Limits.IsValid())
+		|| !FMath::IsFinite(TimeoutSeconds) || TimeoutSeconds < 0.0f)
 	{
 		return false;
 	}

@@ -115,8 +115,8 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetPropellerPositionLocalCm());
 	AccumulateArray(Facade.GetPropellerThrustAxisLocal());
 	AccumulateArray(Facade.GetPropellerSpinDirection());
-	AccumulateArray(Facade.GetPropellerMaxThrustForce());
-	AccumulateArray(Facade.GetPropellerReactionTorqueCoefficient());
+	AccumulateArray(Facade.GetPropellerMaxThrustN());
+	AccumulateArray(Facade.GetPropellerReactionTorqueCoefficientM());
 	AccumulateArray(Facade.GetPropellerControlAuthorityScale());
 
 	/* FlightController：PID 增益本身是属性而非结构，但限幅与分配阻尼会

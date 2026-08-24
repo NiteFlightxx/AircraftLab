@@ -57,8 +57,8 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PropellerPositionLocalCm(TEXT("PositionLocalCm"));
 		const FName PropellerThrustAxisLocal(TEXT("ThrustAxisLocal"));
 		const FName PropellerSpinDirection(TEXT("SpinDirection"));
-		const FName PropellerMaxThrustForce(TEXT("MaxThrustForce"));
-		const FName PropellerReactionTorqueCoefficient(TEXT("ReactionTorqueCoefficient"));
+		const FName PropellerMaxThrustN(TEXT("MaxThrustN"));
+		const FName PropellerReactionTorqueCoefficientM(TEXT("ReactionTorqueCoefficientM"));
 		const FName PropellerControlAuthorityScale(TEXT("ControlAuthorityScale"));
 
 		/* FlightController attributes */
@@ -145,8 +145,8 @@ namespace UE::AircraftLab::AircraftAsset
 		PropellerPositionLocalCm = Collection.FindAttributeTyped<FVector3f>(Private::PropellerPositionLocalCm, Private::PropellersGroup);
 		PropellerThrustAxisLocal = Collection.FindAttributeTyped<FVector3f>(Private::PropellerThrustAxisLocal, Private::PropellersGroup);
 		PropellerSpinDirection = Collection.FindAttributeTyped<uint8>(Private::PropellerSpinDirection, Private::PropellersGroup);
-		PropellerMaxThrustForce = Collection.FindAttributeTyped<float>(Private::PropellerMaxThrustForce, Private::PropellersGroup);
-		PropellerReactionTorqueCoefficient = Collection.FindAttributeTyped<float>(Private::PropellerReactionTorqueCoefficient, Private::PropellersGroup);
+		PropellerMaxThrustN = Collection.FindAttributeTyped<float>(Private::PropellerMaxThrustN, Private::PropellersGroup);
+		PropellerReactionTorqueCoefficientM = Collection.FindAttributeTyped<float>(Private::PropellerReactionTorqueCoefficientM, Private::PropellersGroup);
 		PropellerControlAuthorityScale = Collection.FindAttributeTyped<float>(Private::PropellerControlAuthorityScale, Private::PropellersGroup);
 
 		/* FlightController */
@@ -254,8 +254,8 @@ namespace UE::AircraftLab::AircraftAsset
 		AddAttribute(Private::PropellersGroup, Private::PropellerPositionLocalCm, FVector3f::ZeroVector);
 		AddAttribute(Private::PropellersGroup, Private::PropellerThrustAxisLocal, FVector3f(0.f, 0.f, 1.f));
 		AddAttribute(Private::PropellersGroup, Private::PropellerSpinDirection, uint8(0));
-		AddAttribute(Private::PropellersGroup, Private::PropellerMaxThrustForce, float(0));
-		AddAttribute(Private::PropellersGroup, Private::PropellerReactionTorqueCoefficient, float(0));
+		AddAttribute(Private::PropellersGroup, Private::PropellerMaxThrustN, float(0));
+		AddAttribute(Private::PropellersGroup, Private::PropellerReactionTorqueCoefficientM, float(0));
 		AddAttribute(Private::PropellersGroup, Private::PropellerControlAuthorityScale, float(1));
 
 		/* FlightController */

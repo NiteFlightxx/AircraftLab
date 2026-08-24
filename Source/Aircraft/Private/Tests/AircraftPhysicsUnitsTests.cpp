@@ -13,9 +13,13 @@ bool FAircraftPhysicsUnitsConversionTest::RunTest(const FString& Parameters)
 {
 	const FVector ForceChaos = AircraftPhysicsUnits::NewtonsToChaosForce(FVector(1.0, -2.0, 3.0));
 	TestEqual(TEXT("1 N equals 100 Chaos force units"), ForceChaos, FVector(100.0, -200.0, 300.0));
+	TestEqual(TEXT("Scalar force limits use the same SI boundary"),
+		AircraftPhysicsUnits::NewtonsToChaosForce(2.0f), 200.0f);
 
 	const FVector TorqueChaos = AircraftPhysicsUnits::NewtonMetersToChaosTorque(FVector(1.0, -2.0, 3.0));
 	TestEqual(TEXT("1 Nm equals 10000 Chaos torque units"), TorqueChaos, FVector(10000.0, -20000.0, 30000.0));
+	TestEqual(TEXT("Scalar torque limits use the same SI boundary"),
+		AircraftPhysicsUnits::NewtonMetersToChaosTorque(2.0f), 20000.0f);
 	return true;
 }
 

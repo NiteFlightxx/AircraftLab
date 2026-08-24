@@ -4,24 +4,9 @@
 #include "Dataflow/DataflowEngine.h"
 #include "Dataflow/DataflowNode.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
+#include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
 #include "AircraftSimulationLODProfileNode.generated.h"
-
-UENUM()
-enum class EAircraftProfileDriveMode : uint8
-{
-	FlightController UMETA(DisplayName = "Flight Controller"),
-	PhysicsConstraint UMETA(DisplayName = "Physics Constraint"),
-	Kinematic UMETA(DisplayName = "Kinematic"),
-};
-
-UENUM()
-enum class EAircraftProfileCollisionMode : uint8
-{
-	Disabled UMETA(DisplayName = "Disabled"),
-	QueryOnly UMETA(DisplayName = "Query Only"),
-	QueryAndPhysics UMETA(DisplayName = "Query And Physics"),
-};
 
 /** 一个节点只描述一个 Collection LOD；LOD 顺序由 Terminal 的输入数组决定。 */
 USTRUCT(BlueprintType)
@@ -30,8 +15,8 @@ struct FAircraftSimulationLODProfileData
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, Category = "LOD") FName Name = TEXT("LOD");
-	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftProfileDriveMode DriveMode = EAircraftProfileDriveMode::FlightController;
-	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftProfileCollisionMode CollisionMode = EAircraftProfileCollisionMode::QueryAndPhysics;
+	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
+	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
 
 	/** 距最近玩家的名义上限距离；最后一个 LOD 是无限距离兜底。 */
 	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "0.0")) float MaxDistanceCm = 6000.0f;

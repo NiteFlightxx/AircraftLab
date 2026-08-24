@@ -25,9 +25,9 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	}
 	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	const float Values[] = { Config.LinearStrength, Config.LinearDampingRatio,
-		Config.LinearExtraDamping, Config.LinearForceLimit,
+		Config.LinearExtraDamping, Config.LinearForceLimitN,
 		Config.GravityFeedForwardScale, Config.DynamicsFeedForwardScale, Config.AngularStrength,
-		Config.AngularDampingRatio, Config.AngularExtraDamping, Config.AngularTorqueLimit };
+		Config.AngularDampingRatio, Config.AngularExtraDamping, Config.AngularTorqueLimitNm };
 	for (const float Value : Values)
 	{
 		if (!FMath::IsFinite(Value) || Value < 0.0f)
@@ -46,13 +46,13 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearStrength"), Config.LinearStrength);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearDampingRatio"), Config.LinearDampingRatio);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearExtraDamping"), Config.LinearExtraDamping);
-	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearForceLimit"), Config.LinearForceLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.LinearForceLimitN"), Config.LinearForceLimitN);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.GravityFeedForwardScale"), Config.GravityFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.DynamicsFeedForwardScale"), Config.DynamicsFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularStrength"), Config.AngularStrength);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularDampingRatio"), Config.AngularDampingRatio);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularExtraDamping"), Config.AngularExtraDamping);
-	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularTorqueLimit"), Config.AngularTorqueLimit);
+	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AngularTorqueLimitNm"), Config.AngularTorqueLimitNm);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.AccelerationMode"), Config.bAccelerationMode);
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

@@ -12,7 +12,7 @@
 #include "CoreMinimal.h"
 #include "Aircraft/ControlAllocationTypes.h"
 #include "Aircraft/FlightControlStateTypes.h"
-#include "Aircraft/RotorFailureTypes.h"
+#include "Aircraft/RotorEffectivenessTypes.h"
 
 struct FAircraftFlightControllerRuntimeConfig;
 
@@ -24,8 +24,8 @@ struct AIRCRAFT_API FAircraftControlAllocator
 	TArray<float> CommandBuffer;
 	/** 每旋翼纯值描述（模型/几何变化时由代理重填）。 */
 	TArray<FAircraftRotorAllocationInfo> RotorInfoBuffer;
-	/** 按当前矩阵列顺序展开的单步健康快照。 */
-	TArray<FAircraftRotorHealthState> RotorHealthBuffer;
+	/** 按当前矩阵列顺序展开的单步旋翼效能快照。 */
+	TArray<FAircraftRotorEffectivenessState> RotorEffectivenessBuffer;
 	/** 复用的主动集工作缓冲；异步物理路径不允许每步分配内存。 */
 	TArray<double> AllocatedThrustFractions;
 	TArray<bool> SolvedRotors;
@@ -36,7 +36,7 @@ struct AIRCRAFT_API FAircraftControlAllocator
 	/** 替换旋翼描述集合（数量或定义变化时调用），并标记缓存脏。 */
 	void SetRotorDescriptors(const TArray<FAircraftRotorAllocationInfo>& InRotorInfos);
 
-	/** 由描述 × 健康状态重建雅可比/归一化列/行缩放/权限（含全健康基准归一化）。 */
+	/** 由描述与旋翼效能重建雅可比、归一化列和方向性权限。 */
 	void RebuildAllocationCache(const FAircraftFlightControllerRuntimeConfig& Config);
 
 	/**
@@ -45,7 +45,6 @@ struct AIRCRAFT_API FAircraftControlAllocator
 	 */
 	void Allocate(const FAircraftFlightControllerRuntimeConfig& Config,
 		const FQuat& BodyRotation,
-		const TArray<FAircraftRotorHealthState>& RotorHealthByColumn,
 		float CollectiveCommand, const FVector& AxisCommands,
 		FAircraftFlightControlOutput& OutControlOutput);
 
@@ -55,16 +54,14 @@ struct AIRCRAFT_API FAircraftControlAllocator
 		const FAircraftFlightControllerRuntimeConfig& Config);
 
 	/**
-	 * 计算全健康基准权限（含全部启用旋翼，与 Effectiveness 无关），
-	 * 供失效管理器对 Cache 中的有效权限做归一化。
+	 * 计算全效能基准权限（含全部启用旋翼，与运行时 Effectiveness 无关）。
 	 */
 	static void ComputeBaselineAuthorities(
 		const TArray<FAircraftRotorAllocationInfo>& RotorInfos,
 		const FAircraftFlightControllerRuntimeConfig& Config,
 		double& OutCollectiveAuthority,
-		double& OutRollAuthority,
-		double& OutPitchAuthority,
-		double& OutYawAuthority);
+		FVector& OutPositiveTorqueAuthority,
+		FVector& OutNegativeTorqueAuthority);
 
 	void Reset()
 	{
@@ -72,7 +69,7 @@ struct AIRCRAFT_API FAircraftControlAllocator
 		Diagnostics.Reset();
 		CommandBuffer.Reset();
 		RotorInfoBuffer.Reset();
-		RotorHealthBuffer.Reset();
+		RotorEffectivenessBuffer.Reset();
 		AllocatedThrustFractions.Reset();
 		SolvedRotors.Reset();
 		for (int32 Axis = 0; Axis < 3; ++Axis)

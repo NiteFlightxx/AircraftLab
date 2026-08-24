@@ -24,7 +24,8 @@ void FAircraftAutopilotMpccConfigNode::Evaluate(
 	}
 
 	const FManagedArrayCollection Input = GetValue<FManagedArrayCollection>(Context, &Collection);
-	const float Weights[] = { Config.ContourErrorWeight, Config.LagErrorWeight,
+	const float Weights[] = { Config.ContourErrorWeight, Config.CorridorViolationWeight,
+		Config.LagErrorWeight,
 		Config.SpeedTrackingWeight, Config.AccelerationWeight, Config.JerkWeight,
 		Config.TerminalPositionWeight, Config.TerminalVelocityWeight };
 	bool bInvalid = !FMath::IsFinite(Config.UpdateRateHz) || Config.UpdateRateHz <= 0.0f
@@ -57,6 +58,7 @@ void FAircraftAutopilotMpccConfigNode::Evaluate(
 	SET_MPCC(MaxOptimizationIterations);
 	SET_MPCC(SolveTimeBudgetMilliseconds);
 	SET_MPCC(ContourErrorWeight);
+	SET_MPCC(CorridorViolationWeight);
 	SET_MPCC(LagErrorWeight);
 	SET_MPCC(SpeedTrackingWeight);
 	SET_MPCC(AccelerationWeight);

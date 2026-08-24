@@ -1,7 +1,8 @@
-// 悬停四旋翼均分总距；失效旋翼整列清零并由剩余旋翼重分配；指令反演与电机正向模型互逆。
+// 悬停四旋翼均分总距；零效能旋翼整列清零并由剩余旋翼重分配；指令反演与电机正向模型互逆。
 
 #include "Aircraft/ControlAllocator.h"
 #include "Aircraft/RotorModel.h"
+#include "Aircraft/RotorEffectivenessManager.h"
 #include "Aircraft/FlightControllerRuntimeConfig.h"
 #include "Misc/AutomationTest.h"
 
@@ -52,8 +53,7 @@ bool FAircraftHoverAllocationSplitsThrustEvenlyTest::RunTest(const FString& Para
 	Allocator.SetRotorDescriptors(ControlAllocationTestUtils::MakeQuadXRotors());
 	FAircraftFlightControlOutput Output;
 
-	Allocator.Allocate(Config, FQuat::Identity, Allocator.RotorHealthBuffer,
-		0.5f, FVector::ZeroVector, Output);
+	Allocator.Allocate(Config, FQuat::Identity, 0.5f, FVector::ZeroVector, Output);
 
 	TestEqual(TEXT("All four rotors receive a command"), Allocator.CommandBuffer.Num(), 4);
 	const float First = Allocator.CommandBuffer[0];
@@ -69,29 +69,91 @@ bool FAircraftHoverAllocationSplitsThrustEvenlyTest::RunTest(const FString& Para
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftFailedRotorIsExcludedFromAllocationTest,
-	"AircraftLab.Control.Allocation.FailedRotorExcluded",
+	FAircraftZeroEffectivenessRotorIsExcludedFromAllocationTest,
+	"AircraftLab.Control.Allocation.ZeroEffectivenessRotorExcluded",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FAircraftFailedRotorIsExcludedFromAllocationTest::RunTest(const FString& Parameters)
+bool FAircraftZeroEffectivenessRotorIsExcludedFromAllocationTest::RunTest(const FString& Parameters)
 {
 	const FAircraftFlightControllerRuntimeConfig Config;
 	FAircraftControlAllocator Allocator;
 	Allocator.SetRotorDescriptors(ControlAllocationTestUtils::MakeQuadXRotors());
 
-	// 失效 0 号旋翼：效能清零 → 归一化列整列清零
-	Allocator.RotorHealthBuffer[0].MarkFailed(0.0f);
+	// 0 号旋翼效能清零 → 归一化列整列清零。
+	Allocator.RotorEffectivenessBuffer[0].Effectiveness = 0.0f;
 	Allocator.bCacheDirty = true;
 
 	FAircraftFlightControlOutput Output;
-	Allocator.Allocate(Config, FQuat::Identity, Allocator.RotorHealthBuffer,
-		0.5f, FVector::ZeroVector, Output);
+	Allocator.Allocate(Config, FQuat::Identity, 0.5f, FVector::ZeroVector, Output);
 
-	TestEqual(TEXT("Failed rotor receives zero command"), Allocator.CommandBuffer[0], 0.0f);
-	TestTrue(TEXT("Failed rotor is reported in diagnostics"),
-		Allocator.Diagnostics.FailedMotors.Contains(0));
+	TestEqual(TEXT("Zero-effectiveness rotor receives zero command"), Allocator.CommandBuffer[0], 0.0f);
+	TestTrue(TEXT("Zero-effectiveness rotor is reported in diagnostics"),
+		Allocator.Diagnostics.ZeroEffectivenessRotors.Contains(0));
 	TestTrue(TEXT("Remaining rotors keep producing thrust"),
 		Allocator.CommandBuffer[1] > 0.1f && Allocator.CommandBuffer[2] > 0.1f && Allocator.CommandBuffer[3] > 0.1f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftDirectionalEffectivenessAuthorityTest,
+	"AircraftLab.Control.Allocation.DirectionalEffectivenessAuthority",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftDirectionalEffectivenessAuthorityTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	const FAircraftFlightControllerRuntimeConfig Config;
+	FAircraftControlAllocator Allocator;
+	Allocator.SetRotorDescriptors(ControlAllocationTestUtils::MakeQuadXRotors());
+	FAircraftFlightControlOutput Output;
+	Allocator.Allocate(Config, FQuat::Identity, 0.5f, FVector::ZeroVector, Output);
+
+	double BaselineCollective = 0.0;
+	FVector BaselinePositive = FVector::ZeroVector;
+	FVector BaselineNegative = FVector::ZeroVector;
+	FAircraftControlAllocator::ComputeBaselineAuthorities(
+		Allocator.RotorInfoBuffer, Config,
+		BaselineCollective, BaselinePositive, BaselineNegative);
+	FAircraftRotorEffectivenessManager Manager;
+	TArray<FName> RotorNames;
+	for (const FAircraftRotorAllocationInfo& Rotor : Allocator.RotorInfoBuffer)
+	{
+		RotorNames.Add(Rotor.RotorName);
+	}
+	Manager.SetRotorNames(RotorNames);
+	Manager.UpdateAuthority(Allocator.Cache, BaselineCollective,
+		BaselinePositive, BaselineNegative, AircraftAllocation::AuthorityEpsilon);
+	TestTrue(TEXT("Absolute collective authority is published in newtons"),
+		FMath::IsNearlyEqual(Manager.AuthorityInfo.CollectiveAuthorityN,
+			static_cast<float>(Allocator.Cache.CollectiveAuthority), 1.e-4f));
+	TestTrue(TEXT("Absolute directional torque authority is published in newton-metres"),
+		Manager.AuthorityInfo.PositiveTorqueAuthorityNm.Equals(FVector(
+			Allocator.Cache.PositiveTorqueAuthority[0],
+			Allocator.Cache.PositiveTorqueAuthority[1],
+			Allocator.Cache.PositiveTorqueAuthority[2]), 1.e-4));
+	TestTrue(TEXT("Full-effectiveness collective authority is normalized to one"),
+		FMath::IsNearlyEqual(Manager.AuthorityInfo.CollectiveAuthorityFraction, 1.0f, 1.e-4f));
+
+	Allocator.RotorEffectivenessBuffer[0].Effectiveness = 0.5f;
+	Allocator.bCacheDirty = true;
+	Allocator.Allocate(Config, FQuat::Identity, 0.5f, FVector::ZeroVector, Output);
+	TMap<FName, float> Effectiveness;
+	for (const FName RotorName : RotorNames)
+	{
+		Effectiveness.Add(RotorName, RotorName == RotorNames[0] ? 0.5f : 1.0f);
+	}
+	Manager.ApplyEffectiveness(Effectiveness);
+	Manager.UpdateAuthority(Allocator.Cache, BaselineCollective,
+		BaselinePositive, BaselineNegative, AircraftAllocation::AuthorityEpsilon);
+	TestTrue(TEXT("Partial effectiveness reduces collective authority against a fixed baseline"),
+		Manager.AuthorityInfo.CollectiveAuthorityFraction < 1.0f);
+	TestEqual(TEXT("Partial effectiveness is not reported as zero output"),
+		Manager.AuthorityInfo.ZeroEffectivenessRotorCount, 0);
+	TestTrue(TEXT("Directional torque authority remains independently normalized"),
+		Manager.AuthorityInfo.PositiveTorqueAuthorityFraction.X >= 0.0f
+		&& Manager.AuthorityInfo.PositiveTorqueAuthorityFraction.X <= 1.0f
+		&& Manager.AuthorityInfo.NegativeTorqueAuthorityFraction.X >= 0.0f
+		&& Manager.AuthorityInfo.NegativeTorqueAuthorityFraction.X <= 1.0f);
 	return true;
 }
 

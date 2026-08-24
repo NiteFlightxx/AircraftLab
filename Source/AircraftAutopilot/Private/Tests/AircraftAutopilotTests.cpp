@@ -15,11 +15,24 @@ namespace
 		Result.GravityCmPerSecSq = 980.0f;
 		Result.MaxHorizontalSpeedCmPerSec = 2000.0f;
 		Result.MaxHorizontalAccelerationCmPerSecSq = 1000.0f;
+		Result.MaxHorizontalDecelerationCmPerSecSq = 1000.0f;
+		Result.MaxHorizontalJerkCmPerSecCubed = 4000.0f;
 		Result.MaxVerticalAccelerationCmPerSecSq = 800.0f;
+		Result.MaxVerticalJerkCmPerSecCubed = 3000.0f;
 		Result.MaxClimbRateCmPerSec = 600.0f;
 		Result.MaxDescentRateCmPerSec = 500.0f;
 		Result.MaxTiltRadians = FMath::DegreesToRadians(25.0f);
-		Result.MaxBodyRateRadPerSec = FVector(FMath::DegreesToRadians(360.0f));
+		Result.bHasTiltLimit = true;
+		Result.CollectiveAuthorityN = 2500.0f;
+		Result.MaxBodyRateRadPerSec = FVector(
+			FMath::DegreesToRadians(180.0f),
+			FMath::DegreesToRadians(180.0f),
+			FMath::DegreesToRadians(90.0f));
+		Result.MaxBodyAngularAccelerationRadPerSecSq = FVector(FMath::DegreesToRadians(180.0f));
+		Result.MaxBodyAngularJerkRadPerSecCubed = FVector(FMath::DegreesToRadians(600.0f));
+		Result.bCanControlRoll = true;
+		Result.bCanControlPitch = true;
+		Result.bCanControlYaw = true;
 		Result.PositiveTorqueAuthorityNm = FVector(1000.0f);
 		Result.NegativeTorqueAuthorityNm = FVector(1000.0f);
 		Result.bValid = true;
@@ -34,6 +47,7 @@ namespace
 		Intent.Limits.CruiseSpeedCmPerSec = 800.0f;
 		Intent.Limits.MaxAccelerationCmPerSecSq = 400.0f;
 		Intent.Limits.MaxDecelerationCmPerSecSq = 400.0f;
+		Intent.bHasRequestedMotionLimits = true;
 		Intent.Completion.ArrivalMode = EAircraftArrivalMode::Stop;
 		return Intent;
 	}
@@ -52,6 +66,7 @@ bool FAircraftAutopilotTypedIntentApiTest::RunTest(const FString& Parameters)
 	Autopilot->SetAutopilotActive(true);
 
 	FAircraftMovementIntentSettings Settings;
+	Settings.bOverrideMotionLimits = true;
 	Settings.Limits.CruiseSpeedCmPerSec = 725.0f;
 	Settings.Heading.Mode = EAircraftHeadingMode::FixedYaw;
 	Settings.Heading.FixedYawDegrees = 37.0f;
@@ -141,7 +156,7 @@ bool FAircraftSpatialPathContinuityTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("C2 path builds"), Path.Build(Route, Config));
 
 	FAircraftSpatialPathState Knot;
-	TestTrue(TEXT("Middle knot projects"), Path.Project(Route.PointsCm[1], 1000.0f, Knot));
+	TestTrue(TEXT("Middle knot projects"), Path.Project(Route.PointsCm[1], 1000.0f, false, Knot));
 	FAircraftSpatialPathState Before;
 	FAircraftSpatialPathState After;
 	Path.Evaluate(Knot.DistanceCm - 0.1f, Before);
@@ -181,6 +196,31 @@ bool FAircraftSpatialPathContinuityTest::RunTest(const FString& Parameters)
 				<= Config.ConvergenceToleranceCm);
 		}
 	}
+	TestTrue(TEXT("Point outside the safety corridor is diagnosed"),
+		CorridorPath.ComputeCorridorViolationCm(FVector(500.0, 150.0, 0.0), 500.0f) > 0.0f);
+	TestTrue(TEXT("Corridor correction points back into the feasible region"),
+		CorridorPath.ComputeCorridorCorrectionCm(
+			FVector(500.0, 150.0, 0.0), 500.0f).Y < 0.0f);
+
+	FAircraftRouteIntent NearbyBranchesRoute;
+	NearbyBranchesRoute.PointsCm = {
+		FVector(0.0, 0.0, 0.0), FVector(1000.0, 0.0, 0.0),
+		FVector(1000.0, 100.0, 0.0), FVector(0.0, 100.0, 0.0)
+	};
+	FAircraftPathOptimizationRuntimeConfig ProjectionConfig = Config;
+	ProjectionConfig.ProjectionBacktrackToleranceCm = 25.0f;
+	ProjectionConfig.ProjectionSearchDistanceCm = 250.0f;
+	FAircraftSpatialPath NearbyBranchesPath;
+	TestTrue(TEXT("Nearby-branch path builds"),
+		NearbyBranchesPath.Build(NearbyBranchesRoute, ProjectionConfig));
+	FAircraftSpatialPathState LocalProjection;
+	FAircraftSpatialPathState GlobalProjection;
+	TestTrue(TEXT("Local projection succeeds"), NearbyBranchesPath.Project(
+		FVector(500.0, 100.0, 0.0), 400.0f, false, LocalProjection));
+	TestTrue(TEXT("Initial global projection succeeds"), NearbyBranchesPath.Project(
+		FVector(500.0, 100.0, 0.0), 0.0f, true, GlobalProjection));
+	TestTrue(TEXT("Continuous projection cannot jump to a nearby later branch"),
+		LocalProjection.DistanceCm < 800.0f && GlobalProjection.DistanceCm > 1200.0f);
 	return true;
 }
 
@@ -223,6 +263,7 @@ bool FAircraftTrajectoryRetimingTest::RunTest(const FString& Parameters)
 	FAircraftMovementIntent AsymmetricIntent = MakeRouteIntent(6000.0f);
 	AsymmetricIntent.Limits.MaxAccelerationCmPerSecSq = 200.0f;
 	AsymmetricIntent.Limits.MaxDecelerationCmPerSecSq = 600.0f;
+	AsymmetricIntent.bHasRequestedMotionLimits = true;
 	FAircraftMotionPlan AsymmetricPlan;
 	TestTrue(TEXT("Asymmetric route builds"),
 		AsymmetricPlan.Build(AsymmetricIntent, Config, State, Capability));
@@ -236,6 +277,42 @@ bool FAircraftTrajectoryRetimingTest::RunTest(const FString& Parameters)
 	}
 	TestTrue(TEXT("Deceleration profile is independently stronger"),
 		PeakDeceleration > PeakAcceleration * 2.0f);
+
+	FAircraftMovementIntent JerkLimitedIntent = MakeRouteIntent(6000.0f);
+	JerkLimitedIntent.Limits.MaxAccelerationCmPerSecSq = 600.0f;
+	JerkLimitedIntent.Limits.MaxDecelerationCmPerSecSq = 600.0f;
+	JerkLimitedIntent.Limits.MaxJerkCmPerSecCubed = 100.0f;
+	JerkLimitedIntent.bHasRequestedMotionLimits = true;
+	FAircraftMotionPlan JerkLimitedPlan;
+	TestTrue(TEXT("Jerk-limited route builds"),
+		JerkLimitedPlan.Build(JerkLimitedIntent, Config, State, Capability));
+	float PeakJerk = 0.0f;
+	int32 PeakJerkIndex = INDEX_NONE;
+	const TArray<FAircraftMotionPlanSample>& JerkSamples = JerkLimitedPlan.GetSamples();
+	for (int32 Index = 1; Index < JerkSamples.Num(); ++Index)
+	{
+		const float Dt = JerkSamples[Index].TimeSeconds - JerkSamples[Index - 1].TimeSeconds;
+		if (Dt > UE_SMALL_NUMBER)
+		{
+			const float Jerk = FMath::Abs(
+				static_cast<float>(JerkSamples[Index].AccelerationCmPerSecSq.X
+					- JerkSamples[Index - 1].AccelerationCmPerSecSq.X)) / Dt;
+			if (Jerk > PeakJerk)
+			{
+				PeakJerk = Jerk;
+				PeakJerkIndex = Index;
+			}
+		}
+	}
+	const float PeakJerkDt = PeakJerkIndex > 0
+		? JerkSamples[PeakJerkIndex].TimeSeconds - JerkSamples[PeakJerkIndex - 1].TimeSeconds
+		: 0.0f;
+	TestTrue(*FString::Printf(TEXT("Time parameterization respects requested horizontal jerk (peak %.3f at %d, accel %.3f -> %.3f, dt %.3f)"),
+		PeakJerk, PeakJerkIndex,
+		PeakJerkIndex > 0 ? JerkSamples[PeakJerkIndex - 1].AccelerationCmPerSecSq.X : 0.0,
+		PeakJerkIndex > 0 ? JerkSamples[PeakJerkIndex].AccelerationCmPerSecSq.X : 0.0,
+		PeakJerkDt),
+		PeakJerk <= JerkLimitedIntent.Limits.MaxJerkCmPerSecCubed + 1.0f);
 	return true;
 }
 
@@ -252,6 +329,7 @@ bool FAircraftOrbitContinuityTest::RunTest(const FString& Parameters)
 	Intent.Orbit.CenterCm = FVector::ZeroVector;
 	Intent.Orbit.RadiusCm = 1000.0f;
 	Intent.Limits.CruiseSpeedCmPerSec = 500.0f;
+	Intent.bHasRequestedMotionLimits = true;
 	FAircraftVehicleStateSnapshot State;
 	State.PositionCm = FVector(1000.0, 0.0, 0.0);
 	FAircraftMotionPlan Plan;
@@ -283,6 +361,7 @@ bool FAircraftPredictiveReferenceTest::RunTest(const FString& Parameters)
 	Intent.Velocity.VelocityCmPerSec = FVector(800.0, 0.0, 0.0);
 	Intent.Limits.MaxAccelerationCmPerSecSq = 400.0f;
 	Intent.Limits.MaxJerkCmPerSecCubed = 2000.0f;
+	Intent.bHasRequestedMotionLimits = true;
 	FAircraftAutopilotRuntimeConfig Config;
 	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
 	FAircraftVehicleStateSnapshot State;
@@ -291,6 +370,7 @@ bool FAircraftPredictiveReferenceTest::RunTest(const FString& Parameters)
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
 	Capability.bHasExplicitAerodynamics = true;
 	Capability.AirDensityKgPerM3 = 1.225f;
+	Capability.MaxRelativeAirspeedCmPerSec = 10000.0f;
 	Capability.LinearDragBodyNsPerM = FVector(10.0, 10.0, 10.0);
 	Capability.DragAreaCoefficientBodyM2 = FVector(0.2, 0.2, 0.2);
 
@@ -395,9 +475,11 @@ bool FAircraftCapabilityHardLimitsTest::RunTest(const FString& Parameters)
 	Intent.Limits.MaxClimbRateCmPerSec = 300.0f;
 	Intent.Limits.MaxDescentRateCmPerSec = 250.0f;
 	Intent.Limits.MaxYawRateDegPerSec = 120.0f;
+	Intent.bHasRequestedMotionLimits = true;
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
 	Capability.MaxHorizontalSpeedCmPerSec = 350.0f;
 	Capability.MaxHorizontalAccelerationCmPerSecSq = 220.0f;
+	Capability.MaxHorizontalDecelerationCmPerSecSq = 220.0f;
 	Capability.MaxVerticalAccelerationCmPerSecSq = 180.0f;
 	Capability.MaxClimbRateCmPerSec = 140.0f;
 	Capability.MaxDescentRateCmPerSec = 110.0f;
@@ -480,6 +562,7 @@ bool FAircraftYawReferenceRequiresPhysicalAuthorityTest::RunTest(const FString& 
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
 	Capability.PositiveTorqueAuthorityNm.Z = 0.0f;
 	Capability.NegativeTorqueAuthorityNm.Z = 0.0f;
+	Capability.bCanControlYaw = false;
 	FAircraftAutopilotRuntimeConfig Config;
 	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
 	FAircraftPredictiveController Controller;
@@ -547,6 +630,7 @@ bool FAircraftVelocityReferenceRespectsDragAndTiltAuthorityTest::RunTest(const F
 	Intent.Type = EAircraftMovementIntentType::Velocity;
 	Intent.Velocity.VelocityCmPerSec = FVector(800.0f, 0.0f, 0.0f);
 	Intent.Limits.CruiseSpeedCmPerSec = 800.0f;
+	Intent.bHasRequestedMotionLimits = true;
 	FAircraftAutopilotRuntimeConfig Config;
 	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
 	FAircraftVehicleStateSnapshot State;
@@ -612,6 +696,13 @@ bool FAircraftTimedTrajectoryUsesExplicitClockTest::RunTest(const FString& Param
 		Reference.PositionCm.X, 100.0, 1.0);
 	TestEqual(TEXT("Timed trajectory reports half progress"),
 		Reference.PathProgress, 0.5f, 0.01f);
+	FAircraftMovementIntent UnreachableIntent = Intent;
+	UnreachableIntent.TimedTrajectory.Samples.Last().VelocityCmPerSec.X =
+		Capability.MaxHorizontalSpeedCmPerSec + 1.0f;
+	FAircraftPredictiveController RejectingController;
+	TestFalse(TEXT("Timed trajectory cannot exceed backend hard speed"),
+		RejectingController.SetIntent(
+			UnreachableIntent, 33, 1, Config, State, Capability));
 	return true;
 }
 
@@ -647,6 +738,23 @@ bool FAircraftPathProgressIsMonotonicTest::RunTest(const FString& Parameters)
 			Reference.PathProgress + UE_KINDA_SMALL_NUMBER >= PreviousProgress);
 		PreviousProgress = Reference.PathProgress;
 	}
+	TestTrue(TEXT("Same-handle route update is accepted"),
+		Controller.SetIntent(Intent, 40, 2, Config, State, Capability));
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+	++State.Sequence;
+	TestTrue(TEXT("Updated route reference is solved"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("Same-handle route update preserves monotonic progress"),
+		Reference.PathProgress + UE_KINDA_SMALL_NUMBER >= PreviousProgress);
+	PreviousProgress = Reference.PathProgress;
+	Capability.MaxHorizontalAccelerationCmPerSecSq *= 0.5f;
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+	++State.Sequence;
+	TestTrue(TEXT("Capability retiming reference is solved"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("Capability retiming preserves monotonic progress"),
+		Reference.PathProgress + UE_KINDA_SMALL_NUMBER >= PreviousProgress);
+	PreviousProgress = Reference.PathProgress;
 	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
 	++State.Sequence;
 	State.PositionCm.X -= 100.0f;
@@ -760,6 +868,47 @@ bool FAircraftYawReferenceRemainsAnchoredToMeasuredHeadingTest::RunTest(const FS
 	}
 	TestTrue(TEXT("Yaw reference cannot run away from a stationary measured heading"),
 		FMath::Abs(Reference.YawDegrees) < 5.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftCorridorPredictionPriorityTest,
+	"AircraftAutopilot.MPCC.CorridorPredictionPriority",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftCorridorPredictionPriorityTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(2000.0f);
+	FAircraftSafeCorridorSegment& Corridor = Intent.Route.Corridor.AddDefaulted_GetRef();
+	Corridor.StartDistanceCm = 0.0f;
+	Corridor.EndDistanceCm = 2000.0f;
+	Corridor.BoundaryPlanes = {
+		FPlane(FVector(0.0, 100.0, 0.0), FVector::RightVector),
+		FPlane(FVector(0.0, -100.0, 0.0), -FVector::RightVector)
+	};
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Path.CorridorSafetyMarginCm = 0.0f;
+	Config.Mpcc.MaxOptimizationIterations = 4;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.PositionCm = FVector(0.0f, 70.0f, 0.0f);
+	State.VelocityCmPerSec = FVector(200.0f, 400.0f, 0.0f);
+	FAircraftPredictiveController Controller;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	TestTrue(TEXT("Corridor route is accepted"),
+		Controller.SetIntent(Intent, 34, 1, Config, State, Capability));
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Corridor-constrained reference is solved"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("Predictive controller commands toward the corridor interior"),
+		Reference.ControlAccelerationCmPerSecSq.Y < 0.0f);
+	TestTrue(TEXT("Predicted corridor conflict is reported"),
+		Controller.GetDiagnostics().PathTrackingState
+			== EAircraftPathTrackingState::CorridorConstrained
+		|| Controller.GetDiagnostics().PathTrackingState
+			== EAircraftPathTrackingState::CorridorRecovery);
 	return true;
 }
 

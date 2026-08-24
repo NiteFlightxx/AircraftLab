@@ -3,6 +3,7 @@
 
 #include "AircraftAsset/AircraftComponent.h"
 #include "Aircraft/ConstraintDriveUtils.h"
+#include "Aircraft/AircraftPhysicsUnits.h"
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
@@ -18,6 +19,7 @@
 #include "ThumbnailRendering/ThumbnailManager.h"
 
 #include "Aircraft/FlightControlSolver.h"
+#include "Aircraft/ControlAllocationTypes.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftDebug.h"
 #include "AircraftAsset/AircraftSimulationGraph.h"
@@ -67,9 +69,9 @@ void UAircraftComponent::SetAsset(UAircraftAssetBase* InAsset)
 	UpdateSimulationLOD();
 	ApplySolverSettingsToBodyInstance();
 
-	if (AircraftSimulationProxy.IsValid() && CurrentSimulationLOD == INDEX_NONE)
+	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->PostConstructor();
+		AircraftSimulationProxy->Initialize_GameThread();
 	}
 }
 
@@ -89,9 +91,9 @@ void UAircraftComponent::RefreshAssetState()
 	ApplyMassPropertiesToBodyInstance();
 	ApplySolverSettingsToBodyInstance();
 
-	if (AircraftSimulationProxy.IsValid() && CurrentSimulationLOD == INDEX_NONE)
+	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->PostConstructor();
+		AircraftSimulationProxy->Initialize_GameThread();
 	}
 }
 
@@ -258,6 +260,14 @@ void UAircraftComponent::EmergencyStop()
 	}
 }
 
+void UAircraftComponent::ClearEmergencyStop()
+{
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->SetEmergencyStop_GameThread(false);
+	}
+}
+
 EAircraftArmState UAircraftComponent::GetArmState() const
 {
 	return AircraftSimulationProxy.IsValid()
@@ -346,7 +356,7 @@ void UAircraftComponent::SoftResetSimulation()
 	// 但保留组件注册状态、SkeletalMesh 资源、AircraftBodyInstance 不动。
 	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->PostConstructor();
+		AircraftSimulationProxy->Initialize_GameThread();
 	}
 }
 
@@ -460,7 +470,7 @@ void UAircraftComponent::ApplySimulationLOD(int32 LodIndex)
 
 	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->PostConstructor();
+		AircraftSimulationProxy->ReconfigureForLod_GameThread();
 	}
 }
 
@@ -562,11 +572,6 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	SimulationConstraint->SetAngularSwing2Motion(EAngularConstraintMotion::ACM_Free);
 	SimulationConstraint->SetAngularTwistMotion(EAngularConstraintMotion::ACM_Free);
 	SimulationConstraint->SetAngularDriveMode(EAngularDriveMode::SLERP);
-	SimulationConstraint->SetOrientationDriveSLERP(true);
-	SimulationConstraint->SetAngularVelocityDriveSLERP(true);
-	SimulationConstraint->SetLinearPositionDrive(true, true, true);
-	SimulationConstraint->SetLinearVelocityDrive(true, true, true);
-
 	// 与 PhysicsControl 的世界空间控制完全一致：Constraint 的 Body1 是被控刚体，
 	// Body2 为世界；Frame1 只移动到刚体 COM，Frame2 始终保持 Identity。
 	FTransform BodyFrame = SimulationConstraint->GetRefFrame(EConstraintFrame::Frame1);
@@ -581,26 +586,9 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	SimulationConstraint->SetAngularVelocityTarget(FVector::ZeroVector);
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
-	float LinearStiffness = 0.0f;
-	float LinearDamping = 0.0f;
-	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
-		LinearStiffness, LinearDamping,
-		Config.ConstraintLinearStrength,
-		Config.ConstraintLinearDampingRatio,
-		Config.ConstraintLinearExtraDamping);
-	float AngularStiffness = 0.0f;
-	float AngularDamping = 0.0f;
-	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
-		AngularStiffness, AngularDamping,
-		Config.ConstraintAngularStrength,
-		Config.ConstraintAngularDampingRatio,
-		Config.ConstraintAngularExtraDamping);
 	SimulationConstraint->SetLinearDriveAccelerationMode(Config.bConstraintAccelerationMode);
 	SimulationConstraint->SetAngularDriveAccelerationMode(Config.bConstraintAccelerationMode);
-	SimulationConstraint->SetLinearDriveParams(
-		LinearStiffness, LinearDamping, Config.ConstraintLinearForceLimit);
-	SimulationConstraint->SetAngularDriveParams(
-		AngularStiffness, AngularDamping, Config.ConstraintAngularTorqueLimit);
+	UpdateConstraintDriveAuthority(Config);
 
 	WakeAllRigidBodies();
 
@@ -618,6 +606,62 @@ bool UAircraftComponent::CreateSimulationConstraint()
 		FAircraftDebug::LogConstraintCreationFailure(*this, Model->RootBone, TEXT("InvalidOrBroken"));
 	}
 	return bCreated;
+}
+
+void UAircraftComponent::UpdateConstraintDriveAuthority(
+	const FAircraftFlightControllerRuntimeConfig& Config)
+{
+	if (!SimulationConstraint.IsValid())
+	{
+		return;
+	}
+
+	const FAircraftControlAuthorityInfo Authority = GetControlAuthorityInfo();
+	float LinearForceLimitN = Authority.CollectiveAuthorityN;
+	if (Config.ConstraintLinearForceLimitN > 0.0f)
+	{
+		LinearForceLimitN = FMath::Min(LinearForceLimitN, Config.ConstraintLinearForceLimitN);
+	}
+	float YawTorqueLimitNm = FMath::Min(
+		Authority.PositiveTorqueAuthorityNm.Z,
+		Authority.NegativeTorqueAuthorityNm.Z);
+	if (Config.ConstraintAngularTorqueLimitNm > 0.0f)
+	{
+		YawTorqueLimitNm = FMath::Min(YawTorqueLimitNm, Config.ConstraintAngularTorqueLimitNm);
+	}
+
+	const bool bLinearAuthority = Config.ConstraintLinearStrength > UE_SMALL_NUMBER
+		&& LinearForceLimitN > AircraftAllocation::AuthorityEpsilon;
+	const bool bYawAuthority = Config.ConstraintAngularStrength > UE_SMALL_NUMBER
+		&& Config.MaxYawRateDegreesPerSec > 0.0f
+		&& YawTorqueLimitNm > AircraftAllocation::AuthorityEpsilon;
+	SimulationConstraint->SetLinearPositionDrive(
+		bLinearAuthority, bLinearAuthority, bLinearAuthority);
+	SimulationConstraint->SetLinearVelocityDrive(
+		bLinearAuthority, bLinearAuthority, bLinearAuthority);
+	SimulationConstraint->SetOrientationDriveSLERP(bYawAuthority);
+	SimulationConstraint->SetAngularVelocityDriveSLERP(bYawAuthority);
+
+	float LinearStiffness = 0.0f;
+	float LinearDamping = 0.0f;
+	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
+		LinearStiffness, LinearDamping,
+		Config.ConstraintLinearStrength,
+		Config.ConstraintLinearDampingRatio,
+		Config.ConstraintLinearExtraDamping);
+	float AngularStiffness = 0.0f;
+	float AngularDamping = 0.0f;
+	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
+		AngularStiffness, AngularDamping,
+		Config.ConstraintAngularStrength,
+		Config.ConstraintAngularDampingRatio,
+		Config.ConstraintAngularExtraDamping);
+	SimulationConstraint->SetLinearDriveParams(
+		LinearStiffness, LinearDamping,
+		AircraftPhysicsUnits::NewtonsToChaosForce(LinearForceLimitN));
+	SimulationConstraint->SetAngularDriveParams(
+		AngularStiffness, AngularDamping,
+		AircraftPhysicsUnits::NewtonMetersToChaosTorque(YawTorqueLimitNm));
 }
 
 void UAircraftComponent::DestroySimulationConstraint()
@@ -645,6 +689,8 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	{
 		return;
 	}
+	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
+	UpdateConstraintDriveAuthority(Config);
 
 	FAircraftTrajectoryReference Target;
 	if (!GetTrajectoryReference(Target))
@@ -661,7 +707,6 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	const FVector CurrentCenterOfMass = ChassisBody->GetCOMPosition();
 	const FVector CenterOfMassOffsetLocal = GetComponentQuat().UnrotateVector(
 		CurrentCenterOfMass - GetComponentLocation());
-	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
 	const FQuat TargetControlRotation = FRotator(
 		0.0f, Target.YawDegrees, 0.0f).Quaternion();
 	const FQuat TargetBodyRotation = Config.GetBodyWorldRotation(TargetControlRotation);
@@ -913,7 +958,8 @@ void UAircraftComponent::RequestAircraftArm(bool bArm)
 
 void UAircraftComponent::RequestAircraftFlightMode(uint8 NewFlightMode)
 {
-	SetFlightMode(static_cast<EAircraftFlightMode>(FMath::Clamp(NewFlightMode, uint8(0), uint8(8))));
+	SetFlightMode(static_cast<EAircraftFlightMode>(FMath::Clamp(
+		NewFlightMode, uint8(0), static_cast<uint8>(EAircraftFlightMode::AutoLand))));
 }
 
 /* ==================== MovementIntent ==================== */
@@ -974,7 +1020,6 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 	const bool bUseStabilizedTranslation = Mode == EAircraftFlightMode::VelocityHold
 		|| Mode == EAircraftFlightMode::PositionHold
 		|| Mode == EAircraftFlightMode::Mission
-		|| Mode == EAircraftFlightMode::ReturnToHome
 		|| Mode == EAircraftFlightMode::AutoLand;
 	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
 	if (!bUseStabilizedTranslation || !Model)
@@ -1062,13 +1107,6 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 		ManualMovementIntent.Velocity.Frame = EAircraftVelocityFrame::World;
 		ManualMovementIntent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
 		ManualMovementIntent.Heading.FixedYawDegrees = ManualIntentYawDegrees;
-		ManualMovementIntent.Limits.CruiseSpeedCmPerSec = Config.MaxHorizontalSpeedCmPerSec;
-		ManualMovementIntent.Limits.MaxAccelerationCmPerSecSq = Config.MaxHorizontalAccelerationCmPerSecSq;
-		ManualMovementIntent.Limits.MaxDecelerationCmPerSecSq = Config.MaxHorizontalAccelerationCmPerSecSq;
-		ManualMovementIntent.Limits.MaxClimbRateCmPerSec = Config.MaxClimbRateCmPerSec;
-		ManualMovementIntent.Limits.MaxDescentRateCmPerSec = Config.MaxDescentRateCmPerSec;
-		ManualMovementIntent.Limits.MaxVerticalAccelerationCmPerSecSq = Config.MaxVerticalAccelerationCmPerSecSq;
-		ManualMovementIntent.Limits.MaxYawRateDegPerSec = Config.MaxYawRateDegreesPerSec;
 		if (DesiredType == EAircraftMovementIntentType::Hold)
 		{
 			ManualMovementIntent.Hold.bCaptureCurrentPosition = false;
@@ -1085,27 +1123,7 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 	bMovementIntentWasPushed = true;
 }
 
-/* ==================== 旋翼健康 / 失效策略 ==================== */
-
-bool UAircraftComponent::FailRotor(FName RotorName)
-{
-	if (!AircraftSimulationProxy.IsValid())
-	{
-		return false;
-	}
-	AircraftSimulationProxy->FailRotor_GameThread(RotorName);
-	return true;
-}
-
-bool UAircraftComponent::RecoverRotor(FName RotorName)
-{
-	if (!AircraftSimulationProxy.IsValid())
-	{
-		return false;
-	}
-	AircraftSimulationProxy->RecoverRotor_GameThread(RotorName);
-	return true;
-}
+/* ==================== 旋翼效率 / 控制权限 ==================== */
 
 bool UAircraftComponent::SetRotorEffectiveness(FName RotorName, float Effectiveness)
 {
@@ -1113,16 +1131,7 @@ bool UAircraftComponent::SetRotorEffectiveness(FName RotorName, float Effectiven
 	{
 		return false;
 	}
-	AircraftSimulationProxy->SetRotorEffectiveness_GameThread(RotorName, Effectiveness);
-	return true;
-}
-
-void UAircraftComponent::RecoverAllRotors()
-{
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->RecoverAllRotors_GameThread();
-	}
+	return AircraftSimulationProxy->SetRotorEffectiveness_GameThread(RotorName, Effectiveness);
 }
 
 FAircraftControlAuthorityInfo UAircraftComponent::GetControlAuthorityInfo() const
@@ -1133,58 +1142,6 @@ FAircraftControlAuthorityInfo UAircraftComponent::GetControlAuthorityInfo() cons
 		AircraftSimulationProxy->GetControlAuthorityInfo_GameThread(Info);
 	}
 	return Info;
-}
-
-FAircraftFailurePolicyStatus UAircraftComponent::GetFailurePolicyStatus() const
-{
-	FAircraftFailurePolicyStatus Status;
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->GetFailurePolicyStatus_GameThread(Status);
-	}
-	return Status;
-}
-
-void UAircraftComponent::ResetFailurePolicyLatch()
-{
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->ResetFailurePolicyLatch_GameThread();
-	}
-}
-
-void UAircraftComponent::ApplyFailurePolicyActions()
-{
-	if (!AircraftSimulationProxy.IsValid())
-	{
-		return;
-	}
-
-	EAircraftFailurePolicyAction Action;
-	while (AircraftSimulationProxy->ConsumeFailurePolicyAction_GameThread(Action))
-	{
-		const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-		switch (Action)
-		{
-		case EAircraftFailurePolicyAction::SwitchFlightMode:
-			if (Model)
-			{
-				SetFlightMode(static_cast<EAircraftFlightMode>(Model->FlightController.FailurePolicy.DegradedFlightMode));
-			}
-			break;
-		case EAircraftFailurePolicyAction::ReturnToHome:
-			SetFlightMode(EAircraftFlightMode::ReturnToHome);
-			break;
-		case EAircraftFailurePolicyAction::EmergencyStop:
-			EmergencyStop();
-			break;
-		case EAircraftFailurePolicyAction::WarningOnly:
-		default:
-			UE_LOG(LogAircraft, Warning,
-				TEXT("Aircraft failure policy warning on '%s'."), *GetNameSafe(GetOwner()));
-			break;
-		}
-	}
 }
 
 /* ==================== IAircraftSimulationLODConsumer ==================== */
@@ -1206,12 +1163,6 @@ void UAircraftComponent::ApplyAircraftSimulationBudget_Implementation(const FAir
 }
 
 /* ============================ UObject ============================ */
-
-void UAircraftComponent::PostLoad()
-{
-	Super::PostLoad();
-	SyncSkeletalMeshComponentFromAsset();
-}
 
 #if WITH_EDITOR
 void UAircraftComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
@@ -1338,10 +1289,22 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	}
 
 	PushMovementIntentToProxy(DeltaTime);
+	const bool bControlExecutionAllowed = AircraftSimulationProxy.IsValid()
+		&& AircraftSimulationProxy->IsControlExecutionAllowed_GameThread();
+	if (!bControlExecutionAllowed && AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->InvalidateTrajectoryReference_GameThread();
+	}
 
 	switch (SimulationDriveMode)
 	{
 	case EAircraftSimulationDriveMode::PhysicsConstraint:
+		if (!bControlExecutionAllowed)
+		{
+			DestroySimulationConstraint();
+			UpdateAlternativeDriveEstimatedState(DeltaTime);
+			break;
+		}
 		if (!CreateSimulationConstraint())
 		{
 			break;
@@ -1350,6 +1313,12 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		UpdateAlternativeDriveEstimatedState(DeltaTime);
 		break;
 	case EAircraftSimulationDriveMode::Kinematic:
+		if (!bControlExecutionAllowed)
+		{
+			PreviousAlternativeVelocityCmPerSec = FVector::ZeroVector;
+			UpdateAlternativeDriveEstimatedState(DeltaTime);
+			break;
+		}
 		if (AircraftSimulationProxy.IsValid())
 		{
 			if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel())
@@ -1357,7 +1326,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 				AircraftSimulationProxy->TickKinematicPlanner_GameThread(
 					DeltaTime, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0,
 					GetComponentTransform(), PreviousAlternativeVelocityCmPerSec,
-					FVector::ZeroVector, GetLinearDamping(), GetAngularDamping(), *Model);
+					FVector::ZeroVector, *Model);
 			}
 		}
 		UpdateKinematicSimulation(DeltaTime);
@@ -1365,9 +1334,6 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	default:
 		break;
 	}
-
-	// GT 消费代理回传的失效策略动作（切换模式 / 故障保护 / 急停）
-	ApplyFailurePolicyActions();
 
 	if (AircraftSimulationProxy.IsValid())
 	{
@@ -1409,7 +1375,7 @@ void UAircraftComponent::BuildSimulationProxy()
 	if (!AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy = MakeShared<FAircraftSimulationProxy>(*this);
-		AircraftSimulationProxy->PostConstructor();
+		AircraftSimulationProxy->Initialize_GameThread();
 		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
 		UE_LOG(LogAircraft, Display,
 			TEXT("[AircraftDF.Proxy.Build] Owner=%s Component=%s Proxy=%p Graph=%s"),

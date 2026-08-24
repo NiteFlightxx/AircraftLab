@@ -18,7 +18,8 @@ struct FAircraftConstraintSimulationConfig
 	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (ClampMin = "0.0")) float LinearDampingRatio = 1.0f;
 	/** 不依赖 Strength 的附加线性阻尼。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (ClampMin = "0.0")) float LinearExtraDamping = 0.0f;
-	UPROPERTY(EditAnywhere, Category = "Constraint", meta = (ClampMin = "0.0")) float LinearForceLimit = 0.0f;
+	/** 合力上限（N）；0 表示不限制。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (ClampMin = "0.0", Units = "N")) float LinearForceLimitN = 0.0f;
 	/** 重力前馈系数；0 禁用，1 完整补偿世界重力。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Feed Forward", meta = (ClampMin = "0.0")) float GravityFeedForwardScale = 1.0f;
 	/** 预测器动力学前馈系数；0 禁用，1 完整消费阻尼或显式空气动力学补偿。 */
@@ -29,7 +30,8 @@ struct FAircraftConstraintSimulationConfig
 	UPROPERTY(EditAnywhere, Category = "Constraint|Angular", meta = (ClampMin = "0.0")) float AngularDampingRatio = 1.0f;
 	/** 不依赖 Strength 的附加角度阻尼。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Angular", meta = (ClampMin = "0.0")) float AngularExtraDamping = 0.0f;
-	UPROPERTY(EditAnywhere, Category = "Constraint", meta = (ClampMin = "0.0")) float AngularTorqueLimit = 0.0f;
+	/** 驱动力矩上限（N·m）；0 表示不限制。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Angular", meta = (ClampMin = "0.0", Units = "Nm")) float AngularTorqueLimitNm = 0.0f;
 	UPROPERTY(EditAnywhere, Category = "Constraint") bool bAccelerationMode = true;
 };
 

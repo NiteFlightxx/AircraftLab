@@ -23,7 +23,6 @@
 #include "Dataflow/AircraftAutopilotPathConfigNode.h"
 #include "Dataflow/AircraftAutopilotTimingConfigNode.h"
 #include "Dataflow/AircraftAutopilotMpccConfigNode.h"
-#include "Dataflow/AircraftRotorFailurePolicyConfigNode.h"
 #include "Dataflow/AircraftAerodynamicsConfigNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 
@@ -290,8 +289,8 @@ namespace UE::AircraftDataflowAssetEditor::Private
 						Node.Profile.ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
 						// 单旋翼最大推力需满足 ΣMaxThrust > MassKg×g：
 						// 100 kg 四旋翼单电机需 >245 N；取 350 N → 总推力 1400 N，悬停油门约 70%。
-						Node.Profile.MaxThrustForce = 350.f;
-						Node.Profile.ReactionTorqueCoefficient = 0.03f;
+						Node.Profile.MaxThrustN = 350.f;
+						Node.Profile.ReactionTorqueCoefficientM = 0.03f;
 						Node.Profile.ControlAuthorityScale = 1.f;
 					}));
 			}
@@ -309,28 +308,26 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				DataflowAsset, TEXT("AircraftControlAllocatorConfig"), FVector2D(3600.0, 0.0));
 			const FCreatedTemplateNode InputNode = AddTemplateNode<FAircraftControllerInputConfigNode>(
 				DataflowAsset, TEXT("AircraftControllerInputConfig"), FVector2D(3968.0, 0.0));
-			const FCreatedTemplateNode FailurePolicyNode = AddTemplateNode<FAircraftRotorFailurePolicyConfigNode>(
-				DataflowAsset, TEXT("AircraftRotorFailurePolicyConfig"), FVector2D(4336.0, 0.0));
 			const FCreatedTemplateNode PathNode = AddTemplateNode<FAircraftAutopilotPathConfigNode>(
-				DataflowAsset, TEXT("AircraftAutopilotPathConfig"), FVector2D(4704.0, 0.0));
+				DataflowAsset, TEXT("AircraftAutopilotPathConfig"), FVector2D(4336.0, 0.0));
 			const FCreatedTemplateNode TimingNode = AddTemplateNode<FAircraftAutopilotTimingConfigNode>(
-				DataflowAsset, TEXT("AircraftAutopilotTimingConfig"), FVector2D(5072.0, 0.0));
+				DataflowAsset, TEXT("AircraftAutopilotTimingConfig"), FVector2D(4704.0, 0.0));
 			const FCreatedTemplateNode MpccNode = AddTemplateNode<FAircraftAutopilotMpccConfigNode>(
-				DataflowAsset, TEXT("AircraftAutopilotMpccConfig"), FVector2D(5440.0, 0.0));
+				DataflowAsset, TEXT("AircraftAutopilotMpccConfig"), FVector2D(5072.0, 0.0));
 
 			// 两种替代驱动配置也属于共享资产配置。每个 LOD 都携带完整配置，Profile.DriveMode
 			// 只在运行时选择实际后端，不再由模板拓扑把驱动模式绑定到某个 LOD 索引。
 			const FCreatedTemplateNode ConstraintNode = AddTemplateNode<FAircraftConstraintSimulationConfigNode>(
-				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), FVector2D(5808.0, 0.0));
+				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), FVector2D(5440.0, 0.0));
 			const FCreatedTemplateNode KinematicNode = AddTemplateNode<FAircraftKinematicSimulationConfigNode>(
-				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), FVector2D(6176.0, 0.0));
+				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), FVector2D(5808.0, 0.0));
 
 			/* ---------- Per-LOD profiles ---------- */
 			struct FDefaultLodEntry
 			{
 				FName Name;
-				EAircraftProfileDriveMode DriveMode;
-				EAircraftProfileCollisionMode CollisionMode;
+				EAircraftSimulationDriveMode DriveMode;
+				EAircraftSimulationCollisionMode CollisionMode;
 				float MaxDistanceCm;
 				bool bAllowDebugDraw;
 			};
@@ -338,10 +335,10 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			// 不存在 LOD 索引到驱动类型的固定映射。
 			const FDefaultLodEntry DefaultLods[] =
 			{
-				{ TEXT("LOD0"), EAircraftProfileDriveMode::FlightController, EAircraftProfileCollisionMode::QueryAndPhysics, 6000.0f, false },
-				{ TEXT("LOD1"), EAircraftProfileDriveMode::PhysicsConstraint, EAircraftProfileCollisionMode::QueryAndPhysics, 15000.0f, false },
-				{ TEXT("LOD2"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::QueryOnly, 50000.0f, false },
-				{ TEXT("LOD3"), EAircraftProfileDriveMode::Kinematic, EAircraftProfileCollisionMode::Disabled, 0.0f, false },
+				{ TEXT("LOD0"), EAircraftSimulationDriveMode::FlightController, EAircraftSimulationCollisionMode::QueryAndPhysics, 6000.0f, false },
+				{ TEXT("LOD1"), EAircraftSimulationDriveMode::PhysicsConstraint, EAircraftSimulationCollisionMode::QueryAndPhysics, 15000.0f, false },
+				{ TEXT("LOD2"), EAircraftSimulationDriveMode::Kinematic, EAircraftSimulationCollisionMode::QueryOnly, 50000.0f, false },
+				{ TEXT("LOD3"), EAircraftSimulationDriveMode::Kinematic, EAircraftSimulationCollisionMode::Disabled, 0.0f, false },
 			};
 			TArray<FCreatedTemplateNode> SimulationLODNodes;
 			SimulationLODNodes.Reserve(UE_ARRAY_COUNT(DefaultLods));
@@ -351,7 +348,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				SimulationLODNodes.Add(AddConfiguredTemplateNode<FAircraftSimulationLODProfileNode>(
 					DataflowAsset,
 					FName(*FString::Printf(TEXT("AircraftSimulationLODProfile_%s"), *Entry.Name.ToString())),
-					FVector2D(6608.0, 144.0 * SimulationLODNodes.Num()),
+					FVector2D(6240.0, 144.0 * SimulationLODNodes.Num()),
 					[EntryCopy](FAircraftSimulationLODProfileNode& Node)
 					{
 						Node.Profile.Name = EntryCopy.Name;
@@ -363,7 +360,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			}
 
 			const FCreatedTemplateNode TerminalNode = AddTemplateNode<FAircraftAssetTerminalNode>(
-				DataflowAsset, TEXT("AircraftAssetTerminal"), FVector2D(7136.0, 0.0));
+				DataflowAsset, TEXT("AircraftAssetTerminal"), FVector2D(6768.0, 0.0));
 
 			/* ---------- 连线 ----------
 			 * 唯一共享主干包含 Solver、机架、旋翼、完整飞控、自动驾驶和全部驱动后端配置。
@@ -372,7 +369,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			 * OptionalAerodynamicsNode 默认隔离；把它插入共享主干后，显式空气动力学才会生效。
 			 */
 			TArray<UDataflowEdNode*> MainChain;
-			MainChain.Reserve(19);
+			MainChain.Reserve(18);
 			MainChain.Add(SourceNode.EdNode);
 			MainChain.Add(SolverNode.EdNode);
 			MainChain.Add(FrameNode.EdNode);
@@ -386,7 +383,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			MainChain.Add(AltitudeNode.EdNode);
 			MainChain.Add(AllocatorNode.EdNode);
 			MainChain.Add(InputNode.EdNode);
-			MainChain.Add(FailurePolicyNode.EdNode);
 			MainChain.Add(PathNode.EdNode);
 			MainChain.Add(TimingNode.EdNode);
 			MainChain.Add(MpccNode.EdNode);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 
 #include "AircraftMovementIntent.generated.h"
 
@@ -159,6 +160,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMovementIntentSettings
 {
 	GENERATED_BODY()
 
+	/** 开启后 Limits 是本次请求的完整软上限；关闭时完全使用当前驱动硬能力。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
+	bool bOverrideMotionLimits = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
 	FAircraftRequestedMotionLimits Limits;
 
@@ -306,6 +311,9 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMovementIntent
 	FAircraftRequestedMotionLimits Limits;
 
 	UPROPERTY()
+	bool bHasRequestedMotionLimits = false;
+
+	UPROPERTY()
 	FAircraftHeadingObjective Heading;
 
 	UPROPERTY()
@@ -353,6 +361,15 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMovementIntentResult
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement", meta = (Units = "s"))
 	float ElapsedSeconds = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement")
+	EAircraftPathTrackingState PathTrackingState = EAircraftPathTrackingState::NotTracking;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement", meta = (Units = "cm"))
+	float ContourErrorCm = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Movement", meta = (Units = "cm"))
+	float CorridorViolationCm = 0.0f;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(

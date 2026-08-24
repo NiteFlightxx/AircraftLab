@@ -1,11 +1,11 @@
 //
 // 职责：飞控运行时数据结构 + 仿真代理类（线程间数据中转 / 飞控算法执行体）。
 // FAircraftSimulationProxy 与 ChaosCloth 的 FClothSimulationProxy 一一对应：
-//   * GameThread API 写入双缓冲输入（摇杆 / 四级设定值 / Autopilot 注入 / 旋翼健康操作）；
+//   * GameThread API 写入双缓冲输入（摇杆 / 四级设定值 / Autopilot 注入 / 旋翼效率）；
 //   * PhysicsThread API 在 AsyncPhysicsTickComponent 路径下消费输入，运行串级 PID/分配/电机；
 //   * 通过 FChaosEngineInterface::Add*_AssumesLocked 把结果作用到 Chaos 刚体。
 //
-// 控制律核心（PID/求解器/分配器/旋翼模型/失效管理）位于 Aircraft 求解器模块
+// 控制律核心（PID/求解器/分配器/旋翼模型/执行器效能）位于 Aircraft 求解器模块
 // 内部状态全部使用 Aircraft 模块的纯 C++ 类型（PT 零 UObject）。
 
 #pragma once
@@ -20,7 +20,7 @@
 #include "Aircraft/FlightControlSolver.h"
 #include "Aircraft/ControlAllocator.h"
 #include "Aircraft/RotorModel.h"
-#include "Aircraft/RotorFailureManager.h"
+#include "Aircraft/RotorEffectivenessManager.h"
 #include "AircraftAutopilot/AircraftPredictiveController.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
 
@@ -39,8 +39,7 @@ struct FBodyInstance;
  * 与 FClothSimulationProxy 同位：
  *   - GameThread → PhysicsThread 通过双缓冲（锁 + 原子）交换输入；
  *   - PhysicsThread 内单线程执行：估计状态刷新 → 串级 PID（含参考模型与阻尼前馈）
- *     → 阻尼伪逆控制分配（含失效感知与饱和回传）→ 电机一阶滞后 → Chaos 力/扭矩注入；
- *   - 旋翼失效策略在 PT 评估，触发动作经原子回传 GT 由组件执行。
+ *     → 阻尼伪逆控制分配（含效能感知与饱和回传）→ 电机一阶滞后 → Chaos 力/扭矩注入。
  */
 class AIRCRAFTASSETENGINE_API FAircraftSimulationProxy : public FDataflowPhysicsSolverProxy
 {
@@ -54,8 +53,10 @@ public:
 	FAircraftSimulationProxy& operator=(const FAircraftSimulationProxy&) = delete;
 	FAircraftSimulationProxy& operator=(FAircraftSimulationProxy&&) = delete;
 
-	/** 捕获最新模型和驱动配置；物理线程在下一子步原子消费并完成重建。 */
-	virtual void PostConstructor();
+	/** 新建机体或显式重置：读取资产初始状态并在下一物理子步重建运行时。 */
+	void Initialize_GameThread();
+	/** LOD/驱动切换：只替换后端配置，保留生命周期、意图进度与旋翼效率。 */
+	void ReconfigureForLod_GameThread();
 
 	//~ Begin GameThread API
 	void SetPilotInput_GameThread(const FAircraftPilotInput& InPilotInput);
@@ -75,15 +76,13 @@ public:
 	void TickKinematicPlanner_GameThread(float DeltaTime, double TimeSeconds,
 		const FTransform& BodyTransform, const FVector& VelocityCmPerSec,
 		const FVector& AngularVelocityWorldRadPerSec,
-		float LinearDampingPerSecond, float AngularDampingPerSecond,
 		const FAircraftSimulationLodModel& Model);
 	void SetSimulationState_GameThread(bool bEnabled, bool bSuspended);
+	bool IsControlExecutionAllowed_GameThread() const;
+	void InvalidateTrajectoryReference_GameThread();
 
-	/** 旋翼健康操作（GT 入口；经输入锁排队，PT 在下一子步消费并重建分配缓存）。 */
-	void FailRotor_GameThread(FName RotorName);
-	void RecoverRotor_GameThread(FName RotorName);
-	void SetRotorEffectiveness_GameThread(FName RotorName, float Effectiveness);
-	void RecoverAllRotors_GameThread();
+	/** 设置指定旋翼的执行器效能；0 表示无输出，1 表示完整输出。 */
+	bool SetRotorEffectiveness_GameThread(FName RotorName, float Effectiveness);
 
 	void GetEstimatedState_GameThread(FAircraftEstimatedState& OutState) const;
 	void GetControlOutput_GameThread(FAircraftFlightControlOutput& OutOutput) const;
@@ -94,11 +93,6 @@ public:
 	float GetCollectiveThrustCommand_GameThread() const;
 
 	void GetControlAuthorityInfo_GameThread(FAircraftControlAuthorityInfo& OutInfo) const;
-	void GetFailurePolicyStatus_GameThread(FAircraftFailurePolicyStatus& OutStatus) const;
-	/** GT 消费失效策略触发的动作；无待处理动作时返回 false。 */
-	bool ConsumeFailurePolicyAction_GameThread(EAircraftFailurePolicyAction& OutAction);
-	/** GT 显式解除失效策略锁存。 */
-	void ResetFailurePolicyLatch_GameThread();
 	//~ End GameThread API
 
 	//~ Begin PhysicsThread API
@@ -131,6 +125,7 @@ protected:
 private:
 	/** 按 Chaos 当前真实质心展开旋翼分配描述，并复位全部 PT 控制状态。 */
 	void RebuildRotorDescriptors_PhysicsThread(const FVector& CenterOfMassBodyCm);
+	void QueueConfiguration_GameThread(bool bResetRuntime);
 	void RefreshControlAuthority_PhysicsThread(
 		const FAircraftFlightControllerRuntimeConfig& Config);
 	void ApplyPendingConfiguration_PhysicsThread();
@@ -168,39 +163,27 @@ private:
 	int32 PendingLodIndex = INDEX_NONE;
 	EAircraftSimulationDriveMode PendingDriveMode = EAircraftSimulationDriveMode::FlightController;
 	bool bPendingConfiguration = false;
+	bool bPendingRuntimeReset = false;
 	bool bArmRequest = true;
 	bool bEmergencyStop = false;
-	bool bRecoverAllRotors = false;
+	TMap<FName, float> PendingRotorEffectivenessByName;
+	uint64 PendingRotorEffectivenessRevision = 1;
 	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EAircraftFlightMode::PositionHold) };
 	std::atomic<bool> bPendingControllerReset{ false };
 	std::atomic<bool> bSimulationEnabled{ true };
 	std::atomic<bool> bSimulationSuspended{ false };
 	std::atomic<bool> bControllerEnabled{ true };
 
-	/** 待处理的旋翼健康操作（GT 写、PT 取）。 */
-	struct FPendingRotorHealthOp
-	{
-		FName RotorName = NAME_None;
-		/** 0=Fail 1=Recover 2=SetEffectiveness */
-		uint8 Op = 0;
-		float Effectiveness = 1.0f;
-	};
-	TArray<FPendingRotorHealthOp> PendingRotorHealthOps;
-
 	/* PT → GT 输出缓冲 */
 	mutable FCriticalSection OutputCriticalSection;
 	FAircraftEstimatedState LatestEstimated;
 	FAircraftFlightControlOutput LatestControlOutput;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
-	FAircraftFailurePolicyStatus LatestPolicyStatus;
 	FAircraftTrajectoryReference LatestTrajectoryReference;
 	FAircraftAutopilotDiagnostics LatestAutopilotDiagnostics;
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Armed) };
 	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EAircraftFlightMode::PositionHold) };
 	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
-	std::atomic<uint8> PendingFailureAction{ static_cast<uint8>(EAircraftFailurePolicyAction::WarningOnly) };
-	std::atomic<bool> bFailureActionPending{ false };
-	std::atomic<bool> bPendingPolicyLatchReset{ false };
 
 	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
@@ -215,8 +198,9 @@ private:
 	FAircraftFlightControlSolver ControlSolver;
 	/** 控制分配器（缓存/诊断/饱和回传）。 */
 	FAircraftControlAllocator ControlAllocator;
-	/** 旋翼失效管理器（健康表/权限评估/失效策略）。 */
-	FAircraftRotorFailureManager RotorFailureManager;
+	/** 旋翼执行器效能与剩余控制权限。 */
+	FAircraftRotorEffectivenessManager RotorEffectivenessManager;
+	uint64 AppliedRotorEffectivenessRevision = 0;
 	/** 飞控运行状态（估计/输出/保持目标/模式）。 */
 	FAircraftFlightControlRuntimeState Runtime;
 	/** 物理缓存（刚体真值快照）。 */
@@ -237,6 +221,7 @@ private:
 	bool bExplicitAerodynamicsApplied = false;
 	/* 单旋翼运行时状态（与 SimulationModel.Rotors 一一对应，索引一致） */
 	TArray<FAircraftRotorRuntimeState> RotorStates;
+	bool bResetRotorRuntimeOnNextRebuild = true;
 
 	/* 调试状态仅由 PT 访问。 */
 	float DebugLogAccumulatorSeconds = 0.0f;

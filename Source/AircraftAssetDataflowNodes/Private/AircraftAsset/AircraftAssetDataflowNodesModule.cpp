@@ -16,7 +16,6 @@
 #include "Dataflow/AircraftControllerInputConfigNode.h"
 #include "Dataflow/AircraftConstraintSimulationConfigNode.h"
 #include "Dataflow/AircraftKinematicSimulationConfigNode.h"
-#include "Dataflow/AircraftRotorFailurePolicyConfigNode.h"
 #include "Dataflow/AircraftAerodynamicsConfigNode.h"
 #include "Dataflow/AircraftAutopilotMpccConfigNode.h"
 #include "Dataflow/AircraftAutopilotPathConfigNode.h"
@@ -58,7 +57,6 @@ void FAircraftAssetDataflowNodesModule::StartupModule()
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftControllerInputConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftConstraintSimulationConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftKinematicSimulationConfigNode);
-	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftRotorFailurePolicyConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftAerodynamicsConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftAutopilotPathConfigNode);
 	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FAircraftAutopilotTimingConfigNode);

@@ -93,6 +93,7 @@ FAircraftMovementIntent UAutopilotComponent::BuildIntent(
 	FAircraftMovementIntent Intent;
 	Intent.Type = Type;
 	Intent.Limits = Settings.Limits;
+	Intent.bHasRequestedMotionLimits = Settings.bOverrideMotionLimits;
 	Intent.Heading = Settings.Heading;
 	Intent.TimeoutSeconds = Settings.TimeoutSeconds;
 	if (Completion)
@@ -500,6 +501,9 @@ void UAutopilotComponent::TickComponent(
 	}
 	if (bMatchingDiagnostics)
 	{
+		CurrentResult.PathTrackingState = Diagnostics.PathTrackingState;
+		CurrentResult.ContourErrorCm = Diagnostics.ContourErrorCm;
+		CurrentResult.CorridorViolationCm = Diagnostics.CorridorViolationCm;
 		if (!Diagnostics.bPlanValid)
 		{
 			Finish(EAircraftMovementIntentStatus::Failed,

@@ -123,8 +123,8 @@ struct AIRCRAFTASSETENGINE_API FAircraftMotorModelConfig
  * 单个旋翼的定义（位置、方向、物理参数）
  *
  * 推力与反扭矩模型：
- *     F_thrust = MaxThrustForce · (RPM / MaxRpm)²
- *     τ_drag   = ReactionTorqueCoefficient · F_thrust
+ *     F_thrust = MaxThrustN · (RPM / MaxRpm)²
+ *     τ_drag   = ReactionTorqueCoefficientM · F_thrust
  */
 USTRUCT(BlueprintType)
 struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
@@ -161,11 +161,11 @@ struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
 
 	/** 最大推力（牛顿） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
-	float MaxThrustForce = 9.0f;
+	float MaxThrustN = 9.0f;
 
 	/** 反扭矩系数（τ_drag = 系数 · F_thrust，等价于 kQ/kT 比值） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0"))
-	float ReactionTorqueCoefficient = 0.03f;
+	float ReactionTorqueCoefficientM = 0.03f;
 
 	/** 控制分配可用推力缩放（0~1） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor", meta = (ClampMin = "0.0", ClampMax = "1.0"))

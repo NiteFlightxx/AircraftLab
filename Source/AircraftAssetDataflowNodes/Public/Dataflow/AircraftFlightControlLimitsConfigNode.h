@@ -20,7 +20,12 @@ struct FAircraftFlightControlLimitsConfig
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0")) float MaxDescentRateCmPerSec = 200.0f;
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0")) float MaxHorizontalSpeedCmPerSec = 800.0f;
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0")) float MaxHorizontalAccelerationCmPerSecSq = 600.0f;
+	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0")) float MaxHorizontalDecelerationCmPerSecSq = 600.0f;
+	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0")) float MaxHorizontalJerkCmPerSecCubed = 2000.0f;
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0")) float MaxVerticalAccelerationCmPerSecSq = 500.0f;
+	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0")) float MaxVerticalJerkCmPerSecCubed = 1500.0f;
+	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0")) float MaxYawAccelerationDegPerSecSq = 180.0f;
+	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0")) float MaxYawJerkDegPerSecCubed = 600.0f;
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0", ClampMax = "1.0")) float MinCollectiveCommand = 0.0f;
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0", ClampMax = "1.0")) float HoverCollectiveCommand = 0.5f;
 	UPROPERTY(EditAnywhere, Category = "Limits", meta = (ClampMin = "0.0", ClampMax = "1.0")) float MaxCollectiveCommand = 1.0f;

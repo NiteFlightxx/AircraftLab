@@ -21,6 +21,13 @@ struct FAircraftAutopilotPathConfig
 	UPROPERTY(EditAnywhere, Category = "Corridor", meta = (ClampMin = "0.0", Units = "cm"))
 	float CorridorSafetyMarginCm = 20.0f;
 
+	/** 防止自交或邻近路径把进度投影到已经走过的远处路段。 */
+	UPROPERTY(EditAnywhere, Category = "Projection", meta = (ClampMin = "0.0", Units = "cm"))
+	float ProjectionBacktrackToleranceCm = 25.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Projection", meta = (ClampMin = "1.0", Units = "cm"))
+	float ProjectionSearchDistanceCm = 2000.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0"))
 	float CenterlineWeight = 1.0f;
 

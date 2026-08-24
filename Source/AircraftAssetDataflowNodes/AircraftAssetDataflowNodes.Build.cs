@@ -10,7 +10,9 @@ public class AircraftAssetDataflowNodes : ModuleRules
             new string[]
             {
                 "Core",
-                "AircraftAsset"
+                "AircraftAsset",
+                "Aircraft",
+                "AircraftRuntimeInterface"
             }
         );
 

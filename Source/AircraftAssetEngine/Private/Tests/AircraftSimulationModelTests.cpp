@@ -171,11 +171,11 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftFailurePolicyAndAutopilotConfigTest,
-	"AircraftLab.Dataflow.Runtime.FailurePolicyAndAutopilotConfig",
+	FAircraftAutopilotConfigTest,
+	"AircraftLab.Dataflow.Runtime.AutopilotConfig",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parameters)
+bool FAircraftAutopilotConfigTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
 	using namespace UE::AircraftLab::AircraftAsset;
@@ -184,12 +184,11 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 	FAircraftCollection AircraftCollection(Collection);
 	AircraftCollection.DefineSchema();
 
-	// 无属性键时：失效策略默认关闭，Autopilot 为权威默认值。
+	// 无属性键时，Autopilot 与可选空气动力学使用权威默认语义。
 	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = { Collection };
 	const FAircraftSimulationModel DefaultModel(Collections, TEXT("Defaults"));
 	const FAircraftSimulationLodModel* const DefaultLOD = DefaultModel.GetLodModel(0);
 	TestNotNull(TEXT("A collection compiles one LOD model"), DefaultLOD);
-	TestFalse(TEXT("Failure policy is disabled by default"), DefaultLOD->FlightController.FailurePolicy.bEnabled);
 	TestTrue(TEXT("Autopilot defaults form a valid complete configuration"),
 		DefaultLOD->Autopilot.IsValid());
 	TestFalse(TEXT("Aerodynamics remains absent without its Dataflow node"),
@@ -208,24 +207,27 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 		Properties.SetValue(Index, Value);
 	};
 
-	SetInt(TEXT("FlightController.Failure.Enabled"), 1);
-	SetInt(TEXT("FlightController.Failure.MinimumHealthyRotorCount"), 3);
-	SetFloat(TEXT("FlightController.Failure.MinimumRollAuthority"), 0.4f);
-	SetFloat(TEXT("FlightController.Failure.ConfirmationTimeSeconds"), 0.25f);
-	SetInt(TEXT("FlightController.Failure.Action"), 2); // ReturnToHome
-	SetInt(TEXT("FlightController.Failure.DegradedFlightMode"), 2); // Angle
-
 	SetFloat(TEXT("Autopilot.Path.ResampleSpacingCm"), 75.0f);
+	SetFloat(TEXT("Autopilot.Path.ProjectionBacktrackToleranceCm"), 15.0f);
+	SetFloat(TEXT("Autopilot.Path.ProjectionSearchDistanceCm"), 1500.0f);
 	SetFloat(TEXT("Autopilot.Timing.ThrustReserveFraction"), 0.2f);
 	SetFloat(TEXT("Autopilot.Timing.CurvatureAccelerationReserveFraction"), 0.22f);
 	SetFloat(TEXT("Autopilot.Timing.SpeedConvergenceToleranceCmPerSec"), 0.75f);
 	SetInt(TEXT("Autopilot.Mpcc.HorizonSteps"), 24);
 	SetInt(TEXT("Autopilot.Mpcc.MaxOptimizationIterations"), 4);
 	SetFloat(TEXT("Autopilot.Mpcc.ContourErrorWeight"), 12.0f);
+	SetFloat(TEXT("Autopilot.Mpcc.CorridorViolationWeight"), 900.0f);
 	SetFloat(TEXT("Autopilot.Mpcc.YawResponseTimeSeconds"), 0.08f);
 	SetFloat(TEXT("Autopilot.Mpcc.ContourErrorGovernorScaleCm"), 240.0f);
 	SetFloat(TEXT("FlightController.Kinematic.PositionCorrectionRate"), 6.0f);
 	SetFloat(TEXT("FlightController.Kinematic.RotationInterpSpeed"), 7.0f);
+	SetFloat(TEXT("FlightController.MaxHorizontalDecelerationCmPerSecSq"), 550.0f);
+	SetFloat(TEXT("FlightController.MaxHorizontalJerkCmPerSecCubed"), 1800.0f);
+	SetFloat(TEXT("FlightController.MaxVerticalJerkCmPerSecCubed"), 1400.0f);
+	SetFloat(TEXT("FlightController.MaxYawAccelerationDegPerSecSq"), 160.0f);
+	SetFloat(TEXT("FlightController.MaxYawJerkDegPerSecCubed"), 500.0f);
+	SetInt(TEXT("Aircraft.Initial.StartArmed"), 0);
+	SetInt(TEXT("Aircraft.Initial.FlightMode"), static_cast<int32>(EAircraftFlightMode::VelocityHold));
 	SetInt(TEXT("Aerodynamics.Configured"), 1);
 	SetFloat(TEXT("Aerodynamics.AirDensityKgPerM3"), 1.1f);
 
@@ -233,15 +235,11 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 	const FAircraftSimulationLodModel* const LOD = ConfiguredModel.GetLodModel(0);
 	TestNotNull(TEXT("Configured model compiles"), LOD);
 
-	const FAircraftFailurePolicyConfig& Policy = LOD->FlightController.FailurePolicy;
-	TestTrue(TEXT("Failure policy enabled reaches the runtime model"), Policy.bEnabled);
-	TestEqual(TEXT("Minimum healthy rotor count reaches the runtime model"), Policy.MinimumHealthyRotorCount, 3);
-	TestEqual(TEXT("Minimum roll authority reaches the runtime model"), Policy.MinimumRollAuthority, 0.4f);
-	TestEqual(TEXT("Confirmation time reaches the runtime model"), Policy.ConfirmationTimeSeconds, 0.25f);
-	TestEqual(TEXT("Return-to-home action reaches the runtime model"), Policy.Action, EAircraftFailurePolicyAction::ReturnToHome);
-	TestEqual(TEXT("Degraded flight mode reaches the runtime model"), Policy.DegradedFlightMode, uint8(2));
-
 	TestEqual(TEXT("Path spacing reaches the runtime model"), LOD->Autopilot.Path.ResampleSpacingCm, 75.0f);
+	TestEqual(TEXT("Projection backtrack tolerance reaches the runtime model"),
+		LOD->Autopilot.Path.ProjectionBacktrackToleranceCm, 15.0f);
+	TestEqual(TEXT("Projection search distance reaches the runtime model"),
+		LOD->Autopilot.Path.ProjectionSearchDistanceCm, 1500.0f);
 	TestEqual(TEXT("Thrust reserve reaches the runtime model"), LOD->Autopilot.Timing.ThrustReserveFraction, 0.2f);
 	TestEqual(TEXT("Curvature acceleration reserve reaches the runtime model"),
 		LOD->Autopilot.Timing.CurvatureAccelerationReserveFraction, 0.22f);
@@ -251,12 +249,28 @@ bool FAircraftFailurePolicyAndAutopilotConfigTest::RunTest(const FString& Parame
 	TestEqual(TEXT("MPCC iteration budget reaches the runtime model"),
 		LOD->Autopilot.Mpcc.MaxOptimizationIterations, 4);
 	TestEqual(TEXT("MPCC contour weight reaches the runtime model"), LOD->Autopilot.Mpcc.ContourErrorWeight, 12.0f);
+	TestEqual(TEXT("MPCC corridor weight reaches the runtime model"),
+		LOD->Autopilot.Mpcc.CorridorViolationWeight, 900.0f);
 	TestEqual(TEXT("Yaw response time reaches the runtime model"), LOD->Autopilot.Mpcc.YawResponseTimeSeconds, 0.08f);
 	TestEqual(TEXT("Contour governor scale reaches the runtime model"), LOD->Autopilot.Mpcc.ContourErrorGovernorScaleCm, 240.0f);
 	TestEqual(TEXT("Kinematic position correction reaches the runtime model"),
 		LOD->FlightController.KinematicPositionCorrectionRate, 6.0f);
 	TestEqual(TEXT("Kinematic rotation correction reaches the runtime model"),
 		LOD->FlightController.KinematicRotationInterpSpeed, 7.0f);
+	TestEqual(TEXT("Horizontal deceleration reaches the runtime model"),
+		LOD->FlightController.MaxHorizontalDecelerationCmPerSecSq, 550.0f);
+	TestEqual(TEXT("Horizontal jerk reaches the runtime model"),
+		LOD->FlightController.MaxHorizontalJerkCmPerSecCubed, 1800.0f);
+	TestEqual(TEXT("Vertical jerk reaches the runtime model"),
+		LOD->FlightController.MaxVerticalJerkCmPerSecCubed, 1400.0f);
+	TestEqual(TEXT("Yaw acceleration reaches the runtime model"),
+		LOD->FlightController.MaxYawAccelerationDegPerSecSq, 160.0f);
+	TestEqual(TEXT("Yaw jerk reaches the runtime model"),
+		LOD->FlightController.MaxYawJerkDegPerSecCubed, 500.0f);
+	TestFalse(TEXT("Initial arm state reaches the runtime model"),
+		LOD->FlightController.bStartArmed);
+	TestEqual(TEXT("Initial flight mode reaches the runtime model"),
+		LOD->FlightController.InitialFlightMode, EAircraftFlightMode::VelocityHold);
 	TestTrue(TEXT("Aerodynamics node presence reaches the runtime model"), LOD->bHasAerodynamics);
 	TestEqual(TEXT("Air density reaches the runtime model"), LOD->Aerodynamics.AirDensityKgPerM3, 1.1f);
 	return true;
