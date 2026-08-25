@@ -3,15 +3,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AircraftAsset/AircraftComponent.h"
 #include "GameFramework/Pawn.h"
 #include "AircraftAutopilot/AutopilotComponent.h"
-
+#include "Input/AircraftInputComponent.h"
 #include "AircraftPawn.generated.h"
 
-class UAircraftComponent;
-class UAircraftInputComponent;
 class UAircraftSimulationLODComponent;
-
 /**
  * 飞行器 Pawn —— 可操控的无人机实体。
  *
@@ -39,29 +37,29 @@ public:
 
 	/** 机身（UAircraftComponent，骨骼网格 + 飞控一体）。 */
 	UFUNCTION(BlueprintPure, Category = "Aircraft")
-	UAircraftComponent* GetAircraftComponent() const { return Aircraft; }
+	UAircraftComponent* GetAircraftComponent() const { return Aircraft.Get(); }
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft")
-	UAircraftInputComponent* GetAircraftInputComponent() const { return AircraftInput; }
-
+	UAircraftInputComponent* GetAircraftInputComponent() const { return AircraftInput.Get(); }
+	
 	UFUNCTION(BlueprintPure, Category = "Aircraft")
-	UAutopilotComponent* GetAutopilotComponent() const { return AutopilotComponent; }
-
+	UAutopilotComponent* GetAutopilotComponent() const { return AutopilotComponent.Get(); }
+	
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
-	UAircraftSimulationLODComponent* GetSimulationLODComponent() const { return SimulationLOD; }
+	UAircraftSimulationLODComponent* GetSimulationLODComponent() const { return SimulationLOD.Get(); }
 
 
 
 private:
-	UPROPERTY(EditAnywhere)
-	UAircraftComponent* Aircraft = nullptr;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft",Instanced, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAircraftComponent> Aircraft;
 	
-	UPROPERTY(EditAnywhere)
-	UAircraftInputComponent* AircraftInput = nullptr;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft",Instanced, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAircraftInputComponent>AircraftInput;
 	
-	UPROPERTY(EditAnywhere)
-	UAutopilotComponent* AutopilotComponent = nullptr;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft",Instanced, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAutopilotComponent> AutopilotComponent;
 	
-	UPROPERTY(EditAnywhere)
-	UAircraftSimulationLODComponent* SimulationLOD = nullptr;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft",Instanced, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAircraftSimulationLODComponent>SimulationLOD;
 };
