@@ -103,24 +103,6 @@ namespace
 		return Cast<UPhysicsAsset>(GetFirstPath(AircraftCollection.GetPhysicsAssetSoftObjectPathName()).TryLoad());
 	}
 
-	FTransform GetReferencePoseComponentTransform(const FReferenceSkeleton& ReferenceSkeleton, int32 BoneIndex)
-	{
-		const TArray<FTransform>& ReferencePose = ReferenceSkeleton.GetRefBonePose();
-		if (!ReferencePose.IsValidIndex(BoneIndex))
-		{
-			return FTransform::Identity;
-		}
-
-		FTransform ComponentTransform = ReferencePose[BoneIndex];
-		for (int32 ParentIndex = ReferenceSkeleton.GetParentIndex(BoneIndex);
-			ParentIndex != INDEX_NONE;
-			ParentIndex = ReferenceSkeleton.GetParentIndex(ParentIndex))
-		{
-			ComponentTransform *= ReferencePose[ParentIndex];
-		}
-		return ComponentTransform;
-	}
-
 	void ResolveRotorSocketTransforms(FAircraftSimulationLodModel& Model, const USkeletalMesh* SkeletalMesh)
 	{
 		if (!SkeletalMesh)
@@ -128,11 +110,14 @@ namespace
 			return;
 		}
 
+		// GetComposedRefPoseMatrix 统一处理骨骼名与 socket 名：先按骨骼查，
+		// 查不到则按 socket 查（socket 偏移 × 所挂骨骼的组件空间变换）。
+		// 根骨骼的组件空间变换用于把结果转换到机体（根骨骼）坐标系。
 		const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
-		const int32 RootBoneIndex = Model.RootBone.IsNone()
-			? 0
-			: ReferenceSkeleton.FindBoneIndex(Model.RootBone);
-		const FTransform RootComponentTransform = GetReferencePoseComponentTransform(ReferenceSkeleton, RootBoneIndex);
+		const FName RootBoneName = Model.RootBone.IsNone()
+			? (ReferenceSkeleton.GetNum() > 0 ? ReferenceSkeleton.GetBoneName(0) : NAME_None)
+			: Model.RootBone;
+		const FTransform RootComponentTransform(SkeletalMesh->GetComposedRefPoseMatrix(RootBoneName));
 
 		for (FAircraftRotorDefinition& Rotor : Model.Rotors)
 		{
@@ -141,22 +126,25 @@ namespace
 				continue;
 			}
 
-			const USkeletalMeshSocket* const Socket = SkeletalMesh->FindSocket(Rotor.SocketName);
-			if (!Socket)
+			// 存在性检查：名字既不是骨骼也不是 socket 时跳过（GetComposedRefPoseMatrix
+			// 对不存在的名字返回 Identity，无法与"在原点的骨骼"区分）。
+			const bool bIsBone = ReferenceSkeleton.FindBoneIndex(Rotor.SocketName) != INDEX_NONE;
+			const bool bIsSocket = SkeletalMesh->FindSocket(Rotor.SocketName) != nullptr;
+			if (!bIsBone && !bIsSocket)
 			{
 				continue;
 			}
 
-			const int32 SocketBoneIndex = ReferenceSkeleton.FindBoneIndex(Socket->BoneName);
-			if (SocketBoneIndex == INDEX_NONE)
+			const FTransform SocketBodyTransform(
+				FMatrix(SkeletalMesh->GetComposedRefPoseMatrix(Rotor.SocketName))
+				* RootComponentTransform.ToMatrixWithScale().Inverse());
+			Rotor.PositionLocalCm = SocketBodyTransform.GetTranslation();
+			// 推力轴默认 +Z；若骨骼/socket 带旋转，用其朝向覆盖，保持安装姿态一致。
+			const FVector Axis = SocketBodyTransform.GetRotation().RotateVector(FVector::UpVector);
+			if (!Axis.IsNearlyZero())
 			{
-				continue;
+				Rotor.ThrustAxisLocal = Axis.GetSafeNormal();
 			}
-
-			const FTransform SocketComponentTransform = Socket->GetSocketLocalTransform()
-				* GetReferencePoseComponentTransform(ReferenceSkeleton, SocketBoneIndex);
-			const FTransform SocketBodyTransform = SocketComponentTransform.GetRelativeTransform(RootComponentTransform);
-			Rotor.PositionLocalCm = SocketBodyTransform.GetLocation();
 		}
 	}
 }

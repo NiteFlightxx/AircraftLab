@@ -38,7 +38,7 @@ struct FAircraftAirscrewProfileData
 	UPROPERTY(EditAnywhere, Category = "Identity") FName Name = TEXT("Airscrew");
 	UPROPERTY(EditAnywhere, Category = "Identity") bool bEnabled = true;
 	UPROPERTY(EditAnywhere, Category = "Installation") EAircraftAirscrewSpinDirection SpinDirection = EAircraftAirscrewSpinDirection::CounterClockwise;
-	UPROPERTY(EditAnywhere, Category = "Installation") FName SocketName = NAME_None;
+	UPROPERTY(EditAnywhere, Category = "Installation", meta = (DisplayName = "Socket / Bone Name")) FName SocketName = NAME_None;
 	UPROPERTY(EditAnywhere, Category = "Installation") bool bUseSocketTransform = true;
 	UPROPERTY(EditAnywhere, Category = "Installation") FVector3f PositionLocalCm = FVector3f::ZeroVector;
 	UPROPERTY(EditAnywhere, Category = "Profile") FVector3f ThrustAxisLocal = FVector3f(0.0f, 0.0f, 1.0f);

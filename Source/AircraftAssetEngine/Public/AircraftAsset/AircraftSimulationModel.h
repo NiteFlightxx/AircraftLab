@@ -139,11 +139,11 @@ struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	bool bEnabled = true;
 
-	/** 对应的骨骼插槽名称（用于获取位置和旋转） */
+	/** 骨骼名或插槽名（先按骨骼查，查不到按 socket 查，socket 偏移叠加到所挂骨骼） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FName SocketName = NAME_None;
 
-	/** 是否使用插槽变换（否则使用 PositionLocalCm） */
+	/** 是否使用骨骼/插槽变换解析安装位置与朝向（否则使用 PositionLocalCm/ThrustAxisLocal） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	bool bUseSocketTransform = true;
 
