@@ -16,9 +16,10 @@
 #include "UObject/Object.h"
 #include "DataflowEditorTools/DataflowEditorToolBuilder.h"
 
+#include "AircraftAsset/AircraftAssetBase.h"
+
 #include "AircraftMotorPlacementTool.generated.h"
 
-class UAircraftAssetBase;
 class UAircraftComponent;
 
 /**

@@ -14,9 +14,9 @@
 #include "UObject/Object.h"
 #include "DataflowEditorTools/DataflowEditorToolBuilder.h"
 
-#include "AircraftThrustVectorOrientationTool.generated.h"
+#include "AircraftAsset/AircraftAssetBase.h"
 
-class UAircraftAssetBase;
+#include "AircraftThrustVectorOrientationTool.generated.h"
 
 UCLASS()
 class AIRCRAFTASSETEDITORTOOLS_API UAircraftThrustVectorOrientationToolProperties : public UInteractiveToolPropertySet

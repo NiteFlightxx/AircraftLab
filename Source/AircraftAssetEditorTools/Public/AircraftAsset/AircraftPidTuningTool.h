@@ -13,9 +13,9 @@
 #include "UObject/Object.h"
 #include "DataflowEditorTools/DataflowEditorToolBuilder.h"
 
-#include "AircraftPidTuningTool.generated.h"
+#include "AircraftAsset/AircraftAssetBase.h"
 
-class UAircraftAssetBase;
+#include "AircraftPidTuningTool.generated.h"
 
 /**
  * PID 调参属性面板：四级 PID + 高度通道 + 限幅。

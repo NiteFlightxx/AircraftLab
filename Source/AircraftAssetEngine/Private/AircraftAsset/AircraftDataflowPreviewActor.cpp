@@ -2,7 +2,7 @@
 
 #include "Animation/AnimationAsset.h"
 #include "Engine/SkeletalMesh.h"
-
+#include "AircraftAsset/AircraftAsset.h"   
 #include "AircraftAsset/AircraftComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftDataflowPreviewActor)

@@ -14,14 +14,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AircraftAsset.h"
+#include "AircraftComponent.h"
 #include "GameFramework/Actor.h"
 
 #include "AircraftDataflowPreviewActor.generated.h"
 
-class UAircraftAsset;
-class UAircraftComponent;
-class UAnimationAsset;
-class USkeletalMesh;
 
 /**
  * Dataflow 编辑器 Simulation 视口的多旋翼预览 Actor。
