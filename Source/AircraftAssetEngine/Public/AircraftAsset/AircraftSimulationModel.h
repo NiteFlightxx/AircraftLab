@@ -143,7 +143,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FName SocketName = NAME_None;
 
-	/** 是否使用骨骼/插槽变换解析安装位置与朝向（否则使用 PositionLocalCm/ThrustAxisLocal） */
+	/** 是否使用骨骼/插槽变换解析安装位置（否则使用 PositionLocalCm）；推力轴始终由 ThrustAxisLocal 决定 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	bool bUseSocketTransform = true;
 

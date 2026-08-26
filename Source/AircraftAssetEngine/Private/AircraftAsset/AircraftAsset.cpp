@@ -139,12 +139,6 @@ namespace
 				FMatrix(SkeletalMesh->GetComposedRefPoseMatrix(Rotor.SocketName))
 				* RootComponentTransform.ToMatrixWithScale().Inverse());
 			Rotor.PositionLocalCm = SocketBodyTransform.GetTranslation();
-			// 推力轴默认 +Z；若骨骼/socket 带旋转，用其朝向覆盖，保持安装姿态一致。
-			const FVector Axis = SocketBodyTransform.GetRotation().RotateVector(FVector::UpVector);
-			if (!Axis.IsNearlyZero())
-			{
-				Rotor.ThrustAxisLocal = Axis.GetSafeNormal();
-			}
 		}
 	}
 }
