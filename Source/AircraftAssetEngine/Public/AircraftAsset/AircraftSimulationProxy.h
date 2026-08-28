@@ -225,8 +225,6 @@ private:
 
 	/* 调试状态仅由 PT 访问。 */
 	float DebugLogAccumulatorSeconds = 0.0f;
-	FRotator DebugPreviousAttitudeDegrees = FRotator::ZeroRotator;
-	bool bHasPreviousDebugSample = false;
 	bool bDebugConfigurationPending = true;
 	float DriveGateDebugLogAccumulatorSeconds = 0.0f;
 };

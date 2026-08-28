@@ -8,7 +8,7 @@
 #include "InputMappingContext.h"
 
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
-#include "AircraftAsset/AircraftDebug.h"
+#include "AircraftDiagnostics/AircraftDebug.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftInputComponent)
 

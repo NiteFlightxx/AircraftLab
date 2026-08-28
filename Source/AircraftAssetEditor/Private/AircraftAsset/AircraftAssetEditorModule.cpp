@@ -3,14 +3,12 @@
 #include "ThumbnailRendering/ThumbnailManager.h"
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/AircraftAssetBase.h"
-#include "AircraftAsset/AircraftDataflowConstructionVisualization.h"
 #include "AircraftAsset/AircraftDataflowSimulationVisualization.h"
 #include "AircraftAsset/AircraftAssetThumbnailRenderer.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftDataflowAssetEditorUtils.h"
 #include "AircraftAsset/AircraftDataflowTemplateProvider.h"
 #include "Dataflow/AssetDefinition_DataflowAsset.h"
-#include "Dataflow/DataflowConstructionVisualization.h"
 #include "Dataflow/DataflowSimulationVisualization.h"
 #include "Features/IModularFeatures.h"
 
@@ -84,11 +82,8 @@ void FAircraftAssetEditorModule::StartupModule()
 		UE::AircraftLab::AircraftAsset::IAircraftDataflowTemplateProvider::GetFeatureName(),
 		TemplateProvider.Get());
 
-	//   - Construction 视口：旋翼几何由 AircraftAssetDataflowNodes 的 RenderingFactory 回调负责，
-	//     此挂载点保留扩展位置；
+	//   - Construction 视口：旋翼几何由 AircraftAssetDataflowNodes 的 RenderingFactory 回调负责；
 	//   - Simulation 视口：调试绘制开关菜单 + 视口左上角状态文本。
-	UE::Dataflow::FDataflowConstructionVisualizationRegistry::GetInstance()
-		.RegisterVisualization(MakeUnique<FAircraftDataflowConstructionVisualization>());
 	UE::Dataflow::FDataflowSimulationVisualizationRegistry::GetInstance()
 		.RegisterVisualization(MakeUnique<FAircraftDataflowSimulationVisualization>());
 
@@ -100,8 +95,6 @@ void FAircraftAssetEditorModule::ShutdownModule()
 {
 	UE::Dataflow::FDataflowSimulationVisualizationRegistry::GetInstance()
 		.DeregisterVisualization(FAircraftDataflowSimulationVisualization::Name);
-	UE::Dataflow::FDataflowConstructionVisualizationRegistry::GetInstance()
-		.DeregisterVisualization(FAircraftDataflowConstructionVisualization::Name);
 
 	if (TemplateProvider.IsValid())
 	{

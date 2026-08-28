@@ -26,7 +26,6 @@ struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODRuntimeSettingsLite
 	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
 	float MaxDistanceCm = 6000.0f;
-	bool bAllowDebugDraw = false;
 };
 
 /** Gameplay 网络策略。数组下标与资产 LOD 下标一一对应，但不参与资产编译。 */

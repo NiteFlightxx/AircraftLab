@@ -1,136 +1,61 @@
-#include "AircraftAsset/AircraftDebug.h"
+#include "AircraftDiagnostics/AircraftDebug.h"
 
 #include "Aircraft/ConstraintDriveUtils.h"
 #include "Aircraft/FlightControllerRuntimeConfig.h"
-#include "AircraftAsset/AircraftComponent.h"
-#include "AircraftAsset/AircraftPilotInputMapping.h"
+#include "Components/PrimitiveComponent.h"
 #include "HAL/IConsoleManager.h"
 #include "PhysicsEngine/ConstraintInstance.h"
-#include "UObject/UObjectIterator.h"
 
 DEFINE_LOG_CATEGORY(LogAircraft);
 
-namespace UE::AircraftLab::Debug::Private
+namespace UE::AircraftLab::Diagnostics::Private
 {
-	static TAutoConsoleVariable<int32> CVarAllLog(
-		TEXT("p.Aircraft.Debug.Log.All"), 0,
-		TEXT("Enable all rate-limited Aircraft input, drive, flight, rotor, and constraint diagnostics."));
-
-	static TAutoConsoleVariable<int32> CVarInputLog(
-		TEXT("p.Aircraft.Debug.Log.Input"), 0,
-		TEXT("Enable rate-limited Aircraft Enhanced Input and component input-bridge diagnostics."));
-
-	static TAutoConsoleVariable<int32> CVarDriveLog(
-		TEXT("p.Aircraft.Debug.Log.Drive"), 0,
-		TEXT("Enable rate-limited Aircraft LOD, proxy gate, motion-target, and drive-backend diagnostics."));
-
-	static TAutoConsoleVariable<int32> CVarFlightLog(
-		TEXT("p.Aircraft.Debug.Log.Flight"), 0,
-		TEXT("Enable rate-limited Aircraft flight-controller diagnostics."));
-
-	static TAutoConsoleVariable<int32> CVarRotorLog(
-		TEXT("p.Aircraft.Debug.Log.Rotors"), 0,
-		TEXT("Include per-rotor values in Aircraft flight-controller diagnostics."));
-
-	static TAutoConsoleVariable<int32> CVarSignCheck(
-		TEXT("p.Aircraft.Debug.Check.Signs"), 1,
-		TEXT("Enable Aircraft roll and pitch sign-consistency warnings."));
-
-	static TAutoConsoleVariable<int32> CVarConstraintLog(
-		TEXT("p.Aircraft.Debug.Log.Constraint"), 0,
-		TEXT("Enable rate-limited PhysicsConstraint input, target, drive, and body diagnostics."));
+	static TAutoConsoleVariable<int32> CVarLog(
+		TEXT("p.Aircraft.Debug.Log"), 0,
+		TEXT("Aircraft runtime logging: 0=Off, 1=Input/Drive, 2=Flight/Constraint, 3=All (including per-rotor values)."));
 
 	static TAutoConsoleVariable<float> CVarLogInterval(
-		TEXT("p.Aircraft.Debug.Log.Interval"), 0.2f,
+		TEXT("p.Aircraft.Debug.Interval"), 0.2f,
 		TEXT("Aircraft diagnostic interval in seconds. Zero logs every tick."));
+
+	static int32 GetLogMode()
+	{
+		return FMath::Clamp(CVarLog.GetValueOnAnyThread(), 0, 3);
+	}
 
 	static constexpr float MinimumCommandSpeedCmPerSec = 1.0f;
 	static constexpr float MinimumResponseSpeedCmPerSec = 1.0f;
 	static constexpr float UnresponsiveWarningSeconds = 0.5f;
-
-#if !UE_BUILD_SHIPPING
-	static FAutoConsoleCommandWithWorldAndArgs CommandReset(
-		TEXT("p.Aircraft.Reset"),
-		TEXT("Reset Aircraft simulations in the current world. Usage: p.Aircraft.Reset [Soft|Hard] [AircraftNameFilter]"),
-		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](
-			const TArray<FString>& Args,
-			UWorld* World)
-		{
-			if (!World)
-			{
-				return;
-			}
-			const bool bHardReset = Args.Num() > 0 && Args[0].Equals(TEXT("Hard"), ESearchCase::IgnoreCase);
-			const FString Filter = Args.Num() > 1 ? Args[1] : FString();
-			int32 ResetCount = 0;
-			for (UAircraftComponent* Component : TObjectRange<UAircraftComponent>())
-			{
-				if (!IsValid(Component) || Component->GetWorld() != World)
-				{
-					continue;
-				}
-				if (!Filter.IsEmpty()
-					&& !GetNameSafe(Component->GetOwner()).Contains(Filter)
-					&& !Component->GetName().Contains(Filter))
-				{
-					continue;
-				}
-				if (bHardReset)
-				{
-					Component->HardResetSimulation();
-				}
-				else
-				{
-					Component->SoftResetSimulation();
-				}
-				++ResetCount;
-			}
-			UE_LOG(LogAircraft, Display, TEXT("[Aircraft.Reset] Mode=%s Filter=%s Count=%d"),
-				bHardReset ? TEXT("Hard") : TEXT("Soft"),
-				Filter.IsEmpty() ? TEXT("<all>") : *Filter, ResetCount);
-		}),
-		ECVF_Cheat);
-#endif
 }
 
 bool FAircraftDebug::IsInputLogEnabled()
 {
-	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
-		|| UE::AircraftLab::Debug::Private::CVarInputLog.GetValueOnAnyThread() != 0;
+	return (UE::AircraftLab::Diagnostics::Private::GetLogMode() & 1) != 0;
 }
 
 bool FAircraftDebug::IsDriveLogEnabled()
 {
-	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
-		|| UE::AircraftLab::Debug::Private::CVarDriveLog.GetValueOnAnyThread() != 0;
+	return (UE::AircraftLab::Diagnostics::Private::GetLogMode() & 1) != 0;
 }
 
 bool FAircraftDebug::IsFlightLogEnabled()
 {
-	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
-		|| UE::AircraftLab::Debug::Private::CVarFlightLog.GetValueOnAnyThread() != 0;
+	return (UE::AircraftLab::Diagnostics::Private::GetLogMode() & 2) != 0;
 }
 
 bool FAircraftDebug::IsRotorLogEnabled()
 {
-	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
-		|| UE::AircraftLab::Debug::Private::CVarRotorLog.GetValueOnAnyThread() != 0;
-}
-
-bool FAircraftDebug::IsSignCheckEnabled()
-{
-	return UE::AircraftLab::Debug::Private::CVarSignCheck.GetValueOnAnyThread() != 0;
+	return UE::AircraftLab::Diagnostics::Private::GetLogMode() == 3;
 }
 
 bool FAircraftDebug::IsConstraintLogEnabled()
 {
-	return UE::AircraftLab::Debug::Private::CVarAllLog.GetValueOnAnyThread() != 0
-		|| UE::AircraftLab::Debug::Private::CVarConstraintLog.GetValueOnAnyThread() != 0;
+	return (UE::AircraftLab::Diagnostics::Private::GetLogMode() & 2) != 0;
 }
 
 float FAircraftDebug::GetLogIntervalSeconds()
 {
-	return FMath::Max(UE::AircraftLab::Debug::Private::CVarLogInterval.GetValueOnAnyThread(), 0.0f);
+	return FMath::Max(UE::AircraftLab::Diagnostics::Private::CVarLogInterval.GetValueOnAnyThread(), 0.0f);
 }
 
 const TCHAR* FAircraftDebug::GetDriveModeLabel(const EAircraftSimulationDriveMode Mode)
@@ -160,18 +85,9 @@ const TCHAR* FAircraftDebug::GetFlightModeLabel(const EAircraftFlightMode Mode)
 	}
 }
 
-int32 FAircraftDebug::GetSignBucket(const float Value, const float Deadband)
-{
-	return Value > Deadband ? 1 : Value < -Deadband ? -1 : 0;
-}
-
-const TCHAR* FAircraftDebug::GetSignLabel(const int32 Sign)
-{
-	return Sign > 0 ? TEXT("+") : Sign < 0 ? TEXT("-") : TEXT("0");
-}
-
 void FAircraftDebug::LogConstraintCreated(
-	const UAircraftComponent& Component,
+	const UPrimitiveComponent& Component,
+	const int32 SimulationLOD,
 	FConstraintInstance& Constraint,
 	const FName RootBone,
 	const FAircraftFlightControllerRuntimeConfig& Config)
@@ -199,7 +115,7 @@ void FAircraftDebug::LogConstraintCreated(
 		Config.ConstraintAngularExtraDamping);
 	UE_LOG(LogAircraft, Log,
 		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Valid=%d Broken=%d Simulating=%d BodyFrameLocal=(%.1f,%.1f,%.1f) WorldFrame=(%.1f,%.1f,%.1f) InitialWorldTarget=(%.1f,%.1f,%.1f) MotionLimits(H/Up/Down/Yaw)=(%.1f,%.1f,%.1f,%.1f) Deadbands(H/V/Y)=(%.3f,%.3f,%.3f) BrakeToHold(H/V)=(%.1f,%.1f) LinearDrive(P/V)=(%d%d%d/%d%d%d) LinearControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) LinearSpring(K/D/LimitN)=(%.3f,%.3f,%.3f) Body(Mass/LinearDamping)=(%.3f,%.3f) FeedForward(Gravity/Dynamics)=(%.3f,%.3f) AngularControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) AngularSpring(K/D/LimitNm)=(%.3f,%.3f,%.3f) AccelerationMode=%d"),
-		*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(), *RootBone.ToString(),
+		*GetNameSafe(Component.GetOwner()), SimulationLOD, *RootBone.ToString(),
 		Constraint.IsValidConstraintInstance() ? 1 : 0, bBroken ? 1 : 0,
 		Component.IsSimulatingPhysics() ? 1 : 0,
 		BodyFrame.GetLocation().X, BodyFrame.GetLocation().Y, BodyFrame.GetLocation().Z,
@@ -230,18 +146,20 @@ void FAircraftDebug::LogConstraintCreated(
 }
 
 void FAircraftDebug::LogConstraintCreationFailure(
-	const UAircraftComponent& Component,
+	const UPrimitiveComponent& Component,
+	const int32 SimulationLOD,
 	const FName RootBone,
 	const TCHAR* const Reason)
 {
 	UE_LOG(LogAircraft, Error,
 		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Failed=%s Simulating=%d PhysicsState=%d"),
-		*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(), *RootBone.ToString(), Reason,
+		*GetNameSafe(Component.GetOwner()), SimulationLOD, *RootBone.ToString(), Reason,
 		Component.IsSimulatingPhysics() ? 1 : 0, Component.HasValidPhysicsState() ? 1 : 0);
 }
 
 void FAircraftDebug::TickConstraint(
-	const UAircraftComponent& Component,
+	const UPrimitiveComponent& Component,
+	const int32 SimulationLOD,
 	FConstraintInstance& Constraint,
 	const FName RootBone,
 	const FAircraftTrajectoryReference& Target,
@@ -270,17 +188,17 @@ void FAircraftDebug::TickConstraint(
 	FVector ConstraintTorque = FVector::ZeroVector;
 	Constraint.GetConstraintForce(ConstraintForce, ConstraintTorque);
 	const bool bCommandedMotion = Target.VelocityCmPerSec.SizeSquared()
-		> FMath::Square(UE::AircraftLab::Debug::Private::MinimumCommandSpeedCmPerSec);
+		> FMath::Square(UE::AircraftLab::Diagnostics::Private::MinimumCommandSpeedCmPerSec);
 	const bool bBodyResponding = BodyVelocity.SizeSquared()
-		> FMath::Square(UE::AircraftLab::Debug::Private::MinimumResponseSpeedCmPerSec);
+		> FMath::Square(UE::AircraftLab::Diagnostics::Private::MinimumResponseSpeedCmPerSec);
 	if (bCommandedMotion && !bBodyResponding)
 	{
 		InOutUnresponsiveSeconds += DeltaSeconds;
-		if (InOutUnresponsiveSeconds >= UE::AircraftLab::Debug::Private::UnresponsiveWarningSeconds)
+		if (InOutUnresponsiveSeconds >= UE::AircraftLab::Diagnostics::Private::UnresponsiveWarningSeconds)
 		{
 			UE_LOG(LogAircraft, Warning,
 				TEXT("[Aircraft.Constraint.Unresponsive] Owner=%s LOD=%d CommandVel=(%+.1f,%+.1f,%+.1f) TargetError=(%+.1f,%+.1f,%+.1f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) ConstraintValid=%d Broken=%d Simulating=%d"),
-				*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(),
+				*GetNameSafe(Component.GetOwner()), SimulationLOD,
 				Target.VelocityCmPerSec.X, Target.VelocityCmPerSec.Y,
 				Target.VelocityCmPerSec.Z,
 				PositionError.X, PositionError.Y, PositionError.Z,
@@ -308,7 +226,7 @@ void FAircraftDebug::TickConstraint(
 			InOutLogAccumulatorSeconds = 0.0f;
 			UE_LOG(LogAircraft, Log,
 				TEXT("[Aircraft.Constraint.Tick] Owner=%s LOD=%d BodyPos=(%.1f,%.1f,%.1f) BodyCOM=(%.1f,%.1f,%.1f) ConstraintArm=(%+.2f,%+.2f,%+.2f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) WorldTargetPos=(%.1f,%.1f,%.1f) WorldTargetVel=(%+.1f,%+.1f,%+.1f) Error=(%+.1f,%+.1f,%+.1f) WorldTargetCOM=(%+.1f,%+.1f,%+.1f) WorldTargetCOMVel=(%+.1f,%+.1f,%+.1f) PositionFF=(%+.2f,%+.2f,%+.2f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) WorldTargetQuat=(%+.3f,%+.3f,%+.3f,%+.3f) WorldTargetAngVel=(%+.3f,%+.3f,%+.3f) Drive(P/V)=(%d%d%d/%d%d%d)"),
-				*GetNameSafe(Component.GetOwner()), Component.GetCurrentSimulationLOD(),
+				*GetNameSafe(Component.GetOwner()), SimulationLOD,
 				BodyPosition.X, BodyPosition.Y, BodyPosition.Z,
 				BodyCenterOfMass.X, BodyCenterOfMass.Y, BodyCenterOfMass.Z,
 				ConstraintArmFromCenterOfMass.X, ConstraintArmFromCenterOfMass.Y,

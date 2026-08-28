@@ -17,7 +17,7 @@
 #include "Aircraft/AircraftPhysicsUnits.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftComponent.h"
-#include "AircraftAsset/AircraftDebug.h"
+#include "AircraftDiagnostics/AircraftDebug.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "Chaos/ChaosEngineInterface.h"
@@ -184,7 +184,6 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	bHasRotorDescriptorCenterOfMass = false;
 	DebugLogAccumulatorSeconds = 0.0f;
 	DriveGateDebugLogAccumulatorSeconds = 0.0f;
-	bHasPreviousDebugSample = false;
 	bDebugConfigurationPending = true;
 
 	if (FAircraftDebug::IsFlightLogEnabled())
@@ -459,48 +458,6 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 		UE_LOG(LogAircraft, Log, TEXT("[AircraftDF.Rotors] %s"), *RotorSummary);
 	}
 
-	if (FAircraftDebug::IsSignCheckEnabled())
-	{
-		const auto LogAxisSignMismatch = [this, &State, &DesiredAttitude, &DesiredBodyRatesDegPerSec, &AxisCommands](
-			const TCHAR* AxisName, const float Angle, const float PreviousAngle,
-			const float DesiredAngle, const float Rate, const float DesiredRate, const float AxisCommand)
-		{
-			const int32 AngleDeltaSign = FAircraftDebug::GetSignBucket(
-				FRotator::NormalizeAxis(Angle - PreviousAngle), 0.05f);
-			const int32 RateSign = FAircraftDebug::GetSignBucket(Rate, 1.0f);
-			const int32 ErrorSign = FAircraftDebug::GetSignBucket(
-				FRotator::NormalizeAxis(DesiredAngle - Angle), 0.1f);
-			const int32 DesiredRateSign = FAircraftDebug::GetSignBucket(DesiredRate, 0.5f);
-			const int32 CommandSign = FAircraftDebug::GetSignBucket(AxisCommand, 0.005f);
-			const int32 RateErrorSign = FAircraftDebug::GetSignBucket(DesiredRate - Rate, 0.5f);
-			const bool bRateMatchesAngle = !bHasPreviousDebugSample
-				|| AngleDeltaSign == 0 || RateSign == 0 || AngleDeltaSign == RateSign;
-			const bool bOuterLoopMatches = ErrorSign == 0 || DesiredRateSign == 0
-				|| ErrorSign == DesiredRateSign;
-			const bool bRateLoopMatches = RateErrorSign == 0 || CommandSign == 0
-				|| RateErrorSign == CommandSign;
-			if (!bRateMatchesAngle || !bOuterLoopMatches || !bRateLoopMatches)
-			{
-				UE_LOG(LogAircraft, Warning,
-					TEXT("[AircraftDF.Sign] Axis=%s AngleDelta/Rate=%s/%s Error/DesiredRate=%s/%s RateError/Command=%s/%s Att=%+.2f Desired=%+.2f Rate=%+.2f DesiredRate=%+.2f Cmd=%+.4f"),
-					AxisName,
-					FAircraftDebug::GetSignLabel(AngleDeltaSign), FAircraftDebug::GetSignLabel(RateSign),
-					FAircraftDebug::GetSignLabel(ErrorSign), FAircraftDebug::GetSignLabel(DesiredRateSign),
-					FAircraftDebug::GetSignLabel(RateErrorSign),
-					FAircraftDebug::GetSignLabel(CommandSign),
-					Angle, DesiredAngle, Rate, DesiredRate, AxisCommand);
-			}
-		};
-		LogAxisSignMismatch(TEXT("Roll"), State.AttitudeDegrees.Roll, DebugPreviousAttitudeDegrees.Roll,
-			DesiredAttitude.Roll, State.AngularVelocityBodyDegreesPerSec.X,
-			DesiredBodyRatesDegPerSec.X, AxisCommands.X);
-		LogAxisSignMismatch(TEXT("Pitch"), State.AttitudeDegrees.Pitch, DebugPreviousAttitudeDegrees.Pitch,
-			DesiredAttitude.Pitch, State.AngularVelocityBodyDegreesPerSec.Y,
-			DesiredBodyRatesDegPerSec.Y, AxisCommands.Y);
-	}
-
-	DebugPreviousAttitudeDegrees = State.AttitudeDegrees;
-	bHasPreviousDebugSample = true;
 }
 
 void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread(

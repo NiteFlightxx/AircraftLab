@@ -41,6 +41,8 @@ public class AircraftAssetEditor : ModuleRules
                 "AircraftAssetDataflowNodes",
                 "AircraftAssetEditorTools",
                 "AircraftAssetTools",
+                "AircraftAutopilot",
+                "AircraftDiagnostics",
                 "AircraftRuntimeInterface"
             }
         );

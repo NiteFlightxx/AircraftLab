@@ -12,6 +12,7 @@ public class AircraftRuntimeCommon : ModuleRules
                 "Core",
                 "CoreUObject",
                 "Engine",
+				"AircraftDiagnostics",
                 "AircraftRuntimeInterface",
 				"AircraftAutopilot",
                 "AircraftAssetEngine"

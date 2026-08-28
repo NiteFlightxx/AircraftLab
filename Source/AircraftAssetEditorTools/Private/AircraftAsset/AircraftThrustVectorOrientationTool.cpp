@@ -8,11 +8,12 @@
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
+#include "AircraftDiagnostics/AircraftDebugColors.h"
+#include "AircraftDiagnostics/AircraftDebugDraw.h"
 #include "ContextObjectStore.h"
 #include "InteractiveToolManager.h"
 #include "ToolContextInterfaces.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
-#include "ToolDataVisualizer.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftThrustVectorOrientationTool)
 
@@ -82,9 +83,9 @@ void UAircraftThrustVectorOrientationTool::Render(IToolsContextRenderAPI* Render
 	const TArray<UAircraftComponent*> Components =
 		UE::AircraftLab::AircraftEditorTools::FindAircraftComponents(Asset);
 
-	FToolDataVisualizer Visualizer;
-	Visualizer.LineThickness = 2.0f;
-	Visualizer.BeginFrame(RenderAPI);
+	FAircraftDebugDrawContext C;
+	C.PDI = RenderAPI->GetPrimitiveDrawInterface();
+	C.SizeScale = RenderAPI->GetCameraState().GetPDIScalingFactor();
 
 	const FTransform XformWorld = Components.Num() > 0
 		? Components[0]->GetComponentTransform()
@@ -97,11 +98,11 @@ void UAircraftThrustVectorOrientationTool::Render(IToolsContextRenderAPI* Render
 		const FVector WorldAxis = XformWorld.GetRotation().RotateVector(Rotor.GetNormalizedThrustAxisLocal());
 		const bool bSelected = (Properties->SelectedRotorIndex == i || Properties->SelectedRotorIndex == INDEX_NONE);
 
-		Visualizer.LineColor = bSelected ? FLinearColor::Green : FLinearColor::Gray;
-		Visualizer.DrawLine(WorldPos, WorldPos + WorldAxis * Properties->ArrowLengthCm);
+		const FLinearColor Color = bSelected
+			? FLinearColor::Green
+			: FAircraftDebugColors::ToolUnselectedThrust;
+		FAircraftDebugDraw::DrawLine(C, WorldPos, WorldPos + WorldAxis * Properties->ArrowLengthCm, Color, 2.0f);
 	}
-
-	Visualizer.EndFrame();
 #endif
 }
 

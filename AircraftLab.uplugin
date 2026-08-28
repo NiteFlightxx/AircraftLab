@@ -16,6 +16,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "AircraftDiagnostics",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "AircraftAutopilot",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"

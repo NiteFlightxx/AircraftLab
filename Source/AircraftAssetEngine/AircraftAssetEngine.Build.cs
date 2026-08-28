@@ -17,6 +17,7 @@ public class AircraftAssetEngine : ModuleRules
                 "DataflowSimulation",
                 "Engine",
                 "AircraftAsset",
+                "AircraftDiagnostics",
                 "AircraftRuntimeInterface",
 				"AircraftAutopilot",
                 "Aircraft"

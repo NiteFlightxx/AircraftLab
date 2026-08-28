@@ -5,6 +5,7 @@
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
+#include "AircraftDiagnostics/AircraftDebugSnapshot.h"
 
 #include "AutopilotComponent.generated.h"
 
@@ -87,6 +88,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Autopilot")
 	FAircraftMovementIntentResult GetCurrentIntentResult() const { return CurrentResult; }
+
+	/** Adds the current Autopilot state to a game-thread diagnostics snapshot. */
+	void AppendDebugSnapshot(FAircraftDebugFrameSnapshot& Snapshot) const;
 
 	UPROPERTY(BlueprintAssignable, Category = "Aircraft|Autopilot")
 	FOnAircraftMovementIntentChanged OnMovementIntentChanged;

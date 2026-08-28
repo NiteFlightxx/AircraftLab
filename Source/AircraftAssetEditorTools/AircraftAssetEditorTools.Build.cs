@@ -17,7 +17,8 @@ public class AircraftAssetEditorTools : ModuleRules
                 "DataflowEditor",
                 "DataflowEngine",
                 "AircraftAsset",
-                "AircraftAssetEngine"
+                "AircraftAssetEngine",
+                "AircraftDiagnostics"
             }
         );
 

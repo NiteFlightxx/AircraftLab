@@ -62,7 +62,5 @@ void FAircraftSimulationLODProfileNode::Evaluate(UE::Dataflow::FContext& Context
 	SetLODProperty(Properties, TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Profile.CollisionMode));
 
 	SetLODProperty(Properties, TEXT("SimulationLOD.MaxDistanceCm"), Profile.MaxDistanceCm);
-	SetLODProperty(Properties, TEXT("SimulationLOD.AllowDebugDraw"), Profile.bAllowDebugDraw);
-
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

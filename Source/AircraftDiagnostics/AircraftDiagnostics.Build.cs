@@ -1,8 +1,8 @@
 using UnrealBuildTool;
 
-public class AircraftAutopilot : ModuleRules
+public class AircraftDiagnostics : ModuleRules
 {
-    public AircraftAutopilot(ReadOnlyTargetRules Target) : base(Target)
+    public AircraftDiagnostics(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
@@ -11,8 +11,10 @@ public class AircraftAutopilot : ModuleRules
             "Core",
             "CoreUObject",
             "Engine",
-            "AircraftDiagnostics",
+			"Aircraft",
             "AircraftRuntimeInterface"
         });
+
+		PrivateDependencyModuleNames.Add("PhysicsCore");
     }
 }

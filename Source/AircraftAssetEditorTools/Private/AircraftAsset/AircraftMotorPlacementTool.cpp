@@ -8,11 +8,12 @@
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
+#include "AircraftDiagnostics/AircraftDebugColors.h"
+#include "AircraftDiagnostics/AircraftDebugDraw.h"
 #include "ContextObjectStore.h"
 #include "InteractiveToolManager.h"
 #include "ToolContextInterfaces.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
-#include "ToolDataVisualizer.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftMotorPlacementTool)
 
@@ -88,23 +89,21 @@ void UAircraftMotorPlacementTool::Render(IToolsContextRenderAPI* RenderAPI)
 		? Components[0]->GetComponentTransform()
 		: FTransform::Identity;
 
-	FToolDataVisualizer Visualizer;
-	Visualizer.LineColor = FLinearColor::Yellow;
-	Visualizer.LineThickness = 1.0f;
-	Visualizer.PointSize = 6.0f;
-	Visualizer.BeginFrame(RenderAPI);
+	FAircraftDebugDrawContext C;
+	C.PDI = RenderAPI->GetPrimitiveDrawInterface();
+	C.SizeScale = RenderAPI->GetCameraState().GetPDIScalingFactor();
 
 	for (int32 i = 0; i < LodModel->Rotors.Num(); ++i)
 	{
 		const FVector LocalPos = LodModel->Rotors[i].PositionLocalCm;
 		const FVector WorldPos = XformWorld.TransformPosition(LocalPos);
 		const bool bSelected = (Properties && Properties->SelectedRotorIndex == i);
-		Visualizer.LineColor = bSelected ? FLinearColor::Red : FLinearColor::Yellow;
-		Visualizer.DrawPoint(WorldPos);
-		Visualizer.DrawWireBox(FBox(WorldPos - FVector(8.f), WorldPos + FVector(8.f)));
+		const FLinearColor Color = bSelected
+			? FAircraftDebugColors::ToolSelected
+			: FAircraftDebugColors::ToolUnselectedMotor;
+		FAircraftDebugDraw::DrawPoint(C, WorldPos, Color, 6.0f);
+		FAircraftDebugDraw::DrawWireBox(C, FBox(WorldPos - FVector(8.f), WorldPos + FVector(8.f)), Color);
 	}
-
-	Visualizer.EndFrame();
 #endif
 }
 

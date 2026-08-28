@@ -13,6 +13,7 @@
 #include "Dataflow/Interfaces/DataflowPhysicsSolver.h"
 
 #include "AircraftAsset/AircraftSimulationTypes.h"
+#include "AircraftDiagnostics/AircraftDebugSnapshot.h"
 #include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
@@ -23,7 +24,6 @@
 class UAircraftAssetBase;
 class UThumbnailInfo;
 class FAircraftSimulationProxy;
-class FAircraftVisualization;
 struct FConstraintInstance;
 struct FAircraftSimulationModel;
 struct FAircraftSimulationLodModel;
@@ -168,6 +168,7 @@ public:
 
 	const FAircraftSimulationModel* GetSimulationModel() const;
 	const FAircraftSimulationLodModel* GetCurrentLodModel() const;
+	void CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSnapshot) const;
 
 #if WITH_EDITORONLY_DATA
 	UThumbnailInfo* GetThumbnailInfo() { return ThumbnailInfo; }
@@ -220,8 +221,6 @@ protected:
 	//~ End IAircraftSimulationLODConsumer Interface
 
 private:
-	friend class FAircraftVisualization;
-
 	void SyncSkeletalMeshComponentFromAsset();
 	FBodyInstance* ResolveChassisBodyInstance() const;
 

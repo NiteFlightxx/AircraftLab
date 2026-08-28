@@ -1,6 +1,6 @@
 #include "AircraftAsset/AircraftSimulationGraph.h"
 
-#include "AircraftAsset/AircraftDebug.h"
+#include "AircraftDiagnostics/AircraftDebug.h"
 #include "Dataflow/DataflowNodeFactory.h"
 #include "Dataflow/DataflowObject.h"
 #include "Dataflow/DataflowSimulationNodes.h"

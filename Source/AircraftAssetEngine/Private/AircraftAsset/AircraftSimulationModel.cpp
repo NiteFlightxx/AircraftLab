@@ -388,7 +388,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		Settings.CollisionMode = static_cast<EAircraftSimulationCollisionMode>(FMath::Clamp(
 			Properties.GetValue<int32>(TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Settings.CollisionMode)), 0, 2));
 		Settings.MaxDistanceCm = Properties.GetValue<float>(TEXT("SimulationLOD.MaxDistanceCm"), Settings.MaxDistanceCm);
-		Settings.bAllowDebugDraw = Properties.GetValue<bool>(TEXT("SimulationLOD.AllowDebugDraw"), Settings.bAllowDebugDraw);
 		return Settings;
 	}
 }

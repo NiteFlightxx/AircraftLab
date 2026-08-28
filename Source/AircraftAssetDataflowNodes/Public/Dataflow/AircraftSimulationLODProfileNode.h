@@ -20,7 +20,6 @@ struct FAircraftSimulationLODProfileData
 
 	/** 距最近玩家的名义上限距离；最后一个 LOD 是无限距离兜底。 */
 	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "0.0")) float MaxDistanceCm = 6000.0f;
-	UPROPERTY(EditAnywhere, Category = "LOD") bool bAllowDebugDraw = false;
 };
 
 USTRUCT(meta = (DataflowAircraft))

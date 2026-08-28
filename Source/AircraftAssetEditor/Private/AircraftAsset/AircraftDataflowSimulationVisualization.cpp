@@ -1,38 +1,75 @@
-// 组件获取路径：FDataflowSimulationScene::GetPreviewActor()->GetComponentByClass<UAircraftComponent>()。
-// 与 ChaosCloth 的 Dataflow Simulation Visualization 一致：菜单只保存视口开关，
-// 具体绘制由独立 FAircraftVisualization 完成，不进入飞控求解流程。
-
 #include "AircraftAsset/AircraftDataflowSimulationVisualization.h"
 
-#include "GameFramework/Actor.h"
-#include "Framework/MultiBox/MultiBoxBuilder.h"
-
-#include "Dataflow/DataflowEditorToolkit.h"
+#include "AircraftAsset/AircraftComponent.h"
+#include "AircraftAutopilot/AutopilotComponent.h"
+#include "AircraftDiagnostics/AircraftDebugDraw.h"
 #include "Dataflow/DataflowSimulationScene.h"
 #include "Dataflow/DataflowSimulationViewportClient.h"
-
-#include "AircraftAsset/AircraftComponent.h"
-#include "AircraftAsset/AircraftSimulationModel.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
+#include "GameFramework/Actor.h"
 
 #define LOCTEXT_NAMESPACE "AircraftDataflowSimulationVisualization"
 
-const FName FAircraftDataflowSimulationVisualization::Name = FName("AircraftDataflowSimulationVisualization");
+const FName FAircraftDataflowSimulationVisualization::Name(TEXT("Aircraft"));
 
 FName FAircraftDataflowSimulationVisualization::GetName() const
 {
 	return Name;
 }
 
-UAircraftComponent* FAircraftDataflowSimulationVisualization::GetAircraftComponent(const FDataflowSimulationScene* SimulationScene)
+UAircraftComponent* FAircraftDataflowSimulationVisualization::GetAircraftComponent(
+	const FDataflowSimulationScene* SimulationScene)
 {
-	if (SimulationScene)
+	AActor* const PreviewActor = SimulationScene ? SimulationScene->GetPreviewActor() : nullptr;
+	return PreviewActor ? PreviewActor->FindComponentByClass<UAircraftComponent>() : nullptr;
+}
+
+bool FAircraftDataflowSimulationVisualization::CaptureSnapshot(
+	const FDataflowSimulationScene* SimulationScene,
+	FAircraftDebugFrameSnapshot& OutSnapshot)
+{
+	UAircraftComponent* const Component = GetAircraftComponent(SimulationScene);
+	if (!Component)
 	{
-		if (const TObjectPtr<AActor> PreviewActor = SimulationScene->GetPreviewActor())
+		return false;
+	}
+	Component->CaptureDebugSnapshot(OutSnapshot);
+	if (AActor* const PreviewActor = SimulationScene->GetPreviewActor())
+	{
+		if (const UAutopilotComponent* const Autopilot =
+			PreviewActor->FindComponentByClass<UAutopilotComponent>())
 		{
-			return PreviewActor->GetComponentByClass<UAircraftComponent>();
+			Autopilot->AppendDebugSnapshot(OutSnapshot);
 		}
 	}
-	return nullptr;
+	return true;
+}
+
+void FAircraftDataflowSimulationVisualization::SynchronizeOptionState() const
+{
+	TArray<FAircraftDebugOptionView> Options;
+	FAircraftDebugRegistry::GetOptionViews(Options);
+	TSet<FName> LiveIds;
+	for (const FAircraftDebugOptionView& Option : Options)
+	{
+		LiveIds.Add(Option.Id);
+		if (!KnownOptionIds.Contains(Option.Id))
+		{
+			KnownOptionIds.Add(Option.Id);
+			if (Option.bEditorEnabledByDefault)
+			{
+				EnabledOptionIds.Add(Option.Id);
+			}
+		}
+	}
+	for (auto It = KnownOptionIds.CreateIterator(); It; ++It)
+	{
+		if (!LiveIds.Contains(*It))
+		{
+			EnabledOptionIds.Remove(*It);
+			It.RemoveCurrent();
+		}
+	}
 }
 
 void FAircraftDataflowSimulationVisualization::ExtendSimulationVisualizationMenu(
@@ -43,140 +80,92 @@ void FAircraftDataflowSimulationVisualization::ExtendSimulationVisualizationMenu
 	{
 		return;
 	}
-
+	SynchronizeOptionState();
+	TArray<FAircraftDebugOptionView> Options;
+	FAircraftDebugRegistry::GetOptionViews(Options);
 	TWeakPtr<FDataflowSimulationViewportClient> WeakViewportClient = ViewportClient;
-	MenuBuilder.BeginSection(TEXT("AircraftSimulation_Visualizations"),
-		LOCTEXT("AircraftVisualizationSection", "Aircraft Visualization"));
-	auto AddToggle = [this, &MenuBuilder, WeakViewportClient](
-		const FText& Label,
-		const FText& ToolTip,
-		bool FAircraftVisualizationFlags::* Flag)
+	FName OpenCategory = NAME_None;
+	for (const FAircraftDebugOptionView& Option : Options)
 	{
-		const FExecuteAction Execute = FExecuteAction::CreateLambda([this, WeakViewportClient, Flag]()
+		if (Option.Category != OpenCategory)
 		{
-			Flags.*Flag = !(Flags.*Flag);
-			if (const TSharedPtr<FDataflowSimulationViewportClient> Pinned = WeakViewportClient.Pin())
+			if (OpenCategory != NAME_None)
 			{
-				Pinned->Invalidate();
+				MenuBuilder.EndSection();
 			}
-		});
-		const FIsActionChecked IsChecked = FIsActionChecked::CreateLambda([this, Flag]()
-		{
-			return Flags.*Flag;
-		});
-		MenuBuilder.AddMenuEntry(Label, ToolTip, FSlateIcon(),
+			OpenCategory = Option.Category;
+			MenuBuilder.BeginSection(
+				FName(*FString::Printf(TEXT("AircraftDiagnostics_%s"), *OpenCategory.ToString())),
+				Option.CategoryDisplayName);
+		}
+		const FName OptionId = Option.Id;
+		const FExecuteAction Execute = FExecuteAction::CreateLambda(
+			[this, WeakViewportClient, OptionId]()
+			{
+				if (!EnabledOptionIds.Remove(OptionId))
+				{
+					EnabledOptionIds.Add(OptionId);
+				}
+				if (const TSharedPtr<FDataflowSimulationViewportClient> Pinned = WeakViewportClient.Pin())
+				{
+					Pinned->Invalidate();
+				}
+			});
+		const FIsActionChecked IsChecked = FIsActionChecked::CreateLambda(
+			[this, OptionId]() { return EnabledOptionIds.Contains(OptionId); });
+		MenuBuilder.AddMenuEntry(Option.DisplayName, Option.ToolTip, FSlateIcon(),
 			FUIAction(Execute, FCanExecuteAction(), IsChecked), NAME_None,
 			EUserInterfaceActionType::ToggleButton);
-	};
-
-	AddToggle(LOCTEXT("AircraftVisBodyAxes", "Body Axes"),
-		LOCTEXT("AircraftVisBodyAxesTip", "Draw the rigid-body coordinate system."),
-		&FAircraftVisualizationFlags::bDrawBodyAxes);
-	AddToggle(LOCTEXT("AircraftVisCenterOfMass", "Center of Mass"),
-		LOCTEXT("AircraftVisCenterOfMassTip", "Draw the Chaos center of mass."),
-		&FAircraftVisualizationFlags::bDrawCenterOfMass);
-	AddToggle(LOCTEXT("AircraftVisBounds", "Bounds"),
-		LOCTEXT("AircraftVisBoundsTip", "Draw the component bounds."),
-		&FAircraftVisualizationFlags::bDrawBounds);
-	AddToggle(LOCTEXT("AircraftVisVelocity", "Velocity"),
-		LOCTEXT("AircraftVisVelocityTip", "Draw actual linear and angular velocity."),
-		&FAircraftVisualizationFlags::bDrawVelocity);
-	AddToggle(LOCTEXT("AircraftVisTarget", "Motion Target"),
-		LOCTEXT("AircraftVisTargetTip", "Draw target position, rotation, linear velocity, and angular velocity."),
-		&FAircraftVisualizationFlags::bDrawMotionTarget);
-	AddToggle(LOCTEXT("AircraftVisRotors", "Rotors and Thrust"),
-		LOCTEXT("AircraftVisRotorsTip", "Draw rotor locations, thrust axes, and current thrust."),
-		&FAircraftVisualizationFlags::bDrawRotors);
-	AddToggle(LOCTEXT("AircraftVisConstraint", "Physics Constraint"),
-		LOCTEXT("AircraftVisConstraintTip", "Draw constraint reference, output force, and output torque."),
-		&FAircraftVisualizationFlags::bDrawConstraint);
-	MenuBuilder.EndSection();
+	}
+	if (OpenCategory != NAME_None)
+	{
+		MenuBuilder.EndSection();
+	}
 }
 
 void FAircraftDataflowSimulationVisualization::Draw(
-	const FDataflowSimulationScene* SimulationScene,
-	FPrimitiveDrawInterface* PDI)
+	const FDataflowSimulationScene* SimulationScene, FPrimitiveDrawInterface* PDI)
 {
-	const UAircraftComponent* const Component = GetAircraftComponent(SimulationScene);
-	if (!Component || !PDI)
+	if (!PDI)
 	{
 		return;
 	}
-	FAircraftVisualizationContext Context;
+	SynchronizeOptionState();
+	FAircraftDebugFrameSnapshot Snapshot;
+	if (!CaptureSnapshot(SimulationScene, Snapshot))
+	{
+		return;
+	}
+	FAircraftDebugDrawContext Context;
 	Context.PDI = PDI;
-	FAircraftVisualization::Draw(*Component, Context, Flags);
+	FAircraftDebugRegistry::DrawSelected(Snapshot, Context, EnabledOptionIds);
 }
 
-FText FAircraftDataflowSimulationVisualization::GetDisplayString(const FDataflowSimulationScene* SimulationScene) const
+void FAircraftDataflowSimulationVisualization::DrawCanvas(
+	const FDataflowSimulationScene* SimulationScene, FCanvas* Canvas,
+	const FSceneView* SceneView)
 {
-	const UAircraftComponent* const Component = GetAircraftComponent(SimulationScene);
-	if (!Component)
+	if (!Canvas)
 	{
-		return FText::GetEmpty();
+		return;
 	}
+	SynchronizeOptionState();
+	FAircraftDebugFrameSnapshot Snapshot;
+	if (CaptureSnapshot(SimulationScene, Snapshot))
+	{
+		FAircraftDebugRegistry::DrawCanvasSelected(
+			Snapshot, *Canvas, SceneView, EnabledOptionIds);
+	}
+}
 
-	TArray<FText> Lines;
-
-	// 仿真启停状态
-	if (Component->IsSimulationSuspended())
-	{
-		Lines.Add(LOCTEXT("AircraftDisplaySuspended", "Simulation: Suspended"));
-	}
-	else if (!Component->IsSimulationEnabled())
-	{
-		Lines.Add(LOCTEXT("AircraftDisplayDisabled", "Simulation: Disabled"));
-	}
-	else
-	{
-		Lines.Add(LOCTEXT("AircraftDisplayRunning", "Simulation: Running"));
-	}
-
-	// 当前 LOD 与驱动模式
-	const FAircraftSimulationModel* const Model = Component->GetSimulationModel();
-	const int32 CurrentLOD = Component->GetCurrentSimulationLOD();
-	FText LodText;
-	if (Model && Model->SimulationLOD.LODs.IsValidIndex(CurrentLOD))
-	{
-		LodText = FText::Format(LOCTEXT("AircraftDisplayLod", "Simulation LOD: {0} ({1})"),
-			FText::AsNumber(CurrentLOD),
-			UEnum::GetDisplayValueAsText(Model->SimulationLOD.LODs[CurrentLOD].DriveMode));
-	}
-	else
-	{
-		LodText = LOCTEXT("AircraftDisplayLodUnknown", "Simulation LOD: -");
-	}
-	Lines.Add(LodText);
-
-	// 解锁与飞行模式
-	Lines.Add(FText::Format(LOCTEXT("AircraftDisplayMode", "Mode: {0} | Arm: {1}"),
-		UEnum::GetDisplayValueAsText(Component->GetFlightMode()),
-		UEnum::GetDisplayValueAsText(Component->GetArmState())));
-	Lines.Add(FText::Format(
-		LOCTEXT("AircraftDisplayBackend", "Controller: {0} | Chaos Body: {1}"),
-		Component->IsControllerEnabled()
-			? LOCTEXT("AircraftDisplayControllerEnabled", "Enabled")
-			: LOCTEXT("AircraftDisplayControllerDisabled", "Disabled"),
-		Component->IsSimulatingPhysics()
-			? LOCTEXT("AircraftDisplayPhysicsActive", "Simulating")
-			: LOCTEXT("AircraftDisplayPhysicsInactive", "Inactive")));
-
-	FAircraftEstimatedState EstimatedState;
-	Component->GetEstimatedState(EstimatedState);
-	const FVector& Velocity = EstimatedState.State.VelocityCmPerSec;
-	const FRotator& Attitude = EstimatedState.State.AttitudeDegrees;
-	Lines.Add(FText::Format(
-		LOCTEXT("AircraftDisplayState", "Velocity: ({0}, {1}, {2}) cm/s | Attitude R/P/Y: ({3}, {4}, {5}) deg"),
-		FText::AsNumber(Velocity.X), FText::AsNumber(Velocity.Y), FText::AsNumber(Velocity.Z),
-		FText::AsNumber(Attitude.Roll), FText::AsNumber(Attitude.Pitch), FText::AsNumber(Attitude.Yaw)));
-
-	FText DisplayString;
-	for (const FText& Line : Lines)
-	{
-		DisplayString = DisplayString.IsEmpty()
-			? Line
-			: FText::Format(LOCTEXT("AircraftDisplayLineJoin", "{0}\n{1}"), DisplayString, Line);
-	}
-	return DisplayString;
+FText FAircraftDataflowSimulationVisualization::GetDisplayString(
+	const FDataflowSimulationScene* SimulationScene) const
+{
+	SynchronizeOptionState();
+	FAircraftDebugFrameSnapshot Snapshot;
+	return CaptureSnapshot(SimulationScene, Snapshot)
+		? FAircraftDebugRegistry::BuildStatusTextSelected(Snapshot, EnabledOptionIds)
+		: FText::GetEmpty();
 }
 
 #undef LOCTEXT_NAMESPACE

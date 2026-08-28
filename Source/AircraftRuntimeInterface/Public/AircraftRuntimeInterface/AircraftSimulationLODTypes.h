@@ -49,8 +49,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationLODSettings
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "碰撞模式"))
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "允许调试绘制"))
-	bool bAllowDebugDraw = false;
 };
 /** Gameplay 重要性刻意与飞控/AI 类型解耦。 */
 USTRUCT(BlueprintType)
@@ -127,7 +125,5 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationBudget
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::Disabled;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	bool bAllowDebugDraw = false;
 };
 

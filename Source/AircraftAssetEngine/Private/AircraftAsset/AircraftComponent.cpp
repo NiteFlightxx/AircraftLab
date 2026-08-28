@@ -16,17 +16,17 @@
 #include "Chaos/Framework/PhysicsSolverBase.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 #include "Engine/HitResult.h"
-#include "ThumbnailRendering/ThumbnailManager.h"
 
 #include "Aircraft/FlightControlSolver.h"
 #include "Aircraft/ControlAllocationTypes.h"
 #include "AircraftAsset/AircraftAssetBase.h"
-#include "AircraftAsset/AircraftDebug.h"
+#include "AircraftDiagnostics/AircraftDebug.h"
+#include "AircraftDiagnostics/AircraftDebugRegistry.h"
+#include "AircraftDiagnostics/AircraftDebugRuntime.h"
 #include "AircraftAsset/AircraftSimulationGraph.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "AircraftAsset/AircraftSimulationProxy.h"
-#include "AircraftAsset/AircraftVisualization.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
 #include "Dataflow/DataflowSimulationManager.h"
 
@@ -560,7 +560,8 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	if (!SimulationConstraint->IsValidConstraintInstance())
 	{
 		SimulationConstraint.Reset();
-		FAircraftDebug::LogConstraintCreationFailure(*this, Model->RootBone, TEXT("InitConstraintFailed"));
+		FAircraftDebug::LogConstraintCreationFailure(
+			*this, CurrentSimulationLOD, Model->RootBone, TEXT("InitConstraintFailed"));
 		return false;
 	}
 
@@ -599,11 +600,12 @@ bool UAircraftComponent::CreateSimulationConstraint()
 		ConstraintDebugLogAccumulatorSeconds = 0.0f;
 		ConstraintDebugUnresponsiveSeconds = 0.0f;
 		FAircraftDebug::LogConstraintCreated(
-			*this, *SimulationConstraint, Model->RootBone, Config);
+			*this, CurrentSimulationLOD, *SimulationConstraint, Model->RootBone, Config);
 	}
 	else
 	{
-		FAircraftDebug::LogConstraintCreationFailure(*this, Model->RootBone, TEXT("InvalidOrBroken"));
+		FAircraftDebug::LogConstraintCreationFailure(
+			*this, CurrentSimulationLOD, Model->RootBone, TEXT("InvalidOrBroken"));
 	}
 	return bCreated;
 }
@@ -760,7 +762,7 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	SimulationConstraint->SetAngularVelocityTarget(WorldAngularVelocityTargetRevPerSec);
 	WakeAllRigidBodies();
 	FAircraftDebug::TickConstraint(
-		*this, *SimulationConstraint, Model->RootBone, Target,
+		*this, CurrentSimulationLOD, *SimulationConstraint, Model->RootBone, Target,
 		ConstraintTargetCenterOfMass, TargetCenterOfMassVelocity,
 		AccelerationFeedForwardPositionOffset,
 		TargetBodyRotation, WorldAngularVelocityTargetRevPerSec,
@@ -909,6 +911,69 @@ bool UAircraftComponent::GetAircraftTrajectoryReference(
 	FAircraftTrajectoryReference& OutReference) const
 {
 	return GetTrajectoryReference(OutReference);
+}
+
+void UAircraftComponent::CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSnapshot) const
+{
+	OutSnapshot = {};
+	OutSnapshot.AvailableData = EAircraftDebugData::Aircraft;
+	OutSnapshot.SubjectName = FString::Printf(TEXT("%s/%s"),
+		*GetNameSafe(GetOwner()), *GetName());
+	OutSnapshot.Transform = GetComponentTransform();
+	OutSnapshot.CenterOfMassCm = GetCenterOfMass();
+	OutSnapshot.Bounds = Bounds.GetBox();
+	OutSnapshot.LinearVelocityCmPerSec = GetPhysicsLinearVelocity();
+	OutSnapshot.AngularVelocityDegPerSec = GetPhysicsAngularVelocityInDegrees();
+	OutSnapshot.bHasTrajectoryReference = GetTrajectoryReference(
+		OutSnapshot.TrajectoryReference);
+
+	const FAircraftSimulationLodModel* const LodModel = GetCurrentLodModel();
+	if (LodModel)
+	{
+		FAircraftFlightControlOutput Output;
+		if (AircraftSimulationProxy.IsValid())
+		{
+			AircraftSimulationProxy->GetControlOutput_GameThread(Output);
+		}
+		OutSnapshot.Rotors.Reserve(LodModel->Rotors.Num());
+		for (int32 RotorIndex = 0; RotorIndex < LodModel->Rotors.Num(); ++RotorIndex)
+		{
+			const FAircraftRotorDefinition& Rotor = LodModel->Rotors[RotorIndex];
+			FAircraftDebugRotorSnapshot& RotorSnapshot =
+				OutSnapshot.Rotors.AddDefaulted_GetRef();
+			RotorSnapshot.Name = Rotor.RotorName;
+			RotorSnapshot.PositionCm = OutSnapshot.Transform.TransformPosition(
+				Rotor.PositionLocalCm);
+			RotorSnapshot.ThrustAxis = OutSnapshot.Transform.TransformVectorNoScale(
+				Rotor.GetNormalizedThrustAxisLocal()).GetSafeNormal();
+			RotorSnapshot.ThrustN = Output.RotorCommands.IsValidIndex(RotorIndex)
+				? Output.RotorCommands[RotorIndex].GeneratedThrust
+				: 0.0f;
+			RotorSnapshot.bEnabled = Rotor.IsEnabled();
+		}
+	}
+
+	if (SimulationConstraint.IsValid())
+	{
+		OutSnapshot.bHasConstraint = true;
+		OutSnapshot.ConstraintPositionTargetCm =
+			SimulationConstraint->GetLinearPositionTarget();
+		SimulationConstraint->GetConstraintForce(
+			OutSnapshot.ConstraintForce, OutSnapshot.ConstraintTorque);
+	}
+
+	OutSnapshot.bSimulationEnabled = IsSimulationEnabled();
+	OutSnapshot.bSimulationSuspended = IsSimulationSuspended();
+	OutSnapshot.bControllerEnabled = IsControllerEnabled();
+	OutSnapshot.bSimulatingPhysics = IsSimulatingPhysics();
+	OutSnapshot.SimulationLOD = GetCurrentSimulationLOD();
+	OutSnapshot.DriveModeText = UEnum::GetDisplayValueAsText(
+		GetCurrentSimulationDriveMode());
+	OutSnapshot.FlightModeText = UEnum::GetDisplayValueAsText(GetFlightMode());
+	OutSnapshot.ArmStateText = UEnum::GetDisplayValueAsText(GetArmState());
+	FAircraftEstimatedState EstimatedState;
+	GetEstimatedState(EstimatedState);
+	OutSnapshot.EstimatedAttitudeDegrees = EstimatedState.State.AttitudeDegrees;
 }
 
 void UAircraftComponent::SetAircraftMovementIntentProvider(UObject* Provider)
@@ -1262,7 +1327,12 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	check(IsInGameThread());
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	UpdateSimulationLOD();
-	FAircraftVisualization::DrawRuntime(*this);
+	if (FAircraftDebugRegistry::HasAnyRuntimeDrawEnabled())
+	{
+		FAircraftDebugFrameSnapshot DebugSnapshot;
+		CaptureDebugSnapshot(DebugSnapshot);
+		UE::AircraftLab::Diagnostics::DrawRuntime(GetWorld(), DebugSnapshot);
+	}
 	if (FAircraftDebug::IsDriveLogEnabled())
 	{
 		DriveHeartbeatDebugLogAccumulatorSeconds += DeltaTime;

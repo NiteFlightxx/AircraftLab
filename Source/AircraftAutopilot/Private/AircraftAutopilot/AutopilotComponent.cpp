@@ -1,7 +1,7 @@
 #include "AircraftAutopilot/AutopilotComponent.h"
 
-#include "AircraftAutopilot/AircraftAutopilotDebugDraw.h"
 #include "AircraftAutopilot/AircraftMotionPlan.h"
+#include "AircraftDiagnostics/AircraftDebugRuntime.h"
 #include "GameFramework/Actor.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AutopilotComponent)
@@ -496,8 +496,16 @@ void UAutopilotComponent::TickComponent(
 		&& Controller->GetAircraftFlightKinematicState(State))
 	{
 		Controller->GetAircraftTrajectoryReference(Reference);
-		FAircraftAutopilotDebugDraw::Draw(
-			GetWorld(), ResolvedIntent, Reference, Diagnostics, State);
+		FAircraftDebugFrameSnapshot DebugSnapshot;
+		DebugSnapshot.AvailableData = EAircraftDebugData::Autopilot;
+		DebugSnapshot.SubjectName = FString::Printf(TEXT("%s/%s"),
+			*GetNameSafe(FlightControllerComponent->GetOwner()),
+			*FlightControllerComponent->GetName());
+		DebugSnapshot.MovementIntent = ResolvedIntent;
+		DebugSnapshot.AutopilotReference = Reference;
+		DebugSnapshot.AutopilotDiagnostics = Diagnostics;
+		DebugSnapshot.AutopilotState = State;
+		UE::AircraftLab::Diagnostics::DrawRuntime(GetWorld(), DebugSnapshot);
 	}
 	if (bMatchingDiagnostics)
 	{
@@ -546,6 +554,23 @@ bool UAutopilotComponent::GetAircraftMovementIntent(
 	OutHandle = bHasExternalIntent ? ActiveHandle : PassThroughContinuationHandle;
 	OutRevision = IntentRevision;
 	return true;
+}
+
+void UAutopilotComponent::AppendDebugSnapshot(FAircraftDebugFrameSnapshot& Snapshot) const
+{
+	if (!IsAircraftMovementIntentActive())
+	{
+		return;
+	}
+	IAircraftFlightControllerInterface* const Controller = GetFlightController();
+	if (!Controller || !Controller->GetAircraftFlightKinematicState(Snapshot.AutopilotState))
+	{
+		return;
+	}
+	Snapshot.AvailableData |= EAircraftDebugData::Autopilot;
+	Snapshot.MovementIntent = ActiveHandle.IsValid() ? ResolvedIntent : PassThroughContinuationIntent;
+	Controller->GetAircraftTrajectoryReference(Snapshot.AutopilotReference);
+	Controller->GetAircraftAutopilotDiagnostics(Snapshot.AutopilotDiagnostics);
 }
 
 bool UAutopilotComponent::IsAircraftMovementIntentActive() const

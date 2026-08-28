@@ -109,7 +109,6 @@ bool UAircraftSimulationLODComponent::GetLODSettings(TArray<FAircraftSimulationL
 		Lite.DriveMode = Settings.DriveMode;
 		Lite.CollisionMode = Settings.CollisionMode;
 		Lite.MaxDistanceCm = Settings.MaxDistanceCm;
-		Lite.bAllowDebugDraw = Settings.bAllowDebugDraw;
 		OutSettings.Add(Lite);
 	}
 	return OutSettings.Num() > 0;
@@ -359,7 +358,6 @@ void UAircraftSimulationLODComponent::ApplyCurrentBudget()
 		? bClientProxyUsesDefaultPhysicsReplication && bPhysicalDrive
 		: bPhysicalDrive;
 	Budget.CollisionMode = Entry.CollisionMode;
-	Budget.bAllowDebugDraw = Entry.bAllowDebugDraw;
 
 	// 物理驱动消费者可能立即调用 SetSimulatePhysics(true)。必须先恢复物理碰撞，
 	// 否则从 NoCollision LOD 升级时 Chaos 刚体无法重新进入模拟。
