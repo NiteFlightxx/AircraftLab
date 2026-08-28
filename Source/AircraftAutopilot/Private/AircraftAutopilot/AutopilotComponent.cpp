@@ -2,6 +2,7 @@
 
 #include "AircraftAutopilot/AircraftMotionPlan.h"
 #include "AircraftDiagnostics/AircraftDebugRuntime.h"
+#include "AircraftDiagnostics/AircraftDebugSettings.h"
 #include "GameFramework/Actor.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AutopilotComponent)
@@ -490,21 +491,15 @@ void UAutopilotComponent::TickComponent(
 		&& Controller->GetAircraftAutopilotDiagnostics(Diagnostics)
 		&& Diagnostics.ActiveIntentId == ActiveHandle.Id
 		&& Diagnostics.IntentRevision == IntentRevision;
-	FAircraftFlightKinematicState State;
-	FAircraftTrajectoryReference Reference;
-	if (Controller
-		&& Controller->GetAircraftFlightKinematicState(State))
+	if (EnumHasAnyFlags(UE::AircraftLab::Diagnostics::GetRuntimeDebugDrawData(),
+			EAircraftDebugData::Autopilot)
+		&& Controller)
 	{
-		Controller->GetAircraftTrajectoryReference(Reference);
 		FAircraftDebugFrameSnapshot DebugSnapshot;
-		DebugSnapshot.AvailableData = EAircraftDebugData::Autopilot;
 		DebugSnapshot.SubjectName = FString::Printf(TEXT("%s/%s"),
 			*GetNameSafe(FlightControllerComponent->GetOwner()),
 			*FlightControllerComponent->GetName());
-		DebugSnapshot.MovementIntent = ResolvedIntent;
-		DebugSnapshot.AutopilotReference = Reference;
-		DebugSnapshot.AutopilotDiagnostics = Diagnostics;
-		DebugSnapshot.AutopilotState = State;
+		AppendDebugSnapshot(DebugSnapshot);
 		UE::AircraftLab::Diagnostics::DrawRuntime(GetWorld(), DebugSnapshot);
 	}
 	if (bMatchingDiagnostics)
@@ -571,6 +566,11 @@ void UAutopilotComponent::AppendDebugSnapshot(FAircraftDebugFrameSnapshot& Snaps
 	Snapshot.MovementIntent = ActiveHandle.IsValid() ? ResolvedIntent : PassThroughContinuationIntent;
 	Controller->GetAircraftTrajectoryReference(Snapshot.AutopilotReference);
 	Controller->GetAircraftAutopilotDiagnostics(Snapshot.AutopilotDiagnostics);
+	Controller->GetAircraftMotionPlan(
+		Snapshot.AutopilotPlanSamples,
+		Snapshot.AutopilotPlanDurationSeconds,
+		Snapshot.AutopilotPlanLengthCm,
+		Snapshot.AutopilotPlanRevision);
 }
 
 bool UAutopilotComponent::IsAircraftMovementIntentActive() const

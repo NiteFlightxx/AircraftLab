@@ -208,6 +208,8 @@ protected:
 	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const override;
 	virtual bool GetAircraftAutopilotDiagnostics(FAircraftAutopilotDiagnostics& OutDiagnostics) const override;
 	virtual bool GetAircraftTrajectoryReference(FAircraftTrajectoryReference& OutReference) const override;
+	virtual bool GetAircraftMotionPlan(TArray<FAircraftMotionPlanSample>& OutSamples,
+		float& OutDurationSeconds, float& OutLengthCm, uint64& OutPlanRevision) const override;
 	virtual void SetAircraftMovementIntentProvider(UObject* Provider) override;
 	virtual uint8 ActivateAircraftAutopilotControl() override;
 	virtual void DeactivateAircraftAutopilotControl(uint8 PreviousFlightMode) override;

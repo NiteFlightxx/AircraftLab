@@ -913,6 +913,22 @@ bool UAircraftComponent::GetAircraftTrajectoryReference(
 	return GetTrajectoryReference(OutReference);
 }
 
+bool UAircraftComponent::GetAircraftMotionPlan(
+	TArray<FAircraftMotionPlanSample>& OutSamples, float& OutDurationSeconds,
+	float& OutLengthCm, uint64& OutPlanRevision) const
+{
+	if (!AircraftSimulationProxy.IsValid())
+	{
+		OutSamples.Reset();
+		OutDurationSeconds = 0.0f;
+		OutLengthCm = 0.0f;
+		OutPlanRevision = 0;
+		return false;
+	}
+	return AircraftSimulationProxy->GetMotionPlan_GameThread(
+		OutSamples, OutDurationSeconds, OutLengthCm, OutPlanRevision);
+}
+
 void UAircraftComponent::CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSnapshot) const
 {
 	OutSnapshot = {};

@@ -139,6 +139,25 @@ bool FAircraftRuntimeDebugDispatchTest::RunTest(const FString& Parameters)
 		UE::AircraftLab::Diagnostics::DrawRuntime(GWorld, Snapshot);
 		TestTrue(TEXT("Runtime drawing submits geometry to the scene line batcher"),
 			LineBatcher->BatchedLines.Num() > LineCountBefore);
+
+		RuntimeCVar->Set(2, ECVF_SetByConsole);
+		FAircraftDebugFrameSnapshot AutopilotSnapshot;
+		AutopilotSnapshot.AvailableData = EAircraftDebugData::Autopilot;
+		AutopilotSnapshot.SubjectName = TEXT("RuntimeDispatchAutopilot");
+		AutopilotSnapshot.MovementIntent.Type = EAircraftMovementIntentType::Route;
+		AutopilotSnapshot.AutopilotReference.PathProgress = 0.5f;
+		AutopilotSnapshot.AutopilotPlanLengthCm = 100.0f;
+		FAircraftMotionPlanSample& Start =
+			AutopilotSnapshot.AutopilotPlanSamples.AddDefaulted_GetRef();
+		Start.PositionCm = FVector::ZeroVector;
+		FAircraftMotionPlanSample& End =
+			AutopilotSnapshot.AutopilotPlanSamples.AddDefaulted_GetRef();
+		End.DistanceCm = 100.0f;
+		End.PositionCm = FVector(100.0f, 0.0f, 0.0f);
+		const int32 AutopilotLineCountBefore = LineBatcher->BatchedLines.Num();
+		UE::AircraftLab::Diagnostics::DrawRuntime(GWorld, AutopilotSnapshot);
+		TestTrue(TEXT("The solved Autopilot motion plan is submitted to the scene line batcher"),
+			LineBatcher->BatchedLines.Num() > AutopilotLineCountBefore);
 	}
 
 	RuntimeCVar->Set(false, ECVF_SetByConsole);

@@ -35,6 +35,8 @@ public:
 	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const = 0;
 	virtual bool GetAircraftAutopilotDiagnostics(FAircraftAutopilotDiagnostics& OutDiagnostics) const = 0;
 	virtual bool GetAircraftTrajectoryReference(FAircraftTrajectoryReference& OutReference) const = 0;
+	virtual bool GetAircraftMotionPlan(TArray<FAircraftMotionPlanSample>& OutSamples,
+		float& OutDurationSeconds, float& OutLengthCm, uint64& OutPlanRevision) const = 0;
 	virtual void SetAircraftMovementIntentProvider(UObject* Provider) = 0;
 
 	/** 自动驾驶取得控制权并进入任务飞行模式；返回停用时需要恢复的模式值。 */

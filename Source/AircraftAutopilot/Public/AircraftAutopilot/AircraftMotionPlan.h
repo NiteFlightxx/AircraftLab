@@ -4,17 +4,6 @@
 #include "AircraftAutopilot/AircraftSpatialPath.h"
 #include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 
-struct AIRCRAFTAUTOPILOT_API FAircraftMotionPlanSample
-{
-	float TimeSeconds = 0.0f;
-	float DistanceCm = 0.0f;
-	FVector PositionCm = FVector::ZeroVector;
-	FVector VelocityCmPerSec = FVector::ZeroVector;
-	FVector AccelerationCmPerSecSq = FVector::ZeroVector;
-	float YawDegrees = 0.0f;
-	float YawRateDegPerSec = 0.0f;
-};
-
 /** Spatial path plus dynamically feasible time parameterization. */
 class AIRCRAFTAUTOPILOT_API FAircraftMotionPlan
 {

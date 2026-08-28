@@ -73,6 +73,8 @@ public:
 	void ClearMovementIntent_GameThread(uint64 Revision);
 	void GetTrajectoryReference_GameThread(FAircraftTrajectoryReference& OutReference) const;
 	void GetAutopilotDiagnostics_GameThread(FAircraftAutopilotDiagnostics& OutDiagnostics) const;
+	bool GetMotionPlan_GameThread(TArray<FAircraftMotionPlanSample>& OutSamples,
+		float& OutDurationSeconds, float& OutLengthCm, uint64& OutPlanRevision) const;
 	void TickKinematicPlanner_GameThread(float DeltaTime, double TimeSeconds,
 		const FTransform& BodyTransform, const FVector& VelocityCmPerSec,
 		const FVector& AngularVelocityWorldRadPerSec,

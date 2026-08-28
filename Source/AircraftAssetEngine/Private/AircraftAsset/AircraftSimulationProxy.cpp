@@ -663,6 +663,29 @@ void FAircraftSimulationProxy::GetAutopilotDiagnostics_GameThread(
 	OutDiagnostics = LatestAutopilotDiagnostics;
 }
 
+bool FAircraftSimulationProxy::GetMotionPlan_GameThread(
+	TArray<FAircraftMotionPlanSample>& OutSamples, float& OutDurationSeconds,
+	float& OutLengthCm, uint64& OutPlanRevision) const
+{
+	OutSamples.Reset();
+	OutDurationSeconds = 0.0f;
+	OutLengthCm = 0.0f;
+	OutPlanRevision = 0;
+
+	FScopeLock Lock(&PlannerCriticalSection);
+	const FAircraftMotionPlan& Plan = PredictiveController.GetPlan();
+	if (!Plan.IsValid())
+	{
+		return false;
+	}
+
+	OutSamples = Plan.GetSamples();
+	OutDurationSeconds = Plan.GetDurationSeconds();
+	OutLengthCm = Plan.GetLengthCm();
+	OutPlanRevision = PredictiveController.GetDiagnostics().PlanRevision;
+	return !OutSamples.IsEmpty();
+}
+
 void FAircraftSimulationProxy::TickKinematicPlanner_GameThread(
 	float DeltaTime, double TimeSeconds, const FTransform& BodyTransform,
 	const FVector& VelocityCmPerSec, const FVector& AngularVelocityWorldRadPerSec,

@@ -21,9 +21,74 @@ namespace UE::AircraftLab::Diagnostics::Private
 		Handles.Add(FAircraftDebugRegistry::RegisterOption(MoveTemp(Descriptor)));
 	}
 
+	static float GetPlanSampleProgress(
+		const FAircraftDebugFrameSnapshot& Snapshot, const FAircraftMotionPlanSample& Sample)
+	{
+		if (Snapshot.MovementIntent.Type == EAircraftMovementIntentType::TimedTrajectory)
+		{
+			return Snapshot.AutopilotPlanDurationSeconds > UE_SMALL_NUMBER
+				? Sample.TimeSeconds / Snapshot.AutopilotPlanDurationSeconds : 0.0f;
+		}
+		return Snapshot.AutopilotPlanLengthCm > UE_SMALL_NUMBER
+			? Sample.DistanceCm / Snapshot.AutopilotPlanLengthCm : 0.0f;
+	}
+
+	static bool DrawMotionPlan(
+		const FAircraftDebugFrameSnapshot& Snapshot, const FAircraftDebugDrawContext& Context)
+	{
+		if (Snapshot.MovementIntent.Type == EAircraftMovementIntentType::Velocity
+			|| Snapshot.AutopilotPlanSamples.IsEmpty())
+		{
+			return false;
+		}
+
+		const TArray<FAircraftMotionPlanSample>& Samples = Snapshot.AutopilotPlanSamples;
+		if (Samples.Num() == 1)
+		{
+			FAircraftDebugDraw::DrawPoint(Context, Samples[0].PositionCm,
+				FAircraftDebugColors::TrajectoryEnd, 18.0f);
+			return true;
+		}
+
+		const int32 Step = FMath::Max(1, FMath::DivideAndRoundUp(
+			Samples.Num() - 1, UE::AircraftLab::Diagnostics::DebugMaxTrajectorySamples));
+		const float CurrentProgress = FMath::Clamp(
+			Snapshot.AutopilotReference.PathProgress, 0.0f, 1.0f);
+		int32 PreviousIndex = 0;
+		for (int32 Index = Step; Index < Samples.Num(); Index += Step)
+		{
+			const int32 CurrentIndex = FMath::Min(Index, Samples.Num() - 1);
+			const FLinearColor& Color = GetPlanSampleProgress(Snapshot, Samples[CurrentIndex])
+				<= CurrentProgress ? FAircraftDebugColors::TrajectoryDone
+				: FAircraftDebugColors::Trajectory;
+			FAircraftDebugDraw::DrawLine(Context, Samples[PreviousIndex].PositionCm,
+				Samples[CurrentIndex].PositionCm, Color);
+			PreviousIndex = CurrentIndex;
+		}
+		if (PreviousIndex != Samples.Num() - 1)
+		{
+			const FAircraftMotionPlanSample& LastSample = Samples.Last();
+			const FLinearColor& Color = GetPlanSampleProgress(Snapshot, LastSample)
+				<= CurrentProgress ? FAircraftDebugColors::TrajectoryDone
+				: FAircraftDebugColors::Trajectory;
+			FAircraftDebugDraw::DrawLine(Context, Samples[PreviousIndex].PositionCm,
+				LastSample.PositionCm, Color);
+		}
+
+		FAircraftDebugDraw::DrawPoint(Context, Samples[0].PositionCm,
+			FAircraftDebugColors::TrajectoryStart, 16.0f);
+		FAircraftDebugDraw::DrawPoint(Context, Samples.Last().PositionCm,
+			FAircraftDebugColors::TrajectoryEnd, 16.0f);
+		return true;
+	}
+
 	static void DrawTrajectory(
 		const FAircraftDebugFrameSnapshot& Snapshot, const FAircraftDebugDrawContext& Context)
 	{
+		if (DrawMotionPlan(Snapshot, Context))
+		{
+			return;
+		}
 		const FAircraftMovementIntent& Intent = Snapshot.MovementIntent;
 		const FAircraftTrajectoryReference& Reference = Snapshot.AutopilotReference;
 		const FAircraftFlightKinematicState& State = Snapshot.AutopilotState;
@@ -110,12 +175,16 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAutopilotOptions(
 		FAircraftDebugOptionDescriptor Option;
 		Option.Id = TEXT("Autopilot.Trajectory");
 		Option.DisplayName = LOCTEXT("Trajectory", "Trajectory");
-		Option.ToolTip = LOCTEXT("TrajectoryTip", "Draw the active Autopilot movement intent.");
+		Option.ToolTip = LOCTEXT("TrajectoryTip",
+			"Draw the dynamically feasible Autopilot motion plan generated from the active intent.");
 		Option.Draw3D = &DrawTrajectory;
 		Option.CanvasText = [](const FAircraftDebugFrameSnapshot& S)
 		{
-			return FText::Format(LOCTEXT("TrajectoryCanvas", "Autopilot intent: {0} | Path progress: {1}"),
+			return FText::Format(LOCTEXT("TrajectoryCanvas",
+				"Autopilot intent: {0} | Plan: {1} samples / revision {2} | Path progress: {3}"),
 				UEnum::GetDisplayValueAsText(S.MovementIntent.Type),
+				FText::AsNumber(S.AutopilotPlanSamples.Num()),
+				FText::AsNumber(S.AutopilotPlanRevision),
 				FText::AsPercent(S.AutopilotReference.PathProgress));
 		};
 		AddAutopilotOption(OutHandles, MoveTemp(Option));

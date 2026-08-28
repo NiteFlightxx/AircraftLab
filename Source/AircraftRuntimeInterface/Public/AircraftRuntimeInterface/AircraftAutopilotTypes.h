@@ -14,6 +14,18 @@ enum class EAircraftPathTrackingState : uint8
 	CorridorRecovery
 };
 
+/** 自动驾驶规划器生成的、已经完成运动约束解算的世界空间轨迹样本。 */
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMotionPlanSample
+{
+	float TimeSeconds = 0.0f;
+	float DistanceCm = 0.0f;
+	FVector PositionCm = FVector::ZeroVector;
+	FVector VelocityCmPerSec = FVector::ZeroVector;
+	FVector AccelerationCmPerSecSq = FVector::ZeroVector;
+	float YawDegrees = 0.0f;
+	float YawRateDegPerSec = 0.0f;
+};
+
 /** 同一物理子步采集的完整运动状态。 */
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftVehicleStateSnapshot
 {

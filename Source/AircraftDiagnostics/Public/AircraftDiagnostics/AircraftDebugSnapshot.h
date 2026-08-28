@@ -55,4 +55,8 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugFrameSnapshot
 	FAircraftTrajectoryReference AutopilotReference;
 	FAircraftAutopilotDiagnostics AutopilotDiagnostics;
 	FAircraftFlightKinematicState AutopilotState;
+	TArray<FAircraftMotionPlanSample> AutopilotPlanSamples;
+	float AutopilotPlanDurationSeconds = 0.0f;
+	float AutopilotPlanLengthCm = 0.0f;
+	uint64 AutopilotPlanRevision = 0;
 };
