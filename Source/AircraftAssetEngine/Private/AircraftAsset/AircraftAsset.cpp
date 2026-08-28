@@ -230,16 +230,18 @@ void UAircraftAsset::Build(
 		return;
 	}
 
-	TArray<TSharedRef<const FManagedArrayCollection>>& OutAircraftCollections = GetAircraftCollectionsInternal();
-	OutAircraftCollections.Reset(InAircraftCollections.Num());
+	TArray<TSharedRef<const FManagedArrayCollection>> BuiltAircraftCollections;
+	BuiltAircraftCollections.Reserve(InAircraftCollections.Num());
 
 	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
 	{
 		TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(*InAircraftCollections[LodIndex]);
 		FAircraftCollection AircraftFacade(AircraftCollection);
 		AircraftFacade.DefineSchema();
-		OutAircraftCollections.Emplace(MoveTemp(AircraftCollection));
+		BuiltAircraftCollections.Emplace(MoveTemp(AircraftCollection));
 	}
+
+	GetAircraftCollectionsInternal() = MoveTemp(BuiltAircraftCollections);
 
 	EnsureCollectionsInitialized();
 	SynchronizeAssetStateFromCollections();
