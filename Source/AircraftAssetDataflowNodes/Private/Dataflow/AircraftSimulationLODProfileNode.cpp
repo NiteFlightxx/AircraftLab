@@ -47,9 +47,9 @@ void FAircraftSimulationLODProfileNode::Evaluate(UE::Dataflow::FContext& Context
 	}
 
 	FManagedArrayCollection InCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
-	if (Profile.Name.IsNone() || !FMath::IsFinite(Profile.MaxDistanceCm) || Profile.MaxDistanceCm < 0.0f)
+	if (Profile.Name.IsNone())
 	{
-		Context.Error(FText::FromString(TEXT("Simulation LOD requires a name and a valid distance.")), this);
+		Context.Error(FText::FromString(TEXT("Simulation LOD requires a name.")), this);
 		SetValue(Context, MoveTemp(InCollection), &Collection);
 		return;
 	}
@@ -60,7 +60,5 @@ void FAircraftSimulationLODProfileNode::Evaluate(UE::Dataflow::FContext& Context
 	SetLODStringProperty(Properties, TEXT("SimulationLOD.Name"), Profile.Name.ToString());
 	SetLODProperty(Properties, TEXT("SimulationLOD.DriveMode"), static_cast<int32>(Profile.DriveMode));
 	SetLODProperty(Properties, TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Profile.CollisionMode));
-
-	SetLODProperty(Properties, TEXT("SimulationLOD.MaxDistanceCm"), Profile.MaxDistanceCm);
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }

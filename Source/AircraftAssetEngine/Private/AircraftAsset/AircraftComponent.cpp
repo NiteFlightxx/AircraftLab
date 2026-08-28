@@ -65,8 +65,7 @@ void UAircraftComponent::SetAsset(UAircraftAssetBase* InAsset)
 
 	Asset = InAsset;
 	SyncSkeletalMeshComponentFromAsset();
-	CurrentSimulationLOD = INDEX_NONE;
-	UpdateSimulationLOD();
+	ReapplyCurrentSimulationLOD();
 	ApplySolverSettingsToBodyInstance();
 
 	if (AircraftSimulationProxy.IsValid())
@@ -83,8 +82,7 @@ UAircraftAssetBase* UAircraftComponent::GetAsset() const
 void UAircraftComponent::RefreshAssetState()
 {
 	SyncSkeletalMeshComponentFromAsset();
-	CurrentSimulationLOD = INDEX_NONE;
-	UpdateSimulationLOD();
+	ReapplyCurrentSimulationLOD();
 
 	// 把 FrameConfig 中的 MassKg / CenterOfMass / InertiaDiagonal 重新写入 BodyInstance —
 	// 与 ChaosCloth 在 RefreshAssetState 中重新同步质量/惯性属性的语义一致。
@@ -383,42 +381,20 @@ const FAircraftSimulationLodModel* UAircraftComponent::GetCurrentLodModel() cons
 	return Model ? Model->GetLodModel(CurrentSimulationLOD) : nullptr;
 }
 
-bool UAircraftComponent::SetSimulationLOD(int32 LodIndex)
-{
-	const FAircraftSimulationModel* const Model = GetSimulationModel();
-	if (!Model || !Model->IsValidLodIndex(LodIndex))
-	{
-		return false;
-	}
-
-	ForcedSimulationLOD = LodIndex;
-	ApplySimulationLOD(LodIndex);
-	return true;
-}
-
-void UAircraftComponent::ClearSimulationLODOverride()
-{
-	ForcedSimulationLOD = INDEX_NONE;
-	UpdateSimulationLOD();
-}
-
 EAircraftSimulationDriveMode UAircraftComponent::GetCurrentSimulationDriveMode() const
 {
 	return SimulationDriveMode;
 }
 
-void UAircraftComponent::UpdateSimulationLOD()
+void UAircraftComponent::ReapplyCurrentSimulationLOD()
 {
+	const int32 RequestedLOD = CurrentSimulationLOD == INDEX_NONE ? 0 : CurrentSimulationLOD;
+	CurrentSimulationLOD = INDEX_NONE;
 	const FAircraftSimulationModel* const Model = GetSimulationModel();
-	if (!Model || Model->GetNumLods() == 0)
+	if (Model && Model->GetNumLods() > 0)
 	{
-		return;
+		ApplySimulationLOD(FMath::Clamp(RequestedLOD, 0, Model->GetNumLods() - 1));
 	}
-
-	const int32 RequestedLOD = ForcedSimulationLOD != INDEX_NONE
-		? ForcedSimulationLOD
-		: FMath::Max(GetPredictedLODLevel(), 0);
-	ApplySimulationLOD(FMath::Clamp(RequestedLOD, 0, Model->GetNumLods() - 1));
 }
 
 void UAircraftComponent::ApplySimulationLOD(int32 LodIndex)
@@ -1232,7 +1208,6 @@ void UAircraftComponent::ApplyAircraftSimulationBudget_Implementation(const FAir
 	const FAircraftSimulationModel* const Model = GetSimulationModel();
 	if (Budget.LODIndex != INDEX_NONE && Model && Model->IsValidLodIndex(Budget.LODIndex))
 	{
-		ForcedSimulationLOD = Budget.LODIndex;
 		ApplySimulationLOD(Budget.LODIndex);
 	}
 	if (AircraftSimulationProxy.IsValid())
@@ -1279,8 +1254,7 @@ void UAircraftComponent::OnRegister()
 		SimulationAsset.SimulationGroups = { UE::AircraftLab::AircraftAsset::AircraftSimulationGroupName };
 	}
 
-	CurrentSimulationLOD = INDEX_NONE;
-	UpdateSimulationLOD();
+	ReapplyCurrentSimulationLOD();
 	// 与 ChaosClothComponent 一致：组件注册时立即建立 Dataflow Proxy。
 	// PhysicsState 的全局通知稍后仍可到达，管理器的 TSet 注册是幂等的。
 	UE::Dataflow::RegisterSimulationInterface(this);
@@ -1342,7 +1316,6 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 {
 	check(IsInGameThread());
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-	UpdateSimulationLOD();
 	if (FAircraftDebugRegistry::HasAnyRuntimeDrawEnabled())
 	{
 		FAircraftDebugFrameSnapshot DebugSnapshot;

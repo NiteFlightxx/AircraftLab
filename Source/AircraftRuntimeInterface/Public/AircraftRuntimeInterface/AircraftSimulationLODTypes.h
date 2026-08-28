@@ -1,8 +1,8 @@
-// 模拟 LOD 的共享数据类型（驱动/碰撞模式、LOD 条目、预算、运动目标）。
+// 模拟 LOD 的共享执行契约（驱动/碰撞模式与应用预算）。
 //
 // 注意：EAircraftSimulationDriveMode / EAircraftSimulationCollisionMode 原本定义在
 // AircraftAssetEngine 的 AircraftSimulationModel.h，现上移到本契约层，
-// 以便 AircraftRuntimeCommon 的 LOD 子系统与 AircraftAssetEngine 的组件共同消费而不产生依赖环。
+// 以便 AircraftRuntimeCommon 的选择组件与 AircraftAssetEngine 的执行组件共同消费而不产生依赖环。
 
 #pragma once
 
@@ -10,7 +10,7 @@
 
 #include "AircraftSimulationLODTypes.generated.h"
 
-/** 当前 LOD 使用的运动驱动。LOD 只负责选择驱动，不实现具体 Gameplay 策略。 */
+/** 当前 LOD 使用的运动驱动。 */
 UENUM(BlueprintType)
 enum class EAircraftSimulationDriveMode : uint8
 {
@@ -25,83 +25,6 @@ enum class EAircraftSimulationCollisionMode : uint8
 	Disabled UMETA(DisplayName = "Disabled"),
 	QueryOnly UMETA(DisplayName = "Query Only"),
 	QueryAndPhysics UMETA(DisplayName = "Query And Physics")
-};
-
-/** 一条数据驱动的 LOD 条目。数组顺序为最近/最高优先级到最远。 */
-USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationLODSettings
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "名称"))
-	FName Name = NAME_None;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "驱动模式"))
-	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
-
-	/** 距最近玩家的名义上限距离。数组最后一个 LOD 是无限距离兜底，不使用此参数。 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (
-		DisplayName = "最大生效距离",
-		ToolTip = "该LOD距离最近玩家的最大生效距离。数组最后一个LOD是无限距离兜底，不使用此参数。",
-		ClampMin = "0.0", Units = "cm"))
-	float MaxDistanceCm = 6000.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (DisplayName = "碰撞模式"))
-	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
-
-};
-/** Gameplay 重要性刻意与飞控/AI 类型解耦。 */
-USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationImportance
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bPlayerControlled = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bInCombat = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bFiring = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bRecentlyDamaged = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bRecoveringFromDamage = false;
-
-	/** 外部 Gameplay 约束（吊挂、缆绳、世界关节）。机体/旋翼内部约束不设置此项。 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bHasExternalPhysicsConstraint = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bMissionCritical = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Simulation")
-	bool bMustRemainPhysical = false;
-
-	bool RequiresHighestPriorityLOD() const
-	{
-		return bPlayerControlled || bInCombat || bFiring || bRecentlyDamaged
-			|| bRecoveringFromDamage || bHasExternalPhysicsConstraint || bMissionCritical || bMustRemainPhysical;
-	}
-};
-
-USTRUCT(BlueprintType)
-struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationSnapshot
-{
-	GENERATED_BODY()
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	FVector PositionCm = FVector::ZeroVector;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	float NearestPlayerDistanceCm = TNumericLimits<float>::Max();
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	FAircraftSimulationImportance Importance;
-
 };
 
 /** 可选飞机特性消费的通用预算。 */

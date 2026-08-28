@@ -10,41 +10,6 @@
 #include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftRecentDamageWindowTest,
-	"AircraftLab.SimulationLOD.RecentDamageExpires",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FAircraftRecentDamageWindowTest::RunTest(const FString& Parameters)
-{
-	UAircraftSimulationLODComponent* const Component = NewObject<UAircraftSimulationLODComponent>();
-	Component->DamageKeepAliveSeconds = 5.0f;
-	Component->NotifyRecentlyDamaged();
-
-	TestTrue(TEXT("Damage raises simulation importance inside the keep-alive window"),
-		Component->BuildSnapshot(TNumericLimits<float>::Max(), 4.0f).Importance.bRecentlyDamaged);
-	TestFalse(TEXT("Damage importance expires after the keep-alive window"),
-		Component->BuildSnapshot(TNumericLimits<float>::Max(), 5.01f).Importance.bRecentlyDamaged);
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftSimulationEvaluationScheduleTest,
-	"AircraftLab.SimulationLOD.EvaluationSchedule",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FAircraftSimulationEvaluationScheduleTest::RunTest(const FString& Parameters)
-{
-	UAircraftSimulationLODComponent* const Component = NewObject<UAircraftSimulationLODComponent>();
-	Component->EvaluationIntervalSeconds = 0.25f;
-
-	TestTrue(TEXT("A new component is immediately due"), Component->IsEvaluationDue(10.0f));
-	Component->MarkEvaluated(10.0f);
-	TestFalse(TEXT("The component is not due before its interval"), Component->IsEvaluationDue(10.24f));
-	TestTrue(TEXT("The component is due at its interval"), Component->IsEvaluationDue(10.25f));
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftCollisionBudgetStateTest,
 	"AircraftLab.SimulationLOD.CollisionBudgetPreservesOriginalState",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -122,6 +87,8 @@ bool FAircraftNetworkReplicationContractTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Current LOD uses the network-proxy apply callback"),
 			LODProperty->RepNotifyFunc, FName(TEXT("OnRep_CurrentLODIndex")));
 	}
+	TestNotNull(TEXT("Gameplay owns an explicit simulation LOD selection entry point"),
+		UAircraftSimulationLODComponent::StaticClass()->FindFunctionByName(TEXT("SetSimulationLOD")));
 	return true;
 }
 

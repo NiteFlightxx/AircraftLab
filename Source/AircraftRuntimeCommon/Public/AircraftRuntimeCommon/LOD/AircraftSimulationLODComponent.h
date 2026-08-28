@@ -1,17 +1,11 @@
-// LOD 条目直接来自 UAircraftComponent 资产的 Dataflow 编译产物。
-//
-// 每机适配器：所有更新由世界子系统驱动，本组件无 Tick。
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "AircraftRuntimeInterface/AircraftSimulationLODConsumer.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
 #include "AircraftSimulationLODComponent.generated.h"
 
-class UAircraftSimulationWorldSubsystem;
 class UPrimitiveComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -19,16 +13,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	int32, PreviousLODIndex,
 	int32, NewLODIndex);
 
-/** LOD 条目的轻量视图（Dataflow 编译产物 FAircraftSimulationLODRuntimeSettings 的镜像）。 */
-struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODRuntimeSettingsLite
-{
-	FName Name = NAME_None;
-	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
-	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
-	float MaxDistanceCm = 6000.0f;
-};
-
-/** Gameplay 网络策略。数组下标与资产 LOD 下标一一对应，但不参与资产编译。 */
+/** Gameplay 网络配置。数组下标与资产 LOD 下标一一对应。 */
 USTRUCT(BlueprintType)
 struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODNetworkSettings
 {
@@ -43,9 +28,15 @@ struct AIRCRAFTRUNTIMECOMMON_API FAircraftSimulationLODNetworkSettings
 	bool bEnableDormancy = false;
 };
 
+/**
+ * 飞行模拟 LOD 的唯一运行时选择入口。
+ *
+ * Dataflow 资产只定义各 LOD 被选中后的驱动、碰撞与飞控配置；何时切换完全由游戏策略决定。
+ * 服务器上的 AIController、Significance Manager 或其他 Gameplay 系统显式调用 SetSimulationLOD，
+ * 组件负责把选择复制到客户端并原子应用完整模拟预算。
+ */
 UCLASS(ClassGroup = (Aircraft), meta = (BlueprintSpawnableComponent))
-class AIRCRAFTRUNTIMECOMMON_API UAircraftSimulationLODComponent
-	: public UActorComponent
+class AIRCRAFTRUNTIMECOMMON_API UAircraftSimulationLODComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
@@ -59,64 +50,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
 	int32 GetCurrentSimulationLOD() const { return CurrentLODIndex; }
 
-	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
-	FAircraftSimulationImportance GetSimulationImportance() const { return Importance; }
-
+	/** 由服务器或 Standalone 显式选择 LOD；索引无效时不改变当前状态。 */
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
-	void SetSimulationImportance(const FAircraftSimulationImportance& NewImportance);
-
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
-	void SetInCombat(bool bInCombat);
-
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
-	void SetFiring(bool bFiring);
-
-	/** 在 CombatKeepAliveSeconds 内保持数组第 0 项选中。 */
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
-	void NotifyCombatActivity();
-
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
-	void NotifyRecentlyDamaged();
-
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
-	void SetMustRemainPhysical(bool bMustRemainPhysical);
-
-	/** 仅外部吊挂/世界约束强制数组第 0 项。 */
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
-	void SetHasExternalPhysicsConstraint(bool bHasConstraint);
-
-	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
-	void ForceSimulationReevaluation();
+	bool SetSimulationLOD(int32 NewLODIndex);
 
 	UPROPERTY(BlueprintAssignable, Category = "Aircraft|Simulation")
 	FOnAircraftLODSelectionChanged OnLODSelectionChanged;
-
-	/* ------- 子系统驱动接口（AircraftSimulationWorldSubsystem 调用） ------- */
-
-	FAircraftSimulationSnapshot BuildSnapshot(float NearestPlayerDistanceCm, float WorldTimeSeconds) const;
-	bool IsEvaluationDue(float WorldTimeSeconds) const;
-	void MarkEvaluated(float WorldTimeSeconds);
-	float GetSecondsInCurrentLOD(float WorldTimeSeconds) const;
-	void ApplyLODFromSubsystem(int32 NewLODIndex, float WorldTimeSeconds);
-
-	/** 从 Owner 的 UAircraftComponent 读取 Dataflow 编译的 LOD 条目表。 */
-	bool GetLODSettings(TArray<FAircraftSimulationLODRuntimeSettingsLite>& OutSettings) const;
-	bool IsAuthoritySimulationOnly() const;
-
-	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
-	float EvaluationIntervalSeconds = 0.25f;
-
-	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
-	float DistanceHysteresisCm = 2000.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
-	float MinimumLODResidenceSeconds = 1.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
-	float CombatKeepAliveSeconds = 5.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation", meta = (ClampMin = "0.0"))
-	float DamageKeepAliveSeconds = 5.0f;
 
 	/** 客户端仅消费服务器复制的 LOD 与刚体状态，不在本地执行飞控或位置驱动。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation|Networking", meta = (
@@ -134,9 +73,7 @@ public:
 	TArray<FAircraftSimulationLODNetworkSettings> NetworkSettingsPerLOD;
 
 protected:
-	UPROPERTY(EditAnywhere, Category = "Aircraft|Simulation")
-	FAircraftSimulationImportance Importance;
-
+	/** 由服务器选择并复制；没有 Gameplay 选择时确定性使用 LOD0。 */
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentLODIndex)
 	int32 CurrentLODIndex = 0;
 
@@ -149,10 +86,6 @@ private:
 		ECollisionEnabled::Type OriginalCollision = ECollisionEnabled::NoCollision;
 	};
 
-	float LastEvaluationWorldTime = -1.0f;
-	float LastLODChangeWorldTime = 0.0f;
-	float LastCombatActivityWorldTime = -1000.0f;
-	float LastDamageWorldTime = -1000.0f;
 	bool bHasAppliedBudget = false;
 	bool bNetworkProxyBudget = false;
 	TWeakObjectPtr<class UAircraftComponent> AircraftComponent;
@@ -167,7 +100,7 @@ private:
 	void RefreshConsumerCache();
 	void RefreshCollisionComponents();
 	void ApplyCollisionBudget(const FAircraftSimulationBudget& Budget);
-	void RefreshConsumers();
+	bool ApplyCurrentLOD(int32 PreviousLODIndex, bool bBroadcastChange);
+	void ApplyCurrentNetworkSettings();
 	FAircraftSimulationLODNetworkSettings GetNetworkSettings(int32 LODIndex) const;
-	void ApplyCurrentBudget();
 };

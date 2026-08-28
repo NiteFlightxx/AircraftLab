@@ -30,8 +30,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLODRuntimeSettings
 	FName Name = NAME_None;
 	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
-	/** 距最近玩家的名义上限距离；最后一个 LOD 是无限距离兜底。 */
-	float MaxDistanceCm = 6000.0f;
 };
 
 /** Dataflow 编译后的模拟 LOD Profile。 */

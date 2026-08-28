@@ -328,16 +328,14 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				FName Name;
 				EAircraftSimulationDriveMode DriveMode;
 				EAircraftSimulationCollisionMode CollisionMode;
-				float MaxDistanceCm;
 			};
-			// 仅是新资产模板的初始值；运行时直接读取每个表项的 DriveMode，
-			// 不存在 LOD 索引到驱动类型的固定映射。
+			// 仅是新资产模板的初始值；游戏策略显式选择 LOD，资产只定义选中后的运行方式。
 			const FDefaultLodEntry DefaultLods[] =
 			{
-				{ TEXT("LOD0"), EAircraftSimulationDriveMode::FlightController, EAircraftSimulationCollisionMode::QueryAndPhysics, 6000.0f },
-				{ TEXT("LOD1"), EAircraftSimulationDriveMode::PhysicsConstraint, EAircraftSimulationCollisionMode::QueryAndPhysics, 15000.0f },
-				{ TEXT("LOD2"), EAircraftSimulationDriveMode::Kinematic, EAircraftSimulationCollisionMode::QueryOnly, 50000.0f },
-				{ TEXT("LOD3"), EAircraftSimulationDriveMode::Kinematic, EAircraftSimulationCollisionMode::Disabled, 0.0f },
+				{ TEXT("LOD0"), EAircraftSimulationDriveMode::FlightController, EAircraftSimulationCollisionMode::QueryAndPhysics },
+				{ TEXT("LOD1"), EAircraftSimulationDriveMode::PhysicsConstraint, EAircraftSimulationCollisionMode::QueryAndPhysics },
+				{ TEXT("LOD2"), EAircraftSimulationDriveMode::Kinematic, EAircraftSimulationCollisionMode::QueryOnly },
+				{ TEXT("LOD3"), EAircraftSimulationDriveMode::Kinematic, EAircraftSimulationCollisionMode::Disabled },
 			};
 			TArray<FCreatedTemplateNode> SimulationLODNodes;
 			SimulationLODNodes.Reserve(UE_ARRAY_COUNT(DefaultLods));
@@ -353,7 +351,6 @@ namespace UE::AircraftDataflowAssetEditor::Private
 						Node.Profile.Name = EntryCopy.Name;
 						Node.Profile.DriveMode = EntryCopy.DriveMode;
 						Node.Profile.CollisionMode = EntryCopy.CollisionMode;
-						Node.Profile.MaxDistanceCm = EntryCopy.MaxDistanceCm;
 					}));
 			}
 

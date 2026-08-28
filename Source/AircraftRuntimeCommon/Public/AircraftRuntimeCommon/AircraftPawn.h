@@ -17,7 +17,7 @@ class UAircraftSimulationLODComponent;
  * 1. Aircraft（UAircraftComponent）—— 机身骨骼网格 + 物理碰撞 + 飞控（根组件）
  * 2. AircraftInput（输入组件）—— Enhanced Input 映射 → 摇杆通道
  * 3. AutopilotComponent（自动驾驶组件）—— 轨迹与设定值生成
- * 4. SimulationLOD（模拟 LOD 组件）—— 应用集中式模拟预算
+ * 4. SimulationLOD（模拟 LOD 组件）—— 接收游戏策略的显式选择并应用完整模拟预算
  *
  * 物理模拟由 Aircraft 组件驱动（SetSimulatePhysics=true），
  * 飞控在物理线程经 FAircraftSimulationProxy 施加推力/力矩。

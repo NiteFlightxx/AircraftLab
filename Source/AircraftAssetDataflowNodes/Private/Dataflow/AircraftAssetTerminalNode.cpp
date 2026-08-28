@@ -205,29 +205,37 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 		return;
 	}
 
-	// 不做静态 schema 校验：每级 LOD 需要哪些组由该 LOD 的 DriveMode 在运行时自行消费，
-	float PreviousMaximumDistanceCm = -1.0f;
-	for (int32 LodIndex = 0; LodIndex + 1 < Collections.Num(); ++LodIndex)
+	const FName NameKey(TEXT("SimulationLOD.Name"));
+	const FName DriveModeKey(TEXT("SimulationLOD.DriveMode"));
+	const FName CollisionModeKey(TEXT("SimulationLOD.CollisionMode"));
+	TSet<FName> LodNames;
+	for (int32 LodIndex = 0; LodIndex < Collections.Num(); ++LodIndex)
 	{
 		const UE::AircraftLab::AircraftAsset::FCollectionAircraftPropertyConstFacade Properties(
 			Collections[LodIndex]);
-		const FName DistanceKey(TEXT("SimulationLOD.MaxDistanceCm"));
-		if (!Properties.IsValid() || Properties.GetKeyNameIndex(DistanceKey) == INDEX_NONE)
+		if (!Properties.IsValid()
+			|| Properties.GetKeyNameIndex(NameKey) == INDEX_NONE
+			|| Properties.GetKeyNameIndex(DriveModeKey) == INDEX_NONE
+			|| Properties.GetKeyNameIndex(CollisionModeKey) == INDEX_NONE)
 		{
 			Context.Error(FText::FromString(FString::Printf(
 				TEXT("Collection LOD %d is missing its Simulation LOD profile."), LodIndex)), this);
 			return;
 		}
-		const float MaximumDistanceCm = Properties.GetValue<float>(DistanceKey, -1.0f);
-		if (!FMath::IsFinite(MaximumDistanceCm) || MaximumDistanceCm < 0.0f
-			|| (LodIndex > 0 && MaximumDistanceCm <= PreviousMaximumDistanceCm))
+
+		const FName LodName(*Properties.GetStringValue(NameKey));
+		const int32 DriveMode = Properties.GetValue<int32>(DriveModeKey, INDEX_NONE);
+		const int32 CollisionMode = Properties.GetValue<int32>(CollisionModeKey, INDEX_NONE);
+		if (LodName.IsNone() || LodNames.Contains(LodName)
+			|| DriveMode < 0 || DriveMode > 2
+			|| CollisionMode < 0 || CollisionMode > 2)
 		{
 			Context.Error(FText::FromString(FString::Printf(
-				TEXT("Collection LOD maximum distances must be finite, non-negative and strictly increasing; LOD %d is invalid."),
+				TEXT("Collection LOD %d must have a unique name and valid drive/collision modes."),
 				LodIndex)), this);
 			return;
 		}
-		PreviousMaximumDistanceCm = MaximumDistanceCm;
+		LodNames.Add(LodName);
 	}
 
 	const uint32 NewChecksum = ComputeCollectionsChecksum(Collections);
@@ -240,6 +248,11 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 	FText ErrorText;
 	FText VerboseText;
 	AircraftAssetObject->Build(Collections, &ErrorText, &VerboseText);
+	if (!ErrorText.IsEmpty())
+	{
+		Context.Error(VerboseText.IsEmpty() ? ErrorText : VerboseText, this);
+		return;
+	}
 	if (!VerboseText.IsEmpty())
 	{
 		Context.Warning(VerboseText, this);

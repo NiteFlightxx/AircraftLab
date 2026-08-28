@@ -132,17 +132,6 @@ public:
 
 	/* ------- Simulation LOD ------- */
 
-	/** 固定使用一个 LOD；返回 false 表示资产中不存在该级。 */
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Simulation LOD")
-	bool SetSimulationLOD(int32 LodIndex);
-
-	/** 恢复为与 Skeletal Mesh 预测 LOD 同步的自动模式。 */
-	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Simulation LOD")
-	void ClearSimulationLODOverride();
-
-	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Simulation LOD")
-	bool HasSimulationLODOverride() const { return ForcedSimulationLOD != INDEX_NONE; }
-
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Simulation LOD")
 	int32 GetCurrentSimulationLOD() const { return CurrentSimulationLOD; }
 
@@ -259,7 +248,7 @@ private:
 
 	/** 把可选的 AircraftSolverConfig 同步到 Chaos BodyInstance；配置缺失时清除组件级覆盖标记。 */
 	void ApplySolverSettingsToBodyInstance();
-	void UpdateSimulationLOD();
+	void ReapplyCurrentSimulationLOD();
 	void ApplySimulationLOD(int32 LodIndex);
 	void ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode);
 
@@ -281,9 +270,6 @@ private:
 
 	UPROPERTY(VisibleInstanceOnly, Category = "AircraftComponent|Simulation LOD")
 	int32 CurrentSimulationLOD = 0;
-
-	UPROPERTY(Transient)
-	int32 ForcedSimulationLOD = INDEX_NONE;
 
 	/**
 	 *

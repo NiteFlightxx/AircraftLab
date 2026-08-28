@@ -17,9 +17,6 @@ struct FAircraftSimulationLODProfileData
 	UPROPERTY(EditAnywhere, Category = "LOD") FName Name = TEXT("LOD");
 	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
 	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
-
-	/** 距最近玩家的名义上限距离；最后一个 LOD 是无限距离兜底。 */
-	UPROPERTY(EditAnywhere, Category = "LOD", meta = (ClampMin = "0.0")) float MaxDistanceCm = 6000.0f;
 };
 
 USTRUCT(meta = (DataflowAircraft))
