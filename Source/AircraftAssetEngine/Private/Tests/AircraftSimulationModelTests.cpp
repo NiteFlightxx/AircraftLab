@@ -60,9 +60,9 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	float ConstraintDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
 		ConstraintStiffness, ConstraintDamping,
-		RuntimeDefaults.ConstraintLinearStrength,
+		RuntimeDefaults.ConstraintLinearNaturalFrequencyHz,
 		RuntimeDefaults.ConstraintLinearDampingRatio,
-		RuntimeDefaults.ConstraintLinearExtraDamping);
+		RuntimeDefaults.ConstraintLinearExtraDampingPerSecond);
 	TestTrue(TEXT("Default constraint strength converts to the previous stiffness"),
 		FMath::IsNearlyEqual(ConstraintStiffness, 100.0f, 1.e-3f));
 	TestTrue(TEXT("Default constraint damping ratio converts to the previous damping"),
@@ -218,9 +218,7 @@ bool FAircraftAutopilotConfigTest::RunTest(const FString& Parameters)
 	SetFloat(TEXT("Autopilot.Mpcc.ContourErrorWeight"), 12.0f);
 	SetFloat(TEXT("Autopilot.Mpcc.CorridorViolationWeight"), 900.0f);
 	SetFloat(TEXT("Autopilot.Mpcc.YawResponseTimeSeconds"), 0.08f);
-	SetFloat(TEXT("Autopilot.Mpcc.ContourErrorGovernorScaleCm"), 240.0f);
-	SetFloat(TEXT("FlightController.Kinematic.PositionCorrectionRate"), 6.0f);
-	SetFloat(TEXT("FlightController.Kinematic.RotationInterpSpeed"), 7.0f);
+	SetFloat(TEXT("Autopilot.Tracking.ContourErrorGovernorScaleCm"), 240.0f);
 	SetFloat(TEXT("FlightController.MaxHorizontalDecelerationCmPerSecSq"), 550.0f);
 	SetFloat(TEXT("FlightController.MaxHorizontalJerkCmPerSecCubed"), 1800.0f);
 	SetFloat(TEXT("FlightController.MaxVerticalJerkCmPerSecCubed"), 1400.0f);
@@ -252,11 +250,7 @@ bool FAircraftAutopilotConfigTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("MPCC corridor weight reaches the runtime model"),
 		LOD->Autopilot.Mpcc.CorridorViolationWeight, 900.0f);
 	TestEqual(TEXT("Yaw response time reaches the runtime model"), LOD->Autopilot.Mpcc.YawResponseTimeSeconds, 0.08f);
-	TestEqual(TEXT("Contour governor scale reaches the runtime model"), LOD->Autopilot.Mpcc.ContourErrorGovernorScaleCm, 240.0f);
-	TestEqual(TEXT("Kinematic position correction reaches the runtime model"),
-		LOD->FlightController.KinematicPositionCorrectionRate, 6.0f);
-	TestEqual(TEXT("Kinematic rotation correction reaches the runtime model"),
-		LOD->FlightController.KinematicRotationInterpSpeed, 7.0f);
+	TestEqual(TEXT("Contour governor scale reaches the runtime model"), LOD->Autopilot.Tracking.ContourErrorGovernorScaleCm, 240.0f);
 	TestEqual(TEXT("Horizontal deceleration reaches the runtime model"),
 		LOD->FlightController.MaxHorizontalDecelerationCmPerSecSq, 550.0f);
 	TestEqual(TEXT("Horizontal jerk reaches the runtime model"),
@@ -307,8 +301,8 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	Set(TEXT("FlightController.Altitude.AltitudeDerivativeCutoffHz"), 2.0f);
 	Set(TEXT("FlightController.Altitude.VerticalVelocityFreezeIntegralWhenSaturated"), false);
 	Set(TEXT("FlightController.Execution.ControllerEnabledByDefault"), false);
-	Set(TEXT("FlightController.Constraint.GravityFeedForwardScale"), 0.8f);
-	Set(TEXT("FlightController.Constraint.DynamicsFeedForwardScale"), 0.6f);
+	Set(TEXT("FlightController.Constraint.Linear.GravityFeedForwardScale"), 0.8f);
+	Set(TEXT("FlightController.Constraint.Linear.DynamicsFeedForwardScale"), 0.6f);
 
 	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = { Collection };
 	const FAircraftSimulationModel Model(Collections, TEXT("CompletePid"));

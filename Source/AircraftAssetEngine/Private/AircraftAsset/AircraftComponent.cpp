@@ -4,6 +4,7 @@
 #include "AircraftAsset/AircraftComponent.h"
 #include "Aircraft/ConstraintDriveUtils.h"
 #include "Aircraft/AircraftPhysicsUnits.h"
+#include "Aircraft/AircraftAttitudeReference.h"
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
@@ -15,6 +16,7 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Chaos/Framework/PhysicsSolverBase.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Engine/HitResult.h"
 
 #include "Aircraft/FlightControlSolver.h"
@@ -482,16 +484,24 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 		if (!IsSimulatingPhysics())
 		{
 			SetSimulatePhysics(true);
+			if (PreviousDriveMode == EAircraftSimulationDriveMode::Kinematic)
+			{
+				ResetAllBodiesSimulatePhysics();
+			}
 			SetPhysicsLinearVelocity(SavedSimulationLinearVelocityCmPerSec);
 			SetPhysicsAngularVelocityInRadians(SavedSimulationAngularVelocityRadPerSec);
 			WakeAllRigidBodies();
 		}
 	}
-	else if (IsSimulatingPhysics())
+	else
 	{
-		SavedSimulationLinearVelocityCmPerSec = GetPhysicsLinearVelocity();
-		SavedSimulationAngularVelocityRadPerSec = GetPhysicsAngularVelocityInRadians();
+		if (IsSimulatingPhysics())
+		{
+			SavedSimulationLinearVelocityCmPerSec = GetPhysicsLinearVelocity();
+			SavedSimulationAngularVelocityRadPerSec = GetPhysicsAngularVelocityInRadians();
+		}
 		SetSimulatePhysics(false);
+		SetAllBodiesSimulatePhysics(false);
 	}
 
 	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
@@ -548,7 +558,6 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	SimulationConstraint->SetAngularSwing1Motion(EAngularConstraintMotion::ACM_Free);
 	SimulationConstraint->SetAngularSwing2Motion(EAngularConstraintMotion::ACM_Free);
 	SimulationConstraint->SetAngularTwistMotion(EAngularConstraintMotion::ACM_Free);
-	SimulationConstraint->SetAngularDriveMode(EAngularDriveMode::SLERP);
 	// 与 PhysicsControl 的世界空间控制完全一致：Constraint 的 Body1 是被控刚体，
 	// Body2 为世界；Frame1 只移动到刚体 COM，Frame2 始终保持 Identity。
 	FTransform BodyFrame = SimulationConstraint->GetRefFrame(EConstraintFrame::Frame1);
@@ -556,15 +565,11 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	SimulationConstraint->SetRefFrame(EConstraintFrame::Frame1, BodyFrame);
 
 	const FVector InitialCenterOfMass = ChassisBody->GetCOMPosition();
-	const FQuat InitialRotation = ChassisBody->GetUnrealWorldTransform().GetRotation();
 	SimulationConstraint->SetLinearPositionTarget(InitialCenterOfMass);
 	SimulationConstraint->SetLinearVelocityTarget(FVector::ZeroVector);
-	SimulationConstraint->SetAngularOrientationTarget(InitialRotation);
-	SimulationConstraint->SetAngularVelocityTarget(FVector::ZeroVector);
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
-	SimulationConstraint->SetLinearDriveAccelerationMode(Config.bConstraintAccelerationMode);
-	SimulationConstraint->SetAngularDriveAccelerationMode(Config.bConstraintAccelerationMode);
+	SimulationConstraint->SetLinearDriveAccelerationMode(Config.bConstraintLinearAccelerationMode);
 	UpdateConstraintDriveAuthority(Config);
 
 	WakeAllRigidBodies();
@@ -594,52 +599,37 @@ void UAircraftComponent::UpdateConstraintDriveAuthority(
 		return;
 	}
 
-	const FAircraftControlAuthorityInfo Authority = GetControlAuthorityInfo();
-	float LinearForceLimitN = Authority.CollectiveAuthorityN;
-	if (Config.ConstraintLinearForceLimitN > 0.0f)
-	{
-		LinearForceLimitN = FMath::Min(LinearForceLimitN, Config.ConstraintLinearForceLimitN);
-	}
-	float YawTorqueLimitNm = FMath::Min(
-		Authority.PositiveTorqueAuthorityNm.Z,
-		Authority.NegativeTorqueAuthorityNm.Z);
-	if (Config.ConstraintAngularTorqueLimitNm > 0.0f)
-	{
-		YawTorqueLimitNm = FMath::Min(YawTorqueLimitNm, Config.ConstraintAngularTorqueLimitNm);
-	}
-
-	const bool bLinearAuthority = Config.ConstraintLinearStrength > UE_SMALL_NUMBER
+	const FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+	const float MassKg = ChassisBody ? ChassisBody->GetBodyMass() : 0.0f;
+	const float HorizontalAccelerationCmPerSecSq = FMath::Max(
+		Config.MaxHorizontalAccelerationCmPerSecSq,
+		Config.MaxHorizontalDecelerationCmPerSecSq);
+	const float GravityMagnitudeCmPerSecSq = GetWorld()
+		? FMath::Abs(GetWorld()->GetGravityZ()) : 980.0f;
+	const float RequiredSpecificForceCmPerSecSq = FMath::Sqrt(
+		FMath::Square(HorizontalAccelerationCmPerSecSq)
+		+ FMath::Square(GravityMagnitudeCmPerSecSq
+			+ Config.MaxVerticalAccelerationCmPerSecSq));
+	const float LinearForceLimitN = Config.ConstraintLinearForceLimitN > 0.0f
+		? Config.ConstraintLinearForceLimitN
+		: MassKg * RequiredSpecificForceCmPerSecSq * 0.01f;
+	const bool bLinearAuthority = Config.ConstraintLinearNaturalFrequencyHz > UE_SMALL_NUMBER
 		&& LinearForceLimitN > AircraftAllocation::AuthorityEpsilon;
-	const bool bYawAuthority = Config.ConstraintAngularStrength > UE_SMALL_NUMBER
-		&& Config.MaxYawRateDegreesPerSec > 0.0f
-		&& YawTorqueLimitNm > AircraftAllocation::AuthorityEpsilon;
 	SimulationConstraint->SetLinearPositionDrive(
 		bLinearAuthority, bLinearAuthority, bLinearAuthority);
 	SimulationConstraint->SetLinearVelocityDrive(
 		bLinearAuthority, bLinearAuthority, bLinearAuthority);
-	SimulationConstraint->SetOrientationDriveSLERP(bYawAuthority);
-	SimulationConstraint->SetAngularVelocityDriveSLERP(bYawAuthority);
 
 	float LinearStiffness = 0.0f;
 	float LinearDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
 		LinearStiffness, LinearDamping,
-		Config.ConstraintLinearStrength,
+		Config.ConstraintLinearNaturalFrequencyHz,
 		Config.ConstraintLinearDampingRatio,
-		Config.ConstraintLinearExtraDamping);
-	float AngularStiffness = 0.0f;
-	float AngularDamping = 0.0f;
-	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
-		AngularStiffness, AngularDamping,
-		Config.ConstraintAngularStrength,
-		Config.ConstraintAngularDampingRatio,
-		Config.ConstraintAngularExtraDamping);
+		Config.ConstraintLinearExtraDampingPerSecond);
 	SimulationConstraint->SetLinearDriveParams(
 		LinearStiffness, LinearDamping,
 		AircraftPhysicsUnits::NewtonsToChaosForce(LinearForceLimitN));
-	SimulationConstraint->SetAngularDriveParams(
-		AngularStiffness, AngularDamping,
-		AircraftPhysicsUnits::NewtonMetersToChaosTorque(YawTorqueLimitNm));
 }
 
 void UAircraftComponent::DestroySimulationConstraint()
@@ -656,6 +646,7 @@ void UAircraftComponent::DestroySimulationConstraint()
 
 void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Constraint_ApplyLinearReference);
 	if (!SimulationConstraint.IsValid()
 		|| !SimulationConstraint->IsValidConstraintInstance()
 		|| SimulationConstraint->IsBroken())
@@ -685,9 +676,15 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	const FVector CurrentCenterOfMass = ChassisBody->GetCOMPosition();
 	const FVector CenterOfMassOffsetLocal = GetComponentQuat().UnrotateVector(
 		CurrentCenterOfMass - GetComponentLocation());
-	const FQuat TargetControlRotation = FRotator(
-		0.0f, Target.YawDegrees, 0.0f).Quaternion();
-	const FQuat TargetBodyRotation = Config.GetBodyWorldRotation(TargetControlRotation);
+	const float GravityMagnitudeCmPerSecSq = GetWorld()
+		? FMath::Abs(GetWorld()->GetGravityZ()) : 980.0f;
+	const FQuat TargetBodyRotation = AircraftAttitudeReference::Build(
+		Target.ControlAccelerationCmPerSecSq
+			+ Target.DynamicsFeedForwardAccelerationCmPerSecSq,
+		Target.YawDegrees,
+		GravityMagnitudeCmPerSecSq,
+		Config.MaxTiltAngleDegrees,
+		Config).BodyWorldRotation;
 	const FVector TargetCenterOfMassOffsetWorld = TargetBodyRotation.RotateVector(
 		CenterOfMassOffsetLocal);
 	const FVector TargetAngularVelocityWorldRadPerSec(
@@ -695,8 +692,6 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	const FVector TargetCenterOfMassVelocity = Target.VelocityCmPerSec
 		+ FVector::CrossProduct(
 			TargetAngularVelocityWorldRadPerSec, TargetCenterOfMassOffsetWorld);
-	const FVector WorldAngularVelocityTargetRevPerSec(
-		0.0f, 0.0f, Target.YawRateDegPerSec / 360.0f);
 	const FVector GravityAccelerationCmPerSecSq(
 		0.0, 0.0, GetWorld() ? GetWorld()->GetGravityZ() : -980.0f);
 	const FVector AccelerationFeedForwardPositionOffset =
@@ -706,8 +701,8 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 			GravityAccelerationCmPerSecSq,
 			Config.ConstraintGravityFeedForwardScale,
 			Config.ConstraintDynamicsFeedForwardScale,
-			Config.ConstraintLinearStrength,
-			Config.bConstraintAccelerationMode,
+			Config.ConstraintLinearNaturalFrequencyHz,
+			Config.bConstraintLinearAccelerationMode,
 			ChassisBody->GetBodyMass());
 	FVector TargetCenterOfMass;
 	if (Target.bPositionTrackingEnabled)
@@ -718,7 +713,7 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	{
 		// Velocity 意图使用有限速度误差前置量，不累计世界位置误差，也不会把松杆点当锚点。
 		const FVector CurrentCenterOfMassVelocity = GetPhysicsLinearVelocity();
-		const float Strength = Config.ConstraintLinearStrength;
+		const float Strength = Config.ConstraintLinearNaturalFrequencyHz;
 		TargetCenterOfMass = FVector(
 			UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
 				CurrentCenterOfMass.X, CurrentCenterOfMassVelocity.X,
@@ -734,20 +729,19 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		TargetCenterOfMass + AccelerationFeedForwardPositionOffset;
 	SimulationConstraint->SetLinearPositionTarget(ConstraintTargetCenterOfMass);
 	SimulationConstraint->SetLinearVelocityTarget(TargetCenterOfMassVelocity);
-	SimulationConstraint->SetAngularOrientationTarget(TargetBodyRotation);
-	SimulationConstraint->SetAngularVelocityTarget(WorldAngularVelocityTargetRevPerSec);
 	WakeAllRigidBodies();
 	FAircraftDebug::TickConstraint(
 		*this, CurrentSimulationLOD, *SimulationConstraint, Model->RootBone, Target,
 		ConstraintTargetCenterOfMass, TargetCenterOfMassVelocity,
 		AccelerationFeedForwardPositionOffset,
-		TargetBodyRotation, WorldAngularVelocityTargetRevPerSec,
+		TargetBodyRotation, FVector::ZeroVector,
 		DeltaSeconds,
 		ConstraintDebugLogAccumulatorSeconds, ConstraintDebugUnresponsiveSeconds);
 }
 
 void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Kinematic_ApplyReference);
 	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
 	if (!Model)
 	{
@@ -763,30 +757,19 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
 	const FVector CurrentLocation = GetComponentLocation();
-	const FVector IntegratedLocation = CurrentLocation
-		+ Target.VelocityCmPerSec * DeltaSeconds
-		+ 0.5f * Target.ControlAccelerationCmPerSecSq * FMath::Square(DeltaSeconds);
-	const float PositionCorrectionAlpha = 1.0f - FMath::Exp(
-		-FMath::Max(Config.KinematicPositionCorrectionRate, 0.0f) * DeltaSeconds);
-	const FVector NewLocation = Target.bPositionTrackingEnabled
-		? FMath::Lerp(IntegratedLocation, Target.PositionCm, PositionCorrectionAlpha)
-		: IntegratedLocation;
-	const float CurrentYawDegrees = Config.GetControlWorldRotation(
-		GetComponentQuat()).Rotator().Yaw;
-	const float IntegratedYawDegrees = FRotator::NormalizeAxis(
-		CurrentYawDegrees + Target.YawRateDegPerSec * DeltaSeconds);
-	const float RotationCorrectionAlpha = 1.0f - FMath::Exp(
-		-FMath::Max(Config.KinematicRotationInterpSpeed, 0.0f) * DeltaSeconds);
-	const float NewYawDegrees = FRotator::NormalizeAxis(IntegratedYawDegrees
-		+ FMath::FindDeltaAngleDegrees(IntegratedYawDegrees, Target.YawDegrees)
-			* RotationCorrectionAlpha);
-	const FQuat NewControlRotation = FRotator(
-		0.0f, NewYawDegrees, 0.0f).Quaternion();
-	const FQuat NewBodyRotation = Config.GetBodyWorldRotation(NewControlRotation);
+	const FVector NewLocation = Target.PositionCm;
+	const float GravityMagnitude = GetWorld()
+		? FMath::Abs(GetWorld()->GetGravityZ()) : 980.0f;
+	const FQuat NewBodyRotation = AircraftAttitudeReference::Build(
+		Target.ControlAccelerationCmPerSecSq,
+		Target.YawDegrees,
+		GravityMagnitude,
+		Config.MaxTiltAngleDegrees,
+		Config).BodyWorldRotation;
 
 	FHitResult Hit;
 	SetWorldLocationAndRotation(NewLocation, NewBodyRotation,
-		Config.bKinematicSweepMovement, &Hit, ETeleportType::None);
+		Config.bKinematicSweepMovement, &Hit, ETeleportType::TeleportPhysics);
 	PreviousAlternativeVelocityCmPerSec = DeltaSeconds > UE_SMALL_NUMBER
 		? (GetComponentLocation() - CurrentLocation) / DeltaSeconds
 		: FVector::ZeroVector;
@@ -1074,12 +1057,14 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 	}
 
 	const EAircraftFlightMode Mode = GetFlightMode();
-	const bool bUseStabilizedTranslation = Mode == EAircraftFlightMode::VelocityHold
+	const bool bUseMovementIntent = SimulationDriveMode
+		!= EAircraftSimulationDriveMode::FlightController
+		|| Mode == EAircraftFlightMode::VelocityHold
 		|| Mode == EAircraftFlightMode::PositionHold
 		|| Mode == EAircraftFlightMode::Mission
 		|| Mode == EAircraftFlightMode::AutoLand;
 	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
-	if (!bUseStabilizedTranslation || !Model)
+	if (!bUseMovementIntent || !Model)
 	{
 		if (bMovementIntentWasPushed)
 		{
@@ -1280,6 +1265,11 @@ void UAircraftComponent::OnUnregister()
 void UAircraftComponent::OnCreatePhysicsState()
 {
 	Super::OnCreatePhysicsState();
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic)
+	{
+		SetSimulatePhysics(false);
+		SetAllBodiesSimulatePhysics(false);
+	}
 
 	ApplyMassPropertiesToBodyInstance();
 	ApplySolverSettingsToBodyInstance();
@@ -1382,7 +1372,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		{
 			if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel())
 			{
-				AircraftSimulationProxy->TickKinematicPlanner_GameThread(
+				AircraftSimulationProxy->TickKinematicTrajectory_GameThread(
 					DeltaTime, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0,
 					GetComponentTransform(), PreviousAlternativeVelocityCmPerSec,
 					FVector::ZeroVector, *Model);

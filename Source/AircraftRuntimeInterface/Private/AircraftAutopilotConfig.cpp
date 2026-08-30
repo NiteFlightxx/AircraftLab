@@ -2,6 +2,7 @@
 
 FAircraftPathOptimizationRuntimeConfig::FAircraftPathOptimizationRuntimeConfig() = default;
 FAircraftTrajectoryTimingRuntimeConfig::FAircraftTrajectoryTimingRuntimeConfig() = default;
+FAircraftPathTrackingRuntimeConfig::FAircraftPathTrackingRuntimeConfig() = default;
 FAircraftMpccRuntimeConfig::FAircraftMpccRuntimeConfig() = default;
 FAircraftAutopilotRuntimeConfig::FAircraftAutopilotRuntimeConfig() = default;
 
@@ -35,6 +36,8 @@ bool FAircraftAutopilotRuntimeConfig::IsValid() const
 		&& IsReserve(Timing.BrakingReserveFraction)
 		&& Timing.MaxIterations > 0
 		&& IsPositive(Timing.SpeedConvergenceToleranceCmPerSec)
+		&& IsPositive(Tracking.ContourErrorGovernorScaleCm)
+		&& IsPositive(Tracking.ProgressScaleResponseRatePerSecond)
 		&& IsPositive(Mpcc.UpdateRateHz)
 		&& IsPositive(Mpcc.HorizonSeconds)
 		&& Mpcc.HorizonSteps >= 2
@@ -47,7 +50,6 @@ bool FAircraftAutopilotRuntimeConfig::IsValid() const
 		&& IsNonNegative(Mpcc.AccelerationWeight)
 		&& IsNonNegative(Mpcc.JerkWeight)
 		&& IsPositive(Mpcc.YawResponseTimeSeconds)
-		&& IsPositive(Mpcc.ContourErrorGovernorScaleCm)
 		&& IsNonNegative(Mpcc.TerminalPositionWeight)
 		&& IsNonNegative(Mpcc.TerminalVelocityWeight)
 		&& IsPositive(Mpcc.Regularization)

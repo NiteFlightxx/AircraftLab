@@ -21,7 +21,7 @@
 #include "Aircraft/ControlAllocator.h"
 #include "Aircraft/RotorModel.h"
 #include "Aircraft/RotorEffectivenessManager.h"
-#include "AircraftAutopilot/AircraftPredictiveController.h"
+#include "AircraftAutopilot/AircraftTrajectoryRuntime.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
 
 #include "AircraftAsset/AircraftSimulationModel.h"
@@ -75,7 +75,7 @@ public:
 	void GetAutopilotDiagnostics_GameThread(FAircraftAutopilotDiagnostics& OutDiagnostics) const;
 	bool GetMotionPlan_GameThread(TArray<FAircraftMotionPlanSample>& OutSamples,
 		float& OutDurationSeconds, float& OutLengthCm, uint64& OutPlanRevision) const;
-	void TickKinematicPlanner_GameThread(float DeltaTime, double TimeSeconds,
+	void TickKinematicTrajectory_GameThread(float DeltaTime, double TimeSeconds,
 		const FTransform& BodyTransform, const FVector& VelocityCmPerSec,
 		const FVector& AngularVelocityWorldRadPerSec,
 		const FAircraftSimulationLodModel& Model);
@@ -100,7 +100,8 @@ public:
 	//~ Begin PhysicsThread API
 	/**
 	 * 物理线程子步入口。AsyncPhysicsTickComponent 路径下 DeltaTime 是物理子步长（恒定高频），
-	 * 适合直接作为 PID 的离散步长。仅在 FlightController 驱动模式下执行控制循环；
+	 * FlightController 在此执行 MPCC、PID、分配与旋翼；PhysicsConstraint 在此执行
+	 * 确定性轨迹进度、可选空气动力和显式姿态扭矩。Kinematic 不进入本函数。
 	 */
 	void TickPhysicsThread(float DeltaTime, float SimTime, float ForceAccumulationScale = 1.0f);
 	//~ End PhysicsThread API
@@ -183,6 +184,10 @@ private:
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftTrajectoryReference LatestTrajectoryReference;
 	FAircraftAutopilotDiagnostics LatestAutopilotDiagnostics;
+	TArray<FAircraftMotionPlanSample> LatestMotionPlanSamples;
+	float LatestMotionPlanDurationSeconds = 0.0f;
+	float LatestMotionPlanLengthCm = 0.0f;
+	uint64 LatestMotionPlanRevision = 0;
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Armed) };
 	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EAircraftFlightMode::PositionHold) };
 	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
@@ -190,9 +195,6 @@ private:
 	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
 	std::atomic<float> GravityMagnitudeCmPerSecSq{ 980.0f };
-
-	/** Serializes the predictive controller while a drive-mode transition moves execution between PT and GT. */
-	mutable FCriticalSection PlannerCriticalSection;
 
 	/* ---- PT 内部状态（只在 PT 上访问，不需要锁）---- */
 
@@ -212,10 +214,11 @@ private:
 	bool bHasRotorDescriptorCenterOfMass = false;
 	/** 模式能力缓存。 */
 	FAircraftModeCapabilities ModeCapabilities;
-	FAircraftPredictiveController PredictiveController;
+	FAircraftTrajectoryRuntime TrajectoryRuntime;
 	uint64 ActiveMovementIntentRevision = 0;
 	int64 ActiveMovementIntentId = 0;
 	std::atomic<uint64> VehicleStateSequence{ 0 };
+	std::atomic<bool> bTrajectoryRebindRequested{ false };
 	bool bMovementIntentActive = false;
 	float NativeLinearDamping = 0.0f;
 	float NativeAngularDamping = 0.0f;

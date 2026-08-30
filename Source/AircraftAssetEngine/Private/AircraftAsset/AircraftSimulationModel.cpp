@@ -225,20 +225,18 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				Properties.GetValue<int32>(TEXT("Aircraft.Initial.FlightMode"),
 					static_cast<int32>(OutModel.FlightController.InitialFlightMode)), 0,
 				static_cast<int32>(EAircraftFlightMode::AutoLand)));
-			OutModel.FlightController.ConstraintLinearStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearStrength"), OutModel.FlightController.ConstraintLinearStrength);
-			OutModel.FlightController.ConstraintLinearDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearDampingRatio"), OutModel.FlightController.ConstraintLinearDampingRatio);
-			OutModel.FlightController.ConstraintLinearExtraDamping = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearExtraDamping"), OutModel.FlightController.ConstraintLinearExtraDamping);
-			OutModel.FlightController.ConstraintLinearForceLimitN = Properties.GetValue<float>(TEXT("FlightController.Constraint.LinearForceLimitN"), OutModel.FlightController.ConstraintLinearForceLimitN);
-			OutModel.FlightController.ConstraintGravityFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.GravityFeedForwardScale"), OutModel.FlightController.ConstraintGravityFeedForwardScale);
-			OutModel.FlightController.ConstraintDynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.DynamicsFeedForwardScale"), OutModel.FlightController.ConstraintDynamicsFeedForwardScale);
-			OutModel.FlightController.ConstraintAngularStrength = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularStrength"), OutModel.FlightController.ConstraintAngularStrength);
-			OutModel.FlightController.ConstraintAngularDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularDampingRatio"), OutModel.FlightController.ConstraintAngularDampingRatio);
-			OutModel.FlightController.ConstraintAngularExtraDamping = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularExtraDamping"), OutModel.FlightController.ConstraintAngularExtraDamping);
-			OutModel.FlightController.ConstraintAngularTorqueLimitNm = Properties.GetValue<float>(TEXT("FlightController.Constraint.AngularTorqueLimitNm"), OutModel.FlightController.ConstraintAngularTorqueLimitNm);
-			OutModel.FlightController.bConstraintAccelerationMode = Properties.GetValue<bool>(TEXT("FlightController.Constraint.AccelerationMode"), OutModel.FlightController.bConstraintAccelerationMode);
+			OutModel.FlightController.ConstraintLinearNaturalFrequencyHz = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.NaturalFrequencyHz"), OutModel.FlightController.ConstraintLinearNaturalFrequencyHz);
+			OutModel.FlightController.ConstraintLinearDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.DampingRatio"), OutModel.FlightController.ConstraintLinearDampingRatio);
+			OutModel.FlightController.ConstraintLinearExtraDampingPerSecond = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.ExtraDampingPerSecond"), OutModel.FlightController.ConstraintLinearExtraDampingPerSecond);
+			OutModel.FlightController.ConstraintLinearForceLimitN = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.ForceLimitN"), OutModel.FlightController.ConstraintLinearForceLimitN);
+			OutModel.FlightController.ConstraintGravityFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.GravityFeedForwardScale"), OutModel.FlightController.ConstraintGravityFeedForwardScale);
+			OutModel.FlightController.ConstraintDynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.DynamicsFeedForwardScale"), OutModel.FlightController.ConstraintDynamicsFeedForwardScale);
+			OutModel.FlightController.ConstraintAttitudeNaturalFrequencyHz = Properties.GetValue<float>(TEXT("FlightController.Constraint.Attitude.NaturalFrequencyHz"), OutModel.FlightController.ConstraintAttitudeNaturalFrequencyHz);
+			OutModel.FlightController.ConstraintAttitudeDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.Attitude.DampingRatio"), OutModel.FlightController.ConstraintAttitudeDampingRatio);
+			OutModel.FlightController.ConstraintAttitudeExtraDampingPerSecond = Properties.GetValue<float>(TEXT("FlightController.Constraint.Attitude.ExtraDampingPerSecond"), OutModel.FlightController.ConstraintAttitudeExtraDampingPerSecond);
+			OutModel.FlightController.ConstraintAttitudeTorqueLimitNm = Properties.GetValue<float>(TEXT("FlightController.Constraint.Attitude.TorqueLimitNm"), OutModel.FlightController.ConstraintAttitudeTorqueLimitNm);
+			OutModel.FlightController.bConstraintLinearAccelerationMode = Properties.GetValue<bool>(TEXT("FlightController.Constraint.Linear.AccelerationMode"), OutModel.FlightController.bConstraintLinearAccelerationMode);
 			OutModel.FlightController.bKinematicSweepMovement = Properties.GetValue<bool>(TEXT("FlightController.Kinematic.SweepMovement"), OutModel.FlightController.bKinematicSweepMovement);
-			OutModel.FlightController.KinematicPositionCorrectionRate = Properties.GetValue<float>(TEXT("FlightController.Kinematic.PositionCorrectionRate"), OutModel.FlightController.KinematicPositionCorrectionRate);
-			OutModel.FlightController.KinematicRotationInterpSpeed = Properties.GetValue<float>(TEXT("FlightController.Kinematic.RotationInterpSpeed"), OutModel.FlightController.KinematicRotationInterpSpeed);
 
 			/* Autopilot：空间路径、动力学重定时和 MPCC 各自只有一个配置来源。 */
 			FAircraftAutopilotRuntimeConfig& Autopilot = OutModel.Autopilot;
@@ -252,6 +250,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			Autopilot.Path.SnapWeight = Properties.GetValue<float>(TEXT("Autopilot.Path.SnapWeight"), Autopilot.Path.SnapWeight);
 			Autopilot.Path.MaxIterations = Properties.GetValue<int32>(TEXT("Autopilot.Path.MaxIterations"), Autopilot.Path.MaxIterations);
 			Autopilot.Path.ConvergenceToleranceCm = Properties.GetValue<float>(TEXT("Autopilot.Path.ConvergenceToleranceCm"), Autopilot.Path.ConvergenceToleranceCm);
+			Autopilot.Tracking.ContourErrorGovernorScaleCm = Properties.GetValue<float>(TEXT("Autopilot.Tracking.ContourErrorGovernorScaleCm"), Autopilot.Tracking.ContourErrorGovernorScaleCm);
+			Autopilot.Tracking.ProgressScaleResponseRatePerSecond = Properties.GetValue<float>(TEXT("Autopilot.Tracking.ProgressScaleResponseRatePerSecond"), Autopilot.Tracking.ProgressScaleResponseRatePerSecond);
 
 			Autopilot.Timing.SampleSpacingCm = Properties.GetValue<float>(TEXT("Autopilot.Timing.SampleSpacingCm"), Autopilot.Timing.SampleSpacingCm);
 			Autopilot.Timing.ThrustReserveFraction = Properties.GetValue<float>(TEXT("Autopilot.Timing.ThrustReserveFraction"), Autopilot.Timing.ThrustReserveFraction);
@@ -273,7 +273,6 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			READ_MPCC(AccelerationWeight);
 			READ_MPCC(JerkWeight);
 			READ_MPCC(YawResponseTimeSeconds);
-			READ_MPCC(ContourErrorGovernorScaleCm);
 			READ_MPCC(TerminalPositionWeight);
 			READ_MPCC(TerminalVelocityWeight);
 			READ_MPCC(Regularization);

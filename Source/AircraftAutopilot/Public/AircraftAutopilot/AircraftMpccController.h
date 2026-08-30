@@ -3,8 +3,8 @@
 #include "CoreMinimal.h"
 #include "AircraftAutopilot/AircraftMotionPlan.h"
 
-/** Fixed-horizon constrained contouring controller for the common motion plan. */
-class AIRCRAFTAUTOPILOT_API FAircraftPredictiveController
+/** Fixed-horizon constrained contouring controller used exclusively by the flight-control backend. */
+class AIRCRAFTAUTOPILOT_API FAircraftMpccController
 {
 public:
 	bool SetIntent(const FAircraftMovementIntent& Intent, int64 IntentId, uint64 IntentRevision,
@@ -15,6 +15,11 @@ public:
 	bool Update(const FAircraftVehicleStateSnapshot& State,
 		const FAircraftDynamicCapabilitySnapshot& Capability,
 		FAircraftTrajectoryReference& OutReference);
+	bool RefreshPlan(const FAircraftVehicleStateSnapshot& State,
+		const FAircraftDynamicCapabilitySnapshot& Capability)
+	{
+		return RefreshPlanForCapability(State, Capability);
+	}
 
 	void Reset();
 	const FAircraftAutopilotDiagnostics& GetDiagnostics() const { return Diagnostics; }

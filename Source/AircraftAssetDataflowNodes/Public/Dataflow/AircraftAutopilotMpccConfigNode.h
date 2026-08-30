@@ -24,7 +24,6 @@ struct FAircraftAutopilotMpccConfig
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0")) float AccelerationWeight = 0.05f;
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0")) float JerkWeight = 0.02f;
 	UPROPERTY(EditAnywhere, Category = "Tracking", meta = (ClampMin = "0.001", Units = "s")) float YawResponseTimeSeconds = 0.04f;
-	UPROPERTY(EditAnywhere, Category = "Tracking", meta = (ClampMin = "1.0", Units = "cm")) float ContourErrorGovernorScaleCm = 100.0f;
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0")) float TerminalPositionWeight = 20.0f;
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0")) float TerminalVelocityWeight = 10.0f;
 	UPROPERTY(EditAnywhere, Category = "Solver", meta = (ClampMin = "0.0000001")) float Regularization = 1.0e-5f;

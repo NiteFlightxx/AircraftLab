@@ -36,6 +36,15 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTrajectoryTimingRuntimeConfig
 	float SpeedConvergenceToleranceCmPerSec = 1.0e-3f;
 };
 
+/** Shared path-progress policy consumed by MPCC and deterministic physical-constraint tracking. */
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftPathTrackingRuntimeConfig
+{
+	FAircraftPathTrackingRuntimeConfig();
+
+	float ContourErrorGovernorScaleCm = 100.0f;
+	float ProgressScaleResponseRatePerSecond = 5.0f;
+};
+
 /** Dataflow 编译后的模型预测轮廓控制配置。 */
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMpccRuntimeConfig
 {
@@ -55,8 +64,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMpccRuntimeConfig
 	float JerkWeight = 0.02f;
 	/** 偏航参考一阶响应时间常数（秒）。 */
 	float YawResponseTimeSeconds = 0.04f;
-	/** 轮廓误差减速 governor 的误差标度（厘米）。 */
-	float ContourErrorGovernorScaleCm = 100.0f;
 	float TerminalPositionWeight = 20.0f;
 	float TerminalVelocityWeight = 10.0f;
 	float Regularization = 1.0e-5f;
@@ -71,6 +78,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftAutopilotRuntimeConfig
 
 	FAircraftPathOptimizationRuntimeConfig Path;
 	FAircraftTrajectoryTimingRuntimeConfig Timing;
+	FAircraftPathTrackingRuntimeConfig Tracking;
 	FAircraftMpccRuntimeConfig Mpcc;
 
 	bool IsValid() const;

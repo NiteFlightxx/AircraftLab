@@ -1,4 +1,5 @@
 #include "AircraftAutopilot/AircraftMotionPlan.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 
 namespace
 {
@@ -595,6 +596,7 @@ bool FAircraftMotionPlan::Build(
 	const FAircraftVehicleStateSnapshot& InitialState,
 	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Trajectory_Build);
 	Reset();
 	if (!Intent.IsValid() || !Config.IsValid() || !Capability.bValid)
 	{

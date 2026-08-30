@@ -1,6 +1,7 @@
 #include "AircraftAutopilot/AutopilotComponent.h"
 #include "AircraftAutopilot/AircraftMotionPlan.h"
-#include "AircraftAutopilot/AircraftPredictiveController.h"
+#include "AircraftAutopilot/AircraftMpccController.h"
+#include "AircraftAutopilot/AircraftTrajectoryRuntime.h"
 #include "AircraftAutopilot/AircraftSpatialPath.h"
 #include "Misc/AutomationTest.h"
 
@@ -374,7 +375,7 @@ bool FAircraftPredictiveReferenceTest::RunTest(const FString& Parameters)
 	Capability.LinearDragBodyNsPerM = FVector(10.0, 10.0, 10.0);
 	Capability.DragAreaCoefficientBodyM2 = FVector(0.2, 0.2, 0.2);
 
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	TestTrue(TEXT("Velocity intent is accepted"),
 		Controller.SetIntent(Intent, 7, 3, Config, State, Capability));
 	FAircraftTrajectoryReference First;
@@ -442,7 +443,7 @@ bool FAircraftPredictiveReferenceTest::RunTest(const FString& Parameters)
 
 	FAircraftAutopilotRuntimeConfig BudgetConfig = Config;
 	BudgetConfig.Mpcc.SolveTimeBudgetMilliseconds = 1.0e-9f;
-	FAircraftPredictiveController BudgetController;
+	FAircraftMpccController BudgetController;
 	const FAircraftMovementIntent BudgetIntent = MakeRouteIntent(5000.0f);
 	TestTrue(TEXT("Budget-limited route intent is accepted"),
 		BudgetController.SetIntent(BudgetIntent, 8, 1, BudgetConfig, State, Capability));
@@ -485,7 +486,7 @@ bool FAircraftCapabilityHardLimitsTest::RunTest(const FString& Parameters)
 	Capability.MaxDescentRateCmPerSec = 110.0f;
 	Capability.MaxBodyRateRadPerSec.Z = FMath::DegreesToRadians(45.0f);
 	FAircraftVehicleStateSnapshot State;
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	const FAircraftAutopilotRuntimeConfig Config;
 	TestTrue(TEXT("Capability-limited intent is accepted"),
 		Controller.SetIntent(Intent, 9, 1, Config, State, Capability));
@@ -528,7 +529,7 @@ bool FAircraftYawReferenceUsesControlFrameTest::RunTest(const FString& Parameter
 	State.BodyRotation = FRotator(0.0f, -65.0f, 0.0f).Quaternion();
 	State.ControlRotation = FRotator(0.0f, 25.0f, 0.0f).Quaternion();
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	TestTrue(TEXT("Control-frame yaw intent is accepted"),
 		Controller.SetIntent(Intent, 20, 1, Config, State, Capability));
 	FAircraftTrajectoryReference Reference;
@@ -565,7 +566,7 @@ bool FAircraftYawReferenceRequiresPhysicalAuthorityTest::RunTest(const FString& 
 	Capability.bCanControlYaw = false;
 	FAircraftAutopilotRuntimeConfig Config;
 	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 
 	TestTrue(TEXT("Intent remains valid without physical yaw authority"),
 		Controller.SetIntent(Intent, 21, 1, Config, State, Capability));
@@ -597,7 +598,7 @@ bool FAircraftPathProgressTracksVehicleProjectionTest::RunTest(const FString& Pa
 	FAircraftVehicleStateSnapshot State;
 	State.TimeSeconds = 1.0;
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	TestTrue(TEXT("Route intent is accepted"),
 		Controller.SetIntent(Intent, 30, 1, Config, State, Capability));
 
@@ -637,7 +638,7 @@ bool FAircraftVelocityReferenceRespectsDragAndTiltAuthorityTest::RunTest(const F
 	State.TimeSeconds = 1.0;
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
 	Capability.LinearDampingPerSecond = FVector(2.0f);
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	TestTrue(TEXT("Drag-limited velocity intent is accepted"),
 		Controller.SetIntent(Intent, 31, 1, Config, State, Capability));
 	FAircraftTrajectoryReference Reference;
@@ -680,7 +681,7 @@ bool FAircraftTimedTrajectoryUsesExplicitClockTest::RunTest(const FString& Param
 	FAircraftVehicleStateSnapshot State;
 	State.TimeSeconds = 10.0;
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	TestTrue(TEXT("Timed trajectory intent is accepted"),
 		Controller.SetIntent(Intent, 32, 1, Config, State, Capability));
 	FAircraftTrajectoryReference Reference;
@@ -699,7 +700,7 @@ bool FAircraftTimedTrajectoryUsesExplicitClockTest::RunTest(const FString& Param
 	FAircraftMovementIntent UnreachableIntent = Intent;
 	UnreachableIntent.TimedTrajectory.Samples.Last().VelocityCmPerSec.X =
 		Capability.MaxHorizontalSpeedCmPerSec + 1.0f;
-	FAircraftPredictiveController RejectingController;
+	FAircraftMpccController RejectingController;
 	TestFalse(TEXT("Timed trajectory cannot exceed backend hard speed"),
 		RejectingController.SetIntent(
 			UnreachableIntent, 33, 1, Config, State, Capability));
@@ -720,7 +721,7 @@ bool FAircraftPathProgressIsMonotonicTest::RunTest(const FString& Parameters)
 	FAircraftVehicleStateSnapshot State;
 	State.TimeSeconds = 1.0;
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	TestTrue(TEXT("Monotonic-progress route is accepted"),
 		Controller.SetIntent(Intent, 40, 1, Config, State, Capability));
 
@@ -780,7 +781,7 @@ bool FAircraftPathReferenceGovernorDoesNotSelfThrottleTest::RunTest(const FStrin
 	FAircraftVehicleStateSnapshot State;
 	State.TimeSeconds = 1.0;
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	TestTrue(TEXT("Slow-tracking route is accepted"),
 		Controller.SetIntent(Intent, 43, 1, Config, State, Capability));
 
@@ -825,7 +826,7 @@ bool FAircraftNominalBrakingSurvivesVelocityErrorTest::RunTest(const FString& Pa
 	State.TimeSeconds = 1.0;
 	State.VelocityCmPerSec = FVector(300.0f, 0.0f, 0.0f);
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	TestTrue(TEXT("Braking trajectory is accepted"),
 		Controller.SetIntent(Intent, 41, 1, Config, State, Capability));
 	FAircraftTrajectoryReference Reference;
@@ -855,7 +856,7 @@ bool FAircraftYawReferenceRemainsAnchoredToMeasuredHeadingTest::RunTest(const FS
 	State.ControlRotation = FQuat::Identity;
 	State.BodyRotation = FQuat::Identity;
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	TestTrue(TEXT("Yaw-governed intent is accepted"),
 		Controller.SetIntent(Intent, 42, 1, Config, State, Capability));
 	FAircraftTrajectoryReference Reference;
@@ -895,7 +896,7 @@ bool FAircraftCorridorPredictionPriorityTest::RunTest(const FString& Parameters)
 	State.TimeSeconds = 1.0;
 	State.PositionCm = FVector(0.0f, 70.0f, 0.0f);
 	State.VelocityCmPerSec = FVector(200.0f, 400.0f, 0.0f);
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
 	TestTrue(TEXT("Corridor route is accepted"),
 		Controller.SetIntent(Intent, 34, 1, Config, State, Capability));
@@ -932,7 +933,7 @@ bool FAircraftYawReferenceSurvivesSameIntentUpdatesTest::RunTest(const FString& 
 	State.ControlRotation = FQuat::Identity;
 	State.BodyRotation = FQuat::Identity;
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
-	FAircraftPredictiveController Controller;
+	FAircraftMpccController Controller;
 	FAircraftTrajectoryReference Reference;
 	const float DeltaTime = 1.0f / Config.Mpcc.UpdateRateHz;
 
@@ -968,6 +969,94 @@ bool FAircraftYawReferenceSurvivesSameIntentUpdatesTest::RunTest(const FString& 
 		FMath::Abs(Reference.YawAccelerationDegPerSecSq)
 			<= Intent.Limits.MaxYawJerkDegPerSecCubed * DeltaTime
 				+ UE_KINDA_SMALL_NUMBER);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftDeterministicBackendTrajectoryTest,
+	"AircraftAutopilot.Runtime.DeterministicBackends",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftDeterministicBackendTrajectoryTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftAutopilotRuntimeConfig Config;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	Capability.bHasExplicitAerodynamics = true;
+	Capability.AirDensityKgPerM3 = 1.225f;
+	Capability.LinearDragBodyNsPerM = FVector(10.0f);
+	Capability.DragAreaCoefficientBodyM2 = FVector(0.2f);
+	Capability.MaxRelativeAirspeedCmPerSec = 10000.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.BodyRotation = FQuat::Identity;
+	State.ControlRotation = FQuat::Identity;
+
+	FAircraftTrajectoryRuntime Runtime;
+	const FAircraftMovementIntent RouteIntent = MakeRouteIntent(5000.0f);
+	TestTrue(TEXT("The shared runtime builds the route"),
+		Runtime.SetIntent(RouteIntent, 60, 1, Config, State, Capability));
+	State.TimeSeconds += 0.1;
+	++State.Sequence;
+	FAircraftTrajectoryReference KinematicReference;
+	TestTrue(TEXT("Kinematic sampling succeeds without MPCC"),
+		Runtime.UpdateKinematic(State, Capability, KinematicReference));
+	FAircraftMotionPlanSample ExpectedSample;
+	TestTrue(TEXT("The immutable plan evaluates at the kinematic cursor"),
+		Runtime.GetPlan().Evaluate(0.1f, ExpectedSample));
+	TestTrue(TEXT("Kinematic position is the exact plan sample"),
+		KinematicReference.PositionCm.Equals(ExpectedSample.PositionCm, 0.01f));
+	TestTrue(TEXT("Kinematic sampling never consumes aerodynamics"),
+		KinematicReference.DynamicsFeedForwardAccelerationCmPerSecSq.IsNearlyZero());
+
+	FAircraftTrajectoryRuntime GovernedRuntime;
+	State.PositionCm = FVector(0.0f, 300.0f, 0.0f);
+	TestTrue(TEXT("The constraint runtime builds the route"),
+		GovernedRuntime.SetIntent(RouteIntent, 61, 1, Config, State, Capability));
+	State.TimeSeconds += 0.1;
+	++State.Sequence;
+	FAircraftTrajectoryReference ConstraintReference;
+	TestTrue(TEXT("Constraint deterministic sampling succeeds"),
+		GovernedRuntime.UpdatePhysicsConstraint(State, Capability, ConstraintReference));
+	TestTrue(TEXT("Constraint progress governor reacts to contour error"),
+		GovernedRuntime.GetDiagnostics().ProgressScale < 1.0f);
+	TestTrue(TEXT("Constraint sampling retains dynamics feed-forward"),
+		!ConstraintReference.DynamicsFeedForwardAccelerationCmPerSecSq.IsNearlyZero());
+
+	FAircraftMovementIntent VelocityIntent;
+	VelocityIntent.Type = EAircraftMovementIntentType::Velocity;
+	VelocityIntent.Velocity.VelocityCmPerSec = FVector(800.0f, 0.0f, 0.0f);
+	VelocityIntent.Limits = RouteIntent.Limits;
+	VelocityIntent.bHasRequestedMotionLimits = true;
+	FAircraftTrajectoryRuntime VelocityRuntime;
+	State.PositionCm = FVector::ZeroVector;
+	State.VelocityCmPerSec = FVector::ZeroVector;
+	TestTrue(TEXT("Velocity intent builds"), VelocityRuntime.SetIntent(
+		VelocityIntent, 62, 1, Config, State, Capability));
+	State.TimeSeconds += 0.1;
+	++State.Sequence;
+	FAircraftTrajectoryReference AcceleratingReference;
+	TestTrue(TEXT("Velocity reference accelerates deterministically"),
+		VelocityRuntime.UpdateKinematic(State, Capability, AcceleratingReference));
+	VelocityIntent.Velocity.VelocityCmPerSec = FVector::ZeroVector;
+	TestTrue(TEXT("Same-handle release preserves the velocity profile"),
+		VelocityRuntime.SetIntent(VelocityIntent, 62, 2, Config, State, Capability));
+	State.TimeSeconds += 0.1;
+	++State.Sequence;
+	FAircraftTrajectoryReference BrakingReference;
+	TestTrue(TEXT("Velocity reference brakes deterministically"),
+		VelocityRuntime.UpdateKinematic(State, Capability, BrakingReference));
+	State.TimeSeconds += 0.1;
+	++State.Sequence;
+	FAircraftTrajectoryReference ContinuedBrakingReference;
+	TestTrue(TEXT("Jerk-limited braking continues deterministically"),
+		VelocityRuntime.UpdateKinematic(State, Capability, ContinuedBrakingReference));
+	TestTrue(TEXT("Release decelerates instead of stopping instantly"),
+		BrakingReference.VelocityCmPerSec.X > 0.0f
+		&& BrakingReference.VelocityCmPerSec.X
+			<= AcceleratingReference.VelocityCmPerSec.X);
+	TestTrue(TEXT("Braking never reverses the deterministic reference"),
+		ContinuedBrakingReference.VelocityCmPerSec.X >= 0.0f);
 	return true;
 }
 

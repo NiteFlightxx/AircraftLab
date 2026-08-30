@@ -28,6 +28,14 @@ struct FAircraftAutopilotPathConfig
 	UPROPERTY(EditAnywhere, Category = "Projection", meta = (ClampMin = "1.0", Units = "cm"))
 	float ProjectionSearchDistanceCm = 2000.0f;
 
+	/** MPCC 与物理约束进度调节器共享的轮廓误差标度。 */
+	UPROPERTY(EditAnywhere, Category = "Tracking", meta = (ClampMin = "1.0", Units = "cm"))
+	float ContourErrorGovernorScaleCm = 100.0f;
+
+	/** 物理约束进度比例向目标比例收敛的响应率。 */
+	UPROPERTY(EditAnywhere, Category = "Tracking", meta = (ClampMin = "0.01"))
+	float ProgressScaleResponseRatePerSecond = 5.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Objective", meta = (ClampMin = "0.0"))
 	float CenterlineWeight = 1.0f;
 
@@ -48,7 +56,7 @@ USTRUCT(meta = (DataflowAircraft))
 struct FAircraftAutopilotPathConfigNode : public FDataflowNode
 {
 	GENERATED_BODY()
-	DATAFLOW_NODE_DEFINE_INTERNAL(FAircraftAutopilotPathConfigNode, "AircraftAutopilotPathConfig", "Aircraft|Autopilot", "Spatial Path Optimization")
+	DATAFLOW_NODE_DEFINE_INTERNAL(FAircraftAutopilotPathConfigNode, "AircraftAutopilotPathConfig", "Aircraft|Autopilot", "Spatial Path and Tracking")
 
 public:
 	FAircraftAutopilotPathConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());

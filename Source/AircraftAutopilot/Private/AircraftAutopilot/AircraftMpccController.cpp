@@ -1,6 +1,7 @@
-#include "AircraftAutopilot/AircraftPredictiveController.h"
+#include "AircraftAutopilot/AircraftMpccController.h"
 
 #include "HAL/PlatformTime.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 
 namespace
 {
@@ -50,7 +51,7 @@ namespace
 	}
 }
 
-void FAircraftPredictiveController::Reset()
+void FAircraftMpccController::Reset()
 {
 	Plan.Reset();
 	RequestedIntent = {};
@@ -72,7 +73,7 @@ void FAircraftPredictiveController::Reset()
 	NextSolveTimeSeconds = -DBL_MAX;
 }
 
-bool FAircraftPredictiveController::SetIntent(
+bool FAircraftMpccController::SetIntent(
 	const FAircraftMovementIntent& Intent, int64 InIntentId, uint64 InIntentRevision,
 	const FAircraftAutopilotRuntimeConfig& Config,
 	const FAircraftVehicleStateSnapshot& State,
@@ -134,7 +135,7 @@ bool FAircraftPredictiveController::SetIntent(
 	return bBuilt;
 }
 
-bool FAircraftPredictiveController::RefreshPlanForCapability(
+bool FAircraftMpccController::RefreshPlanForCapability(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
@@ -170,7 +171,7 @@ bool FAircraftPredictiveController::RefreshPlanForCapability(
 	return true;
 }
 
-FVector FAircraftPredictiveController::ProjectAcceleration(
+FVector FAircraftMpccController::ProjectAcceleration(
 	const FVector& Acceleration,
 	const FAircraftRequestedMotionLimits& Limits,
 	const FAircraftDynamicCapabilitySnapshot& Capability,
@@ -198,7 +199,7 @@ FVector FAircraftPredictiveController::ProjectAcceleration(
 	return Result;
 }
 
-FVector FAircraftPredictiveController::ProjectControlAcceleration(
+FVector FAircraftMpccController::ProjectControlAcceleration(
 	const FVector& Acceleration,
 	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
@@ -242,7 +243,7 @@ FVector FAircraftPredictiveController::ProjectControlAcceleration(
 	return Result;
 }
 
-FVector FAircraftPredictiveController::ApplyJerkLimit(
+FVector FAircraftMpccController::ApplyJerkLimit(
 	const FVector& PreviousAcceleration, const FVector& DesiredAcceleration,
 	float DeltaTime, const FAircraftRequestedMotionLimits& Limits)
 {
@@ -255,7 +256,7 @@ FVector FAircraftPredictiveController::ApplyJerkLimit(
 	return PreviousAcceleration + FVector(HorizontalDelta.X, HorizontalDelta.Y, Delta.Z);
 }
 
-void FAircraftPredictiveController::ApplyYawConstraints(
+void FAircraftMpccController::ApplyYawConstraints(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftRequestedMotionLimits& Limits, float DeltaTime,
 	float DesiredYawDegrees,
@@ -318,7 +319,7 @@ void FAircraftPredictiveController::ApplyYawConstraints(
 	}
 }
 
-FVector FAircraftPredictiveController::ComputeDragCompensation(
+FVector FAircraftMpccController::ComputeDragCompensation(
 	const FVector& DesiredVelocityWorldCmPerSec, const FQuat& BodyRotation,
 	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
@@ -338,11 +339,12 @@ FVector FAircraftPredictiveController::ComputeDragCompensation(
 		* (100.0f / Capability.MassKg);
 }
 
-bool FAircraftPredictiveController::SolveVelocityIntent(
+bool FAircraftMpccController::SolveVelocityIntent(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability,
 	FAircraftTrajectoryReference& OutReference)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_MPCC_VelocityProfile);
 	const FAircraftMovementIntent& Intent = Plan.GetIntent();
 	FVector TargetVelocity = Intent.Velocity.VelocityCmPerSec;
 	if (Intent.Velocity.Frame == EAircraftVelocityFrame::ControlHeading)
@@ -466,12 +468,13 @@ bool FAircraftPredictiveController::SolveVelocityIntent(
 	return true;
 }
 
-bool FAircraftPredictiveController::SolvePlan(
+bool FAircraftMpccController::SolvePlan(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability,
 	FAircraftTrajectoryReference& OutReference,
 	const double SolveDeadlineSeconds)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_MPCC_OptimizePlan);
 	FAircraftMotionPlanSample Projection;
 	const float PlanLengthCm = Plan.GetLengthCm();
 	const float NominalSolveDeltaTime = 1.0f / RuntimeConfig.Mpcc.UpdateRateHz;
@@ -558,7 +561,7 @@ bool FAircraftPredictiveController::SolvePlan(
 		const float NominalSpeedCmPerSec = static_cast<float>(
 			CurrentNominalReference.VelocityCmPerSec.Size());
 		const float NormalizedContourError = ContourErrorCm
-			/ FMath::Max(RuntimeConfig.Mpcc.ContourErrorGovernorScaleCm, 1.0f);
+			/ FMath::Max(RuntimeConfig.Tracking.ContourErrorGovernorScaleCm, 1.0f);
 		const float TargetReferenceScale = CorridorViolationCm > 0.0f
 			|| Diagnostics.PredictedCorridorViolationCm > 0.0f
 			? 0.0f : 1.0f / (1.0f + FMath::Square(NormalizedContourError));
@@ -813,7 +816,7 @@ bool FAircraftPredictiveController::SolvePlan(
 	return true;
 }
 
-bool FAircraftPredictiveController::Update(
+bool FAircraftMpccController::Update(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability,
 	FAircraftTrajectoryReference& OutReference)

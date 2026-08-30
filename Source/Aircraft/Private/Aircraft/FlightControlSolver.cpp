@@ -1,5 +1,6 @@
 
 #include "Aircraft/FlightControlSolver.h"
+#include "Aircraft/AircraftAttitudeReference.h"
 
 #include "Aircraft/ControlAllocator.h"
 #include "Math/RotationMatrix.h"
@@ -304,23 +305,12 @@ FRotator FAircraftFlightControlSolver::ComputeDesiredAttitude(FAircraftFlightCon
 	const float CurrentHeadingDegrees = GetPlanarHeadingDegrees(
 		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized(), Config);
 
-	// 构造仅含航向的"平面旋转"——提取机体前/右方向的水平投影
-	const FRotator FlatYawRotation(0.0f, CurrentHeadingDegrees, 0.0f);
-	const FVector ForwardFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::X);
-	const FVector RightFlat = FRotationMatrix(FlatYawRotation).GetUnitAxis(EAxis::Y);
-
-	// 将期望加速度投影到机体前/右方向
-	const float ForwardAcceleration = FVector::DotProduct(DesiredHorizontalAcceleration, ForwardFlat);
-	const float RightAcceleration = FVector::DotProduct(DesiredHorizontalAcceleration, RightFlat);
-
-	// 悬停倾斜方程：tan(θ) = a/g
-	float DesiredPitchDegrees = -FMath::RadiansToDegrees(FMath::Atan2(ForwardAcceleration, GravityMagnitude));
-	float DesiredRollDegrees = FMath::RadiansToDegrees(FMath::Atan2(RightAcceleration, GravityMagnitude));
-
-	// 限制最大倾角——超出此角度可能推力不足以抵消重力分量
-	DesiredRollDegrees = FMath::Clamp(DesiredRollDegrees, -Config.MaxTiltAngleDegrees, Config.MaxTiltAngleDegrees);
-	DesiredPitchDegrees = FMath::Clamp(DesiredPitchDegrees, -Config.MaxTiltAngleDegrees, Config.MaxTiltAngleDegrees);
-	return FRotator(DesiredPitchDegrees, CurrentHeadingDegrees, DesiredRollDegrees);
+	return AircraftAttitudeReference::Build(
+		DesiredHorizontalAcceleration,
+		CurrentHeadingDegrees,
+		GravityMagnitude,
+		Config.MaxTiltAngleDegrees,
+		Config).ControlWorldRotation.Rotator();
 }
 
 

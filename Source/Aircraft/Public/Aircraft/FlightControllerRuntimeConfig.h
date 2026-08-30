@@ -100,22 +100,20 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	float YawHoldStickDeadband = 0.05f;
 	float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
 	float VerticalBrakeToHoldSpeedCmPerSec = 20.0f;
-	float ConstraintLinearStrength = 1.59154943f;
+	float ConstraintLinearNaturalFrequencyHz = 1.59154943f;
 	float ConstraintLinearDampingRatio = 1.0f;
-	float ConstraintLinearExtraDamping = 0.0f;
+	float ConstraintLinearExtraDampingPerSecond = 0.0f;
 	/** 线性约束驱动合力上限（N）；0 表示不限制。 */
 	float ConstraintLinearForceLimitN = 0.0f;
 	float ConstraintGravityFeedForwardScale = 1.0f;
 	float ConstraintDynamicsFeedForwardScale = 1.0f;
-	float ConstraintAngularStrength = 1.59154943f;
-	float ConstraintAngularDampingRatio = 1.0f;
-	float ConstraintAngularExtraDamping = 0.0f;
-	/** 角约束驱动力矩上限（N·m）；0 表示不限制。 */
-	float ConstraintAngularTorqueLimitNm = 0.0f;
-	bool bConstraintAccelerationMode = true;
+	float ConstraintAttitudeNaturalFrequencyHz = 1.59154943f;
+	float ConstraintAttitudeDampingRatio = 1.0f;
+	float ConstraintAttitudeExtraDampingPerSecond = 0.0f;
+	/** 物理线程姿态控制力矩上限（N·m）；0 表示不限制。 */
+	float ConstraintAttitudeTorqueLimitNm = 0.0f;
+	bool bConstraintLinearAccelerationMode = true;
 	bool bKinematicSweepMovement = true;
-	float KinematicPositionCorrectionRate = 8.0f;
-	float KinematicRotationInterpSpeed = 8.0f;
 	bool bStartArmed = true;
 	EAircraftFlightMode InitialFlightMode = EAircraftFlightMode::PositionHold;
 	bool bControllerEnabledByDefault = true;

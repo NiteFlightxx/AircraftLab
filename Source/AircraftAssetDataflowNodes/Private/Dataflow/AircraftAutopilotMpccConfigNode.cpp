@@ -34,7 +34,6 @@ void FAircraftAutopilotMpccConfigNode::Evaluate(
 		|| !FMath::IsFinite(Config.SolveTimeBudgetMilliseconds) || Config.SolveTimeBudgetMilliseconds <= 0.0f
 		|| !FMath::IsFinite(Config.Regularization) || Config.Regularization <= 0.0f
 		|| !FMath::IsFinite(Config.YawResponseTimeSeconds) || Config.YawResponseTimeSeconds <= 0.0f
-		|| !FMath::IsFinite(Config.ContourErrorGovernorScaleCm) || Config.ContourErrorGovernorScaleCm <= 0.0f
 		|| Config.MaxConsecutiveFailures <= 0
 		|| !FMath::IsFinite(Config.MaximumReferenceAgeSeconds) || Config.MaximumReferenceAgeSeconds <= 0.0f;
 	for (const float Weight : Weights)
@@ -64,7 +63,6 @@ void FAircraftAutopilotMpccConfigNode::Evaluate(
 	SET_MPCC(AccelerationWeight);
 	SET_MPCC(JerkWeight);
 	SET_MPCC(YawResponseTimeSeconds);
-	SET_MPCC(ContourErrorGovernorScaleCm);
 	SET_MPCC(TerminalPositionWeight);
 	SET_MPCC(TerminalVelocityWeight);
 	SET_MPCC(Regularization);
