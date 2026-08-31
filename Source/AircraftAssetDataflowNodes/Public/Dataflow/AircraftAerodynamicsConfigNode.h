@@ -13,22 +13,22 @@ struct FAircraftAerodynamicsConfig
 	GENERATED_BODY()
 
 	/** 空气密度（kg/m³）。 */
-	UPROPERTY(EditAnywhere, Category = "Atmosphere", meta = (ClampMin = "0.0001"))
+	UPROPERTY(EditAnywhere, Category = "Atmosphere", meta = (DisplayName = "Air Density (kg/m³)", ClampMin = "0.0001"))
 	float AirDensityKgPerM3 = 1.225f;
 
-	UPROPERTY(EditAnywhere, Category = "Body")
+	UPROPERTY(EditAnywhere, Category = "Body", meta = (DisplayName = "Linear Drag (N·s/m)"))
 	FVector LinearDragNsPerM = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, Category = "Body")
+	UPROPERTY(EditAnywhere, Category = "Body", meta = (DisplayName = "Drag Area Coefficient (m²)"))
 	FVector DragAreaCoefficientM2 = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, Category = "Body")
+	UPROPERTY(EditAnywhere, Category = "Body", meta = (DisplayName = "Angular Drag (N·m·s/rad)"))
 	FVector AngularDragNmPerRadPerSec = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, Category = "Body")
+	UPROPERTY(EditAnywhere, Category = "Body", meta = (DisplayName = "Quadratic Angular Drag (N·m·s²/rad²)"))
 	FVector QuadraticAngularDragNmPerRadPerSecSq = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, Category = "Safety", meta = (ClampMin = "1.0", Units = "cm/s"))
+	UPROPERTY(EditAnywhere, Category = "Safety", meta = (DisplayName = "Max Relative Airspeed (cm/s)", ClampMin = "1.0", Units = "cm/s"))
 	float MaxRelativeAirspeedCmPerSec = 10000.0f;
 };
 
@@ -41,7 +41,7 @@ struct FAircraftAerodynamicsConfigNode : public FDataflowNode
 public:
 	FAircraftAerodynamicsConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DisplayName = "Collection", DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
 	FManagedArrayCollection Collection;
 
 	UPROPERTY(EditAnywhere, Category = "Config", meta = (ShowOnlyInnerProperties))

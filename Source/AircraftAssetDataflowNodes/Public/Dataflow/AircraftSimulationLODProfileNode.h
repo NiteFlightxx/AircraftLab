@@ -14,9 +14,12 @@ struct FAircraftSimulationLODProfileData
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category = "LOD") FName Name = TEXT("LOD");
-	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
-	UPROPERTY(EditAnywhere, Category = "LOD") EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
+	UPROPERTY(EditAnywhere, Category = "LOD", meta = (DisplayName = "LOD Name"))
+	FName Name = TEXT("LOD");
+	UPROPERTY(EditAnywhere, Category = "LOD", meta = (DisplayName = "Drive Mode"))
+	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
+	UPROPERTY(EditAnywhere, Category = "LOD", meta = (DisplayName = "Collision Mode"))
+	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::QueryAndPhysics;
 };
 
 USTRUCT(meta = (DataflowAircraft))
@@ -28,8 +31,10 @@ struct FAircraftSimulationLODProfileNode : public FDataflowNode
 public:
 	FAircraftSimulationLODProfileNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DataflowInput, DataflowOutput, DataflowPassthrough = "Collection")) FManagedArrayCollection Collection;
-	UPROPERTY(EditAnywhere, Category = "Profile", meta = (ShowOnlyInnerProperties)) FAircraftSimulationLODProfileData Profile;
+	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DisplayName = "Collection", DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
+	FManagedArrayCollection Collection;
+	UPROPERTY(EditAnywhere, Category = "Profile", meta = (DisplayName = "Profile", ShowOnlyInnerProperties))
+	FAircraftSimulationLODProfileData Profile;
 
 	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
 };

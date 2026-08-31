@@ -19,14 +19,14 @@ struct  FAircraftSkeletalMeshSourceNode : public FDataflowNode
 public:
 	FAircraftSkeletalMeshSourceNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Source")
+	UPROPERTY(EditAnywhere, Category = "Source", meta = (DisplayName = "Skeletal Mesh"))
 	TObjectPtr< USkeletalMesh> SkeletalMesh = nullptr;
 
-	UPROPERTY(EditAnywhere, Category = "Source")
+	UPROPERTY(EditAnywhere, Category = "Source", meta = (DisplayName = "Physics Asset"))
 	TObjectPtr<UPhysicsAsset> PhysicsAsset = nullptr;
 
 
-	UPROPERTY(meta = (DataflowOutput))
+	UPROPERTY(meta = (DisplayName = "Collection", DataflowOutput))
 	FManagedArrayCollection Collection;
 
 	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;

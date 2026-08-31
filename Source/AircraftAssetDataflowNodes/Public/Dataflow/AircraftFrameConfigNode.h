@@ -33,27 +33,27 @@ struct FAircraftFrameConfigNode : public FDataflowNode
 public:
 	FAircraftFrameConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DisplayName = "Collection", DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
 	FManagedArrayCollection Collection;
 
 	/** 机体根骨骼，用于物理刚体绑定。 */
-	UPROPERTY(EditAnywhere, Category = "Frame")
+	UPROPERTY(EditAnywhere, Category = "Frame", meta = (DisplayName = "Root Bone"))
 	FName RootBone = NAME_None;
 
 	/** 视觉模型的局部机头方向。 */
-	UPROPERTY(EditAnywhere, Category = "Frame")
+	UPROPERTY(EditAnywhere, Category = "Frame", meta = (DisplayName = "Forward Axis"))
 	EAircraftForwardAxisNode ForwardAxis = EAircraftForwardAxisNode::PositiveY;
 
 	/** 机体总质量（千克）。 */
-	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (ClampMin = "0.01"))
+	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (DisplayName = "Total Mass (kg)", ClampMin = "0.01"))
 	float MassKg = 1.2f;
 
 	/** 在 PhysicsAsset 计算质心基础上施加的局部偏移（厘米）。 */
-	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia")
+	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (DisplayName = "Center Of Mass Nudge (cm)"))
 	FVector3f CenterOfMassNudgeCm = FVector3f::ZeroVector;
 
 	/** PhysicsAsset 计算出的惯性张量逐轴缩放；(1,1,1) 保持原始惯性。 */
-	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (ClampMin = "0.01"))
+	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (DisplayName = "Inertia Tensor Scale", ClampMin = "0.01"))
 	FVector3f InertiaTensorScale = FVector3f::OneVector;
 
 	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;

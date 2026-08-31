@@ -150,7 +150,7 @@ protected:
 	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
 
 	virtual void AddProperties(struct FPropertyHelper& PropertyHelper) const
-	PURE_VIRTUAL(FAircraftConfigNodeBase::AddProperties, );
+	PURE_VIRTUAL(FAircraftConfigNodeBase::AddProperties);
 
 	virtual void EvaluateAircraftCollection(
 		UE::Dataflow::FContext& Context,
