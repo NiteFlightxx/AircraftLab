@@ -29,8 +29,6 @@
 #include "Editor.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Curves/RichCurve.h"
-#include "Engine/SkeletalMesh.h"
-#include "PhysicsEngine/PhysicsAsset.h"
 #include "UObject/UObjectGlobals.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftDataflowPreviewActor.h"
@@ -209,51 +207,41 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				return false;
 			}
 
-			// 默认 QuadX 旋翼布局（30cm 臂长）。模板显式列出全部旋翼；
-			// Terminal 不会为缺失数据悄悄生成后备布局，图本身始终是唯一事实来源。
+			// 默认 QuadX 旋翼布局：旋翼通过骨骼 Socket 安装在机体四角（前右/前左/后左/后右）。
+			// 模板显式列出全部旋翼；Terminal 不会为缺失数据悄悄生成后备布局，图本身始终是唯一事实来源。
 			//
 			// QuadX 编号约定（俯视图）：
 			//     2(CW)   1(CCW)
 			//           x
 			//     3(CCW)  4(CW)
-			constexpr float DefaultArmLengthCm = 30.0f;
 
-			// 模板默认网格/物理资产（插件随包内容；缺失时保持空引用由用户在节点中指定）。
-			const FString DefaultSkeletalMeshPath = TEXT("/AircraftLab/Meshs/SK_Aircraft.SK_Aircraft");
-			const FString DefaultPhysicsAssetPath = TEXT("/AircraftLab/Meshs/SK_Aircraft_Physics2.SK_Aircraft_Physics2");
+			// Source 的 SkeletalMesh / PhysicsAsset 默认留空，由用户在编辑器中手动指定。
 
 			struct FQuadXEntry
 			{
 				FName RotorName;
-				FVector3f Position;
+				FName SocketName;
 				EAircraftAirscrewSpinDirection SpinDirection;
 			};
 			const FQuadXEntry QuadXEntries[] =
 			{
-				{ TEXT("Rotor1_FR"), FVector3f( DefaultArmLengthCm, -DefaultArmLengthCm, 0.f), EAircraftAirscrewSpinDirection::CounterClockwise },
-				{ TEXT("Rotor2_FL"), FVector3f( DefaultArmLengthCm,  DefaultArmLengthCm, 0.f), EAircraftAirscrewSpinDirection::Clockwise },
-				{ TEXT("Rotor3_RL"), FVector3f(-DefaultArmLengthCm,  DefaultArmLengthCm, 0.f), EAircraftAirscrewSpinDirection::CounterClockwise },
-				{ TEXT("Rotor4_RR"), FVector3f(-DefaultArmLengthCm, -DefaultArmLengthCm, 0.f), EAircraftAirscrewSpinDirection::Clockwise },
+				{ TEXT("Rotor1_FR"), TEXT("Bone_F_R"), EAircraftAirscrewSpinDirection::CounterClockwise },
+				{ TEXT("Rotor2_FL"), TEXT("Bone_F_L"), EAircraftAirscrewSpinDirection::Clockwise },
+				{ TEXT("Rotor3_RL"), TEXT("Bone_B_L"), EAircraftAirscrewSpinDirection::CounterClockwise },
+				{ TEXT("Rotor4_RR"), TEXT("Bone_B_R"), EAircraftAirscrewSpinDirection::Clockwise },
 			};
 
 			/* ---------- Source / Solver / Frame ---------- */
-			const FCreatedTemplateNode SourceNode = AddConfiguredTemplateNode<FAircraftSkeletalMeshSourceNode>(
-				DataflowAsset,
-				TEXT("AircraftSkeletalMeshSource"),
-				FVector2D(512.0, 0.0),
-				[&DefaultSkeletalMeshPath, &DefaultPhysicsAssetPath](FAircraftSkeletalMeshSourceNode& Node)
-				{
-					Node.SkeletalMesh = LoadObject<USkeletalMesh>(nullptr, *DefaultSkeletalMeshPath);
-					Node.PhysicsAsset = LoadObject<UPhysicsAsset>(nullptr, *DefaultPhysicsAssetPath);
-				});
+			const FCreatedTemplateNode SourceNode = AddTemplateNode<FAircraftSkeletalMeshSourceNode>(
+				DataflowAsset, TEXT("AircraftSkeletalMeshSource"), FVector2D(592.0, 320.0));
 
 			const FCreatedTemplateNode SolverNode = AddTemplateNode<FAircraftSolverConfigNode>(
-				DataflowAsset, TEXT("AircraftSolverConfig"), FVector2D(880.0, 0.0));
+				DataflowAsset, TEXT("AircraftSolverConfig"), FVector2D(960.0, 320.0));
 
 			const FCreatedTemplateNode FrameNode = AddConfiguredTemplateNode<FAircraftFrameConfigNode>(
 				DataflowAsset,
 				TEXT("AircraftFrameConfig"),
-				FVector2D(1248.0, 0.0),
+				FVector2D(1328.0, 320.0),
 				[](FAircraftFrameConfigNode& Node)
 				{
 					Node.RootBone = RootBoneName;
@@ -278,20 +266,17 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				AirscrewNodes.Add(AddConfiguredTemplateNode<FAircraftAirscrewProfileNode>(
 					DataflowAsset,
 					FName(*FString::Printf(TEXT("AircraftAirscrewProfile_%s"), *Entry.RotorName.ToString())),
-					FVector2D(1664.0, 112.0 * RotorIndex),
+					FVector2D(1680.0, -352.0 + 112.0 * RotorIndex),
 					[EntryCopy](FAircraftAirscrewProfileNode& Node)
 					{
 						Node.Profile.Name = EntryCopy.RotorName;
-						Node.Profile.bEnabled = true;
 						Node.Profile.SpinDirection = EntryCopy.SpinDirection;
-						Node.Profile.bUseSocketTransform = false;
-						Node.Profile.PositionLocalCm = EntryCopy.Position;
-						Node.Profile.ThrustAxisLocal = FVector3f(0.f, 0.f, 1.f);
+						Node.Profile.SocketName = EntryCopy.SocketName;
+						// bUseSocketTransform 默认 true：旋翼位姿直接取自骨骼 Socket，无需手动 PositionLocalCm。
 						// 单旋翼最大推力需满足 ΣMaxThrust > MassKg×g：
-						// 100 kg 四旋翼单电机需 >245 N；取 350 N → 总推力 1400 N，悬停油门约 70%。
-						Node.Profile.MaxThrustN = 350.f;
-						Node.Profile.ReactionTorqueCoefficientM = 0.03f;
-						Node.Profile.ControlAuthorityScale = 1.f;
+						// 100 kg 四旋翼单电机需 >245 N；取 490 N → 总推力 1960 N，悬停油门约 50%。
+						Node.Profile.MaxThrustN = 490.f;
+						Node.Profile.ReactionTorqueCoefficientM = 1.f;
 					}));
 			}
 
@@ -315,12 +300,18 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			const FCreatedTemplateNode MpccNode = AddTemplateNode<FAircraftAutopilotMpccConfigNode>(
 				DataflowAsset, TEXT("AircraftAutopilotMpccConfig"), FVector2D(5072.0, 0.0));
 
-			// 两种替代驱动配置也属于共享资产配置。每个 LOD 都携带完整配置，Profile.DriveMode
-			// 只在运行时选择实际后端，不再由模板拓扑把驱动模式绑定到某个 LOD 索引。
+			// 两种替代驱动配置从 Frame 经 ReRoute 分叉，分别供给 PhysicsConstraint/Kinematic LOD；
+			// 不再串接在飞控主干末端，避免远距离 LOD 携带完整飞控/自动驾驶链。
+			// ReRoute 节点（引擎内置 FDataflowReRouteNode）仅做引线汇流，不改变 Collection 内容。
+			const FCreatedTemplateNode ReRouteNode1 = AddTemplateNode(
+				DataflowAsset, TEXT("ReRouteNode_v1"), TEXT("FDataflowReRouteNode"), FVector2D(5612.0, 345.0));
+			const FCreatedTemplateNode ReRouteNode1Reroute = AddTemplateNode(
+				DataflowAsset, TEXT("ReRouteNode_v1_0"), TEXT("FDataflowReRouteNode"), FVector2D(5744.0, 480.0));
+
 			const FCreatedTemplateNode ConstraintNode = AddTemplateNode<FAircraftConstraintSimulationConfigNode>(
-				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), FVector2D(5440.0, 0.0));
+				DataflowAsset, TEXT("AircraftConstraintSimulationConfig"), FVector2D(5776.0, 144.0));
 			const FCreatedTemplateNode KinematicNode = AddTemplateNode<FAircraftKinematicSimulationConfigNode>(
-				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), FVector2D(5808.0, 0.0));
+				DataflowAsset, TEXT("AircraftKinematicSimulationConfig"), FVector2D(5776.0, 288.0));
 
 			/* ---------- Per-LOD profiles ---------- */
 			struct FDefaultLodEntry
@@ -358,13 +349,17 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				DataflowAsset, TEXT("AircraftAssetTerminal"), FVector2D(6768.0, 0.0));
 
 			/* ---------- 连线 ----------
-			 * 唯一共享主干包含 Solver、机架、旋翼、完整飞控、自动驾驶和全部驱动后端配置。
-			 * 主干末端扇出到每个 LOD Profile，Profile.DriveMode 可自由选择任意驱动模式。
+			 * 飞控主干 Source → Solver → Frame → 旋翼 → Limits → 位置 → 姿态 → 高度 → 分配 → 输入
+			 *        → Path → Timing → Mpcc 携带完整飞控+自动驾驶链，末端进入 LOD0(FlightController)。
+			 * Frame 的 Collection 经 ReRouteNode_v1 分叉到两条替代驱动链与一个纯机架 LOD：
+			 *   - +Constraint → LOD1(PhysicsConstraint)
+			 *   - +Kinematic  → LOD2(Kinematic)
+			 *   - 经 ReRouteNode_v1_0 不加任何驱动配置 → LOD3(Kinematic/Disabled，仅机架)
 			 * 四个 LOD 分别进入 Terminal 的 CollectionLods[0..3]。
-			 * OptionalAerodynamicsNode 默认隔离；把它插入共享主干后，显式空气动力学才会生效。
+			 * OptionalAerodynamicsNode 默认隔离；把它插入主干后，显式空气动力学才会生效。
 			 */
 			TArray<UDataflowEdNode*> MainChain;
-			MainChain.Reserve(18);
+			MainChain.Reserve(16);
 			MainChain.Add(SourceNode.EdNode);
 			MainChain.Add(SolverNode.EdNode);
 			MainChain.Add(FrameNode.EdNode);
@@ -381,10 +376,9 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			MainChain.Add(PathNode.EdNode);
 			MainChain.Add(TimingNode.EdNode);
 			MainChain.Add(MpccNode.EdNode);
-			MainChain.Add(ConstraintNode.EdNode);
-			MainChain.Add(KinematicNode.EdNode);
 
-			bool bTemplateComplete = OptionalAerodynamicsNode.IsValid();
+			bool bTemplateComplete = OptionalAerodynamicsNode.IsValid()
+				&& ReRouteNode1.IsValid() && ReRouteNode1Reroute.IsValid();
 			for (int32 ChainIndex = 0; ChainIndex + 1 < MainChain.Num(); ++ChainIndex)
 			{
 				bTemplateComplete &= ConnectTemplateNodes(
@@ -393,25 +387,57 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					MainChain[ChainIndex + 1], TEXT("Collection"));
 			}
 
-			if (const FAircraftAssetTerminalNode* const TerminalDataflowNode =
-				TerminalNode.Node.IsValid() ? TerminalNode.Node->AsType<FAircraftAssetTerminalNode>() : nullptr)
+			const bool bLodsComplete = SimulationLODNodes.Num() == 4;
+			bTemplateComplete &= bLodsComplete;
+			if (bLodsComplete)
 			{
-				for (int32 LodIndex = 0; LodIndex < SimulationLODNodes.Num(); ++LodIndex)
+				// LOD0 直接承接飞控主干末端（完整飞控+自动驾驶链）。
+				bTemplateComplete &= ConnectTemplateNodes(
+					DataflowAsset, MpccNode.EdNode, TEXT("Collection"),
+					SimulationLODNodes[0].EdNode, TEXT("Collection"));
+
+				// Frame → ReRouteNode_v1 → (Constraint / Kinematic / ReRouteNode_v1_0)。
+				bTemplateComplete &= ConnectTemplateNodes(
+					DataflowAsset, FrameNode.EdNode, TEXT("Collection"),
+					ReRouteNode1.EdNode, TEXT("Value"));
+				bTemplateComplete &= ConnectTemplateNodes(
+					DataflowAsset, ReRouteNode1.EdNode, TEXT("Value"),
+					ConstraintNode.EdNode, TEXT("Collection"));
+				bTemplateComplete &= ConnectTemplateNodes(
+					DataflowAsset, ReRouteNode1.EdNode, TEXT("Value"),
+					KinematicNode.EdNode, TEXT("Collection"));
+				bTemplateComplete &= ConnectTemplateNodes(
+					DataflowAsset, ReRouteNode1.EdNode, TEXT("Value"),
+					ReRouteNode1Reroute.EdNode, TEXT("Value"));
+
+				// 替代驱动链分别进入 LOD1/LOD2；ReRouteNode_v1_0(纯机架)进入 LOD3。
+				bTemplateComplete &= ConnectTemplateNodes(
+					DataflowAsset, ConstraintNode.EdNode, TEXT("Collection"),
+					SimulationLODNodes[1].EdNode, TEXT("Collection"));
+				bTemplateComplete &= ConnectTemplateNodes(
+					DataflowAsset, KinematicNode.EdNode, TEXT("Collection"),
+					SimulationLODNodes[2].EdNode, TEXT("Collection"));
+				bTemplateComplete &= ConnectTemplateNodes(
+					DataflowAsset, ReRouteNode1Reroute.EdNode, TEXT("Value"),
+					SimulationLODNodes[3].EdNode, TEXT("Collection"));
+
+				// LOD0..3 → Terminal.CollectionLods[0..3]
+				if (const FAircraftAssetTerminalNode* const TerminalDataflowNode =
+					TerminalNode.Node.IsValid() ? TerminalNode.Node->AsType<FAircraftAssetTerminalNode>() : nullptr)
 				{
-					bTemplateComplete &= ConnectTemplateNodes(
-						DataflowAsset,
-						KinematicNode.EdNode, TEXT("Collection"),
-						SimulationLODNodes[LodIndex].EdNode, TEXT("Collection"));
-					bTemplateComplete &= ConnectTemplateNodes(
-						DataflowAsset,
-						SimulationLODNodes[LodIndex].EdNode, TEXT("Collection"),
-						TerminalNode.EdNode,
-						TerminalDataflowNode->GetCollectionLodInputName(LodIndex));
+					for (int32 LodIndex = 0; LodIndex < SimulationLODNodes.Num(); ++LodIndex)
+					{
+						bTemplateComplete &= ConnectTemplateNodes(
+							DataflowAsset,
+							SimulationLODNodes[LodIndex].EdNode, TEXT("Collection"),
+							TerminalNode.EdNode,
+							TerminalDataflowNode->GetCollectionLodInputName(LodIndex));
+					}
 				}
-			}
-			else
-			{
-				bTemplateComplete = false;
+				else
+				{
+					bTemplateComplete = false;
+				}
 			}
 
 			return bTemplateComplete;

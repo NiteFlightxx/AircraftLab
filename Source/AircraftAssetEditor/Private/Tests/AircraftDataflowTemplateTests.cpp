@@ -56,6 +56,8 @@ bool FAircraftCompleteDefaultDataflowTemplateTest::RunTest(const FString& Parame
 		TEXT("AircraftSimulationLODProfile_LOD2"),
 		TEXT("AircraftSimulationLODProfile_LOD3"),
 		TEXT("AircraftAssetTerminal"),
+		TEXT("ReRouteNode_v1"),
+		TEXT("ReRouteNode_v1_0"),
 	};
 
 	TestEqual(TEXT("The template contains every authoring node exactly once"),
@@ -67,7 +69,7 @@ bool FAircraftCompleteDefaultDataflowTemplateTest::RunTest(const FString& Parame
 	}
 
 	TestEqual(TEXT("The shared chain and four LOD branches are fully connected"),
-		Graph->GetConnections().Num(), 25);
+		Graph->GetConnections().Num(), 27);
 
 	const TSharedPtr<FDataflowNode> AerodynamicsNode =
 		Graph->FindBaseNode(TEXT("OptionalAircraftAerodynamicsConfig"));
@@ -83,8 +85,21 @@ bool FAircraftCompleteDefaultDataflowTemplateTest::RunTest(const FString& Parame
 			bAerodynamicsConnected);
 	}
 
+	const TSharedPtr<FDataflowNode> MpccNode =
+		Graph->FindBaseNode(TEXT("AircraftAutopilotMpccConfig"));
+	const TSharedPtr<FDataflowNode> ConstraintNode =
+		Graph->FindBaseNode(TEXT("AircraftConstraintSimulationConfig"));
 	const TSharedPtr<FDataflowNode> KinematicNode =
 		Graph->FindBaseNode(TEXT("AircraftKinematicSimulationConfig"));
+	const TSharedPtr<FDataflowNode> ReRouteRerouteNode =
+		Graph->FindBaseNode(TEXT("ReRouteNode_v1_0"));
+	const TSharedPtr<FDataflowNode> ExpectedLodSources[] =
+	{
+		MpccNode,
+		ConstraintNode,
+		KinematicNode,
+		ReRouteRerouteNode,
+	};
 	const EAircraftSimulationDriveMode ExpectedDriveModes[] =
 	{
 		EAircraftSimulationDriveMode::FlightController,
@@ -96,20 +111,21 @@ bool FAircraftCompleteDefaultDataflowTemplateTest::RunTest(const FString& Parame
 	{
 		const FName ProfileName(*FString::Printf(TEXT("AircraftSimulationLODProfile_LOD%d"), LodIndex));
 		const TSharedPtr<FDataflowNode> ProfileNode = Graph->FindBaseNode(ProfileName);
-		if (!TestTrue(*FString::Printf(TEXT("LOD%d profile exists"), LodIndex),
-			KinematicNode.IsValid() && ProfileNode.IsValid()))
+		const TSharedPtr<FDataflowNode> ExpectedSource = ExpectedLodSources[LodIndex];
+		if (!TestTrue(*FString::Printf(TEXT("LOD%d source and profile exist"), LodIndex),
+			ExpectedSource.IsValid() && ProfileNode.IsValid()))
 		{
 			continue;
 		}
 
-		bool bReceivesCompleteSharedChain = false;
+		bool bReceivesFromExpectedSource = false;
 		for (const UE::Dataflow::FLink& Link : Graph->GetConnections())
 		{
-			bReceivesCompleteSharedChain |= Link.OutputNode == KinematicNode->GetGuid()
+			bReceivesFromExpectedSource |= Link.OutputNode == ExpectedSource->GetGuid()
 				&& Link.InputNode == ProfileNode->GetGuid();
 		}
-		TestTrue(*FString::Printf(TEXT("LOD%d receives the complete shared configuration"), LodIndex),
-			bReceivesCompleteSharedChain);
+		TestTrue(*FString::Printf(TEXT("LOD%d receives its dedicated drive source"), LodIndex),
+			bReceivesFromExpectedSource);
 
 		const FAircraftSimulationLODProfileNode* const TypedProfile =
 			ProfileNode->AsType<FAircraftSimulationLODProfileNode>();

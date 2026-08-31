@@ -100,14 +100,14 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	float YawHoldStickDeadband = 0.05f;
 	float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
 	float VerticalBrakeToHoldSpeedCmPerSec = 20.0f;
-	float ConstraintLinearNaturalFrequencyHz = 1.59154943f;
+	float ConstraintLinearNaturalFrequencyHz = 1.f;
 	float ConstraintLinearDampingRatio = 1.0f;
 	float ConstraintLinearExtraDampingPerSecond = 0.0f;
 	/** 线性约束驱动合力上限（N）；0 表示不限制。 */
 	float ConstraintLinearForceLimitN = 0.0f;
 	float ConstraintGravityFeedForwardScale = 1.0f;
 	float ConstraintDynamicsFeedForwardScale = 1.0f;
-	float ConstraintAttitudeNaturalFrequencyHz = 1.59154943f;
+	float ConstraintAttitudeNaturalFrequencyHz = 1.f;
 	float ConstraintAttitudeDampingRatio = 1.0f;
 	float ConstraintAttitudeExtraDampingPerSecond = 0.0f;
 	/** 物理线程姿态控制力矩上限（N·m）；0 表示不限制。 */

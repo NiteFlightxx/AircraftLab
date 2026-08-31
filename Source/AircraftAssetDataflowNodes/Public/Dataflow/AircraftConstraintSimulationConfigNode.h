@@ -13,7 +13,7 @@ struct FAircraftConstraintSimulationConfig
 	GENERATED_BODY()
 
 	/** 线性弹簧自然频率（Hz）。运行时转换为 Stiffness=(Strength*2π)^2。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (ClampMin = "0.0", Units = "Hz")) float LinearNaturalFrequencyHz = 1.59154943f;
+	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (ClampMin = "0.0", Units = "Hz")) float LinearNaturalFrequencyHz = 1.f;
 	/** 线性阻尼比；1 为临界阻尼。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (ClampMin = "0.0")) float LinearDampingRatio = 1.0f;
 	/** 不依赖 Strength 的附加线性阻尼。 */
@@ -25,7 +25,7 @@ struct FAircraftConstraintSimulationConfig
 	/** 预测器动力学前馈系数；0 禁用，1 完整消费阻尼或显式空气动力学补偿。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Feed Forward", meta = (ClampMin = "0.0")) float DynamicsFeedForwardScale = 1.0f;
 	/** 显式姿态扭矩控制器自然频率（Hz）。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Torque", meta = (ClampMin = "0.0", Units = "Hz")) float AttitudeNaturalFrequencyHz = 1.59154943f;
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Torque", meta = (ClampMin = "0.0", Units = "Hz")) float AttitudeNaturalFrequencyHz = 1.f;
 	/** 姿态扭矩控制器阻尼比；1 为临界阻尼。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Torque", meta = (ClampMin = "0.0")) float AttitudeDampingRatio = 1.0f;
 	/** 姿态扭矩控制器附加角速度阻尼（s^-1）。 */
