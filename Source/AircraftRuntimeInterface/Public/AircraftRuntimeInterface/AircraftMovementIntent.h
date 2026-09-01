@@ -201,11 +201,20 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftVelocityIntent
 	EAircraftVelocityFrame Frame = EAircraftVelocityFrame::World;
 };
 
-/** 一段凸安全走廊。Plane 的法向朝向可行区域外侧，约束为 PlaneDot(Position) <= 0。 */
+/** 一段解析胶囊体安全走廊；轴线对应规范导航折线的一条线段。 */
 USTRUCT(BlueprintType)
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSafeCorridorSegment
 {
 	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (Units = "cm"))
+	FVector AxisStartCm = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (Units = "cm"))
+	FVector AxisEndCm = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (ClampMin = "0.0", Units = "cm"))
+	float RadiusCm = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (ClampMin = "0.0", Units = "cm"))
 	float StartDistanceCm = 0.0f;
@@ -213,9 +222,18 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSafeCorridorSegment
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (ClampMin = "0.0", Units = "cm"))
 	float EndDistanceCm = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation")
-	TArray<FPlane> BoundaryPlanes;
+	bool IsGeometryValid() const;
+	FVector GetClosestAxisPoint(const FVector& PositionCm) const;
+	FVector ComputeCorrectionCm(const FVector& PositionCm, float SafetyMarginCm) const;
+	bool ComputeRayExitParameter(const FVector& StartCm, const FVector& DirectionCm,
+		float SafetyMarginCm, float& OutExitParameter) const;
 };
+
+/** 按 [Start, End)（末段包含 End）语义解析 Route 距离对应的唯一安全走廊单元。 */
+AIRCRAFTRUNTIMEINTERFACE_API int32 ResolveAircraftSafeCorridorSegment(
+	TConstArrayView<FAircraftSafeCorridorSegment> Corridor,
+	float RouteDistanceCm,
+	float RouteLengthCm);
 
 USTRUCT(BlueprintType)
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftRouteIntent

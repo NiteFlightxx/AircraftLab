@@ -140,6 +140,40 @@ void FAircraftDebugDraw::DrawSphere(
 #endif
 }
 
+void FAircraftDebugDraw::DrawCapsule(
+	const FAircraftDebugDrawContext& Context,
+	const FVector& AxisStart, const FVector& AxisEnd, const float Radius,
+	const FLinearColor& Color, const int32 Segments, const float Thickness)
+{
+#if ENABLE_DRAW_DEBUG
+	const FVector AxisDelta = AxisEnd - AxisStart;
+	const double AxisLength = AxisDelta.Size();
+	if (AxisLength <= UE_DOUBLE_SMALL_NUMBER || Radius <= 0.0f)
+	{
+		return;
+	}
+	const FVector AxisDirection = AxisDelta / AxisLength;
+	const FVector Center = 0.5 * (AxisStart + AxisEnd);
+	const double HalfHeight = 0.5 * AxisLength + Radius;
+	if (Context.PDI)
+	{
+		FVector BasisX;
+		FVector BasisY;
+		AxisDirection.FindBestAxisVectors(BasisX, BasisY);
+		::DrawWireCapsule(Context.PDI, Center, BasisX, BasisY, AxisDirection,
+			Color, Radius, HalfHeight, Segments, Context.DepthPriority,
+			ResolveThickness(Context, Thickness));
+	}
+	else if (Context.World)
+	{
+		const FQuat Rotation = FQuat::FindBetweenNormals(FVector::UpVector, AxisDirection);
+		DrawDebugCapsule(Context.World, Center, HalfHeight, Radius, Rotation,
+			Color.ToFColor(true), false, -1.0f, Context.DepthPriority,
+			ResolveThickness(Context, Thickness));
+	}
+#endif
+}
+
 void FAircraftDebugDraw::DrawDashedLine(
 	const FAircraftDebugDrawContext& Context, const FVector& Start, const FVector& End,
 	const FLinearColor& Color, const float Thickness, const float DashCm, const float GapCm)

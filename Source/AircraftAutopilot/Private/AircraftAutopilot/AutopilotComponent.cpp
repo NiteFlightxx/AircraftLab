@@ -171,6 +171,25 @@ bool UAutopilotComponent::UpdateRouteIntent(
 	return UpdateIntent(Handle, Intent);
 }
 
+FAircraftSafeCorridorBuildResult UAutopilotComponent::BuildSafeCorridorFromPathPoints(
+	const TArray<FVector>& PathPointsCm,
+	const FAircraftSafeCorridorBuildSettings& Settings,
+	FAircraftRouteIntent& OutRoute)
+{
+	ResolveFlightController();
+	FAircraftAutopilotRuntimeConfig RuntimeConfig;
+	IAircraftFlightControllerInterface* const Controller = GetFlightController();
+	if (!Controller || !Controller->GetAircraftAutopilotRuntimeConfig(RuntimeConfig))
+	{
+		OutRoute = {};
+		FAircraftSafeCorridorBuildResult Result;
+		Result.Status = EAircraftSafeCorridorBuildStatus::RuntimeConfigUnavailable;
+		return Result;
+	}
+	return FAircraftSafeCorridorBuilder::BuildOpenPolyline(
+		PathPointsCm, Settings, RuntimeConfig.Path, OutRoute);
+}
+
 FAircraftMovementIntentHandle UAutopilotComponent::SubmitOrbitIntent(
 	const FAircraftOrbitIntent& Orbit,
 	const FAircraftMovementIntentSettings& Settings)

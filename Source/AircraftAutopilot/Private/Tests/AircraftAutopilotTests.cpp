@@ -174,14 +174,13 @@ bool FAircraftSpatialPathContinuityTest::RunTest(const FString& Parameters)
 		FVector(0.0, 0.0, 0.0), FVector(500.0, 40.0, 0.0), FVector(1000.0, 0.0, 0.0)
 	};
 	FAircraftSafeCorridorSegment& Corridor = CorridorRoute.Corridor.AddDefaulted_GetRef();
+	Corridor.AxisStartCm = CorridorRoute.PointsCm[0];
+	Corridor.AxisEndCm = CorridorRoute.PointsCm.Last();
+	Corridor.RadiusCm = 100.0f;
 	Corridor.StartDistanceCm = 0.0f;
-	Corridor.EndDistanceCm = 1200.0f;
-	Corridor.BoundaryPlanes = {
-		FPlane(0.0, 2.0, 0.0, 200.0),
-		FPlane(FVector(0.0, -100.0, 0.0), -FVector::RightVector),
-		FPlane(FVector(0.0, 0.0, 100.0), FVector::UpVector),
-		FPlane(FVector(0.0, 0.0, -100.0), -FVector::UpVector)
-	};
+	Corridor.EndDistanceCm = FVector::Distance(
+		CorridorRoute.PointsCm[0], CorridorRoute.PointsCm[1])
+		+ FVector::Distance(CorridorRoute.PointsCm[1], CorridorRoute.PointsCm[2]);
 	FAircraftSpatialPath CorridorPath;
 	TestTrue(TEXT("Path satisfying a convex safe corridor builds"),
 		CorridorPath.Build(CorridorRoute, Config));
@@ -189,13 +188,10 @@ bool FAircraftSpatialPathContinuityTest::RunTest(const FString& Parameters)
 	{
 		FAircraftSpatialPathState Sample;
 		CorridorPath.Evaluate(Distance, Sample);
-		for (const FPlane& Plane : Corridor.BoundaryPlanes)
-		{
-			const double NormalLength = FVector(Plane.X, Plane.Y, Plane.Z).Size();
-			TestTrue(TEXT("Every sampled path point respects the corridor margin"),
-				Plane.PlaneDot(Sample.PositionCm) / NormalLength + Config.CorridorSafetyMarginCm
-				<= Config.ConvergenceToleranceCm);
-		}
+		TestTrue(TEXT("Every sampled path point respects the corridor margin"),
+			Corridor.ComputeCorrectionCm(
+				Sample.PositionCm, Config.CorridorSafetyMarginCm).IsNearlyZero(
+					Config.ConvergenceToleranceCm));
 	}
 	TestTrue(TEXT("Point outside the safety corridor is diagnosed"),
 		CorridorPath.ComputeCorridorViolationCm(FVector(500.0, 150.0, 0.0), 500.0f) > 0.0f);
@@ -882,12 +878,11 @@ bool FAircraftCorridorPredictionPriorityTest::RunTest(const FString& Parameters)
 	(void)Parameters;
 	FAircraftMovementIntent Intent = MakeRouteIntent(2000.0f);
 	FAircraftSafeCorridorSegment& Corridor = Intent.Route.Corridor.AddDefaulted_GetRef();
+	Corridor.AxisStartCm = Intent.Route.PointsCm[0];
+	Corridor.AxisEndCm = Intent.Route.PointsCm.Last();
+	Corridor.RadiusCm = 100.0f;
 	Corridor.StartDistanceCm = 0.0f;
 	Corridor.EndDistanceCm = 2000.0f;
-	Corridor.BoundaryPlanes = {
-		FPlane(FVector(0.0, 100.0, 0.0), FVector::RightVector),
-		FPlane(FVector(0.0, -100.0, 0.0), -FVector::RightVector)
-	};
 	FAircraftAutopilotRuntimeConfig Config;
 	Config.Path.CorridorSafetyMarginCm = 0.0f;
 	Config.Mpcc.MaxOptimizationIterations = 4;

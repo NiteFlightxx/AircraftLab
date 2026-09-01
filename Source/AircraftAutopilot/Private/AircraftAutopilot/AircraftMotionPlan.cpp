@@ -1,4 +1,5 @@
 #include "AircraftAutopilot/AircraftMotionPlan.h"
+#include "AircraftDiagnostics/AircraftDebug.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 
 namespace
@@ -312,6 +313,7 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		SpatialPath.Evaluate(Distance, PathState);
 		FAircraftMotionPlanSample& Sample = Samples[Index];
 		Sample.DistanceCm = Distance;
+		Sample.RouteDistanceCm = SpatialPath.GetRouteDistanceCm(Distance);
 		Sample.PositionCm = PathState.PositionCm;
 		const float Curvature = static_cast<float>(PathState.CurvaturePerCm.Size());
 		float Limit = CruiseSpeed;
@@ -587,7 +589,19 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		PreviousYaw = Sample.YawDegrees;
 	}
 	DurationSeconds = Samples.Last().TimeSeconds;
-	return DurationSeconds > 0.0f;
+	if (DurationSeconds <= 0.0f)
+	{
+		FAircraftPlanningFailureDiagnostics Diagnostics;
+		Diagnostics.Stage = TEXT("MotionPlan.Timing");
+		Diagnostics.Reason = TEXT("NonPositiveDuration");
+		Diagnostics.RoutePointCount = Route.PointsCm.Num();
+		Diagnostics.CorridorSegmentCount = Route.Corridor.Num();
+		Diagnostics.PathPointCount = Samples.Num();
+		Diagnostics.PlannedLengthCm = Length;
+		FAircraftDebug::LogPlanningFailure(Diagnostics);
+		return false;
+	}
+	return true;
 }
 
 bool FAircraftMotionPlan::Build(
@@ -598,8 +612,17 @@ bool FAircraftMotionPlan::Build(
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Trajectory_Build);
 	Reset();
-	if (!Intent.IsValid() || !Config.IsValid() || !Capability.bValid)
+	const bool bIntentValid = Intent.IsValid();
+	const bool bConfigValid = Config.IsValid();
+	if (!bIntentValid || !bConfigValid || !Capability.bValid)
 	{
+		FAircraftPlanningFailureDiagnostics Diagnostics;
+		Diagnostics.Stage = TEXT("MotionPlan.Input");
+		Diagnostics.Reason = !bIntentValid ? TEXT("InvalidIntent")
+			: !bConfigValid ? TEXT("InvalidRuntimeConfig") : TEXT("InvalidCapability");
+		Diagnostics.RoutePointCount = Intent.Route.PointsCm.Num();
+		Diagnostics.CorridorSegmentCount = Intent.Route.Corridor.Num();
+		FAircraftDebug::LogPlanningFailure(Diagnostics);
 		return false;
 	}
 	SourceIntent = Intent;
@@ -656,6 +679,7 @@ bool FAircraftMotionPlan::Evaluate(float TimeSeconds, FAircraftMotionPlanSample&
 	const float Alpha = FMath::GetRangePct(A.TimeSeconds, B.TimeSeconds, Time);
 	OutSample.TimeSeconds = Time;
 	OutSample.DistanceCm = FMath::Lerp(A.DistanceCm, B.DistanceCm, Alpha);
+	OutSample.RouteDistanceCm = FMath::Lerp(A.RouteDistanceCm, B.RouteDistanceCm, Alpha);
 	OutSample.PositionCm = FMath::Lerp(A.PositionCm, B.PositionCm, Alpha);
 	OutSample.VelocityCmPerSec = FMath::Lerp(A.VelocityCmPerSec, B.VelocityCmPerSec, Alpha);
 	OutSample.AccelerationCmPerSecSq = FMath::Lerp(A.AccelerationCmPerSecSq, B.AccelerationCmPerSecSq, Alpha);
@@ -701,6 +725,7 @@ bool FAircraftMotionPlan::Project(
 		return false;
 	}
 	OutSample.DistanceCm = Projection.DistanceCm;
+	OutSample.RouteDistanceCm = SpatialPath.GetRouteDistanceCm(Projection.DistanceCm);
 	OutSample.PositionCm = Projection.PositionCm;
 	OutSample.VelocityCmPerSec = Projection.Tangent
 		* static_cast<float>(OutSample.VelocityCmPerSec.Size());

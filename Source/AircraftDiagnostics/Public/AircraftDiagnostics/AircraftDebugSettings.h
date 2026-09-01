@@ -11,6 +11,7 @@ namespace UE::AircraftLab::Diagnostics
 	inline constexpr int32 DebugMaxTrajectorySamples = 256;
 
 	AIRCRAFTDIAGNOSTICS_API EAircraftDebugData GetRuntimeDebugDrawData();
+	AIRCRAFTDIAGNOSTICS_API bool IsCorridorDebugDrawEnabled();
 	AIRCRAFTDIAGNOSTICS_API FString GetDebugAircraftFilter();
 	AIRCRAFTDIAGNOSTICS_API FName GetDebugRotorFilter();
 }

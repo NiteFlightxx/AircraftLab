@@ -9,6 +9,9 @@ namespace UE::AircraftLab::Diagnostics::Private
 		TEXT("p.Aircraft.Debug.Draw"), 0,
 		TEXT("Aircraft runtime drawing: 0=Off, 1=Aircraft, 2=Autopilot, 3=All."),
 		ECVF_Cheat);
+	static TAutoConsoleVariable<bool> CVarCorridor(
+		TEXT("p.Aircraft.Debug.Corridor"), false,
+		TEXT("Draw the active Autopilot route's safe corridor."), ECVF_Cheat);
 	static TAutoConsoleVariable<FString> CVarAircraftFilter(
 		TEXT("p.Aircraft.Debug.AircraftFilter"), TEXT(""),
 		TEXT("Only draw Aircraft whose owner or component name contains this string."), ECVF_Cheat);
@@ -26,6 +29,7 @@ namespace UE::AircraftLab::Diagnostics
 		return static_cast<EAircraftDebugData>(FMath::Clamp(
 			Private::CVarDraw.GetValueOnAnyThread(), 0, 3));
 	}
+	bool IsCorridorDebugDrawEnabled() { return Private::CVarCorridor.GetValueOnAnyThread(); }
 	FString GetDebugAircraftFilter() { return Private::CVarAircraftFilter.GetValueOnAnyThread(); }
 	FName GetDebugRotorFilter()
 	{
@@ -34,6 +38,7 @@ namespace UE::AircraftLab::Diagnostics
 	}
 #else
 	EAircraftDebugData GetRuntimeDebugDrawData() { return EAircraftDebugData::None; }
+	bool IsCorridorDebugDrawEnabled() { return false; }
 	FString GetDebugAircraftFilter() { return {}; }
 	FName GetDebugRotorFilter() { return NAME_None; }
 #endif

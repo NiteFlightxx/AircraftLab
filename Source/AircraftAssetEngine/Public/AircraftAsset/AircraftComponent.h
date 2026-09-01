@@ -194,6 +194,8 @@ protected:
 	//~ End IDataflowPhysicsSolverInterface Interface
 
 	//~ Begin IAircraftFlightControllerInterface Interface（Autopilot 窄契约）
+	virtual bool GetAircraftAutopilotRuntimeConfig(
+		FAircraftAutopilotRuntimeConfig& OutConfig) const override;
 	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const override;
 	virtual bool GetAircraftAutopilotDiagnostics(FAircraftAutopilotDiagnostics& OutDiagnostics) const override;
 	virtual bool GetAircraftTrajectoryReference(FAircraftTrajectoryReference& OutReference) const override;

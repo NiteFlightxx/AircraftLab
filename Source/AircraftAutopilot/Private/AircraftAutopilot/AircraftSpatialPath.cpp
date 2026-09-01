@@ -1,5 +1,7 @@
 #include "AircraftAutopilot/AircraftSpatialPath.h"
 
+#include "AircraftDiagnostics/AircraftDebug.h"
+
 namespace
 {
 	constexpr int32 ArcTableSubdivisions = 64;
@@ -10,41 +12,220 @@ namespace
 		return Wrapped < 0.0f ? Wrapped + Length : Wrapped;
 	}
 
-	int32 FindCorridorSegment(const TArray<FAircraftSafeCorridorSegment>& Corridor, float DistanceCm)
+	void ResamplePolyline(TArray<FVector>& Points, TArray<float>& RouteDistancesCm,
+		bool bClosed, float SpacingCm, float RouteLengthCm,
+		const TConstArrayView<FAircraftSafeCorridorSegment> Corridor)
 	{
-		return Corridor.IndexOfByPredicate([DistanceCm](const FAircraftSafeCorridorSegment& Segment)
-		{
-			return DistanceCm >= Segment.StartDistanceCm && DistanceCm <= Segment.EndDistanceCm;
-		});
-	}
-
-	void ResamplePolyline(TArray<FVector>& Points, bool bClosed, float SpacingCm)
-	{
-		if (Points.Num() < 2 || SpacingCm <= 0.0f)
+		if (Points.Num() < 2 || Points.Num() != RouteDistancesCm.Num() || SpacingCm <= 0.0f)
 		{
 			return;
 		}
 		TArray<FVector> Resampled;
+		TArray<float> ResampledRouteDistancesCm;
 		Resampled.Reserve(Points.Num());
+		ResampledRouteDistancesCm.Reserve(RouteDistancesCm.Num());
 		Resampled.Add(Points[0]);
+		ResampledRouteDistancesCm.Add(RouteDistancesCm[0]);
 		const int32 SegmentCount = bClosed ? Points.Num() : Points.Num() - 1;
 		for (int32 Index = 0; Index < SegmentCount; ++Index)
 		{
 			const FVector& A = Points[Index];
-			const FVector& B = Points[(Index + 1) % Points.Num()];
+			const int32 NextIndex = (Index + 1) % Points.Num();
+			const FVector& B = Points[NextIndex];
+			const float RouteStartDistanceCm = RouteDistancesCm[Index];
+			const float RouteEndDistanceCm = bClosed && Index == SegmentCount - 1
+				? RouteLengthCm : RouteDistancesCm[NextIndex];
 			const int32 Subdivisions = FMath::Max(1,
 				FMath::CeilToInt(FVector::Distance(A, B) / SpacingCm));
+			TArray<float, TInlineAllocator<16>> SampleRouteDistancesCm;
+			SampleRouteDistancesCm.Reserve(Subdivisions + Corridor.Num() * 2);
 			for (int32 Step = 1; Step <= Subdivisions; ++Step)
 			{
-				if (bClosed && Index == SegmentCount - 1 && Step == Subdivisions)
+				const float Alpha = static_cast<float>(Step) / static_cast<float>(Subdivisions);
+				SampleRouteDistancesCm.Add(FMath::Lerp(
+					RouteStartDistanceCm, RouteEndDistanceCm, Alpha));
+			}
+			for (const FAircraftSafeCorridorSegment& Segment : Corridor)
+			{
+				const float BoundaryDistancesCm[] = {
+					Segment.StartDistanceCm, Segment.EndDistanceCm};
+				for (const float BoundaryDistanceCm : BoundaryDistancesCm)
+				{
+					if (BoundaryDistanceCm > RouteStartDistanceCm + UE_KINDA_SMALL_NUMBER
+						&& BoundaryDistanceCm < RouteEndDistanceCm - UE_KINDA_SMALL_NUMBER)
+					{
+						SampleRouteDistancesCm.Add(BoundaryDistanceCm);
+					}
+				}
+			}
+			SampleRouteDistancesCm.Sort();
+			float PreviousSampleDistanceCm = -TNumericLimits<float>::Max();
+			for (const float SampleRouteDistanceCm : SampleRouteDistancesCm)
+			{
+				if (FMath::IsNearlyEqual(SampleRouteDistanceCm,
+					PreviousSampleDistanceCm, UE_KINDA_SMALL_NUMBER))
 				{
 					continue;
 				}
-				Resampled.Add(FMath::Lerp(A, B,
-					static_cast<double>(Step) / static_cast<double>(Subdivisions)));
+				PreviousSampleDistanceCm = SampleRouteDistanceCm;
+				if (bClosed && Index == SegmentCount - 1
+					&& FMath::IsNearlyEqual(SampleRouteDistanceCm,
+						RouteLengthCm, UE_KINDA_SMALL_NUMBER))
+				{
+					continue;
+				}
+				const float Alpha = (SampleRouteDistanceCm - RouteStartDistanceCm)
+					/ (RouteEndDistanceCm - RouteStartDistanceCm);
+				Resampled.Add(FMath::Lerp(A, B, Alpha));
+				ResampledRouteDistancesCm.Add(SampleRouteDistanceCm);
 			}
 		}
 		Points = MoveTemp(Resampled);
+		RouteDistancesCm = MoveTemp(ResampledRouteDistancesCm);
+	}
+
+	bool IsCorridorBoundaryDistance(
+		const float RouteDistanceCm,
+		const TConstArrayView<FAircraftSafeCorridorSegment> Corridor)
+	{
+		for (const FAircraftSafeCorridorSegment& Segment : Corridor)
+		{
+			if (FMath::IsNearlyEqual(RouteDistanceCm,
+				Segment.StartDistanceCm, UE_KINDA_SMALL_NUMBER)
+				|| FMath::IsNearlyEqual(RouteDistanceCm,
+					Segment.EndDistanceCm, UE_KINDA_SMALL_NUMBER))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool BuildSegmentCorridorIndices(
+		const TConstArrayView<float> RouteDistancesCm,
+		const bool bClosed, const float RouteLengthCm,
+		const TConstArrayView<FAircraftSafeCorridorSegment> Corridor,
+		TArray<int32>& OutSegmentCorridorIndices, int32& OutFailedSegmentIndex)
+	{
+		const int32 SegmentCount = bClosed
+			? RouteDistancesCm.Num() : RouteDistancesCm.Num() - 1;
+		OutSegmentCorridorIndices.Init(INDEX_NONE, SegmentCount);
+		OutFailedSegmentIndex = INDEX_NONE;
+		if (Corridor.IsEmpty())
+		{
+			return true;
+		}
+
+		for (int32 SegmentIndex = 0; SegmentIndex < SegmentCount; ++SegmentIndex)
+		{
+			const int32 NextIndex = (SegmentIndex + 1) % RouteDistancesCm.Num();
+			const float SegmentStartDistanceCm = RouteDistancesCm[SegmentIndex];
+			const float SegmentEndDistanceCm = bClosed && SegmentIndex == SegmentCount - 1
+				? RouteLengthCm : RouteDistancesCm[NextIndex];
+			if (SegmentEndDistanceCm <= SegmentStartDistanceCm + UE_KINDA_SMALL_NUMBER)
+			{
+				OutFailedSegmentIndex = SegmentIndex;
+				return false;
+			}
+			const int32 CorridorIndex = ResolveAircraftSafeCorridorSegment(
+				Corridor, 0.5f * (SegmentStartDistanceCm + SegmentEndDistanceCm), RouteLengthCm);
+			if (!Corridor.IsValidIndex(CorridorIndex))
+			{
+				OutFailedSegmentIndex = SegmentIndex;
+				return false;
+			}
+
+			const FAircraftSafeCorridorSegment& CorridorSegment = Corridor[CorridorIndex];
+			if (SegmentStartDistanceCm < CorridorSegment.StartDistanceCm - UE_KINDA_SMALL_NUMBER
+				|| SegmentEndDistanceCm > CorridorSegment.EndDistanceCm + UE_KINDA_SMALL_NUMBER)
+			{
+				OutFailedSegmentIndex = SegmentIndex;
+				return false;
+			}
+			OutSegmentCorridorIndices[SegmentIndex] = CorridorIndex;
+		}
+		return true;
+	}
+
+	bool AccumulateDerivativeControlScale(
+		const FVector& KnotPositionCm, const FVector& ControlDeltaCm,
+		const FAircraftSafeCorridorSegment& CorridorSegment,
+		const float SafetyMarginCm, float& InOutScale)
+	{
+		float ExitParameter = 0.0f;
+		if (!CorridorSegment.ComputeRayExitParameter(
+			KnotPositionCm, ControlDeltaCm, SafetyMarginCm, ExitParameter))
+		{
+			return false;
+		}
+		InOutScale = FMath::Min(InOutScale, ExitParameter);
+		return true;
+	}
+
+	bool ConstrainDerivativesToCorridor(
+		const TConstArrayView<FVector> Points,
+		const bool bClosed,
+		const TConstArrayView<FAircraftSafeCorridorSegment> Corridor,
+		const TConstArrayView<int32> SegmentCorridorIndices,
+		const float SafetyMarginCm,
+		TArray<FVector>& InOutFirst, TArray<FVector>& InOutSecond,
+		int32& OutFailedKnotIndex)
+	{
+		OutFailedKnotIndex = INDEX_NONE;
+		if (Corridor.IsEmpty())
+		{
+			return true;
+		}
+
+		for (int32 KnotIndex = 0; KnotIndex < Points.Num(); ++KnotIndex)
+		{
+			float DerivativeScale = 1.0f;
+			const bool bHasIncomingSegment = bClosed || KnotIndex > 0;
+			const bool bHasOutgoingSegment = bClosed || KnotIndex < Points.Num() - 1;
+			if (bHasIncomingSegment)
+			{
+				const int32 IncomingSegmentIndex =
+					(KnotIndex - 1 + SegmentCorridorIndices.Num()) % SegmentCorridorIndices.Num();
+				const int32 CorridorIndex = SegmentCorridorIndices[IncomingSegmentIndex];
+				if (!Corridor.IsValidIndex(CorridorIndex)
+					|| !AccumulateDerivativeControlScale(Points[KnotIndex],
+						-InOutFirst[KnotIndex] / 5.0f,
+						Corridor[CorridorIndex], SafetyMarginCm, DerivativeScale)
+					|| !AccumulateDerivativeControlScale(Points[KnotIndex],
+						-2.0f * InOutFirst[KnotIndex] / 5.0f + InOutSecond[KnotIndex] / 20.0f,
+						Corridor[CorridorIndex], SafetyMarginCm, DerivativeScale))
+				{
+					OutFailedKnotIndex = KnotIndex;
+					return false;
+				}
+			}
+			if (bHasOutgoingSegment)
+			{
+				const int32 OutgoingSegmentIndex = KnotIndex % SegmentCorridorIndices.Num();
+				const int32 CorridorIndex = SegmentCorridorIndices[OutgoingSegmentIndex];
+				if (!Corridor.IsValidIndex(CorridorIndex)
+					|| !AccumulateDerivativeControlScale(Points[KnotIndex],
+						InOutFirst[KnotIndex] / 5.0f,
+						Corridor[CorridorIndex], SafetyMarginCm, DerivativeScale)
+					|| !AccumulateDerivativeControlScale(Points[KnotIndex],
+						2.0f * InOutFirst[KnotIndex] / 5.0f + InOutSecond[KnotIndex] / 20.0f,
+						Corridor[CorridorIndex], SafetyMarginCm, DerivativeScale))
+				{
+					OutFailedKnotIndex = KnotIndex;
+					return false;
+				}
+			}
+
+			DerivativeScale = FMath::Clamp(DerivativeScale, 0.0f, 1.0f);
+			if (DerivativeScale <= UE_SMALL_NUMBER)
+			{
+				OutFailedKnotIndex = KnotIndex;
+				return false;
+			}
+			InOutFirst[KnotIndex] *= DerivativeScale;
+			InOutSecond[KnotIndex] *= DerivativeScale;
+		}
+		return true;
 	}
 }
 
@@ -92,9 +273,9 @@ void FAircraftSpatialPath::Reset()
 {
 	Segments.Reset();
 	TotalLengthCm = 0.0f;
+	RouteLengthCm = 0.0f;
 	bClosed = false;
 	Corridor.Reset();
-	CorridorDistanceScale = 1.0f;
 	CorridorSafetyMarginCm = 0.0f;
 	ProjectionBacktrackToleranceCm = 0.0f;
 	ProjectionSearchDistanceCm = 0.0f;
@@ -104,20 +285,18 @@ void FAircraftSpatialPath::Reset()
 void FAircraftSpatialPath::OptimizeKnots(
 	TArray<FVector>& Points, bool bInClosed,
 	const TArray<FAircraftSafeCorridorSegment>& Corridor,
+	const TConstArrayView<int32> SegmentCorridorIndices,
 	const FAircraftPathOptimizationRuntimeConfig& Config)
 {
-	if (Points.Num() < 3 || Config.MaxIterations <= 0)
+	const int32 ExpectedSegmentCount = bInClosed ? Points.Num() : Points.Num() - 1;
+	if (Points.Num() < 3
+		|| SegmentCorridorIndices.Num() != ExpectedSegmentCount
+		|| Config.MaxIterations <= 0)
 	{
 		return;
 	}
 
 	const TArray<FVector> Centerline = Points;
-	TArray<float> Distances;
-	Distances.SetNumZeroed(Points.Num());
-	for (int32 Index = 1; Index < Points.Num(); ++Index)
-	{
-		Distances[Index] = Distances[Index - 1] + FVector::Distance(Points[Index - 1], Points[Index]);
-	}
 
 	const float WeightSum = FMath::Max(
 		Config.CenterlineWeight + Config.CurvatureWeight + Config.SnapWeight, UE_SMALL_NUMBER);
@@ -129,6 +308,19 @@ void FAircraftSpatialPath::OptimizeKnots(
 		const int32 End = bInClosed ? Points.Num() : Points.Num() - 1;
 		for (int32 Index = Begin; Index < End; ++Index)
 		{
+			const int32 IncomingCorridorIndex = bInClosed || Index > 0
+				? SegmentCorridorIndices[(Index - 1 + ExpectedSegmentCount) % ExpectedSegmentCount]
+				: INDEX_NONE;
+			const int32 OutgoingCorridorIndex = bInClosed || Index < Points.Num() - 1
+				? SegmentCorridorIndices[Index % ExpectedSegmentCount]
+				: INDEX_NONE;
+			if (IncomingCorridorIndex != INDEX_NONE
+				&& OutgoingCorridorIndex != INDEX_NONE
+				&& IncomingCorridorIndex != OutgoingCorridorIndex)
+			{
+				continue;
+			}
+
 			const int32 Previous = (Index - 1 + Points.Num()) % Points.Num();
 			const int32 Next = (Index + 1) % Points.Num();
 			const FVector CurvatureTarget = 0.5 * (Points[Previous] + Points[Next]);
@@ -146,23 +338,12 @@ void FAircraftSpatialPath::OptimizeKnots(
 				+ Config.CurvatureWeight * CurvatureTarget
 				+ Config.SnapWeight * SnapTarget) / WeightSum;
 
-			if (const int32 CorridorIndex = FindCorridorSegment(Corridor, Distances[Index]);
-				Corridor.IsValidIndex(CorridorIndex))
+			const int32 CorridorIndex = IncomingCorridorIndex != INDEX_NONE
+				? IncomingCorridorIndex : OutgoingCorridorIndex;
+			if (Corridor.IsValidIndex(CorridorIndex))
 			{
-				for (const FPlane& Plane : Corridor[CorridorIndex].BoundaryPlanes)
-				{
-					const FVector Normal(Plane.X, Plane.Y, Plane.Z);
-					const double NormalLength = Normal.Size();
-					if (NormalLength > UE_DOUBLE_SMALL_NUMBER)
-					{
-						const double Violation = Plane.PlaneDot(Candidate) / NormalLength
-							+ Config.CorridorSafetyMarginCm;
-						if (Violation > 0.0)
-						{
-							Candidate -= Normal / NormalLength * Violation;
-						}
-					}
-				}
+				Candidate += Corridor[CorridorIndex].ComputeCorrectionCm(
+					Candidate, Config.CorridorSafetyMarginCm);
 			}
 
 			Updated[Index] = Candidate;
@@ -216,40 +397,117 @@ bool FAircraftSpatialPath::Build(
 	const FAircraftRouteIntent& Route, const FAircraftPathOptimizationRuntimeConfig& Config)
 {
 	Reset();
-	TArray<FVector> Points;
-	Points.Reserve(Route.PointsCm.Num());
-	for (const FVector& Point : Route.PointsCm)
+	for (int32 CorridorIndex = 0; CorridorIndex < Route.Corridor.Num(); ++CorridorIndex)
 	{
+		const FAircraftSafeCorridorSegment& Segment = Route.Corridor[CorridorIndex];
+		if (!Segment.IsGeometryValid()
+			|| Segment.RadiusCm - Config.CorridorSafetyMarginCm <= UE_SMALL_NUMBER)
+		{
+			FAircraftPlanningFailureDiagnostics Diagnostics;
+			Diagnostics.Stage = TEXT("SpatialPath.Input");
+			Diagnostics.Reason = TEXT("InvalidCorridorCapsule");
+			Diagnostics.RoutePointCount = Route.PointsCm.Num();
+			Diagnostics.CorridorSegmentCount = Route.Corridor.Num();
+			Diagnostics.CorridorSegmentIndex = CorridorIndex;
+			Diagnostics.CorridorAxisStartCm = Segment.AxisStartCm;
+			Diagnostics.CorridorAxisEndCm = Segment.AxisEndCm;
+			Diagnostics.CorridorRadiusCm = Segment.RadiusCm;
+			Diagnostics.CorridorEffectiveRadiusCm =
+				Segment.RadiusCm - Config.CorridorSafetyMarginCm;
+			FAircraftDebug::LogPlanningFailure(Diagnostics);
+			return false;
+		}
+	}
+	TArray<FVector> Points;
+	TArray<float> RouteDistancesCm;
+	Points.Reserve(Route.PointsCm.Num());
+	RouteDistancesCm.Reserve(Route.PointsCm.Num());
+	TArray<float> InputRouteDistancesCm;
+	InputRouteDistancesCm.SetNumZeroed(Route.PointsCm.Num());
+	for (int32 PointIndex = 1; PointIndex < Route.PointsCm.Num(); ++PointIndex)
+	{
+		InputRouteDistancesCm[PointIndex] = InputRouteDistancesCm[PointIndex - 1]
+			+ FVector::Distance(Route.PointsCm[PointIndex - 1], Route.PointsCm[PointIndex]);
+	}
+	RouteLengthCm = InputRouteDistancesCm.IsEmpty() ? 0.0f : InputRouteDistancesCm.Last();
+	if (Route.bClosed && Route.PointsCm.Num() > 1)
+	{
+		RouteLengthCm += FVector::Distance(Route.PointsCm.Last(), Route.PointsCm[0]);
+	}
+	for (int32 PointIndex = 0; PointIndex < Route.PointsCm.Num(); ++PointIndex)
+	{
+		const FVector& Point = Route.PointsCm[PointIndex];
+		const bool bCorridorBoundary = IsCorridorBoundaryDistance(
+			InputRouteDistancesCm[PointIndex], Route.Corridor);
 		if (!Point.ContainsNaN() && (Points.IsEmpty()
-			|| FVector::Distance(Points.Last(), Point) >= Config.MinimumSegmentLengthCm))
+			|| FVector::Distance(Points.Last(), Point) >= Config.MinimumSegmentLengthCm
+			|| bCorridorBoundary))
 		{
 			Points.Add(Point);
+			RouteDistancesCm.Add(InputRouteDistancesCm[PointIndex]);
 		}
 	}
 	if (Route.bClosed && Points.Num() > 2
 		&& FVector::Distance(Points[0], Points.Last()) < Config.MinimumSegmentLengthCm)
 	{
 		Points.Pop();
+		RouteDistancesCm.Pop();
 	}
 	if (Points.Num() < (Route.bClosed ? 3 : 2))
 	{
+		FAircraftPlanningFailureDiagnostics Diagnostics;
+		Diagnostics.Stage = TEXT("SpatialPath.Input");
+		Diagnostics.Reason = TEXT("InsufficientPointsAfterFiltering");
+		Diagnostics.RoutePointCount = Route.PointsCm.Num();
+		Diagnostics.PathPointCount = Points.Num();
+		Diagnostics.CorridorSegmentCount = Route.Corridor.Num();
+		FAircraftDebug::LogPlanningFailure(Diagnostics);
 		return false;
 	}
 
-	ResamplePolyline(Points, Route.bClosed, Config.ResampleSpacingCm);
-	float CenterlineLengthCm = 0.0f;
-	for (int32 Index = 1; Index < Points.Num(); ++Index)
+	ResamplePolyline(Points, RouteDistancesCm, Route.bClosed,
+		Config.ResampleSpacingCm, RouteLengthCm, Route.Corridor);
+	TArray<int32> SegmentCorridorIndices;
+	int32 FailedSegmentIndex = INDEX_NONE;
+	if (!BuildSegmentCorridorIndices(RouteDistancesCm, Route.bClosed, RouteLengthCm,
+			Route.Corridor, SegmentCorridorIndices, FailedSegmentIndex))
 	{
-		CenterlineLengthCm += FVector::Distance(Points[Index - 1], Points[Index]);
+		FAircraftPlanningFailureDiagnostics Diagnostics;
+		Diagnostics.Stage = TEXT("SpatialPath.CorridorTopology");
+		Diagnostics.Reason = TEXT("PathSegmentCrossesCorridorBoundary");
+		Diagnostics.RoutePointCount = Route.PointsCm.Num();
+		Diagnostics.PathPointCount = Points.Num();
+		Diagnostics.CorridorSegmentCount = Route.Corridor.Num();
+		Diagnostics.PathSegmentIndex = FailedSegmentIndex;
+		Diagnostics.RouteLengthCm = RouteLengthCm;
+		FAircraftDebug::LogPlanningFailure(Diagnostics);
+		Reset();
+		return false;
 	}
-	if (Route.bClosed)
-	{
-		CenterlineLengthCm += FVector::Distance(Points.Last(), Points[0]);
-	}
-	OptimizeKnots(Points, Route.bClosed, Route.Corridor, Config);
+	OptimizeKnots(Points, Route.bClosed,
+		Route.Corridor, SegmentCorridorIndices, Config);
 	TArray<FVector> First;
 	TArray<FVector> Second;
 	BuildDerivatives(Points, Route.bClosed, First, Second);
+	int32 FailedKnotIndex = INDEX_NONE;
+	if (!ConstrainDerivativesToCorridor(Points, Route.bClosed,
+			Route.Corridor, SegmentCorridorIndices, Config.CorridorSafetyMarginCm,
+			First, Second, FailedKnotIndex))
+	{
+		FAircraftPlanningFailureDiagnostics Diagnostics;
+		Diagnostics.Stage = TEXT("SpatialPath.CorridorDerivatives");
+		Diagnostics.Reason = TEXT("NoFeasibleBezierControlHull");
+		Diagnostics.RoutePointCount = Route.PointsCm.Num();
+		Diagnostics.PathPointCount = Points.Num();
+		Diagnostics.CorridorSegmentCount = Route.Corridor.Num();
+		Diagnostics.PathSampleIndex = FailedKnotIndex;
+		Diagnostics.RouteLengthCm = RouteLengthCm;
+		Diagnostics.PositionCm = Points.IsValidIndex(FailedKnotIndex)
+			? Points[FailedKnotIndex] : FVector::ZeroVector;
+		FAircraftDebug::LogPlanningFailure(Diagnostics);
+		Reset();
+		return false;
+	}
 
 	bClosed = Route.bClosed;
 	const int32 SegmentCount = bClosed ? Points.Num() : Points.Num() - 1;
@@ -270,6 +528,9 @@ bool FAircraftSpatialPath::Build(
 		Segment.Coefficients[4] = -15.0 * C0 + 7.0 * C1 - C2;
 		Segment.Coefficients[5] = 6.0 * C0 - 3.0 * C1 + 0.5 * C2;
 		Segment.StartDistanceCm = TotalLengthCm;
+		Segment.RouteStartDistanceCm = RouteDistancesCm[Index];
+		Segment.RouteEndDistanceCm = bClosed && Index == SegmentCount - 1
+			? RouteLengthCm : RouteDistancesCm[Next];
 		Segment.ArcLengthsCm.SetNumZeroed(ArcTableSubdivisions + 1);
 		FVector Previous = Segment.Evaluate(0.0f);
 		for (int32 Sample = 1; Sample <= ArcTableSubdivisions; ++Sample)
@@ -284,46 +545,101 @@ bool FAircraftSpatialPath::Build(
 		TotalLengthCm += Segment.LengthCm;
 	}
 	Corridor = Route.Corridor;
-	CorridorDistanceScale = TotalLengthCm > UE_SMALL_NUMBER
-		? CenterlineLengthCm / TotalLengthCm : 1.0f;
 	CorridorSafetyMarginCm = Config.CorridorSafetyMarginCm;
 	ProjectionBacktrackToleranceCm = Config.ProjectionBacktrackToleranceCm;
 	ProjectionSearchDistanceCm = Config.ProjectionSearchDistanceCm;
 	ProjectionSampleSpacingCm = FMath::Max(Config.ResampleSpacingCm, 10.0f);
-	for (const FSegment& Segment : Segments)
+	for (int32 PathSegmentIndex = 0; PathSegmentIndex < Segments.Num(); ++PathSegmentIndex)
 	{
+		const FSegment& Segment = Segments[PathSegmentIndex];
 		for (int32 SampleIndex = 0; SampleIndex <= ArcTableSubdivisions; ++SampleIndex)
 		{
+			const float Parameter = static_cast<float>(SampleIndex)
+				/ static_cast<float>(ArcTableSubdivisions);
 			const float DistanceCm = Segment.StartDistanceCm
 				+ Segment.ArcLengthsCm[SampleIndex];
-			const int32 CorridorIndex = FindCorridorSegment(
-				Route.Corridor, DistanceCm * CorridorDistanceScale);
+			const float RouteDistanceCm = FMath::Lerp(
+				Segment.RouteStartDistanceCm, Segment.RouteEndDistanceCm, Parameter);
+			const int32 CorridorIndex = ResolveAircraftSafeCorridorSegment(
+				Route.Corridor, RouteDistanceCm, RouteLengthCm);
 			if (!Route.Corridor.IsValidIndex(CorridorIndex))
 			{
-				continue;
-			}
-			const FVector Position = Segment.Evaluate(
-				static_cast<float>(SampleIndex) / static_cast<float>(ArcTableSubdivisions));
-			for (const FPlane& Plane : Route.Corridor[CorridorIndex].BoundaryPlanes)
-			{
-				const FVector Normal(Plane.X, Plane.Y, Plane.Z);
-				const double NormalLength = Normal.Size();
-				if (NormalLength <= UE_DOUBLE_SMALL_NUMBER
-					|| Plane.PlaneDot(Position) / NormalLength + Config.CorridorSafetyMarginCm
-						> Config.ConvergenceToleranceCm)
+				if (!Route.Corridor.IsEmpty())
 				{
+					FAircraftPlanningFailureDiagnostics Diagnostics;
+					Diagnostics.Stage = TEXT("SpatialPath.CorridorValidation");
+					Diagnostics.Reason = TEXT("NoCorridorAtDistance");
+					Diagnostics.RoutePointCount = Route.PointsCm.Num();
+					Diagnostics.PathPointCount = Points.Num();
+					Diagnostics.CorridorSegmentCount = Route.Corridor.Num();
+					Diagnostics.PathSegmentIndex = PathSegmentIndex;
+					Diagnostics.PathSampleIndex = SampleIndex;
+					Diagnostics.PathDistanceCm = DistanceCm;
+					Diagnostics.RouteDistanceCm = RouteDistanceCm;
+					Diagnostics.RouteLengthCm = RouteLengthCm;
+					Diagnostics.PlannedLengthCm = TotalLengthCm;
+					Diagnostics.PositionCm = Segment.Evaluate(Parameter);
+					FAircraftDebug::LogPlanningFailure(Diagnostics);
 					Reset();
 					return false;
 				}
+				continue;
+			}
+			const FVector Position = Segment.Evaluate(Parameter);
+			const FAircraftSafeCorridorSegment& CorridorSegment = Route.Corridor[CorridorIndex];
+			const float ConstraintValueCm = static_cast<float>(
+				CorridorSegment.ComputeCorrectionCm(
+					Position, Config.CorridorSafetyMarginCm).Size());
+			if (ConstraintValueCm > Config.ConvergenceToleranceCm)
+			{
+				FAircraftPlanningFailureDiagnostics Diagnostics;
+				Diagnostics.Stage = TEXT("SpatialPath.CorridorValidation");
+				Diagnostics.Reason = TEXT("CorridorCapsuleViolation");
+				Diagnostics.RoutePointCount = Route.PointsCm.Num();
+				Diagnostics.PathPointCount = Points.Num();
+				Diagnostics.CorridorSegmentCount = Route.Corridor.Num();
+				Diagnostics.PathSegmentIndex = PathSegmentIndex;
+				Diagnostics.PathSampleIndex = SampleIndex;
+				Diagnostics.CorridorSegmentIndex = CorridorIndex;
+				Diagnostics.PathDistanceCm = DistanceCm;
+				Diagnostics.RouteDistanceCm = RouteDistanceCm;
+				Diagnostics.RouteLengthCm = RouteLengthCm;
+				Diagnostics.PlannedLengthCm = TotalLengthCm;
+				Diagnostics.ConstraintValueCm = ConstraintValueCm;
+				Diagnostics.ConstraintToleranceCm = Config.ConvergenceToleranceCm;
+				Diagnostics.PositionCm = Position;
+				Diagnostics.CorridorAxisStartCm = CorridorSegment.AxisStartCm;
+				Diagnostics.CorridorAxisEndCm = CorridorSegment.AxisEndCm;
+				Diagnostics.CorridorRadiusCm = CorridorSegment.RadiusCm;
+				Diagnostics.CorridorEffectiveRadiusCm = CorridorSegment.RadiusCm
+					- Config.CorridorSafetyMarginCm;
+				FAircraftDebug::LogPlanningFailure(Diagnostics);
+				Reset();
+				return false;
 			}
 		}
 	}
-	return IsValid();
+	if (!IsValid())
+	{
+		FAircraftPlanningFailureDiagnostics Diagnostics;
+		Diagnostics.Stage = TEXT("SpatialPath.Output");
+		Diagnostics.Reason = TEXT("InvalidBuiltPath");
+		Diagnostics.RoutePointCount = Route.PointsCm.Num();
+		Diagnostics.PathPointCount = Points.Num();
+		Diagnostics.CorridorSegmentCount = Route.Corridor.Num();
+		Diagnostics.RouteLengthCm = RouteLengthCm;
+		Diagnostics.PlannedLengthCm = TotalLengthCm;
+		FAircraftDebug::LogPlanningFailure(Diagnostics);
+		return false;
+	}
+	return true;
 }
 
-bool FAircraftSpatialPath::Evaluate(float DistanceCm, FAircraftSpatialPathState& OutState) const
+bool FAircraftSpatialPath::ResolveSegmentParameter(
+	const float DistanceCm, int32& OutSegmentIndex, float& OutParameter) const
 {
-	OutState = {};
+	OutSegmentIndex = INDEX_NONE;
+	OutParameter = 0.0f;
 	if (!IsValid())
 	{
 		return false;
@@ -331,17 +647,33 @@ bool FAircraftSpatialPath::Evaluate(float DistanceCm, FAircraftSpatialPathState&
 	const float Distance = bClosed
 		? WrapDistance(DistanceCm, TotalLengthCm)
 		: FMath::Clamp(DistanceCm, 0.0f, TotalLengthCm);
-	int32 SegmentIndex = Segments.Num() - 1;
+	OutSegmentIndex = Segments.Num() - 1;
 	for (int32 Index = 0; Index < Segments.Num(); ++Index)
 	{
 		if (Distance <= Segments[Index].StartDistanceCm + Segments[Index].LengthCm)
 		{
-			SegmentIndex = Index;
+			OutSegmentIndex = Index;
 			break;
 		}
 	}
+	const FSegment& Segment = Segments[OutSegmentIndex];
+	OutParameter = Segment.ParameterAtArcLength(Distance - Segment.StartDistanceCm);
+	return true;
+}
+
+bool FAircraftSpatialPath::Evaluate(float DistanceCm, FAircraftSpatialPathState& OutState) const
+{
+	OutState = {};
+	int32 SegmentIndex = INDEX_NONE;
+	float U = 0.0f;
+	if (!ResolveSegmentParameter(DistanceCm, SegmentIndex, U))
+	{
+		return false;
+	}
+	const float Distance = bClosed
+		? WrapDistance(DistanceCm, TotalLengthCm)
+		: FMath::Clamp(DistanceCm, 0.0f, TotalLengthCm);
 	const FSegment& Segment = Segments[SegmentIndex];
-	const float U = Segment.ParameterAtArcLength(Distance - Segment.StartDistanceCm);
 	const FVector D1 = Segment.FirstDerivative(U);
 	const FVector D2 = Segment.SecondDerivative(U);
 	const double D1Squared = D1.SizeSquared();
@@ -354,6 +686,24 @@ bool FAircraftSpatialPath::Evaluate(float DistanceCm, FAircraftSpatialPathState&
 	OutState.SegmentIndex = SegmentIndex;
 	OutState.bValid = true;
 	return true;
+}
+
+float FAircraftSpatialPath::GetRouteDistanceCm(const float DistanceCm) const
+{
+	if (bClosed && DistanceCm > 0.0f && TotalLengthCm > UE_SMALL_NUMBER
+		&& FMath::IsNearlyZero(FMath::Fmod(DistanceCm, TotalLengthCm), UE_KINDA_SMALL_NUMBER))
+	{
+		return RouteLengthCm;
+	}
+	int32 SegmentIndex = INDEX_NONE;
+	float Parameter = 0.0f;
+	if (!ResolveSegmentParameter(DistanceCm, SegmentIndex, Parameter))
+	{
+		return 0.0f;
+	}
+	const FSegment& Segment = Segments[SegmentIndex];
+	return FMath::Lerp(
+		Segment.RouteStartDistanceCm, Segment.RouteEndDistanceCm, Parameter);
 }
 
 bool FAircraftSpatialPath::Project(
@@ -417,29 +767,11 @@ FVector FAircraftSpatialPath::ComputeCorridorCorrectionCm(
 	{
 		return FVector::ZeroVector;
 	}
-	const float MappedDistanceCm = (bClosed ? WrapDistance(DistanceCm, TotalLengthCm)
-		: FMath::Clamp(DistanceCm, 0.0f, TotalLengthCm)) * CorridorDistanceScale;
-	const int32 CorridorIndex = FindCorridorSegment(Corridor, MappedDistanceCm);
+	const int32 CorridorIndex = ResolveAircraftSafeCorridorSegment(
+		Corridor, GetRouteDistanceCm(DistanceCm), RouteLengthCm);
 	if (!Corridor.IsValidIndex(CorridorIndex))
 	{
 		return FVector::ZeroVector;
 	}
-	float MaximumViolationCm = 0.0f;
-	FVector CorrectionCm = FVector::ZeroVector;
-	for (const FPlane& Plane : Corridor[CorridorIndex].BoundaryPlanes)
-	{
-		const FVector Normal(Plane.X, Plane.Y, Plane.Z);
-		const double NormalLength = Normal.Size();
-		if (NormalLength > UE_DOUBLE_SMALL_NUMBER)
-		{
-			const float ViolationCm = static_cast<float>(
-				Plane.PlaneDot(PositionCm) / NormalLength) + CorridorSafetyMarginCm;
-			if (ViolationCm > MaximumViolationCm)
-			{
-				MaximumViolationCm = ViolationCm;
-				CorrectionCm = -Normal / NormalLength * ViolationCm;
-			}
-		}
-	}
-	return CorrectionCm;
+	return Corridor[CorridorIndex].ComputeCorrectionCm(PositionCm, CorridorSafetyMarginCm);
 }

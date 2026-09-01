@@ -842,6 +842,19 @@ bool UAircraftComponent::GetTrajectoryReference(FAircraftTrajectoryReference& Ou
 
 /* ==================== IAircraftFlightControllerInterface（Autopilot 窄契约） ==================== */
 
+bool UAircraftComponent::GetAircraftAutopilotRuntimeConfig(
+	FAircraftAutopilotRuntimeConfig& OutConfig) const
+{
+	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
+	if (!Model)
+	{
+		OutConfig = {};
+		return false;
+	}
+	OutConfig = Model->Autopilot;
+	return true;
+}
+
 bool UAircraftComponent::GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const
 {
 	FAircraftEstimatedState Estimated;

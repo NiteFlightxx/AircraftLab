@@ -33,6 +33,76 @@ namespace UE::AircraftLab::Diagnostics::Private
 			? Sample.DistanceCm / Snapshot.AutopilotPlanLengthCm : 0.0f;
 	}
 
+	static float ComputeRouteLength(const FAircraftRouteIntent& Route)
+	{
+		float LengthCm = 0.0f;
+		for (int32 Index = 1; Index < Route.PointsCm.Num(); ++Index)
+		{
+			LengthCm += FVector::Distance(Route.PointsCm[Index - 1], Route.PointsCm[Index]);
+		}
+		if (Route.bClosed && Route.PointsCm.Num() > 2)
+		{
+			LengthCm += FVector::Distance(Route.PointsCm.Last(), Route.PointsCm[0]);
+		}
+		return LengthCm;
+	}
+
+	static void DrawCorridorSegment(const FAircraftDebugDrawContext& Context,
+		const FAircraftSafeCorridorSegment& Segment, const FLinearColor& Color)
+	{
+		FAircraftDebugDraw::DrawCapsule(Context,
+			Segment.AxisStartCm, Segment.AxisEndCm, Segment.RadiusCm, Color);
+	}
+
+	static void DrawSafeCorridor(
+		const FAircraftDebugFrameSnapshot& Snapshot, const FAircraftDebugDrawContext& Context)
+	{
+		const FAircraftRouteIntent& Route = Snapshot.MovementIntent.Route;
+		if (Snapshot.MovementIntent.Type != EAircraftMovementIntentType::Route
+			|| Route.Corridor.IsEmpty())
+		{
+			return;
+		}
+
+		const float RouteLengthCm = ComputeRouteLength(Route);
+		if (RouteLengthCm <= UE_SMALL_NUMBER)
+		{
+			return;
+		}
+
+		const float CurrentRouteDistanceCm = FMath::Clamp(
+			Snapshot.AutopilotReference.RouteProgress, 0.0f, 1.0f) * RouteLengthCm;
+		const int32 CurrentSegmentIndex = ResolveAircraftSafeCorridorSegment(
+			Route.Corridor, CurrentRouteDistanceCm, RouteLengthCm);
+
+		for (int32 SegmentIndex = 0; SegmentIndex < Route.Corridor.Num(); ++SegmentIndex)
+		{
+			const FAircraftSafeCorridorSegment& Segment = Route.Corridor[SegmentIndex];
+			if (Segment.StartDistanceCm >= RouteLengthCm || Segment.EndDistanceCm <= 0.0f)
+			{
+				continue;
+			}
+			FLinearColor Color = FAircraftDebugColors::CorridorInactive;
+			if (SegmentIndex == CurrentSegmentIndex)
+			{
+				if (Snapshot.AutopilotDiagnostics.CorridorViolationCm > UE_SMALL_NUMBER)
+				{
+					Color = FAircraftDebugColors::CorridorViolation;
+				}
+				else if (Snapshot.AutopilotDiagnostics.PredictedCorridorViolationCm
+					> UE_SMALL_NUMBER)
+				{
+					Color = FAircraftDebugColors::CorridorPredictedViolation;
+				}
+				else
+				{
+					Color = FAircraftDebugColors::CorridorCurrent;
+				}
+			}
+			DrawCorridorSegment(Context, Segment, Color);
+		}
+	}
+
 	static bool DrawMotionPlan(
 		const FAircraftDebugFrameSnapshot& Snapshot, const FAircraftDebugDrawContext& Context)
 	{
@@ -85,6 +155,10 @@ namespace UE::AircraftLab::Diagnostics::Private
 	static void DrawTrajectory(
 		const FAircraftDebugFrameSnapshot& Snapshot, const FAircraftDebugDrawContext& Context)
 	{
+		if (UE::AircraftLab::Diagnostics::IsCorridorDebugDrawEnabled())
+		{
+			DrawSafeCorridor(Snapshot, Context);
+		}
 		if (DrawMotionPlan(Snapshot, Context))
 		{
 			return;

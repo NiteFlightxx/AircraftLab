@@ -58,6 +58,25 @@ float FAircraftDebug::GetLogIntervalSeconds()
 	return FMath::Max(UE::AircraftLab::Diagnostics::Private::CVarLogInterval.GetValueOnAnyThread(), 0.0f);
 }
 
+void FAircraftDebug::LogPlanningFailure(
+	const FAircraftPlanningFailureDiagnostics& Diagnostics)
+{
+	UE_LOG(LogAircraft, Warning,
+		TEXT("[Aircraft.Autopilot.PlanFailed] Stage=%s Reason=%s RoutePoints=%d PathPoints=%d CorridorSegments=%d PathSegment=%d PathSample=%d CorridorSegment=%d PathDistanceCm=%.3f RouteDistanceCm=%.3f RouteLengthCm=%.3f PlannedLengthCm=%.3f ConstraintValueCm=%.6f ToleranceCm=%.6f PositionCm=(%.3f,%.3f,%.3f) CapsuleStartCm=(%.3f,%.3f,%.3f) CapsuleEndCm=(%.3f,%.3f,%.3f) CapsuleRadiusCm=%.3f CapsuleEffectiveRadiusCm=%.3f"),
+		Diagnostics.Stage, Diagnostics.Reason,
+		Diagnostics.RoutePointCount, Diagnostics.PathPointCount,
+		Diagnostics.CorridorSegmentCount, Diagnostics.PathSegmentIndex,
+		Diagnostics.PathSampleIndex, Diagnostics.CorridorSegmentIndex,
+		Diagnostics.PathDistanceCm, Diagnostics.RouteDistanceCm, Diagnostics.RouteLengthCm,
+		Diagnostics.PlannedLengthCm, Diagnostics.ConstraintValueCm,
+		Diagnostics.ConstraintToleranceCm, Diagnostics.PositionCm.X,
+		Diagnostics.PositionCm.Y, Diagnostics.PositionCm.Z,
+		Diagnostics.CorridorAxisStartCm.X, Diagnostics.CorridorAxisStartCm.Y,
+		Diagnostics.CorridorAxisStartCm.Z, Diagnostics.CorridorAxisEndCm.X,
+		Diagnostics.CorridorAxisEndCm.Y, Diagnostics.CorridorAxisEndCm.Z,
+		Diagnostics.CorridorRadiusCm, Diagnostics.CorridorEffectiveRadiusCm);
+}
+
 const TCHAR* FAircraftDebug::GetDriveModeLabel(const EAircraftSimulationDriveMode Mode)
 {
 	switch (Mode)

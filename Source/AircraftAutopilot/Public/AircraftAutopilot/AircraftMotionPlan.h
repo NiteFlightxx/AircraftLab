@@ -31,6 +31,11 @@ public:
 	bool IsContinuous() const { return bContinuous; }
 	float GetDurationSeconds() const { return DurationSeconds; }
 	float GetLengthCm() const { return SpatialPath.GetLengthCm(); }
+	float GetRouteLengthCm() const { return SpatialPath.GetRouteLengthCm(); }
+	float GetRouteDistanceCm(float DistanceCm) const
+	{
+		return SpatialPath.GetRouteDistanceCm(DistanceCm);
+	}
 	const TArray<FAircraftMotionPlanSample>& GetSamples() const { return Samples; }
 	const FAircraftMovementIntent& GetIntent() const { return SourceIntent; }
 	static float ResolveYaw(const FAircraftHeadingObjective& Heading,

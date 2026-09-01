@@ -30,6 +30,9 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugDraw
 		const FLinearColor& Color, float Thickness = -1.0f);
 	static void DrawSphere(const FAircraftDebugDrawContext& Context, const FVector& Center,
 		float Radius, const FLinearColor& Color, int32 Segments = 12, float Thickness = -1.0f);
+	static void DrawCapsule(const FAircraftDebugDrawContext& Context,
+		const FVector& AxisStart, const FVector& AxisEnd, float Radius,
+		const FLinearColor& Color, int32 Segments = 12, float Thickness = -1.0f);
 	static void DrawDashedLine(const FAircraftDebugDrawContext& Context, const FVector& Start,
 		const FVector& End, const FLinearColor& Color, float Thickness = -1.0f,
 		float DashCm = 15.0f, float GapCm = 10.0f);

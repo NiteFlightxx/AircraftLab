@@ -300,6 +300,9 @@ void FAircraftTrajectoryRuntime::FinalizeReference(
 	OutReference.ValidUntilSeconds = State.TimeSeconds + 0.15;
 	OutReference.PathProgress = GetPlan().GetLengthCm() > UE_SMALL_NUMBER
 		? PlanDistanceCm / GetPlan().GetLengthCm() : 0.0f;
+	OutReference.RouteProgress = GetPlan().GetRouteLengthCm() > UE_SMALL_NUMBER
+		? GetPlan().GetRouteDistanceCm(PlanDistanceCm) / GetPlan().GetRouteLengthCm()
+		: 0.0f;
 	OutReference.bValid = true;
 	Diagnostics = MpccDiagnostics;
 	Diagnostics.ProgressScale = ProgressScale;

@@ -465,6 +465,7 @@ bool FAircraftMpccController::SolveVelocityIntent(
 		State.PositionCm, TargetVelocity, State.ControlRotation.Rotator().Yaw);
 	ApplyYawConstraints(State, Intent.Limits, Dt, DesiredYaw, OutReference);
 	OutReference.PathProgress = 0.0f;
+	OutReference.RouteProgress = 0.0f;
 	return true;
 }
 
@@ -786,6 +787,7 @@ bool FAircraftMpccController::SolvePlan(
 	{
 		OutReference.PathProgress = FMath::Clamp(EstimatedPlanTimeSeconds
 			/ FMath::Max(Plan.GetDurationSeconds(), UE_SMALL_NUMBER), 0.0f, 1.0f);
+		OutReference.RouteProgress = 0.0f;
 	}
 	else
 	{
@@ -793,6 +795,9 @@ bool FAircraftMpccController::SolvePlan(
 			? (Plan.IsContinuous()
 				? FMath::Fmod(EstimatedDistanceCm, PlanLengthCm) / PlanLengthCm
 				: FMath::Clamp(EstimatedDistanceCm / PlanLengthCm, 0.0f, 1.0f))
+			: 0.0f;
+		OutReference.RouteProgress = Plan.GetRouteLengthCm() > UE_SMALL_NUMBER
+			? Plan.GetRouteDistanceCm(EstimatedDistanceCm) / Plan.GetRouteLengthCm()
 			: 0.0f;
 	}
 	Diagnostics.ContourErrorCm = ContourErrorCm;

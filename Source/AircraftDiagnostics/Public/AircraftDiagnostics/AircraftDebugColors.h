@@ -21,6 +21,10 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugColors
 	static const FLinearColor TrajectoryDone;
 	static const FLinearColor TrajectoryStart;
 	static const FLinearColor TrajectoryEnd;
+	static const FLinearColor CorridorInactive;
+	static const FLinearColor CorridorCurrent;
+	static const FLinearColor CorridorPredictedViolation;
+	static const FLinearColor CorridorViolation;
 	static const FLinearColor Setpoint;
 	static const FLinearColor LookAhead;
 	static const FLinearColor TrackingError;

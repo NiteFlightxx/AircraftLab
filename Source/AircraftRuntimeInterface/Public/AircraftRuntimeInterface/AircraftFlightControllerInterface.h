@@ -7,6 +7,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Interface.h"
+#include "AircraftRuntimeInterface/AircraftAutopilotConfig.h"
 #include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftFlightControllerInterface.generated.h"
 
@@ -32,6 +33,8 @@ class AIRCRAFTRUNTIMEINTERFACE_API IAircraftFlightControllerInterface
 	GENERATED_BODY()
 
 public:
+	virtual bool GetAircraftAutopilotRuntimeConfig(
+		FAircraftAutopilotRuntimeConfig& OutConfig) const = 0;
 	virtual bool GetAircraftFlightKinematicState(FAircraftFlightKinematicState& OutState) const = 0;
 	virtual bool GetAircraftAutopilotDiagnostics(FAircraftAutopilotDiagnostics& OutDiagnostics) const = 0;
 	virtual bool GetAircraftTrajectoryReference(FAircraftTrajectoryReference& OutReference) const = 0;

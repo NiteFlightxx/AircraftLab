@@ -6,6 +6,7 @@
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
 #include "AircraftDiagnostics/AircraftDebugSnapshot.h"
+#include "AircraftAutopilot/AircraftSafeCorridorBuilder.h"
 
 #include "AutopilotComponent.generated.h"
 
@@ -58,6 +59,13 @@ public:
 		const FAircraftRouteIntent& Route,
 		const FAircraftMovementIntentSettings& Settings,
 		const FAircraftCompletionPolicy& Completion);
+
+	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Route",
+		meta = (DisplayName = "Build Safe Corridor From Path Points"))
+	FAircraftSafeCorridorBuildResult BuildSafeCorridorFromPathPoints(
+		const TArray<FVector>& PathPointsCm,
+		const FAircraftSafeCorridorBuildSettings& Settings,
+		FAircraftRouteIntent& OutRoute);
 
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Autopilot|Orbit")
 	FAircraftMovementIntentHandle SubmitOrbitIntent(const FAircraftOrbitIntent& Orbit,

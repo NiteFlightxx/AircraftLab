@@ -19,6 +19,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftMotionPlanSample
 {
 	float TimeSeconds = 0.0f;
 	float DistanceCm = 0.0f;
+	float RouteDistanceCm = 0.0f;
 	FVector PositionCm = FVector::ZeroVector;
 	FVector VelocityCmPerSec = FVector::ZeroVector;
 	FVector AccelerationCmPerSecSq = FVector::ZeroVector;
@@ -148,6 +149,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTrajectoryReference
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot")
 	float PathProgress = 0.0f;
+
+	/** 原始 Route 折线参数进度；安全走廊选择和调试绘制使用该语义。 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot")
+	float RouteProgress = 0.0f;
 
 	/** Velocity 意图只跟踪速度；路径、环绕与 Hold 才启用位置外环。 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot")
