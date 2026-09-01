@@ -1,261 +1,205 @@
-# Aircraft Corner Transition Corridor Implementation Plan
+# Aircraft Analytic Capsule Corridor Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace per-leg-only corridor construction with a strictly safe straight/corner convex-cell partition and a rounded reference route that can traverse turns without artificial near-zero speed.
+**Goal:** Replace plane-based straight/corner corridor cells with one analytic capsule per canonical navigation leg, using the shared capsule end-cap volume for rounded turns and exact route ownership boundaries.
 
-**Architecture:** `AircraftRuntimeInterface` owns the single corridor-interval resolver and strict route contract. `AircraftSafeCorridorBuilder` canonicalizes the navigation polyline, builds straight prisms and waypoint-centered inscribed corner bipyramids, allocates short-leg transition extents, and emits a rounded reference route with matching Route intervals. `AircraftSpatialPath` and `AircraftDiagnostics` consume the shared resolver; the physical timing planner remains unchanged.
+**Architecture:** `AircraftRuntimeInterface` owns the reflected capsule data and exact geometry operations. `AircraftSafeCorridorBuilder` emits a rounded route plus one capsule per canonical input leg, with each corner midpoint acting as the exact route ownership boundary. `AircraftSpatialPath`, MPCC-facing correction, diagnostics, and drawing consume the same capsule geometry; no polyhedral or separate-sphere representation remains.
 
-**Tech Stack:** Unreal Engine 5.7 C++, USTRUCT/UENUM reflection, `FVector`, `FPlane`, `TArray`, AircraftLab Dataflow runtime.
+**Tech Stack:** Unreal Engine 5.7 C++, USTRUCT reflection, `FVector`, analytic segment/capsule geometry, AircraftLab Autopilot and Diagnostics modules.
 
 **Spec:** `docs/superpowers/specs/2026-09-01-aircraft-corner-transition-corridor-design.md`
 
 ## Global Constraints
 
-- `OuterRadiusCm` remains a hard Euclidean clearance radius.
-- `CorridorSafetyMarginCm` is read from RuntimeConfig and is not duplicated as a builder setting.
-- Keep the existing Blueprint entry point and three builder settings.
-- Do not add old-builder compatibility, minimum corner speed, tolerance relaxation, or fallback paths.
-- Do not modify `AircraftMotionPlan` physical speed-limit semantics.
-- Preserve user-owned assets and unrelated source changes.
-- Per user instruction, do not run automated tests; verify with compiler builds and provide a manual scenario checklist.
+- Preserve user-owned `.uasset` and `.umap` changes.
+- Do not retain `BoundaryPlanes`, polygonal prisms, corner hulls, separate corner spheres, `CrossSectionSides`, deprecated fields, overloads, or fallback builders.
+- `StoredRadiusCm = OuterRadiusCm`; apply `CorridorSafetyMarginCm` exactly once when evaluating the effective capsule.
+- Do not change physical speed planning, flight-control, drive-mode, LOD, or networking semantics.
+- Do not run automated tests. Update test sources only where the public data-model change requires compilation, then verify with static checks and Development/DebugGame Editor builds.
 
 ---
 
-### Task 1: Centralize Corridor Route-Interval Semantics
+### Task 1: Replace Plane Corridor Data With Analytic Capsule Data
 
 **Files:**
 - Modify: `Source/AircraftRuntimeInterface/Public/AircraftRuntimeInterface/AircraftMovementIntent.h`
 - Modify: `Source/AircraftRuntimeInterface/Private/AircraftMovementIntent.cpp`
 
 **Interfaces:**
-- Produces: `int32 ResolveAircraftSafeCorridorSegment(TConstArrayView<FAircraftSafeCorridorSegment> Corridor, float RouteDistanceCm, float RouteLengthCm)`.
-- Produces: strict contiguous Corridor validation used by every Route intent.
+- Produces capsule fields `AxisStartCm`, `AxisEndCm`, and `RadiusCm` on `FAircraftSafeCorridorSegment`.
+- Produces `IsGeometryValid()`, `GetClosestAxisPoint(...)`, `ComputeCorrectionCm(...)`, and `ComputeRayExitParameter(...)`.
+- Preserves `ResolveAircraftSafeCorridorSegment(...)` and its half-open Route interval contract.
 
-- [ ] **Step 1: Declare the exported resolver after `FAircraftSafeCorridorSegment`**
-
-```cpp
-AIRCRAFTRUNTIMEINTERFACE_API int32 ResolveAircraftSafeCorridorSegment(
-    TConstArrayView<FAircraftSafeCorridorSegment> Corridor,
-    float RouteDistanceCm,
-    float RouteLengthCm);
-```
-
-- [ ] **Step 2: Implement one ordered half-open lookup**
+- [ ] **Step 1: Replace `BoundaryPlanes` with reflected capsule fields and focused methods**
 
 ```cpp
-int32 ResolveAircraftSafeCorridorSegment(
-    const TConstArrayView<FAircraftSafeCorridorSegment> Corridor,
-    const float RouteDistanceCm,
-    const float RouteLengthCm)
-{
-    if (Corridor.IsEmpty() || !FMath::IsFinite(RouteDistanceCm)
-        || !FMath::IsFinite(RouteLengthCm) || RouteLengthCm <= UE_SMALL_NUMBER
-        || RouteDistanceCm < -UE_KINDA_SMALL_NUMBER
-        || RouteDistanceCm > RouteLengthCm + UE_KINDA_SMALL_NUMBER)
-    {
-        return INDEX_NONE;
-    }
-    const float DistanceCm = FMath::Clamp(RouteDistanceCm, 0.0f, RouteLengthCm);
-    for (int32 Index = 0; Index < Corridor.Num(); ++Index)
-    {
-        const FAircraftSafeCorridorSegment& Segment = Corridor[Index];
-        const bool bLast = Index == Corridor.Num() - 1;
-        if (DistanceCm >= Segment.StartDistanceCm
-            && (DistanceCm < Segment.EndDistanceCm
-                || (bLast && DistanceCm <= Segment.EndDistanceCm)))
-        {
-            return Index;
-        }
-    }
-    return INDEX_NONE;
-}
+UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (Units = "cm"))
+FVector AxisStartCm = FVector::ZeroVector;
+
+UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (Units = "cm"))
+FVector AxisEndCm = FVector::ZeroVector;
+
+UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Navigation", meta = (ClampMin = "0.0", Units = "cm"))
+float RadiusCm = 0.0f;
+
+bool IsGeometryValid() const;
+FVector GetClosestAxisPoint(const FVector& PositionCm) const;
+FVector ComputeCorrectionCm(const FVector& PositionCm, float SafetyMarginCm) const;
+bool ComputeRayExitParameter(const FVector& StartCm, const FVector& DirectionCm,
+    float SafetyMarginCm, float& OutExitParameter) const;
 ```
 
-- [ ] **Step 3: Tighten Route validation**
+- [ ] **Step 2: Implement exact capsule membership and correction**
 
-Require a non-empty Corridor to begin at zero, contain only positive-length finite cells, share the exact previous end value within `UE_KINDA_SMALL_NUMBER`, contain finite nonzero planes, and end at the computed Route length within `UE_KINDA_SMALL_NUMBER`. Remove separate overlap/gap compatibility clauses.
+Use the clamped projection parameter on `[AxisStartCm, AxisEndCm]`. Return zero correction when squared radial distance is no larger than `(RadiusCm - SafetyMarginCm)^2`; otherwise return the vector from the point to the nearest point on the effective capsule surface.
 
-- [ ] **Step 4: Inspect the diff**
+- [ ] **Step 3: Implement analytic ray exit**
+
+Transform the ray into axial/radial components, solve the quadratic intersection with the cylindrical side and both endpoint spheres, accept only roots on the corresponding side/hemisphere, and return the unique nonnegative exit parameter for a start point inside the effective capsule. Zero direction returns an unbounded parameter; invalid geometry, invalid margin, non-finite values, or an outside start returns false.
+
+- [ ] **Step 4: Replace Route validation**
+
+Validate finite nonzero capsule axes, finite positive radii, finite positive contiguous Route intervals, first start zero, and last end equal to Route length. Remove all plane validation.
+
+- [ ] **Step 5: Static check**
 
 Run: `git diff --check -- Source/AircraftRuntimeInterface`
 
-Expected: no whitespace errors.
+Expected: no whitespace errors and no `BoundaryPlanes` reference in RuntimeInterface.
 
-### Task 2: Build Straight and Corner Convex Cells
+### Task 2: Emit One Capsule Per Canonical Navigation Leg
 
 **Files:**
 - Modify: `Source/AircraftAutopilot/Public/AircraftAutopilot/AircraftSafeCorridorBuilder.h`
 - Modify: `Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSafeCorridorBuilder.cpp`
 
 **Interfaces:**
-- Consumes: `FAircraftSafeCorridorBuildSettings`, `FAircraftPathOptimizationRuntimeConfig`.
-- Produces: `EAircraftSafeCorridorBuildStatus::DegenerateTurn`.
-- Produces: a canonical rounded `FAircraftRouteIntent` whose cells strictly partition its Route length.
+- Consumes `FAircraftPathOptimizationRuntimeConfig::CorridorSafetyMarginCm` and `ResampleSpacingCm`.
+- Produces a rounded `FAircraftRouteIntent` with exactly `CanonicalPoints.Num() - 1` capsule cells.
 
-- [ ] **Step 1: Add the explicit degenerate-turn status**
+- [ ] **Step 1: Remove polygon configuration and geometry**
+
+Delete `CrossSectionSides` from `FAircraftSafeCorridorBuildSettings`, delete all prism/plane/hull helpers, and update the public comment to describe analytic capsules.
+
+- [ ] **Step 2: Keep strict canonical path construction**
+
+Reject non-finite points, remove consecutive points shorter than `MinimumSegmentLengthCm`, remove forward-collinear internal points, and return `DegenerateTurn` for exact reverse turns.
+
+- [ ] **Step 3: Calculate turn extents from the effective radius**
 
 ```cpp
-DegenerateTurn UMETA(DisplayName = "Degenerate Turn"),
+const float EffectiveRadiusCm = Settings.OuterRadiusCm - PathConfig.CorridorSafetyMarginCm;
 ```
 
-- [ ] **Step 2: Replace the builder-local geometry with focused helpers**
+Initialize each internal corner's entry and exit extent to this value. For each source leg, proportionally scale the start exit and end entry extents if their sum exceeds the leg length.
 
-Create private helpers with these responsibilities and signatures:
+- [ ] **Step 4: Emit exact rounded-route structure**
+
+For each corner emit a straight span to `Entry`, sample the quadratic Bézier separately over `[0, 0.5]` and `[0.5, 1]`, and always append the exact midpoint `B(0.5)`. Record its cumulative Route distance as the ownership boundary between the incoming and outgoing capsules.
+
+- [ ] **Step 5: Build the capsule partition after the route**
+
+For canonical leg `i`, assign:
 
 ```cpp
-bool IsFiniteVector(const FVector& Value);
-void AddPrismPlanes(const FVector& Start, const FVector& End,
-    float EndCapExtensionCm, float CrossSectionApothemCm,
-    int32 CrossSectionSides, TArray<FPlane>& OutPlanes);
-bool BuildCornerPlanes(const FVector& Center, const FVector& EntryRay,
-    const FVector& ExitRay, float RadiusCm, int32 CrossSectionSides,
-    TArray<FPlane>& OutPlanes);
-float ComputeInsetRayExtent(const FVector& Center, const FVector& Ray,
-    TConstArrayView<FPlane> Planes, float SafetyMarginCm);
-FVector EvaluateQuadraticBezier(const FVector& Entry, const FVector& Control,
-    const FVector& Exit, float Alpha);
+Segment.AxisStartCm = Points[i].PositionCm;
+Segment.AxisEndCm = Points[i + 1].PositionCm;
+Segment.RadiusCm = Settings.OuterRadiusCm;
+Segment.StartDistanceCm = i == 0 ? 0.0f : CornerBoundaryDistancesCm[i - 1];
+Segment.EndDistanceCm = i + 1 == LegCount ? RouteLengthCm : CornerBoundaryDistancesCm[i];
 ```
 
-`BuildCornerPlanes` must construct the N ring vertices plus two poles, orient every triangular face outward by comparing its normal with the corner center, and normalize every stored plane. It must not generate a circumscribed polyhedron.
+Require exactly one positive Route interval per leg and validate the final strict partition before returning `Succeeded`.
 
-- [ ] **Step 3: Canonicalize the input polyline**
+- [ ] **Step 6: Static check**
 
-Track original input indices while filtering invalid/short points. Remove forward-collinear internal points using the normalized direction cross/dot rule. Return `DegenerateTurn` with the responsible `InputPointIndex` for an exact reverse turn.
+Run: `rg -n "CrossSectionSides|BoundaryPlanes|BuildCornerPlanes|AddPrismPlanes" Source/AircraftAutopilot/Public/AircraftAutopilot/AircraftSafeCorridorBuilder.h Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSafeCorridorBuilder.cpp`
 
-- [ ] **Step 4: Compute corner geometry and desired extents**
+Expected: no matches.
 
-For each internal canonical point, store its boundary planes plus inset entry/exit ray extents. Reject non-finite or non-positive inset extents as `InsufficientClearance`.
-
-- [ ] **Step 5: Fit adjacent corner extents to every source leg**
-
-For each leg of length `L`, take the outgoing extent of its start corner and incoming extent of its end corner. If their sum exceeds `L`, multiply both by `L / Sum`. Endpoints use zero extent. This must leave a zero-or-positive straight remainder with no uncovered distance.
-
-- [ ] **Step 6: Emit the rounded route and exact cell intervals in one pass**
-
-Use a single route-point append helper that rejects only duplicate consecutive samples and updates cumulative distance. Emit:
-
-```text
-straight start -> corner entry -> sampled quadratic Bézier -> corner exit -> next straight
-```
-
-For every emitted straight or corner span, record the cumulative distance before and after the span and use those same values for `StartDistanceCm` and `EndDistanceCm`. Omit zero-length straight cells. Sample each Bézier with at least one interior point and maximum chord spacing no greater than `PathConfig.ResampleSpacingCm`.
-
-- [ ] **Step 7: Validate the builder output before success**
-
-Before returning `Succeeded`, require at least two output points, at least one positive-length cell, first start zero, exact adjacent interval continuity, and final end equal to cumulative Route length. Failure caused by available clearance returns `InsufficientClearance`; no old-builder fallback is allowed.
-
-- [ ] **Step 8: Inspect the diff**
-
-Run: `git diff --check -- Source/AircraftAutopilot/Public/AircraftAutopilot/AircraftSafeCorridorBuilder.h Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSafeCorridorBuilder.cpp`
-
-Expected: no whitespace errors.
-
-### Task 3: Make Spatial Path Use the Unique Corridor Cell
+### Task 3: Make Spatial Path Preserve Capsule Boundaries and Use Capsule Constraints
 
 **Files:**
 - Modify: `Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSpatialPath.cpp`
 
 **Interfaces:**
-- Consumes: `ResolveAircraftSafeCorridorSegment(...)` from Task 1.
-- Preserves: explicit `RouteStartDistanceCm`/`RouteEndDistanceCm` mapping.
+- Consumes capsule methods from Task 1.
+- Preserves explicit source Route distance mapping on every Quintic segment.
 
-- [ ] **Step 1: Delete the local `FindCorridorSegment`**
+- [ ] **Step 1: Make resampling boundary-aware**
 
-Remove the anonymous-namespace predicate that treats both ends as inclusive.
+For every input polyline span, merge its uniform sample distances with all Corridor `StartDistanceCm`/`EndDistanceCm` values strictly inside that span, sort and deduplicate, then interpolate positions using Route distance. Exact Corridor boundary distances must survive filtering and resampling.
 
-- [ ] **Step 2: Constrain each optimized Knot to one cell**
+- [ ] **Step 2: Preserve ownership knots during optimization**
 
-Resolve the Knot's stored Route distance once, then project the candidate only against that cell's boundary planes:
+If a Knot's incoming and outgoing sample segments resolve to different capsule indices, keep the Knot at its constructed Route position. Otherwise optimize normally and apply the selected capsule's exact `ComputeCorrectionCm` once.
 
-```cpp
-const int32 CorridorIndex = ResolveAircraftSafeCorridorSegment(
-    Corridor, RouteDistancesCm[Index], RouteLengthCm);
-if (CorridorIndex != INDEX_NONE)
-{
-    ProjectCandidateIntoPlanes(Candidate, Corridor[CorridorIndex].BoundaryPlanes,
-        Config.CorridorSafetyMarginCm);
-}
-```
+- [ ] **Step 3: Replace plane control-hull scaling**
 
-Pass `RouteLengthCm` into `OptimizeKnots`; do not recover it from optimized path arc length.
+For each equivalent Quintic Bézier control delta, call `ComputeRayExitParameter(...)` on the required capsule and accumulate the minimum scale. Apply one common scale to the Knot's first and second derivatives to retain C2 continuity.
 
-- [ ] **Step 3: Replace validation and runtime correction lookups**
+- [ ] **Step 4: Replace plane sample validation and runtime correction**
 
-Use the shared resolver for full-spline Corridor validation, `ComputeCorridorViolationCm`, and `ComputeCorridorCorrectionCm`. A non-empty Corridor that cannot resolve a sampled Route distance is a planning failure, not an unconstrained sample.
+Use `ComputeCorrectionCm(...).Size()` for full-curve validation, `ComputeCorridorViolationCm`, and `ComputeCorridorCorrectionCm`. Report `CorridorCapsuleViolation` with the capsule index and violation distance; remove plane iteration and plane-index diagnostics.
 
-- [ ] **Step 4: Preserve explicit source-route mapping**
+- [ ] **Step 5: Static check**
 
-Keep `FSegment::RouteStartDistanceCm`, `RouteEndDistanceCm`, `GetRouteDistanceCm`, motion-plan sample Route distance, and trajectory Route progress unchanged.
+Run: `rg -n "BoundaryPlanes|CorridorPlaneViolation|InvalidCorridorPlane" Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSpatialPath.cpp`
 
-- [ ] **Step 5: Inspect the diff**
+Expected: no matches.
 
-Run: `git diff --check -- Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSpatialPath.cpp`
-
-Expected: no whitespace errors and no `FindCorridorSegment` definition remains.
-
-### Task 4: Align Corridor Debug Selection and Polyhedron Drawing
+### Task 4: Align Diagnostics, Public Blueprint Data, and Compile-Time Fixtures
 
 **Files:**
+- Modify: `Source/AircraftDiagnostics/Public/AircraftDiagnostics/AircraftDebug.h`
+- Modify: `Source/AircraftDiagnostics/Private/AircraftDebug.cpp`
+- Modify: `Source/AircraftDiagnostics/Public/AircraftDiagnostics/AircraftDebugDraw.h`
+- Modify: `Source/AircraftDiagnostics/Private/AircraftDebugDraw.cpp`
 - Modify: `Source/AircraftDiagnostics/Private/AircraftDebugAutopilotOptions.cpp`
+- Modify only for compilation: `Source/AircraftAutopilot/Private/Tests/AircraftAutopilotTests.cpp`
 
 **Interfaces:**
-- Consumes: `ResolveAircraftSafeCorridorSegment(...)` from Task 1.
-- Preserves: green current, red actual violation, orange predicted violation, cyan-blue inactive colors.
+- Produces `FAircraftDebugDraw::DrawCapsule(...)`.
+- Preserves green current, red actual violation, orange predicted violation, and cyan-blue inactive colors.
 
-- [ ] **Step 1: Use the shared resolver for the current segment**
+- [ ] **Step 1: Replace plane-specific failure diagnostics**
 
-```cpp
-const int32 CurrentSegmentIndex = ResolveAircraftSafeCorridorSegment(
-    Route.Corridor, CurrentRouteDistanceCm, RouteLengthCm);
-```
+Remove `CorridorPlaneIndex`; add capsule axis start/end, stored radius, and effective radius fields. Update the single planning-failure log format accordingly.
 
-Delete the local inclusive `IndexOfByPredicate` selection.
+- [ ] **Step 2: Add authoritative capsule drawing**
 
-- [ ] **Step 2: Draw stored convex cells without synthesizing route caps**
+Add `DrawCapsule(Context, AxisStartCm, AxisEndCm, RadiusCm, Color, Segments, Thickness)`. For PDI use `DrawWireCapsule` with half-height `0.5 * AxisLength + Radius`; for World use `DrawDebugCapsule` with local Z rotated onto the capsule axis.
 
-`FAircraftSafeCorridorSegment::BoundaryPlanes` now completely bounds both prisms and corner bipyramids. Update `DrawCorridorSegment` to reconstruct vertices and edges from those stored planes directly. Do not add `StartPosition`/`EndPosition` cap planes, because doing so would clip the formal corner transition cell.
+- [ ] **Step 3: Replace polyhedron reconstruction**
 
-- [ ] **Step 3: Remove helpers made obsolete by cap synthesis**
+Delete plane intersection, vertex, and edge reconstruction from `AircraftDebugAutopilotOptions.cpp`. Draw each stored capsule directly through `FAircraftDebugDraw::DrawCapsule` while preserving the existing dynamic color selection.
 
-Keep route sampling only where it still serves trajectory rendering. Remove unused `SampleCorridorPath` inputs from `DrawCorridorSegment` and any now-dead tangent calculations.
+- [ ] **Step 4: Update compile-time test fixtures without running tests**
 
-- [ ] **Step 4: Inspect the diff**
+Replace manually assigned `BoundaryPlanes` with `AxisStartCm`, `AxisEndCm`, and `RadiusCm`; replace direct plane containment assertions with `ComputeCorrectionCm(...).IsNearlyZero()` or a positive correction assertion.
 
-Run: `git diff --check -- Source/AircraftDiagnostics/Private/AircraftDebugAutopilotOptions.cpp`
+- [ ] **Step 5: Static check**
 
-Expected: no whitespace errors; all four existing color branches remain.
+Run: `rg -n "CrossSectionSides|BoundaryPlanes|CorridorPlaneIndex" Source`
 
-### Task 5: Static Review and Compiler Verification
+Expected: no matches.
+
+### Task 5: Review and Compile
 
 **Files:**
-- Review: all files modified in Tasks 1-4
-- Do not modify: user-owned `.uasset` and `.umap` files
+- Review all files changed by Tasks 1-4.
+- Do not modify user assets.
 
-**Interfaces:**
-- Verifies: module boundaries, Unreal reflection, generated headers, and both editor build configurations.
-
-- [ ] **Step 1: Search for obsolete and duplicated semantics**
-
-Run:
-
-```powershell
-rg -n "FindCorridorSegment|CorridorDistanceScale|IndexOfByPredicate" Source/AircraftAutopilot Source/AircraftDiagnostics Source/AircraftRuntimeInterface
-```
-
-Expected: no obsolete Corridor lookup remains; unrelated `IndexOfByPredicate` uses are reviewed individually.
-
-- [ ] **Step 2: Review the final source diff**
+- [ ] **Step 1: Inspect source-only changes**
 
 Run: `git diff --check`
 
-Expected: no whitespace errors.
+Run: `git diff -- Source/AircraftRuntimeInterface Source/AircraftAutopilot Source/AircraftDiagnostics`
 
-Run: `git diff -- Source/AircraftAutopilot Source/AircraftRuntimeInterface Source/AircraftDiagnostics`
+Expected: only capsule-corridor work plus the user's already-restored related source changes; no asset staging or rewriting.
 
-Expected: only approved corridor architecture and already-restored related work are present; no assets are touched.
-
-- [ ] **Step 3: Compile Development Editor**
+- [ ] **Step 2: Compile Development Editor**
 
 Run:
 
@@ -265,7 +209,7 @@ Run:
 
 Expected: `Result: Succeeded`.
 
-- [ ] **Step 4: Compile DebugGame Editor**
+- [ ] **Step 3: Compile DebugGame Editor**
 
 Run:
 
@@ -275,12 +219,6 @@ Run:
 
 Expected: `Result: Succeeded`.
 
-- [ ] **Step 5: Provide the manual scene checklist**
+- [ ] **Step 4: Report the manual scene checks**
 
-Report these user-run checks without executing automation:
-
-1. Straight route: only one straight corridor and unchanged cruise behavior.
-2. Two-leg 90-degree route: one visible corner cell, no uncovered gap, smooth nonzero turn speed where dynamics allow.
-3. Short leg between two corners: transition cells meet without negative or missing straight cells.
-4. Actual and predicted violations: current cell changes green/red/orange consistently; inactive cells remain cyan-blue.
-5. Exact reverse route: builder returns `DegenerateTurn` instead of choosing an arbitrary side.
+Ask the user to verify: a straight two-point route; a 90-degree turn; adjacent turns on a short middle leg; current/actual/predicted corridor colors; and an exact reverse route returning `DegenerateTurn`.
