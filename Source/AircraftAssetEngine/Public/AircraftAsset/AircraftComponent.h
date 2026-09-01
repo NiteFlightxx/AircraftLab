@@ -213,7 +213,7 @@ protected:
 
 private:
 	void SyncSkeletalMeshComponentFromAsset();
-	FBodyInstance* ResolveChassisBodyInstance() const;
+	FBodyInstance* ResolveChassisBodyInstance();
 
 
 	/** 创建 6-DOF 物理约束后端（约束参数取自当前 LOD 的 FlightController 配置）。 */

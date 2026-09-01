@@ -1512,16 +1512,15 @@ void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 	SetPhysicsAsset(Asset->GetPhysicsAsset());
 }
 
-FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance() const
+FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance()
 {
-	UAircraftComponent* const MutableThis = const_cast<UAircraftComponent*>(this);
 	if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
 		Model && !Model->RootBone.IsNone())
 	{
-		if (FBodyInstance* const RootBody = MutableThis->GetBodyInstance(Model->RootBone))
+		if (FBodyInstance* const RootBody = GetBodyInstance(Model->RootBone))
 		{
 			return RootBody;
 		}
 	}
-	return MutableThis->GetBodyInstance();
+	return GetBodyInstance();
 }
