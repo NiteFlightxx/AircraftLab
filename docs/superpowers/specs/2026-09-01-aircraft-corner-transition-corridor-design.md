@@ -1,179 +1,233 @@
-# Aircraft 拐角过渡安全走廊设计
+# Aircraft 解析胶囊体安全走廊设计
 
 日期：2026-09-01  
 状态：待用户审查  
-范围：`AircraftAutopilot`、`AircraftRuntimeInterface`、`AircraftDiagnostics`
+范围：`AircraftRuntimeInterface`、`AircraftAutopilot`、`AircraftDiagnostics`
 
 ## 1. 背景
 
-`FAircraftSafeCorridorBuilder::BuildOpenPolyline` 当前为输入折线的每条线段生成一个凸直棱柱。相邻棱柱在路径拐点附近只通过很短的端盖延伸相接，端盖延伸量为 `CorridorSafetyMarginCm + GeometryToleranceCm`。
+当前自动走廊构建器使用多平面凸棱柱表示直线路段，并为拐角构造内接双锥凸包。该结构存在三个根本问题：
 
-这种表示没有覆盖折线拐点周围已经由导航净空证明提供的球形安全区域。轨迹优化器为了平滑折线路径，会尝试从拐点内侧切角，但切角区域不属于任一相邻直棱柱。共享 Route 边界上的 Knot 还会同时投影到两个棱柱的交集，使优化后的轨迹仍接近尖锐折点。
+1. `OuterRadiusCm` 是欧氏距离半径，而棱柱和双锥只是对圆柱、球体的离散近似，会损失可用空间并受到 `CrossSectionSides` 影响。
+2. 直线单元、拐角单元需要额外处理端盖、重叠与安全边距，数据和求解路径重复。
+3. Route 重采样没有始终保留走廊归属边界，可能生成跨越两个走廊区间的 Quintic 段并触发 `PathSegmentCrossesCorridorBoundary`。
 
-空间路径因此产生很大的局部曲率。`FAircraftMotionPlan` 根据曲率、推力、倾角、垂直能力和偏航能力执行物理可达性限速，最终在拐角处将速度降低到接近零。该限速结果本身正确，问题来自走廊几何和参考中心线。
+输入折线的严格半径安全域本质上是折线与半径球的 Minkowski Sum。每条折线线段对应一个解析胶囊体；相邻胶囊体在公共路径点天然共享同一个球形端帽。因此转角球域已经存在于相邻胶囊体的交集中，不需要独立球体单元。
 
 ## 2. 目标
 
-1. 在每个有效折线拐角建立正式的凸过渡走廊，完整覆盖允许的切角区域。
-2. 保持 `OuterRadiusCm` 为严格的欧氏净空半径，不通过放宽边界获得更高转弯速度。
-3. 生成与过渡走廊一致的平滑参考中心线，使真实曲率自然降低。
-4. Route 距离到走廊单元的映射唯一、连续且在所有消费者中保持一致。
-5. 保留现有动力学速度规划，不添加最低转弯速度、越界容差放宽或转弯速度补偿。
-6. 不增加兼容分支，不保留旧版“一条输入线段对应一个直棱柱”的构建路径。
-7. 不增加新的用户配置项。
+1. 每条规范化输入线段只生成一个解析胶囊体走廊单元。
+2. 删除凸棱柱、拐角双锥凸包和独立转角球体。
+3. 删除 `CrossSectionSides`，不保留旧几何或旧接口兼容分支。
+4. 在相邻胶囊体的公共球形端帽中生成平滑转角参考路径。
+5. 在每个胶囊体归属切换点生成并永久保留精确 Route Knot，使每条空间样条段只属于一个胶囊体。
+6. 使用统一的解析胶囊体运算完成有效性校验、Knot 投影、Bezier 控制点约束、运行时越界修正和调试绘制。
+7. 保持现有动力学速度规划、飞控、驱动模式和网络同步语义不变。
 
 ## 3. 非目标
 
-- 不改变导航系统提供路径点和净空证明的方式。
-- 不修改 Aircraft 的飞控、PhysicsConstraint 或 Kinematic 驱动语义。
-- 不修改到达判定、任务状态机或网络同步。
-- 不用速度层补偿几何问题。
-- 不为旧版自动生成的 Corridor 输出提供兼容解析。
-- 不改变手工构造 `FAircraftRouteIntent` 的能力，但手工 Corridor 必须满足新的严格区间契约。
+- 不改变 NavigationSystem 生成路径点的方式。
+- 不在插件内验证场景障碍物；调用方仍负责保证 `OuterRadiusCm` 对应真实可用净空。
+- 不添加最低拐角速度、额外越界容差、速度补偿或规划失败降级路径。
+- 不引入通用几何多态、虚接口或仅为未来扩展预留的类型。
+- 不保留基于 `FPlane` 的旧走廊解析。
+- 不运行自动化测试；按用户要求只执行静态检查和编译验证。
 
-## 4. 安全几何契约
+## 4. 几何契约
 
-### 4.1 OuterRadiusCm
+### 4.1 胶囊体定义
 
-`OuterRadiusCm` 表示飞行器参考点相对输入折线的最大欧氏偏移半径。调用方必须已经扣除飞行器包围半径、导航代理误差和体素误差。
-
-构建器输出的每个凸单元都必须完全包含在输入折线与半径为 `OuterRadiusCm` 的球做 Minkowski Sum 后得到的安全区域内：
-
-- 直线单元位于对应线段的胶囊体内。
-- 拐角单元位于对应路径点的半径球内。
-
-`CorridorSafetyMarginCm` 继续由 RuntimeConfig 提供，并在约束求值时只应用一次。构建器使用该值计算有效入口、出口以及端盖补偿，不创建第二份安全边距配置。
-
-### 4.2 直线走廊单元
-
-直线部分继续使用 `CrossSectionSides` 边凸棱柱。端盖沿轴向扩展 `CorridorSafetyMarginCm + GeometryToleranceCm`，横截面半径按当前欧氏半径证明缩减，确保端盖角点仍位于硬净空半径内。
-
-直线单元只覆盖相邻拐角入口和出口之间的剩余直线部分，不再一直延伸到原始尖锐路径点。
-
-### 4.3 拐角过渡走廊单元
-
-每个非共线内部路径点生成一个独立凸过渡单元：
-
-1. 根据入射方向和出射方向建立转弯平面。
-2. 在转弯平面内生成 `CrossSectionSides` 个半径为 `OuterRadiusCm` 的环形顶点。
-3. 沿转弯平面法向生成上下两个半径为 `OuterRadiusCm` 的极点。
-4. 以这些顶点构造 N 边双锥凸体，并将其三角面转换为外法向 `FPlane`。
-
-所有顶点均位于路径点净空球面上；球是凸集合，因此这些顶点的凸包完全位于净空球内。这为拐角单元提供严格的安全包含证明。
-
-环形相位以入射、出射两条径向方向的角平分线对齐，使常见 90 度拐角能够有效使用净空半径，同时保持任意三维转弯的一致构造。
-
-## 5. 路径预处理
-
-构建器首先生成唯一的规范输入折线：
-
-1. 拒绝包含 NaN 或 Infinity 的路径点。
-2. 使用 `MinimumSegmentLengthCm` 删除连续重复或过近的点。
-3. 对单位入射、出射方向，叉积长度不超过 `UE_KINDA_SMALL_NUMBER` 且点积为正时，删除继续沿同一方向前进的共线内部点，因为它们不形成几何拐角。
-4. 保留真正改变方向的内部点。
-5. 叉积长度不超过 `UE_KINDA_SMALL_NUMBER` 且点积为负时，路径构成没有唯一转弯平面的反向折返，返回 `DegenerateTurn`，不任意选择转弯侧。
-
-预处理后少于两个点时返回 `InsufficientPoints`。
-
-## 6. 拐角入口、出口与短线段分配
-
-对路径点 `V`，令：
-
-- `Din` 为上一点指向 `V` 的单位方向。
-- `Dout` 为 `V` 指向下一点的单位方向。
-- 入口射线方向为 `-Din`。
-- 出口射线方向为 `Dout`。
-
-在已经应用 `CorridorSafetyMarginCm` 的拐角凸体中，分别求入口射线和出口射线与所有边界平面的最小正交点距离，得到该拐角允许的最大入口、出口过渡长度。
-
-对于连接两个内部拐角的原始线段，如果前一拐角的出口长度与后一拐角的入口长度之和超过线段长度，则按相同比例缩短两者，使二者之和等于线段长度：
-
-- 不产生负长度直线单元。
-- 不产生未被走廊覆盖的区间。
-- 缩短后的入口、出口仍位于各自过渡凸体内部。
-- 直线剩余长度为零时省略该直线单元，两个拐角单元在同一合法点连接。
-
-首段只有末端入口需要分配，末段只有起始出口需要分配。
-
-## 7. 平滑参考中心线
-
-构建器不再把原始尖锐路径点作为轨迹必须经过的 Knot。
-
-每个拐角使用以下二次 Bézier 参考曲线：
-
-- 起点：`CornerEntry`
-- 控制点：原始路径点 `V`
-- 终点：`CornerExit`
-
-该曲线入口切线与前一线段一致，出口切线与后一线段一致。Bézier 曲线完全位于三个控制点的凸包中；三个控制点均位于应用安全边距后的拐角凸单元内，因此参考曲线也位于该单元内。
-
-过渡曲线按不大于 `PathConfig.ResampleSpacingCm` 的弦长采样，并且至少包含一个内部采样点。入口和出口必须作为精确 Route 点保留。现有 `FAircraftSpatialPath` 在这些参考点上构建 C2 quintic 路径，并继续对完整曲线执行走廊采样验证；验证失败时直接返回规划失败，不降级为尖角路径。
-
-## 8. Route 参数与 Corridor 分区
-
-`OutRoute.PointsCm` 改为构建后的平滑参考折线，而不是原样复制输入路径点。Route 长度由该参考折线的累计长度计算。
-
-走廊单元按参考折线的行进顺序输出：
+规范化路径的每条非零线段 `[A, B]` 生成一个胶囊体：
 
 ```text
-Straight 0 -> Corner 1 -> Straight 1 -> Corner 2 -> Straight 2
+Capsule(A, B, R) = { P | Distance(P, Segment(A, B)) <= R }
+R = OuterRadiusCm
 ```
 
-每个单元的 `StartDistanceCm` 和 `EndDistanceCm` 构成 `[0, RouteLengthCm]` 的严格连续分区：
+胶囊体包含以 `[A, B]` 为轴线的圆柱中段，以及以 `A`、`B` 为球心的两个半球端帽。
 
-- 第一个单元从 0 开始。
-- 相邻单元在 `GeometryToleranceCm` 内满足 `Current.StartDistanceCm == Previous.EndDistanceCm`；构建器直接复用同一个累计值写入两侧边界，避免累计误差。
+胶囊体自身是凸集合。路径点 `B` 两侧的：
+
+```text
+Capsule(A, B, R)
+Capsule(B, C, R)
+```
+
+都完整包含 `Sphere(B, R)`，所以公共端帽球域是两者交集的一部分。转角无需第三个几何单元。
+
+### 4.2 安全边距
+
+走廊保存未经 Runtime 安全边距缩减的物理净空半径：
+
+```text
+StoredRadiusCm = OuterRadiusCm
+EffectiveRadiusCm = StoredRadiusCm - CorridorSafetyMarginCm
+```
+
+`CorridorSafetyMarginCm` 继续只从 RuntimeConfig 获取并只应用一次。必须满足：
+
+```text
+EffectiveRadiusCm > GeometryToleranceCm
+```
+
+否则构建返回 `InsufficientClearance`。由于相邻胶囊体具有相同公共端点和相同有效半径，缩减后仍共享 `Sphere(B, EffectiveRadiusCm)`，不会出现端盖缝隙。
+
+### 4.3 数据结构
+
+`FAircraftSafeCorridorSegment` 直接表达一个解析胶囊体及其 Route 归属区间：
+
+```cpp
+USTRUCT(BlueprintType)
+struct FAircraftSafeCorridorSegment
+{
+    FVector AxisStartCm;
+    FVector AxisEndCm;
+    float RadiusCm;
+    float StartDistanceCm;
+    float EndDistanceCm;
+};
+```
+
+删除 `BoundaryPlanes`。不增加 Shape 枚举，因为正式数据模型只有一种走廊图元：胶囊体。
+
+## 5. 输入路径规范化
+
+构建器生成唯一的规范输入折线：
+
+1. 拒绝 NaN 或 Infinity 路径点。
+2. 使用 `MinimumSegmentLengthCm` 删除连续重复或过近的点。
+3. 删除继续沿相同方向前进的共线内部点。
+4. 保留真正改变方向的内部点。
+5. 精确反向折返没有唯一、非退化的平滑转角，返回 `DegenerateTurn`。
+6. 规范化后少于两个点时返回 `InsufficientPoints`。
+
+规范化后的每条线段恰好对应一个胶囊体，不生成零长度单元。
+
+## 6. 转角参考路径
+
+对于内部路径点 `V`：
+
+- `Din`：上一点指向 `V` 的单位方向。
+- `Dout`：`V` 指向下一点的单位方向。
+- `EffectiveRadiusCm`：应用 Runtime 安全边距后的胶囊半径。
+
+转角入口和出口位于公共有效球体内：
+
+```text
+Entry = V - Din  * EntryExtentCm
+Exit  = V + Dout * ExitExtentCm
+0 < EntryExtentCm <= EffectiveRadiusCm
+0 < ExitExtentCm  <= EffectiveRadiusCm
+```
+
+默认期望长度为 `EffectiveRadiusCm`。若一条原始线段两端转角期望长度之和超过该线段长度，则按同一比例缩短两端长度，保证不产生负长度直线区间、未覆盖区间或短线段断裂。
+
+转角使用二次 Bézier：
+
+```text
+B(t) = Bezier(Entry, V, Exit, t), 0 <= t <= 1
+```
+
+`Entry`、`V`、`Exit` 均位于 `Sphere(V, EffectiveRadiusCm)` 内。球体是凸集合，因此完整 Bézier 曲线位于该公共球域内，并同时满足入射、出射两个胶囊体约束。
+
+## 7. 胶囊体归属与精确边界 Knot
+
+每个转角只改变 Route 对胶囊体的归属，不创建独立走廊单元：
+
+```text
+前一胶囊体：转角曲线 t <= 0.5
+后一胶囊体：转角曲线 t >= 0.5
+归属边界：B(0.5)
+```
+
+构建器必须显式生成 `Entry`、`B(0.5)` 和 `Exit`，并分别重采样 `[0, 0.5]` 与 `[0.5, 1]`。`B(0.5)` 必须作为不可删除的结构边界点写入 Route；禁止先对整个转角统一采样后通过浮点距离推断边界。
+
+胶囊体 Route 区间按以下方式分区：
+
+- 第一条胶囊体从 Route 距离 0 开始。
+- 内部胶囊体边界使用对应转角 `B(0.5)` 的累计 Route 距离。
 - 普通单元使用 `[Start, End)`。
 - 最后一个单元使用 `[Start, End]`。
-- 不允许区间重叠、区间空洞或零长度单元。
-- 最后一个单元必须在 `GeometryToleranceCm` 内覆盖 Route 终点。
+- 相邻区间直接复用同一个累计距离值。
+- 所有胶囊体区间严格覆盖 `[0, RouteLengthCm]`，不存在空洞、重叠或零长度区间。
 
-恢复后的 `FAircraftSpatialPath::FSegment::RouteStartDistanceCm` 和 `RouteEndDistanceCm` 保留，路径优化后的空间弧长继续显式映射回构建时的 Route 参数，不恢复全局长度比例映射。
+`FAircraftSpatialPath` 重采样时必须将全部 Corridor 区间边界距离注入采样距离集合，排序去重后再采样。这样每个空间路径段的 Route 起止距离一定属于同一个胶囊体，`PathSegmentCrossesCorridorBoundary` 不再由采样跨界产生。
 
-## 9. 唯一走廊解析
+## 8. 统一解析胶囊体运算
 
-在 `AircraftRuntimeInterface` 中提供一个共享的 Route 距离解析函数，输入有序 Corridor 和 Route 距离，返回唯一单元索引。该函数实现统一的半开区间语义。Route 距离位于 `[0, RouteLengthCm]` 外时返回 `INDEX_NONE`；只允许在 `GeometryToleranceCm` 内将首尾浮点误差夹紧到合法端点。
+为避免各模块重复实现，`AircraftRuntimeInterface` 提供无状态、导出的解析运算：
 
-以下消费者必须全部使用该函数：
+1. 校验胶囊体轴线、半径和 Route 区间。
+2. 计算点到轴线段的最近点。
+3. 判断点是否位于应用安全边距后的胶囊体内。
+4. 将点投影到有效胶囊体内。
+5. 计算带方向的越界修正向量。
+6. 计算从胶囊体内一点沿给定射线到有效边界的最大非负参数。
 
-- `FAircraftSpatialPath::OptimizeKnots`
+包含判断使用距离平方，未越界时不执行平方根：
+
+```text
+Closest = ClosestPointOnSegment(Position, AxisStart, AxisEnd)
+Inside  = DistanceSquared(Position, Closest) <= EffectiveRadiusCm^2
+```
+
+越界时，修正方向为当前位置指向轴线最近点的径向方向。射线边界参数使用解析的圆柱侧面与球形端帽交点，不使用采样、迭代猜测或多平面近似。
+
+## 9. SpatialPath 约束
+
+`FAircraftSpatialPath` 使用共享 Route 区间解析函数为每条样条段确定唯一胶囊体。
+
+在 Quintic 构造前：
+
+1. 将 Knot 位置投影进相邻样条段所需的胶囊体。
+2. 将 Quintic 等价 Bézier 控制点约束在相应胶囊体内。
+3. 对共享 Knot 的一阶、二阶导数使用统一比例缩放，保持 C2 连续。
+4. 利用胶囊体的凸性：全部等价 Bézier 控制点位于胶囊体内，即可证明整条 Quintic 段位于胶囊体内。
+
+完整路径仍执行采样验证。无法解析 Route 单元、胶囊数据无效或样条越界均返回明确规划失败；不降低安全边距、不恢复尖角路线。
+
+## 10. Runtime 越界与 MPCC
+
+以下消费者统一使用同一胶囊体解析和 Route 区间选择：
+
 - `ComputeCorridorViolationCm`
 - `ComputeCorridorCorrectionCm`
-- MPCC 当前和预测参考
-- 实际越界与预测越界诊断
+- MPCC 当前状态越界
+- MPCC 预测状态越界
+- 轨迹运行时诊断
 - 安全走廊调试绘制
 
-删除各模块中重复的 `FindCorridorSegment`、`IndexOfByPredicate` 和边界特判。
+当前点或预测点位于有效胶囊体外时，修正向量为投影点减当前位置。不存在 `CorridorPlaneViolation`；诊断改为胶囊体语义，并记录胶囊索引、轴线、半径、有效半径、Route 距离和越界距离。
 
-路径优化时，每个 Knot 只投影到唯一解析出的凸单元。共享 Route 边界不再同时应用两个直棱柱的交集约束。入口和出口的几何构造负责保证相邻凸单元连续连接。
+## 11. 调试绘制
 
-## 10. 速度规划
+每个 Corridor 单元直接绘制真实胶囊体，不从平面重建顶点和边。
 
-`FAircraftMotionPlan` 的动力学限速算法不做补偿性修改。它继续综合：
+颜色保持：
 
-- CruiseSpeed
-- 最大加速度与减速度
-- 曲率法向加速度
-- 推力和阻力余量
-- 最大倾角
-- 垂直速度与垂直加速度
-- 最大偏航速度
+- 当前所在胶囊体：绿色。
+- 实际越界胶囊体：红色。
+- 预测越界胶囊体：橙色。
+- 其他胶囊体：青蓝色。
 
-新的过渡走廊和参考中心线降低真实曲率后，允许速度自然提高。若给定 `OuterRadiusCm`、机体能力和转弯角仍不足以高速通过，规划器仍应物理正确地减速。
+相邻胶囊端帽允许视觉重合；这是真实几何交集，不是重复数据。调试层不额外绘制转角球体。
 
-禁止添加最低拐角速度、忽略曲率、扩大走廊容差或临近拐点强制加速。
+## 12. 接口与配置
 
-## 11. 验证与错误处理
+保留现有蓝图功能语义：根据路径点数组构建 Route 和安全走廊。
 
-`FAircraftMovementIntent::IsValid` 对非空 Corridor 执行严格验证：
+构建参数只保留：
 
-- 所有距离有限且单元长度大于零。
-- 第一个单元从零开始。
-- 相邻区间在统一的 `GeometryToleranceCm` 内连续且不重叠。
-- 最后一个单元在同一容差内结束于 Route 长度。
-- 所有平面有限且法向非零。
+- `OuterRadiusCm`
+- `MinimumSegmentLengthCm`
 
-构建器使用明确状态报告失败：
+删除 `CrossSectionSides`。蓝图函数签名和 `FAircraftSafeCorridorBuildSettings` 同步移除该参数。不提供弃用字段、重载或旧节点兼容代码；相关蓝图需要由用户按新签名重新连接。
+
+`CorridorSafetyMarginCm` 继续直接读取 RuntimeConfig，不成为蓝图构建参数。
+
+## 13. 错误处理
+
+构建器保留明确失败状态：
 
 - `InvalidSettings`
 - `InvalidPoint`
@@ -182,58 +236,30 @@ Straight 0 -> Corner 1 -> Straight 1 -> Corner 2 -> Straight 2
 - `DegenerateTurn`
 - `RuntimeConfigUnavailable`
 
-安全边距大到使拐角凸体不存在有效入口或出口时返回 `InsufficientClearance`。不会缩小安全边距、扩大 `OuterRadiusCm` 或退回旧走廊构造。
-
-## 12. 调试绘制
-
-现有任意凸多面体绘制流程继续用于直线和拐角单元。拐角过渡单元是正式 Corridor 数据，不创建仅用于视觉填缝的附加图形。
-
-颜色语义保持：
-
-- 当前所在单元：绿色
-- 实际越界单元：红色
-- 预测越界单元：橙色
-- 其他单元：青蓝色
-
-当前单元、实际越界和预测越界全部使用共享 Route 距离解析函数，保证绘制结果与运行时约束一致。
-
-## 13. 接口与配置
-
-保留现有蓝图入口：
-
-```cpp
-UAutopilotComponent::BuildSafeCorridorFromPathPoints(...)
-```
-
-保留现有三个构建参数：
-
-- `OuterRadiusCm`
-- `MinimumSegmentLengthCm`
-- `CrossSectionSides`
-
-`CorridorSafetyMarginCm` 继续直接读取 RuntimeConfig。不存在新的 Corner Radius、Corner Speed 或额外 Safety Margin 配置。
-
-构建函数的输出语义直接替换为“平滑参考 Route + 直线/拐角凸单元分区”，不保留旧输出模式。
+`FAircraftMovementIntent::IsValid` 对非空 Corridor 验证轴线端点、轴线长度、半径和 Route 连续分区。应用 Runtime 安全边距后的有效半径由规划入口结合 RuntimeConfig 校验，因为 MovementIntent 本身不拥有该配置。
 
 ## 14. 预计修改文件
 
-- `Source/AircraftAutopilot/Public/AircraftAutopilot/AircraftSafeCorridorBuilder.h`
-- `Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSafeCorridorBuilder.cpp`
-- `Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSpatialPath.cpp`
 - `Source/AircraftRuntimeInterface/Public/AircraftRuntimeInterface/AircraftMovementIntent.h`
 - `Source/AircraftRuntimeInterface/Private/AircraftMovementIntent.cpp`
+- `Source/AircraftAutopilot/Public/AircraftAutopilot/AircraftSafeCorridorBuilder.h`
+- `Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSafeCorridorBuilder.cpp`
+- `Source/AircraftAutopilot/Public/AircraftAutopilot/AircraftSpatialPath.h`
+- `Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSpatialPath.cpp`
 - `Source/AircraftDiagnostics/Private/AircraftDebugAutopilotOptions.cpp`
+- 暴露构建蓝图接口的 `AutopilotComponent` 声明和实现。
 
-只有在共享解析函数的调用关系要求时才修改其他文件。`AircraftMotionPlan.cpp` 不做速度补偿性修改。
+只有在编译器证明调用关系需要时才修改其他文件。`AircraftMotionPlan` 的物理速度规划不做补偿性修改。
 
 ## 15. 完成条件
 
-1. 直线路径只产生直线走廊，不引入无意义过渡单元。
-2. 90 度两段路径生成一个明确可绘制的拐角过渡单元，直线与拐角单元之间没有几何缺口。
-3. 规划轨迹在拐角内平滑切角，不被锁定到原始尖锐路径点。
-4. 相同动力学配置下，拐角速度由真实曲率决定，不再因为走廊交集退化而接近零。
-5. 短路径段的相邻过渡区域自动缩短并连续连接。
-6. 实际越界、预测越界、MPCC 修正和调试绘制选择同一个 Corridor 单元。
-7. 无兼容分支、无重复区间解析、无最低速度或容差补丁。
-8. Development Editor 与 DebugGame Editor 编译成功。
-9. 按用户要求不运行自动化测试；由用户在场景中完成直线、90 度拐角、短线段连续拐角和越界配色的手动验证。
+1. N 个规范路径点生成且只生成 N-1 个解析胶囊体。
+2. 不存在 `BoundaryPlanes`、凸棱柱、转角凸包、独立转角球体或 `CrossSectionSides`。
+3. 90 度转角参考路径完全位于相邻胶囊体的公共端帽球域内。
+4. 每个转角中点是精确 Corridor 边界 Knot，空间样条段不跨越胶囊区间。
+5. 安全边距只应用一次，缩减后的相邻胶囊体仍连续重叠。
+6. Knot 投影、Bezier 控制点限制、完整路径校验、MPCC 修正和调试绘制使用同一解析胶囊体语义。
+7. 转角速度只由生成路径的真实曲率和现有动力学能力决定。
+8. 无兼容代码、无几何离散参数、无容差或速度补丁。
+9. Development Editor 与 DebugGame Editor 编译成功。
+10. 按用户要求不运行自动化测试，由用户在场景中验证直线、90 度转角、短线段连续转角以及越界配色。
