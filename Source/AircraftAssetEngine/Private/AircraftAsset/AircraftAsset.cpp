@@ -1,7 +1,6 @@
 #include "AircraftAsset/AircraftAsset.h"
 
 #include "Engine/SkeletalMesh.h"
-#include "Engine/SkeletalMeshSocket.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Misc/SecureHash.h"
 #include "Serialization/MemoryWriter.h"
@@ -103,44 +102,69 @@ namespace
 		return Cast<UPhysicsAsset>(GetFirstPath(AircraftCollection.GetPhysicsAssetSoftObjectPathName()).TryLoad());
 	}
 
-	void ResolveRotorSocketTransforms(FAircraftSimulationLodModel& Model, const USkeletalMesh* SkeletalMesh)
+	enum class ECompiledAircraftModelError : uint8
 	{
-		if (!SkeletalMesh)
+		None,
+		MissingModel,
+		MissingSkeletalMesh,
+		MissingLod,
+		InvalidRootBone,
+		InvalidRotorInstallation
+	};
+
+	struct FCompiledAircraftModelValidation
+	{
+		ECompiledAircraftModelError Error = ECompiledAircraftModelError::None;
+		int32 LodIndex = 0;
+		FName RootBone = NAME_None;
+		FName RotorName = NAME_None;
+		FName InstallationName = NAME_None;
+	};
+
+	FCompiledAircraftModelValidation ValidateCompiledAircraftModel(
+		const FAircraftSimulationModel* Model)
+	{
+		FCompiledAircraftModelValidation Result;
+		if (!Model)
 		{
-			return;
+			Result.Error = ECompiledAircraftModelError::MissingModel;
+			return Result;
 		}
-
-		// GetComposedRefPoseMatrix 统一处理骨骼名与 socket 名：先按骨骼查，
-		// 查不到则按 socket 查（socket 偏移 × 所挂骨骼的组件空间变换）。
-		// 根骨骼的组件空间变换用于把结果转换到机体（根骨骼）坐标系。
-		const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
-		const FName RootBoneName = Model.RootBone.IsNone()
-			? (ReferenceSkeleton.GetNum() > 0 ? ReferenceSkeleton.GetBoneName(0) : NAME_None)
-			: Model.RootBone;
-		const FTransform RootComponentTransform(SkeletalMesh->GetComposedRefPoseMatrix(RootBoneName));
-
-		for (FAircraftRotorDefinition& Rotor : Model.Rotors)
+		if (!Model->SkeletalMesh)
 		{
-			if (!Rotor.bUseSocketTransform || Rotor.SocketName.IsNone())
-			{
-				continue;
-			}
-
-			// 存在性检查：名字既不是骨骼也不是 socket 时跳过（GetComposedRefPoseMatrix
-			// 对不存在的名字返回 Identity，无法与"在原点的骨骼"区分）。
-			const bool bIsBone = ReferenceSkeleton.FindBoneIndex(Rotor.SocketName) != INDEX_NONE;
-			const bool bIsSocket = SkeletalMesh->FindSocket(Rotor.SocketName) != nullptr;
-			if (!bIsBone && !bIsSocket)
-			{
-				continue;
-			}
-
-			const FTransform SocketBodyTransform(
-				FMatrix(SkeletalMesh->GetComposedRefPoseMatrix(Rotor.SocketName))
-				* RootComponentTransform.ToMatrixWithScale().Inverse());
-			Rotor.PositionLocalCm = SocketBodyTransform.GetTranslation();
+			Result.Error = ECompiledAircraftModelError::MissingSkeletalMesh;
+			return Result;
 		}
+		if (Model->LodModels.IsEmpty())
+		{
+			Result.Error = ECompiledAircraftModelError::MissingLod;
+			return Result;
+		}
+		for (int32 LodIndex = 0; LodIndex < Model->LodModels.Num(); ++LodIndex)
+		{
+			const FAircraftSimulationLodModel& LodModel = Model->LodModels[LodIndex];
+			if (!LodModel.FlightController.FrameBinding.IsValid())
+			{
+				Result.Error = ECompiledAircraftModelError::InvalidRootBone;
+				Result.LodIndex = LodIndex;
+				Result.RootBone = LodModel.RootBone;
+				return Result;
+			}
+			for (const FAircraftRotorDefinition& Rotor : LodModel.Rotors)
+			{
+				if (Rotor.bEnabled && !Rotor.bInstallationValid)
+				{
+					Result.Error = ECompiledAircraftModelError::InvalidRotorInstallation;
+					Result.LodIndex = LodIndex;
+					Result.RotorName = Rotor.RotorName;
+					Result.InstallationName = Rotor.SocketName;
+					return Result;
+				}
+			}
+		}
+		return Result;
 	}
+
 }
 
 using namespace UE::AircraftLab::AircraftAsset;
@@ -245,6 +269,31 @@ void UAircraftAsset::Build(
 
 	EnsureCollectionsInitialized();
 	SynchronizeAssetStateFromCollections();
+	const FCompiledAircraftModelValidation Validation = ValidateCompiledAircraftModel(
+		AircraftSimulationModel.Get());
+	switch (Validation.Error)
+	{
+	case ECompiledAircraftModelError::None:
+		break;
+	case ECompiledAircraftModelError::InvalidRootBone:
+		AppendValidationError(Validation.LodIndex, FText::Format(
+			LOCTEXT("InvalidRootBoneFrame",
+				"Root Bone '{0}' cannot be resolved in the skeletal mesh reference pose."),
+			FText::FromName(Validation.RootBone)));
+		return;
+	case ECompiledAircraftModelError::InvalidRotorInstallation:
+		AppendValidationError(Validation.LodIndex, FText::Format(
+			LOCTEXT("InvalidRotorInstallation",
+				"Rotor '{0}' has an invalid installation frame '{1}'."),
+			FText::FromName(Validation.RotorName),
+			FText::FromName(Validation.InstallationName)));
+		return;
+	default:
+		AppendValidationError(Validation.LodIndex,
+			LOCTEXT("InvalidCompiledAircraftModel",
+				"Aircraft frame compilation requires a skeletal mesh and at least one LOD."));
+		return;
+	}
 	OnAssetChanged();
 }
 
@@ -269,9 +318,8 @@ void UAircraftAsset::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 
 bool UAircraftAsset::HasValidAircraftSimulationModels() const
 {
-	return AircraftSimulationModel.IsValid()
-		&& AircraftSimulationModel->SkeletalMesh != nullptr
-		&& AircraftSimulationModel->GetNumLods() > 0;
+	return ValidateCompiledAircraftModel(AircraftSimulationModel.Get()).Error
+		== ECompiledAircraftModelError::None;
 }
 
 void UAircraftAsset::SetCollections(TArray<TSharedRef<const FManagedArrayCollection>>&& InCollections)
@@ -370,19 +418,14 @@ void UAircraftAsset::SynchronizeAssetStateFromCollections()
 
 void UAircraftAsset::BuildAircraftSimulationModel()
 {
+	USkeletalMesh* const SkeletalMesh = ResolveSourceSkeletalMesh(GetAircraftCollections());
 	AircraftSimulationModel = MakeShared<FAircraftSimulationModel>(
 		const_cast<const UAircraftAsset*>(this)->GetAircraftCollections(),
-		GetFName());
+		GetFName(), SkeletalMesh);
 
-	// 把资产层引用的 SkeletalMesh / PhysicsAsset 同步到运行时只读模型中，供 SimulationProxy 消费。
 	if (AircraftSimulationModel.IsValid())
 	{
-		AircraftSimulationModel->SkeletalMesh = ResolveSourceSkeletalMesh(GetAircraftCollections());
 		AircraftSimulationModel->PhysicsAsset = PhysicsAsset;
-		for (FAircraftSimulationLodModel& LodModel : AircraftSimulationModel->LodModels)
-		{
-			ResolveRotorSocketTransforms(LodModel, AircraftSimulationModel->SkeletalMesh);
-		}
 	}
 }
 

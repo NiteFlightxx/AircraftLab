@@ -6,6 +6,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Aircraft/AircraftFrameBinding.h"
 #include "Aircraft/FlightControlPid.h"
 #include "Aircraft/FlightControlStateTypes.h"
 #include "Aircraft/HoverThrustEstimator.h"
@@ -18,8 +19,8 @@
  */
 struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 {
-	/** 来自 AircraftFrameConfig：0=+X, 1=+Y, 2=-X, 3=-Y。 */
-	uint8 ForwardAxis = 1;
+	/** 蒙皮模型、飞控标准轴与当前 LOD 物理 RootBone 之间的唯一坐标绑定。 */
+	FAircraftFrameBinding FrameBinding;
 
 	FVector3f PositionKp = FVector3f(0.40f, 0.40f, 0.0f);
 	FVector3f PositionKi = FVector3f::ZeroVector;
@@ -186,32 +187,24 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	// 机体轴约定（飞控标准坐标 X=Forward、Y=Right、Z=Up 与模型局部坐标的映射）
 	// ------------------------------------------------------------------
 
-	float GetForwardYawOffsetDegrees() const
-	{
-		switch (ForwardAxis)
-		{
-		case 0: return 0.0f;
-		case 1: return 90.0f;
-		case 2: return 180.0f;
-		case 3: return -90.0f;
-		default: return 90.0f;
-		}
-	}
-
 	FVector GetForwardAxisBody() const
 	{
-		return FQuat(FVector::UpVector, FMath::DegreesToRadians(GetForwardYawOffsetDegrees()))
-			.RotateVector(FVector::ForwardVector);
+		return FrameBinding.GetForwardAxisBody();
+	}
+
+	FVector GetUpAxisBody() const
+	{
+		return FrameBinding.GetUpAxisBody();
 	}
 
 	FVector GetRightAxisBody() const
 	{
-		return FVector::CrossProduct(FVector::UpVector, GetForwardAxisBody()).GetSafeNormal();
+		return FrameBinding.GetRightAxisBody();
 	}
 
 	FQuat GetControlToBodyRotation() const
 	{
-		return FQuat(FVector::UpVector, FMath::DegreesToRadians(GetForwardYawOffsetDegrees()));
+		return FrameBinding.GetControlToBodyRotation();
 	}
 
 	FQuat GetControlWorldRotation(const FQuat& BodyWorldRotation) const
@@ -229,24 +222,25 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 		return FVector(
 			FVector::DotProduct(BodyVector, GetForwardAxisBody()),
 			FVector::DotProduct(BodyVector, GetRightAxisBody()),
-			BodyVector.Z);
+			FVector::DotProduct(BodyVector, GetUpAxisBody()));
 	}
 
 	FVector ControlToBodyVector(const FVector& ControlVector) const
 	{
 		return GetForwardAxisBody() * ControlVector.X
 			+ GetRightAxisBody() * ControlVector.Y
-			+ FVector::UpVector * ControlVector.Z;
+			+ GetUpAxisBody() * ControlVector.Z;
 	}
 
 	FVector BodyAxisMagnitudesToControl(const FVector& BodyAxisMagnitudes) const
 	{
 		const FVector ForwardAbs = GetForwardAxisBody().GetAbs();
 		const FVector RightAbs = GetRightAxisBody().GetAbs();
+		const FVector UpAbs = GetUpAxisBody().GetAbs();
 		return FVector(
 			FVector::DotProduct(BodyAxisMagnitudes, ForwardAbs),
 			FVector::DotProduct(BodyAxisMagnitudes, RightAbs),
-			BodyAxisMagnitudes.Z);
+			FVector::DotProduct(BodyAxisMagnitudes, UpAbs));
 	}
 
 	/** 物理机体系角向量 -> 飞控 Roll/Pitch/Yaw 符号约定。 */

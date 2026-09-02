@@ -18,11 +18,12 @@ bool FAircraftDataflowDefaultAxesTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
 	const FAircraftFlightControllerRuntimeConfig Config;
-	TestEqual(TEXT("The Dataflow runtime defaults to model-local +Y forward"), Config.ForwardAxis, uint8(1));
+	TestEqual(TEXT("The Dataflow runtime defaults to model-local +Y forward"),
+		Config.FrameBinding.GetModelForwardAxis(), EAircraftModelForwardAxis::PositiveY);
 	TestTrue(TEXT("Forward maps to model-local +Y"),
-		Config.GetForwardAxisBody().Equals(FVector::RightVector, 1.e-4f));
+		Config.FrameBinding.GetForwardAxisModel().Equals(FVector::RightVector, 1.e-4f));
 	TestTrue(TEXT("Right maps to model-local -X"),
-		Config.GetRightAxisBody().Equals(-FVector::ForwardVector, 1.e-4f));
+		Config.FrameBinding.GetRightAxisModel().Equals(-FVector::ForwardVector, 1.e-4f));
 	TestTrue(TEXT("Identity body rotation exposes a +90 degree control heading"),
 		FMath::IsNearlyEqual(Config.GetControlWorldRotation(FQuat::Identity).Rotator().Yaw, 90.0f, 1.e-4f));
 
@@ -115,10 +116,14 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	FrameProperties.DefineSchema();
 	const int32 ForwardAxisIndex = FrameProperties.AddProperty(
 		TEXT("Frame.ForwardAxis"), EAircraftCollectionPropertyFlags::Enabled);
-	FrameProperties.SetValue(ForwardAxisIndex, 3);
+	FrameProperties.SetValue(ForwardAxisIndex, static_cast<int32>(EAircraftModelForwardAxis::NegativeY));
 	const FAircraftSimulationModel FrameConfigModel(CollectionsWithoutOverride, TEXT("FrameConfig"));
-	TestEqual(TEXT("Frame config owns the runtime forward axis"),
-		FrameConfigModel.GetLodModel(0)->FlightController.ForwardAxis, uint8(3));
+	TestEqual(TEXT("Frame config owns the model-space forward selection"),
+		FrameConfigModel.GetLodModel(0)->FlightController.FrameBinding.GetModelForwardAxis(),
+		EAircraftModelForwardAxis::NegativeY);
+	TestTrue(TEXT("Model-space Up remains fixed at +Z for every forward selection"),
+		FrameConfigModel.GetLodModel(0)->FlightController.FrameBinding.GetUpAxisModel().Equals(
+			FVector::UpVector, 1.e-4));
 	Collection->AddElements(1, AircraftCollectionGroup::Solver);
 	AircraftCollection.UpdateArrays();
 	(*AircraftCollection.GetAsyncFixedTimeStepSize())[0] = 1.0f / 120.0f;

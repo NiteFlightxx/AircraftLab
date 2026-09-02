@@ -23,7 +23,7 @@ FVector4 FAircraftControlAllocator::BuildJacobianColumn(
 {
 	// 推力轴方向（机体系，归一化）
 	const FVector ThrustAxisBody = RotorInfo.ThrustAxisBody.IsNearlyZero()
-		? FVector::UpVector : RotorInfo.ThrustAxisBody.GetSafeNormal();
+		? Config.GetUpAxisBody() : RotorInfo.ThrustAxisBody.GetSafeNormal();
 	// 最大可分配推力时的力向量
 	const FVector ForceAtMax = ThrustAxisBody * RotorInfo.MaxAllocatedThrustN;
 	// 力臂：cm → m（力矩 = N·m，所以需要米）
@@ -35,9 +35,9 @@ FVector4 FAircraftControlAllocator::BuildJacobianColumn(
 	// 总力矩 = 偏心力矩 + 反扭矩
 	const FVector PhysicalTorque = FVector::CrossProduct(MomentArmMeters, ForceAtMax) + ReactionTorque;
 	const FVector ControllerTorque = Config.BodyTorqueToController(PhysicalTorque);
-	// 飞控标准坐标中的雅可比列：[Fz, Roll, Pitch, Yaw]
+	// 飞控标准坐标中的雅可比列：[Fup, Roll, Pitch, Yaw]
 	return FVector4(
-		ForceAtMax.Z,
+		FVector::DotProduct(ForceAtMax, Config.GetUpAxisBody()),
 		ControllerTorque.X,
 		ControllerTorque.Y,
 		ControllerTorque.Z);
@@ -237,8 +237,8 @@ void FAircraftControlAllocator::Allocate(
 	double CompensatedCollective = FMath::Clamp(static_cast<double>(CollectiveCommand), 0.0, 1.0);
 	if (Config.bEnableTiltCompensation && CompensatedCollective > 0.0)
 	{
-		const FVector BodyZWorld = BodyRotation.RotateVector(FVector::UpVector);
-		double CosTilt = static_cast<double>(BodyZWorld | FVector::UpVector);
+		const FVector BodyUpWorld = BodyRotation.RotateVector(Config.GetUpAxisBody());
+		double CosTilt = static_cast<double>(BodyUpWorld | FVector::UpVector);
 		CosTilt = FMath::Max(CosTilt, static_cast<double>(Config.MinimumCosTilt));
 		CompensatedCollective /= CosTilt;
 	}

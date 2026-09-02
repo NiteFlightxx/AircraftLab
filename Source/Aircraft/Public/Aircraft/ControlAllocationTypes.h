@@ -99,7 +99,7 @@ struct FAircraftAllocationCache
 
 namespace AircraftAllocation
 {
-	/** Wrench 维度：4（总距 Fz、滚转 τx、俯仰 τy、偏航 τz）。 */
+	/** Wrench 维度：4（飞控 Up 轴总距、Roll、Pitch、Yaw）。 */
 	constexpr int32 WrenchAxisCount = 4;
 
 	/** 判断某轴"无权限"的阈值。 */

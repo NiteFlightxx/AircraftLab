@@ -42,8 +42,9 @@ namespace
 			&& A.AngularDampingPerSecond.Equals(B.AngularDampingPerSecond, 1.0e-4)
 			&& A.bHasExplicitAerodynamics == B.bHasExplicitAerodynamics
 			&& FMath::IsNearlyEqual(A.AirDensityKgPerM3, B.AirDensityKgPerM3)
-			&& A.LinearDragBodyNsPerM.Equals(B.LinearDragBodyNsPerM, 1.0e-4)
-			&& A.DragAreaCoefficientBodyM2.Equals(B.DragAreaCoefficientBodyM2, 1.0e-4)
+			&& A.AircraftToBodyRotation.Equals(B.AircraftToBodyRotation, 1.0e-4)
+			&& A.LinearDragAircraftNsPerM.Equals(B.LinearDragAircraftNsPerM, 1.0e-4)
+			&& A.DragAreaCoefficientAircraftM2.Equals(B.DragAreaCoefficientAircraftM2, 1.0e-4)
 			&& FMath::IsNearlyEqual(
 				A.MaxRelativeAirspeedCmPerSec, B.MaxRelativeAirspeedCmPerSec)
 			&& FMath::IsNearlyEqual(A.ThrustRiseResponseTimeSeconds, B.ThrustRiseResponseTimeSeconds)
@@ -328,13 +329,19 @@ FVector FAircraftMpccController::ComputeDragCompensation(
 	{
 		return Compensation;
 	}
-	FVector VelocityBodyMps = BodyRotation.UnrotateVector(DesiredVelocityWorldCmPerSec) * 0.01f;
-	VelocityBodyMps = VelocityBodyMps.GetClampedToMaxSize(
+	const FVector VelocityBodyMps = BodyRotation.UnrotateVector(
+		DesiredVelocityWorldCmPerSec) * 0.01f;
+	FVector VelocityAircraftMps = Capability.AircraftToBodyRotation.UnrotateVector(
+		VelocityBodyMps);
+	VelocityAircraftMps = VelocityAircraftMps.GetClampedToMaxSize(
 		Capability.MaxRelativeAirspeedCmPerSec * 0.01f);
-	const FVector QuadraticCoefficient = Capability.DragAreaCoefficientBodyM2
+	const FVector QuadraticCoefficient = Capability.DragAreaCoefficientAircraftM2
 		* (0.5f * Capability.AirDensityKgPerM3);
-	const FVector RequiredForceBodyN = Capability.LinearDragBodyNsPerM * VelocityBodyMps
-		+ QuadraticCoefficient * VelocityBodyMps.GetAbs() * VelocityBodyMps;
+	const FVector RequiredForceAircraftN =
+		Capability.LinearDragAircraftNsPerM * VelocityAircraftMps
+		+ QuadraticCoefficient * VelocityAircraftMps.GetAbs() * VelocityAircraftMps;
+	const FVector RequiredForceBodyN = Capability.AircraftToBodyRotation.RotateVector(
+		RequiredForceAircraftN);
 	return Compensation + BodyRotation.RotateVector(RequiredForceBodyN)
 		* (100.0f / Capability.MassKg);
 }

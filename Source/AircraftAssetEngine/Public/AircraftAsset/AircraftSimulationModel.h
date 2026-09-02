@@ -140,17 +140,17 @@ struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FName SocketName = NAME_None;
 
-	/** 是否使用骨骼/插槽变换解析安装位置（否则使用 PositionLocalCm）；推力轴始终由 ThrustAxisLocal 决定 */
+	/** 是否使用骨骼/插槽的完整参考姿态作为旋翼安装坐标系。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	bool bUseSocketTransform = true;
 
-	/** 旋翼在机体坐标系中的位置（厘米，当 bUseSocketTransform 为 false 时） */
+	/** 资产构建后旋翼在当前 LOD 物理 RootBone 空间中的位置（厘米）。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
-	FVector PositionLocalCm = FVector::ZeroVector;
+	FVector PositionBodyCm = FVector::ZeroVector;
 
-	/** 推力方向（机体坐标系，通常为向上） */
+	/** 资产构建后旋翼在当前 LOD 物理 RootBone 空间中的推力方向。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
-	FVector ThrustAxisLocal = FVector::UpVector;
+	FVector ThrustAxisBody = FVector::UpVector;
 
 	/** 旋转方向 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
@@ -172,12 +172,15 @@ struct AIRCRAFTASSETENGINE_API FAircraftRotorDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Rotor")
 	FAircraftMotorModelConfig Motor;
 
-	bool IsEnabled() const { return bEnabled; }
+	/** Socket/骨骼及其参考姿态是否成功编译到当前 LOD RootBone 空间。 */
+	bool bInstallationValid = true;
+
+	bool IsEnabled() const { return bEnabled && bInstallationValid; }
 	bool HasSocket() const { return !SocketName.IsNone(); }
 
-	FVector GetNormalizedThrustAxisLocal() const
+	FVector GetNormalizedThrustAxisBody() const
 	{
-		return ThrustAxisLocal.IsNearlyZero() ? FVector::UpVector : ThrustAxisLocal.GetSafeNormal();
+		return ThrustAxisBody.IsNearlyZero() ? FVector::UpVector : ThrustAxisBody.GetSafeNormal();
 	}
 
 	float GetSpinDirectionSign() const
@@ -279,7 +282,8 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 	FAircraftSimulationModel() = default;
 	explicit FAircraftSimulationModel(
 		const TArray<TSharedRef<const FManagedArrayCollection>>& InAircraftCollections,
-		FName InAircraftName = NAME_None);
+		FName InAircraftName = NAME_None,
+		USkeletalMesh* InSkeletalMesh = nullptr);
 
 	FName AircraftName = NAME_None;
 	USkeletalMesh* SkeletalMesh = nullptr;

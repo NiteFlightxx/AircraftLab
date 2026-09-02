@@ -24,7 +24,8 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 	(void)Parameters;
 
 	const FAircraftFrameConfigNode Frame(UE::Dataflow::FNodeParameters{});
-	TestEqual(TEXT("Aircraft frame defaults to +Y forward"), Frame.ForwardAxis, EAircraftForwardAxisNode::PositiveY);
+	TestEqual(TEXT("Aircraft frame defaults to model +Y forward"),
+		Frame.ForwardAxis, EAircraftModelForwardAxis::PositiveY);
 	TestEqual(TEXT("Frame config exposes only its Collection input"), Frame.GetNumInputs(), 1);
 	const FAircraftControllerInputConfig Input;
 	TestEqual(TEXT("Controller input preserves authoritative horizontal hold deadband"),

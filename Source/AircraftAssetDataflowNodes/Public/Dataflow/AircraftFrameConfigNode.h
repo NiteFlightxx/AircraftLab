@@ -3,21 +3,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Aircraft/AircraftFrameBinding.h"
 #include "Dataflow/DataflowEngine.h"
 #include "Dataflow/DataflowNode.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
 
 #include "AircraftFrameConfigNode.generated.h"
-
-/** 模型局部前向轴；飞控标准坐标始终为 X=Forward、Y=Right、Z=Up。 */
-UENUM()
-enum class EAircraftForwardAxisNode : uint8
-{
-	PositiveX UMETA(DisplayName = "+X"),
-	PositiveY UMETA(DisplayName = "+Y"),
-	NegativeX UMETA(DisplayName = "-X"),
-	NegativeY UMETA(DisplayName = "-Y"),
-};
 
 /** 机架配置节点：写入物理绑定、控制轴约定、质量、质心和惯量。 */
 USTRUCT(meta = (DataflowAircraft))
@@ -40,9 +31,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Frame", meta = (DisplayName = "Root Bone"))
 	FName RootBone = NAME_None;
 
-	/** 视觉模型的局部机头方向。 */
+	/** 蒙皮模型局部空间中的机头方向；模型 Up 固定为 +Z。 */
 	UPROPERTY(EditAnywhere, Category = "Frame", meta = (DisplayName = "Forward Axis"))
-	EAircraftForwardAxisNode ForwardAxis = EAircraftForwardAxisNode::PositiveY;
+	EAircraftModelForwardAxis ForwardAxis = EAircraftModelForwardAxis::PositiveY;
 
 	/** 机体总质量（千克）。 */
 	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (DisplayName = "Total Mass (kg)", ClampMin = "0.01"))

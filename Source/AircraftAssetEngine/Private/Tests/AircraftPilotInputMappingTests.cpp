@@ -13,7 +13,6 @@ bool FAircraftSharedPilotInputMappingTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
 	FAircraftFlightControllerRuntimeConfig Config;
-	Config.ForwardAxis = 1;
 	Config.MaxHorizontalSpeedCmPerSec = 800.0f;
 	Config.MaxClimbRateCmPerSec = 300.0f;
 	Config.MaxDescentRateCmPerSec = 200.0f;

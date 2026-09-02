@@ -32,6 +32,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftVehicleStateSnapshot
 {
 	double TimeSeconds = 0.0;
 	uint64 Sequence = 0;
+	/** 世界空间物理质心位置。 */
 	FVector PositionCm = FVector::ZeroVector;
 	FVector VelocityCmPerSec = FVector::ZeroVector;
 	FVector AccelerationCmPerSecSq = FVector::ZeroVector;
@@ -73,8 +74,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftDynamicCapabilitySnapshot
 	FVector AngularDampingPerSecond = FVector::ZeroVector;
 	bool bHasExplicitAerodynamics = false;
 	float AirDensityKgPerM3 = 0.0f;
-	FVector LinearDragBodyNsPerM = FVector::ZeroVector;
-	FVector DragAreaCoefficientBodyM2 = FVector::ZeroVector;
+	/** Aircraft Forward/Right/Up 到物理 RootBone 的旋转。 */
+	FQuat AircraftToBodyRotation = FQuat::Identity;
+	FVector LinearDragAircraftNsPerM = FVector::ZeroVector;
+	FVector DragAreaCoefficientAircraftM2 = FVector::ZeroVector;
 	float MaxRelativeAirspeedCmPerSec = 0.0f;
 	/** 当前有效旋翼中最慢的增推力响应时间常数。 */
 	float ThrustRiseResponseTimeSeconds = 0.0f;
@@ -118,6 +121,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftTrajectoryReference
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot", meta = (Units = "s"))
 	double ValidUntilSeconds = 0.0;
 
+	/** 所有驱动后端共享的世界空间质心目标。 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Autopilot", meta = (Units = "cm"))
 	FVector PositionCm = FVector::ZeroVector;
 

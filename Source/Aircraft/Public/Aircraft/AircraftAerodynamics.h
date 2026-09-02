@@ -6,9 +6,11 @@
 struct AIRCRAFT_API FAircraftAerodynamicsRuntimeConfig
 {
 	float AirDensityKgPerM3 = 1.225f;
+	/** Aircraft Forward/Right/Up 三轴线性阻力系数。 */
 	FVector LinearDragNsPerM = FVector::ZeroVector;
-	/** Cd*A，单位 m^2；二次阻力为 0.5*rho*CdA*|v|v。 */
+	/** Aircraft Forward/Right/Up 三轴 Cd*A，单位 m^2。 */
 	FVector DragAreaCoefficientM2 = FVector::ZeroVector;
+	/** Aircraft Roll/Pitch/Yaw 三轴角阻尼。 */
 	FVector AngularDragNmPerRadPerSec = FVector::ZeroVector;
 	FVector QuadraticAngularDragNmPerRadPerSecSq = FVector::ZeroVector;
 	float MaxRelativeAirspeedCmPerSec = 10000.0f;
@@ -27,6 +29,7 @@ namespace AircraftAerodynamics
 	AIRCRAFT_API FAircraftAerodynamicWrench ComputeWrench(
 		const FAircraftAerodynamicsRuntimeConfig& Config,
 		const FQuat& BodyRotation,
+		const FQuat& ControlToBodyRotation,
 		const FVector& VelocityWorldCmPerSec,
 		const FVector& WindVelocityWorldCmPerSec,
 		const FVector& AngularVelocityBodyRadPerSec);

@@ -76,7 +76,8 @@ public:
 	bool GetMotionPlan_GameThread(TArray<FAircraftMotionPlanSample>& OutSamples,
 		float& OutDurationSeconds, float& OutLengthCm, uint64& OutPlanRevision) const;
 	void TickKinematicTrajectory_GameThread(float DeltaTime, double TimeSeconds,
-		const FTransform& BodyTransform, const FVector& VelocityCmPerSec,
+		const FTransform& BodyTransform, const FVector& CenterOfMassWorldCm,
+		const FVector& VelocityCmPerSec,
 		const FVector& AngularVelocityWorldRadPerSec,
 		const FAircraftSimulationLodModel& Model);
 	void SetSimulationState_GameThread(bool bEnabled, bool bSuspended);

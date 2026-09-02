@@ -58,13 +58,19 @@ namespace
 		{
 			return Result;
 		}
-		FVector VelocityBodyMps = BodyRotation.UnrotateVector(VelocityWorldCmPerSec) * 0.01f;
-		VelocityBodyMps = VelocityBodyMps.GetClampedToMaxSize(
+		const FVector VelocityBodyMps = BodyRotation.UnrotateVector(
+			VelocityWorldCmPerSec) * 0.01f;
+		FVector VelocityAircraftMps = Capability.AircraftToBodyRotation.UnrotateVector(
+			VelocityBodyMps);
+		VelocityAircraftMps = VelocityAircraftMps.GetClampedToMaxSize(
 			Capability.MaxRelativeAirspeedCmPerSec * 0.01f);
-		const FVector Quadratic = Capability.DragAreaCoefficientBodyM2
+		const FVector Quadratic = Capability.DragAreaCoefficientAircraftM2
 			* (0.5f * Capability.AirDensityKgPerM3);
-		const FVector ForceBodyN = Capability.LinearDragBodyNsPerM * VelocityBodyMps
-			+ Quadratic * VelocityBodyMps.GetAbs() * VelocityBodyMps;
+		const FVector ForceAircraftN =
+			Capability.LinearDragAircraftNsPerM * VelocityAircraftMps
+			+ Quadratic * VelocityAircraftMps.GetAbs() * VelocityAircraftMps;
+		const FVector ForceBodyN = Capability.AircraftToBodyRotation.RotateVector(
+			ForceAircraftN);
 		return Result + BodyRotation.RotateVector(ForceBodyN)
 			* (100.0f / Capability.MassKg);
 	}

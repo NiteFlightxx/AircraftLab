@@ -31,6 +31,7 @@ bool FAircraftAerodynamicsRuntimeConfig::IsValid() const
 FAircraftAerodynamicWrench AircraftAerodynamics::ComputeWrench(
 	const FAircraftAerodynamicsRuntimeConfig& Config,
 	const FQuat& BodyRotation,
+	const FQuat& ControlToBodyRotation,
 	const FVector& VelocityWorldCmPerSec,
 	const FVector& WindVelocityWorldCmPerSec,
 	const FVector& AngularVelocityBodyRadPerSec)
@@ -43,24 +44,34 @@ FAircraftAerodynamicWrench AircraftAerodynamics::ComputeWrench(
 
 	const FVector RelativeVelocityWorldMps =
 		(VelocityWorldCmPerSec - WindVelocityWorldCmPerSec) * 0.01;
-	FVector RelativeVelocityBodyMps = BodyRotation.UnrotateVector(RelativeVelocityWorldMps);
-	RelativeVelocityBodyMps = RelativeVelocityBodyMps.GetClampedToMaxSize(
+	const FVector RelativeVelocityBodyMps = BodyRotation.UnrotateVector(
+		RelativeVelocityWorldMps);
+	FVector RelativeVelocityControlMps = ControlToBodyRotation.UnrotateVector(
+		RelativeVelocityBodyMps);
+	RelativeVelocityControlMps = RelativeVelocityControlMps.GetClampedToMaxSize(
 		Config.MaxRelativeAirspeedCmPerSec * 0.01f);
 
-	const FVector LinearForceBodyN(
-		-Config.LinearDragNsPerM.X * RelativeVelocityBodyMps.X,
-		-Config.LinearDragNsPerM.Y * RelativeVelocityBodyMps.Y,
-		-Config.LinearDragNsPerM.Z * RelativeVelocityBodyMps.Z);
+	const FVector LinearForceControlN(
+		-Config.LinearDragNsPerM.X * RelativeVelocityControlMps.X,
+		-Config.LinearDragNsPerM.Y * RelativeVelocityControlMps.Y,
+		-Config.LinearDragNsPerM.Z * RelativeVelocityControlMps.Z);
 	const FVector QuadraticCoefficient = Config.DragAreaCoefficientM2
 		* (0.5 * Config.AirDensityKgPerM3);
+	const FVector ForceBodyN = ControlToBodyRotation.RotateVector(
+		LinearForceControlN
+		+ OpposingQuadratic(RelativeVelocityControlMps, QuadraticCoefficient));
 	Result.ForceWorldN = BodyRotation.RotateVector(
-		LinearForceBodyN + OpposingQuadratic(RelativeVelocityBodyMps, QuadraticCoefficient));
+		ForceBodyN);
 
-	const FVector LinearTorqueBodyNm(
-		-Config.AngularDragNmPerRadPerSec.X * AngularVelocityBodyRadPerSec.X,
-		-Config.AngularDragNmPerRadPerSec.Y * AngularVelocityBodyRadPerSec.Y,
-		-Config.AngularDragNmPerRadPerSec.Z * AngularVelocityBodyRadPerSec.Z);
-	Result.TorqueBodyNm = LinearTorqueBodyNm
-		+ OpposingQuadratic(AngularVelocityBodyRadPerSec, Config.QuadraticAngularDragNmPerRadPerSecSq);
+	const FVector AngularVelocityControlRadPerSec =
+		ControlToBodyRotation.UnrotateVector(AngularVelocityBodyRadPerSec);
+	const FVector LinearTorqueControlNm(
+		-Config.AngularDragNmPerRadPerSec.X * AngularVelocityControlRadPerSec.X,
+		-Config.AngularDragNmPerRadPerSec.Y * AngularVelocityControlRadPerSec.Y,
+		-Config.AngularDragNmPerRadPerSec.Z * AngularVelocityControlRadPerSec.Z);
+	Result.TorqueBodyNm = ControlToBodyRotation.RotateVector(
+		LinearTorqueControlNm + OpposingQuadratic(
+			AngularVelocityControlRadPerSec,
+			Config.QuadraticAngularDragNmPerRadPerSecSq));
 	return Result;
 }

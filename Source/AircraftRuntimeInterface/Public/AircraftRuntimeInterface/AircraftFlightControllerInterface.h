@@ -14,6 +14,7 @@
 /** 高层制导所需的最小飞行状态。 */
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftFlightKinematicState
 {
+	/** 世界空间物理质心位置。 */
 	FVector PositionCm = FVector::ZeroVector;
 	FVector VelocityCmPerSec = FVector::ZeroVector;
 	FVector AccelerationWorldCmPerSecSq = FVector::ZeroVector;

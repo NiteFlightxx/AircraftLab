@@ -51,9 +51,11 @@ struct FAircraftAirscrewProfileData
 	FName SocketName = NAME_None;
 	UPROPERTY(EditAnywhere, Category = "Installation")
 	bool bUseSocketTransform = true;
-	UPROPERTY(EditAnywhere, Category = "Installation", meta = (DisplayName = "Position Local (cm)"))
+	/** 不使用 Socket 时的模型局部位置；构建时编译到当前 LOD RootBone 空间。 */
+	UPROPERTY(EditAnywhere, Category = "Installation", meta = (DisplayName = "Position in Model (cm)"))
 	FVector3f PositionLocalCm = FVector3f::ZeroVector;
-	UPROPERTY(EditAnywhere, Category = "Profile", meta = (DisplayName = "Thrust Axis Local"))
+	/** 使用 Socket 时为 Socket 局部轴，否则为模型局部轴。 */
+	UPROPERTY(EditAnywhere, Category = "Installation", meta = (DisplayName = "Thrust Axis in Installation Frame"))
 	FVector3f ThrustAxisLocal = FVector3f(0.0f, 0.0f, 1.0f);
 	UPROPERTY(EditAnywhere, Category = "Profile", meta = (DisplayName = "Max Thrust (N)", ClampMin = "0.0", Units = "N"))
 	float MaxThrustN = 9.0f;

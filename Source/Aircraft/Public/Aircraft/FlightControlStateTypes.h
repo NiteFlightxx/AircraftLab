@@ -78,6 +78,7 @@ struct AIRCRAFT_API FAircraftKinematicState
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Nav")
 	float TimeSeconds = 0.0f;
 
+	/** 世界空间物理质心位置（厘米）。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Nav")
 	FVector PositionCm = FVector::ZeroVector;
 

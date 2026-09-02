@@ -16,16 +16,16 @@ struct FAircraftAerodynamicsConfig
 	UPROPERTY(EditAnywhere, Category = "Atmosphere", meta = (DisplayName = "Air Density (kg/m³)", ClampMin = "0.0001"))
 	float AirDensityKgPerM3 = 1.225f;
 
-	UPROPERTY(EditAnywhere, Category = "Body", meta = (DisplayName = "Linear Drag (N·s/m)"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft Frame", meta = (DisplayName = "Linear Drag Forward/Right/Up (N·s/m)"))
 	FVector LinearDragNsPerM = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, Category = "Body", meta = (DisplayName = "Drag Area Coefficient (m²)"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft Frame", meta = (DisplayName = "Drag Area Forward/Right/Up (m²)"))
 	FVector DragAreaCoefficientM2 = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, Category = "Body", meta = (DisplayName = "Angular Drag (N·m·s/rad)"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft Frame", meta = (DisplayName = "Angular Drag Roll/Pitch/Yaw (N·m·s/rad)"))
 	FVector AngularDragNmPerRadPerSec = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, Category = "Body", meta = (DisplayName = "Quadratic Angular Drag (N·m·s²/rad²)"))
+	UPROPERTY(EditAnywhere, Category = "Aircraft Frame", meta = (DisplayName = "Quadratic Angular Drag Roll/Pitch/Yaw (N·m·s²/rad²)"))
 	FVector QuadraticAngularDragNmPerRadPerSecSq = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere, Category = "Safety", meta = (DisplayName = "Max Relative Airspeed (cm/s)", ClampMin = "1.0", Units = "cm/s"))

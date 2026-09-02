@@ -1,6 +1,7 @@
 #include "Dataflow/AircraftAssetTerminalNode.h"
 
 #include "AircraftAsset/AircraftAsset.h"
+#include "Aircraft/AircraftFrameBinding.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 
@@ -28,6 +29,7 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 
 	TSharedRef<const FManagedArrayCollection> SharedCollection = MakeShared<FManagedArrayCollection>(InCollection);
 	UE::AircraftLab::AircraftAsset::FCollectionAircraftConstFacade Facade(SharedCollection);
+	const UE::AircraftLab::AircraftAsset::FCollectionAircraftPropertyConstFacade Properties(SharedCollection);
 
 	if (!Facade.IsValid())
 	{
@@ -96,6 +98,11 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 	AccumulateArray(Facade.GetFrameMassKg());
 	AccumulateArray(Facade.GetFrameCenterOfMassNudgeCm());
 	AccumulateArray(Facade.GetFrameInertiaTensorScale());
+	const int32 ModelForwardAxis = Properties.IsValid()
+		? Properties.GetValue<int32>(TEXT("Frame.ForwardAxis"),
+			static_cast<int32>(EAircraftModelForwardAxis::PositiveY))
+		: static_cast<int32>(EAircraftModelForwardAxis::PositiveY);
+	Checksum = FCrc::MemCrc32(&ModelForwardAxis, sizeof(ModelForwardAxis), Checksum);
 
 	/* Motors：电机数量 / 名字 / 一阶滞后参数都是结构性的 */
 	AccumulateArray(Facade.GetMotorName());
@@ -146,7 +153,6 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 
 	// Chaos Cloth 把 Collection Property Facade 作为可扩展配置层。键、值、字符串和标记都必须
 	// 进入校验和，否则只修改扩展飞控参数时 Terminal 会错误地认为资产没有变化。
-	const FCollectionAircraftPropertyConstFacade Properties(SharedCollection);
 	if (Properties.IsValid())
 	{
 		for (int32 PropertyIndex = 0; PropertyIndex < Properties.Num(); ++PropertyIndex)

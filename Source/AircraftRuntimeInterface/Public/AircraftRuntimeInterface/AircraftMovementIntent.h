@@ -179,6 +179,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftHoldIntent
 {
 	GENERATED_BODY()
 
+	/** 世界空间质心保持位置。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (Units = "cm"))
 	FVector PositionCm = FVector::ZeroVector;
 

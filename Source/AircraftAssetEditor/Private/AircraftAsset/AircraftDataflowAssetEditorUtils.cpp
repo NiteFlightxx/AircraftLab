@@ -245,7 +245,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 				[](FAircraftFrameConfigNode& Node)
 				{
 					Node.RootBone = RootBoneName;
-					Node.ForwardAxis = EAircraftForwardAxisNode::PositiveY;
+					Node.ForwardAxis = EAircraftModelForwardAxis::PositiveY;
 					Node.MassKg = 100.0f;
 					Node.CenterOfMassNudgeCm = FVector3f::ZeroVector;
 					Node.InertiaTensorScale = FVector3f::OneVector;

@@ -25,6 +25,18 @@ namespace UE::AircraftLab::Diagnostics::Private
 			FText::AsNumber(Value.X), FText::AsNumber(Value.Y),
 			FText::AsNumber(Value.Z), Unit);
 	}
+
+	static FString CardinalAxisText(const FVector& Axis)
+	{
+		const FVector Normalized = Axis.GetSafeNormal();
+		if (Normalized.Equals(FVector::ForwardVector)) return TEXT("+X");
+		if (Normalized.Equals(-FVector::ForwardVector)) return TEXT("-X");
+		if (Normalized.Equals(FVector::RightVector)) return TEXT("+Y");
+		if (Normalized.Equals(-FVector::RightVector)) return TEXT("-Y");
+		if (Normalized.Equals(FVector::UpVector)) return TEXT("+Z");
+		if (Normalized.Equals(-FVector::UpVector)) return TEXT("-Z");
+		return Normalized.ToCompactString();
+	}
 }
 
 void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
@@ -60,18 +72,62 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 	{
 		FAircraftDebugOptionDescriptor Option;
 		Option.Id = TEXT("Aircraft.BodyAxes");
-		Option.DisplayName = LOCTEXT("BodyAxes", "Body Axes");
-		Option.ToolTip = LOCTEXT("BodyAxesTip", "Draw the rigid-body coordinate system.");
+		Option.DisplayName = LOCTEXT("BodyAxes", "Body and Control Axes");
+		Option.ToolTip = LOCTEXT("BodyAxesTip",
+			"Draw the skeletal-model Aircraft frame and the physical RootBone frame used by simulation.");
+		Option.bEditorEnabledByDefault = true;
 		Option.Draw3D = [](const FAircraftDebugFrameSnapshot& S, const FAircraftDebugDrawContext& C)
 		{
-			FAircraftDebugDraw::DrawAxes(C, S.Transform.GetLocation(), S.Transform.Rotator(),
-				UE::AircraftLab::Diagnostics::DebugAxisLengthCm);
+			constexpr float AxisLength = UE::AircraftLab::Diagnostics::DebugAxisLengthCm;
+			const FVector BodyOrigin = S.BodyTransform.GetLocation();
+			const FVector BodyX = S.BodyTransform.TransformVectorNoScale(FVector::ForwardVector);
+			const FVector BodyY = S.BodyTransform.TransformVectorNoScale(FVector::RightVector);
+			const FVector BodyZ = S.BodyTransform.TransformVectorNoScale(FVector::UpVector);
+			FAircraftDebugDraw::DrawAxes(C, BodyOrigin, S.BodyTransform.Rotator(), AxisLength);
+			FAircraftDebugDraw::DrawString(C, BodyOrigin + BodyX * AxisLength,
+				TEXT("Body +X"), FLinearColor::Red, 0.8f);
+			FAircraftDebugDraw::DrawString(C, BodyOrigin + BodyY * AxisLength,
+				TEXT("Body +Y"), FLinearColor::Green, 0.8f);
+			FAircraftDebugDraw::DrawString(C, BodyOrigin + BodyZ * AxisLength,
+				TEXT("Body +Z"), FLinearColor::Blue, 0.8f);
+
+			const FVector ControlForward = S.ModelTransform.TransformVectorNoScale(
+				S.ControlForwardAxisModel).GetSafeNormal();
+			const FVector ControlRight = S.ModelTransform.TransformVectorNoScale(
+				S.ControlRightAxisModel).GetSafeNormal();
+			const FVector ControlUp = S.ModelTransform.TransformVectorNoScale(
+				S.ControlUpAxisModel).GetSafeNormal();
+			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm,
+				ControlForward * AxisLength, FAircraftDebugColors::ControlForward);
+			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm,
+				ControlRight * AxisLength, FAircraftDebugColors::ControlRight);
+			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm,
+				ControlUp * AxisLength, FAircraftDebugColors::ControlUp);
+			FAircraftDebugDraw::DrawString(C, S.CenterOfMassCm + ControlForward * AxisLength,
+				FString::Printf(TEXT("Aircraft Forward (Model %s)"),
+					*CardinalAxisText(S.ControlForwardAxisModel)),
+				FAircraftDebugColors::ControlForward, 0.8f);
+			FAircraftDebugDraw::DrawString(C, S.CenterOfMassCm + ControlRight * AxisLength,
+				TEXT("Aircraft Right"), FAircraftDebugColors::ControlRight, 0.8f);
+			FAircraftDebugDraw::DrawString(C, S.CenterOfMassCm + ControlUp * AxisLength,
+				TEXT("Aircraft Up (Model +Z)"), FAircraftDebugColors::ControlUp, 0.8f);
 		};
 		Option.CanvasText = [](const FAircraftDebugFrameSnapshot& S)
 		{
-			const FRotator R = S.Transform.Rotator();
-			return FText::Format(LOCTEXT("BodyAxesCanvas", "Body R/P/Y: {0}, {1}, {2} deg"),
-				FText::AsNumber(R.Roll), FText::AsNumber(R.Pitch), FText::AsNumber(R.Yaw));
+			const FRotator R = S.BodyTransform.Rotator();
+			const FText RootBoneText = S.RootBone.IsNone()
+				? LOCTEXT("ComponentBody", "Component Body")
+				: FText::FromName(S.RootBone);
+			return FText::Format(LOCTEXT("BodyAxesCanvas",
+				"Physical root: {0} | Body R/P/Y: {1}, {2}, {3} deg\nAircraft in Model: Forward={4} Right={5} Up={6}\nAircraft in Body: Forward={7} Right={8} Up={9}"),
+				RootBoneText, FText::AsNumber(R.Roll), FText::AsNumber(R.Pitch),
+				FText::AsNumber(R.Yaw),
+				FText::FromString(CardinalAxisText(S.ControlForwardAxisModel)),
+				FText::FromString(CardinalAxisText(S.ControlRightAxisModel)),
+				FText::FromString(CardinalAxisText(S.ControlUpAxisModel)),
+				FText::FromString(CardinalAxisText(S.ControlForwardAxisBody)),
+				FText::FromString(CardinalAxisText(S.ControlRightAxisBody)),
+				FText::FromString(CardinalAxisText(S.ControlUpAxisBody)));
 		};
 		AddAircraftOption(OutHandles, MoveTemp(Option));
 	}
@@ -81,6 +137,7 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 		Option.Id = TEXT("Aircraft.CenterOfMass");
 		Option.DisplayName = LOCTEXT("CenterOfMass", "Center of Mass");
 		Option.ToolTip = LOCTEXT("CenterOfMassTip", "Draw the Chaos center of mass.");
+		Option.bEditorEnabledByDefault = true;
 		Option.Draw3D = [](const FAircraftDebugFrameSnapshot& S, const FAircraftDebugDrawContext& C)
 		{
 			FAircraftDebugDraw::DrawPoint(C, S.CenterOfMassCm, FAircraftDebugColors::CenterOfMass, 10.0f);
@@ -164,7 +221,9 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 		FAircraftDebugOptionDescriptor Option;
 		Option.Id = TEXT("Aircraft.Rotors");
 		Option.DisplayName = LOCTEXT("Rotors", "Rotors and Thrust");
-		Option.ToolTip = LOCTEXT("RotorsTip", "Draw rotor locations, thrust axes, and current thrust.");
+		Option.ToolTip = LOCTEXT("RotorsTip",
+			"Draw RootBone-space rotor force application points, center-of-mass lever arms, thrust axes, and current thrust.");
+		Option.bEditorEnabledByDefault = true;
 		Option.Draw3D = [](const FAircraftDebugFrameSnapshot& S, const FAircraftDebugDrawContext& C)
 		{
 			for (const FAircraftDebugRotorSnapshot& Rotor : S.Rotors)
@@ -172,16 +231,22 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 				if (!C.RotorFilter.IsNone() && Rotor.Name != C.RotorFilter) continue;
 				const FLinearColor& Color = Rotor.bEnabled
 					? FAircraftDebugColors::RotorEnabled : FAircraftDebugColors::RotorDisabled;
+				FAircraftDebugDraw::DrawLine(C, S.CenterOfMassCm, Rotor.PositionCm,
+					FAircraftDebugColors::RotorArm);
 				FAircraftDebugDraw::DrawPoint(C, Rotor.PositionCm, Color, 7.0f);
 				FAircraftDebugDraw::DrawArrow(C, Rotor.PositionCm,
 					Rotor.ThrustAxis * FMath::Max(20.0f, Rotor.ThrustN * 5.0f), Color);
+				FAircraftDebugDraw::DrawString(C, Rotor.PositionCm,
+					FString::Printf(TEXT("%s  Axis=%s  %.2f N"), *Rotor.Name.ToString(),
+						*CardinalAxisText(Rotor.ThrustAxisBody), Rotor.ThrustN), Color, 0.75f);
 			}
 		};
 		Option.CanvasText = [](const FAircraftDebugFrameSnapshot& S)
 		{
 			float TotalThrustN = 0.0f;
 			for (const FAircraftDebugRotorSnapshot& Rotor : S.Rotors) TotalThrustN += Rotor.ThrustN;
-			return FText::Format(LOCTEXT("RotorsCanvas", "Rotors: {0} | Total thrust: {1} N"),
+			return FText::Format(LOCTEXT("RotorsCanvas",
+				"Rotors: {0} | Total thrust: {1} N | Positions and axes: physical RootBone space"),
 				FText::AsNumber(S.Rotors.Num()), FText::AsNumber(TotalThrustN));
 		};
 		AddAircraftOption(OutHandles, MoveTemp(Option));

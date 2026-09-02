@@ -457,6 +457,11 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 {
 	const bool bEnablePhysics = NewDriveMode != EAircraftSimulationDriveMode::Kinematic;
 	const EAircraftSimulationDriveMode PreviousDriveMode = SimulationDriveMode;
+	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
+	const FName RootBone = Model ? Model->RootBone : NAME_None;
+	const FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+	const bool bChassisWasSimulating = ChassisBody
+		&& ChassisBody->IsInstanceSimulatingPhysics();
 	if (PreviousDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
 		&& (NewDriveMode != EAircraftSimulationDriveMode::PhysicsConstraint || !bEnablePhysics))
 	{
@@ -470,7 +475,8 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 
 	if (bEnablePhysics)
 	{
-		if (!IsSimulatingPhysics() && PreviousDriveMode == EAircraftSimulationDriveMode::Kinematic)
+		if (!bChassisWasSimulating
+			&& PreviousDriveMode == EAircraftSimulationDriveMode::Kinematic)
 		{
 			// 离开运动学驱动：保存当前估计速度以便物理恢复时连续。
 			FAircraftEstimatedState Estimated;
@@ -481,24 +487,27 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 				? FVector(0.0f, 0.0f, FMath::DegreesToRadians(Target.YawRateDegPerSec))
 				: FVector::ZeroVector;
 		}
-		if (!IsSimulatingPhysics())
+		if (!bChassisWasSimulating)
 		{
 			SetSimulatePhysics(true);
 			if (PreviousDriveMode == EAircraftSimulationDriveMode::Kinematic)
 			{
 				ResetAllBodiesSimulatePhysics();
 			}
-			SetPhysicsLinearVelocity(SavedSimulationLinearVelocityCmPerSec);
-			SetPhysicsAngularVelocityInRadians(SavedSimulationAngularVelocityRadPerSec);
+			SetPhysicsLinearVelocity(
+				SavedSimulationLinearVelocityCmPerSec, false, RootBone);
+			SetPhysicsAngularVelocityInRadians(
+				SavedSimulationAngularVelocityRadPerSec, false, RootBone);
 			WakeAllRigidBodies();
 		}
 	}
 	else
 	{
-		if (IsSimulatingPhysics())
+		if (bChassisWasSimulating)
 		{
-			SavedSimulationLinearVelocityCmPerSec = GetPhysicsLinearVelocity();
-			SavedSimulationAngularVelocityRadPerSec = GetPhysicsAngularVelocityInRadians();
+			SavedSimulationLinearVelocityCmPerSec = GetPhysicsLinearVelocity(RootBone);
+			SavedSimulationAngularVelocityRadPerSec =
+				GetPhysicsAngularVelocityInRadians(RootBone);
 		}
 		SetSimulatePhysics(false);
 		SetAllBodiesSimulatePhysics(false);
@@ -672,10 +681,8 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		return;
 	}
 
-	// 运动目标的 PositionCm 是组件原点，约束连接点则是 COM；先把目标换算到 COM。
+	// 轨迹位置、线速度与约束连接点统一使用世界空间 COM 语义。
 	const FVector CurrentCenterOfMass = ChassisBody->GetCOMPosition();
-	const FVector CenterOfMassOffsetLocal = GetComponentQuat().UnrotateVector(
-		CurrentCenterOfMass - GetComponentLocation());
 	const float GravityMagnitudeCmPerSecSq = GetWorld()
 		? FMath::Abs(GetWorld()->GetGravityZ()) : 980.0f;
 	const FQuat TargetBodyRotation = AircraftAttitudeReference::Build(
@@ -685,13 +692,7 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		GravityMagnitudeCmPerSecSq,
 		Config.MaxTiltAngleDegrees,
 		Config).BodyWorldRotation;
-	const FVector TargetCenterOfMassOffsetWorld = TargetBodyRotation.RotateVector(
-		CenterOfMassOffsetLocal);
-	const FVector TargetAngularVelocityWorldRadPerSec(
-		0.0f, 0.0f, FMath::DegreesToRadians(Target.YawRateDegPerSec));
-	const FVector TargetCenterOfMassVelocity = Target.VelocityCmPerSec
-		+ FVector::CrossProduct(
-			TargetAngularVelocityWorldRadPerSec, TargetCenterOfMassOffsetWorld);
+	const FVector TargetCenterOfMassVelocity = Target.VelocityCmPerSec;
 	const FVector GravityAccelerationCmPerSecSq(
 		0.0, 0.0, GetWorld() ? GetWorld()->GetGravityZ() : -980.0f);
 	const FVector AccelerationFeedForwardPositionOffset =
@@ -707,12 +708,12 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	FVector TargetCenterOfMass;
 	if (Target.bPositionTrackingEnabled)
 	{
-		TargetCenterOfMass = Target.PositionCm + TargetCenterOfMassOffsetWorld;
+		TargetCenterOfMass = Target.PositionCm;
 	}
 	else
 	{
 		// Velocity 意图使用有限速度误差前置量，不累计世界位置误差，也不会把松杆点当锚点。
-		const FVector CurrentCenterOfMassVelocity = GetPhysicsLinearVelocity();
+		const FVector CurrentCenterOfMassVelocity = GetPhysicsLinearVelocity(Model->RootBone);
 		const float Strength = Config.ConstraintLinearNaturalFrequencyHz;
 		TargetCenterOfMass = FVector(
 			UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
@@ -756,8 +757,14 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	}
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
-	const FVector CurrentLocation = GetComponentLocation();
-	const FVector NewLocation = Target.PositionCm;
+	FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+	const FVector CenterOfMassBodyCm = ChassisBody
+		? ChassisBody->GetMassSpaceLocal().GetTranslation()
+		: FVector::ZeroVector;
+	const FTransform CurrentBodyTransform = Config.FrameBinding.GetBodyWorldTransform(
+		GetComponentTransform());
+	const FVector CurrentCenterOfMass = CurrentBodyTransform.TransformPosition(
+		CenterOfMassBodyCm);
 	const float GravityMagnitude = GetWorld()
 		? FMath::Abs(GetWorld()->GetGravityZ()) : 980.0f;
 	const FQuat NewBodyRotation = AircraftAttitudeReference::Build(
@@ -766,12 +773,24 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 		GravityMagnitude,
 		Config.MaxTiltAngleDegrees,
 		Config).BodyWorldRotation;
+	const FVector TargetBodyOrigin = Target.PositionCm
+		- NewBodyRotation.RotateVector(
+			CenterOfMassBodyCm * CurrentBodyTransform.GetScale3D());
+	const FTransform TargetBodyTransform(
+		NewBodyRotation, TargetBodyOrigin, CurrentBodyTransform.GetScale3D());
+	const FTransform TargetModelTransform = Config.FrameBinding.GetModelWorldTransform(
+		TargetBodyTransform);
 
 	FHitResult Hit;
-	SetWorldLocationAndRotation(NewLocation, NewBodyRotation,
+	SetWorldLocationAndRotation(
+		TargetModelTransform.GetLocation(), TargetModelTransform.GetRotation(),
 		Config.bKinematicSweepMovement, &Hit, ETeleportType::TeleportPhysics);
+	const FTransform NewActualBodyTransform = Config.FrameBinding.GetBodyWorldTransform(
+		GetComponentTransform());
+	const FVector NewCenterOfMass = NewActualBodyTransform.TransformPosition(
+		CenterOfMassBodyCm);
 	PreviousAlternativeVelocityCmPerSec = DeltaSeconds > UE_SMALL_NUMBER
-		? (GetComponentLocation() - CurrentLocation) / DeltaSeconds
+		? (NewCenterOfMass - CurrentCenterOfMass) / DeltaSeconds
 		: FVector::ZeroVector;
 	if (FAircraftDebug::IsDriveLogEnabled())
 	{
@@ -783,10 +802,10 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 			UE_LOG(LogAircraft, Log,
 				TEXT("[Aircraft.Drive.Kinematic] Owner=%s Input(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) Current=(%.1f,%.1f,%.1f) Target=(%.1f,%.1f,%.1f) TargetVel=(%+.1f,%+.1f,%+.1f) New=(%.1f,%.1f,%.1f) Hit=%d"),
 				*GetNameSafe(GetOwner()), PilotInput.Throttle, PilotInput.Roll, PilotInput.Pitch, PilotInput.Yaw,
-				CurrentLocation.X, CurrentLocation.Y, CurrentLocation.Z,
+				CurrentCenterOfMass.X, CurrentCenterOfMass.Y, CurrentCenterOfMass.Z,
 				Target.PositionCm.X, Target.PositionCm.Y, Target.PositionCm.Z,
 				Target.VelocityCmPerSec.X, Target.VelocityCmPerSec.Y, Target.VelocityCmPerSec.Z,
-				NewLocation.X, NewLocation.Y, NewLocation.Z, Hit.bBlockingHit ? 1 : 0);
+				NewCenterOfMass.X, NewCenterOfMass.Y, NewCenterOfMass.Z, Hit.bBlockingHit ? 1 : 0);
 		}
 	}
 	UpdateAlternativeDriveEstimatedState(DeltaSeconds);
@@ -800,25 +819,38 @@ void UAircraftComponent::UpdateAlternativeDriveEstimatedState(float DeltaSeconds
 	}
 
 	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
+	if (!Model || !Model->FlightController.FrameBinding.IsValid())
+	{
+		return;
+	}
 	FAircraftEstimatedState Estimated;
 	AircraftSimulationProxy->GetEstimatedState_GameThread(Estimated);
 
-	const FVector Velocity = IsSimulatingPhysics()
-		? GetPhysicsLinearVelocity()
+	FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+	const bool bBodySimulating = ChassisBody && ChassisBody->IsInstanceSimulatingPhysics();
+	const FTransform BodyTransform = ChassisBody && ChassisBody->IsValidBodyInstance()
+		? ChassisBody->GetUnrealWorldTransform()
+		: Model->FlightController.FrameBinding.GetBodyWorldTransform(GetComponentTransform());
+	const FVector CenterOfMassBodyCm = ChassisBody
+		? ChassisBody->GetMassSpaceLocal().GetTranslation()
+		: FVector::ZeroVector;
+	const FVector CenterOfMassWorldCm = bBodySimulating
+		? ChassisBody->GetCOMPosition()
+		: BodyTransform.TransformPosition(CenterOfMassBodyCm);
+	const FVector Velocity = bBodySimulating
+		? GetPhysicsLinearVelocity(Model->RootBone)
 		: PreviousAlternativeVelocityCmPerSec;
-	Estimated.State.PositionCm = GetComponentLocation();
+	Estimated.State.PositionCm = CenterOfMassWorldCm;
 	Estimated.State.AccelerationWorldCmPerSecSq =
 		(Velocity - Estimated.State.VelocityCmPerSec) / DeltaSeconds;
 	Estimated.State.VelocityCmPerSec = Velocity;
-	if (Model)
-	{
-		Estimated.State.AttitudeDegrees = Model->FlightController.GetControlWorldRotation(
-			GetComponentQuat()).Rotator();
-		Estimated.State.AngularVelocityBodyDegreesPerSec = IsSimulatingPhysics()
-			? FMath::RadiansToDegrees(Model->FlightController.BodyAngularToController(
-				GetComponentQuat().UnrotateVector(GetPhysicsAngularVelocityInRadians())))
-			: FVector::ZeroVector;
-	}
+	Estimated.State.AttitudeDegrees = Model->FlightController.GetControlWorldRotation(
+		BodyTransform.GetRotation()).Rotator();
+	Estimated.State.AngularVelocityBodyDegreesPerSec = bBodySimulating
+		? FMath::RadiansToDegrees(Model->FlightController.BodyAngularToController(
+			BodyTransform.GetRotation().UnrotateVector(
+				GetPhysicsAngularVelocityInRadians(Model->RootBone))))
+		: FVector::ZeroVector;
 	AircraftSimulationProxy->SetEstimatedStateOverride_GameThread(Estimated);
 }
 
@@ -901,21 +933,51 @@ bool UAircraftComponent::GetAircraftMotionPlan(
 		OutSamples, OutDurationSeconds, OutLengthCm, OutPlanRevision);
 }
 
-void UAircraftComponent::CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSnapshot) const
+void UAircraftComponent::CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSnapshot)
 {
 	OutSnapshot = {};
 	OutSnapshot.AvailableData = EAircraftDebugData::Aircraft;
 	OutSnapshot.SubjectName = FString::Printf(TEXT("%s/%s"),
 		*GetNameSafe(GetOwner()), *GetName());
-	OutSnapshot.Transform = GetComponentTransform();
-	OutSnapshot.CenterOfMassCm = GetCenterOfMass();
+
+	const FAircraftSimulationLodModel* const LodModel = GetCurrentLodModel();
+	OutSnapshot.RootBone = LodModel ? LodModel->RootBone : NAME_None;
+	FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+	if (ChassisBody && ChassisBody->IsValidBodyInstance())
+	{
+		OutSnapshot.BodyTransform = ChassisBody->GetUnrealWorldTransform();
+		OutSnapshot.CenterOfMassCm = ChassisBody->GetCOMPosition();
+	}
+	else
+	{
+		OutSnapshot.BodyTransform = LodModel
+			? LodModel->FlightController.FrameBinding.GetBodyWorldTransform(
+				GetComponentTransform())
+			: GetComponentTransform();
+		const FVector CenterOfMassBodyCm = ChassisBody
+			? ChassisBody->GetMassSpaceLocal().GetTranslation()
+			: FVector::ZeroVector;
+		OutSnapshot.CenterOfMassCm = OutSnapshot.BodyTransform.TransformPosition(
+			CenterOfMassBodyCm);
+	}
+	if (LodModel)
+	{
+		const FAircraftFlightControllerRuntimeConfig& Config = LodModel->FlightController;
+		OutSnapshot.ModelTransform = GetComponentTransform();
+		OutSnapshot.ControlForwardAxisModel = Config.FrameBinding.GetForwardAxisModel();
+		OutSnapshot.ControlRightAxisModel = Config.FrameBinding.GetRightAxisModel();
+		OutSnapshot.ControlUpAxisModel = Config.FrameBinding.GetUpAxisModel();
+		OutSnapshot.ControlForwardAxisBody = Config.GetForwardAxisBody();
+		OutSnapshot.ControlRightAxisBody = Config.GetRightAxisBody();
+		OutSnapshot.ControlUpAxisBody = Config.GetUpAxisBody();
+	}
 	OutSnapshot.Bounds = Bounds.GetBox();
-	OutSnapshot.LinearVelocityCmPerSec = GetPhysicsLinearVelocity();
-	OutSnapshot.AngularVelocityDegPerSec = GetPhysicsAngularVelocityInDegrees();
+	OutSnapshot.LinearVelocityCmPerSec = GetPhysicsLinearVelocity(OutSnapshot.RootBone);
+	OutSnapshot.AngularVelocityDegPerSec =
+		GetPhysicsAngularVelocityInDegrees(OutSnapshot.RootBone);
 	OutSnapshot.bHasTrajectoryReference = GetTrajectoryReference(
 		OutSnapshot.TrajectoryReference);
 
-	const FAircraftSimulationLodModel* const LodModel = GetCurrentLodModel();
 	if (LodModel)
 	{
 		FAircraftFlightControlOutput Output;
@@ -930,10 +992,12 @@ void UAircraftComponent::CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSn
 			FAircraftDebugRotorSnapshot& RotorSnapshot =
 				OutSnapshot.Rotors.AddDefaulted_GetRef();
 			RotorSnapshot.Name = Rotor.RotorName;
-			RotorSnapshot.PositionCm = OutSnapshot.Transform.TransformPosition(
-				Rotor.PositionLocalCm);
-			RotorSnapshot.ThrustAxis = OutSnapshot.Transform.TransformVectorNoScale(
-				Rotor.GetNormalizedThrustAxisLocal()).GetSafeNormal();
+			RotorSnapshot.PositionBodyCm = Rotor.PositionBodyCm;
+			RotorSnapshot.PositionCm = OutSnapshot.BodyTransform.TransformPosition(
+				RotorSnapshot.PositionBodyCm);
+			RotorSnapshot.ThrustAxisBody = Rotor.GetNormalizedThrustAxisBody();
+			RotorSnapshot.ThrustAxis = OutSnapshot.BodyTransform.TransformVectorNoScale(
+				RotorSnapshot.ThrustAxisBody).GetSafeNormal();
 			RotorSnapshot.ThrustN = Output.RotorCommands.IsValidIndex(RotorIndex)
 				? Output.RotorCommands[RotorIndex].GeneratedThrust
 				: 0.0f;
@@ -953,7 +1017,9 @@ void UAircraftComponent::CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSn
 	OutSnapshot.bSimulationEnabled = IsSimulationEnabled();
 	OutSnapshot.bSimulationSuspended = IsSimulationSuspended();
 	OutSnapshot.bControllerEnabled = IsControllerEnabled();
-	OutSnapshot.bSimulatingPhysics = IsSimulatingPhysics();
+	OutSnapshot.bSimulatingPhysics = ChassisBody
+		? ChassisBody->IsInstanceSimulatingPhysics()
+		: IsSimulatingPhysics();
 	OutSnapshot.SimulationLOD = GetCurrentSimulationLOD();
 	OutSnapshot.DriveModeText = UEnum::GetDisplayValueAsText(
 		GetCurrentSimulationDriveMode());
@@ -1091,10 +1157,23 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 	}
 
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
+	const FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+	const bool bChassisBodyValid = ChassisBody && ChassisBody->IsValidBodyInstance();
+	const FTransform BodyWorldTransform = bChassisBodyValid
+		? ChassisBody->GetUnrealWorldTransform()
+		: Config.FrameBinding.GetBodyWorldTransform(GetComponentTransform());
+	const FQuat BodyWorldRotation = BodyWorldTransform.GetRotation();
+	const FVector CenterOfMassBodyCm = ChassisBody
+		? ChassisBody->GetMassSpaceLocal().GetTranslation()
+		: FVector::ZeroVector;
+	const FVector CurrentCenterOfMassWorldCm = bChassisBodyValid
+		&& ChassisBody->IsInstanceSimulatingPhysics()
+		? ChassisBody->GetCOMPosition()
+		: BodyWorldTransform.TransformPosition(CenterOfMassBodyCm);
 	const FAircraftManualCommand Command = UE::AircraftLab::PilotInputMapping::BuildManualCommand(
-		PilotInput, GetComponentQuat(), Config);
+		PilotInput, BodyWorldRotation, Config);
 	const float ControlHeadingDegrees = UE::AircraftLab::PilotInputMapping::GetPlanarHeadingDegrees(
-		GetComponentQuat(), Config);
+		BodyWorldRotation, Config);
 	const FQuat ControlHeadingRotation(
 		FVector::UpVector, FMath::DegreesToRadians(ControlHeadingDegrees));
 	// MovementIntent 以稳定的航向局部坐标表达。世界坐标目标会随每一帧姿态微动，
@@ -1125,8 +1204,9 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 		|| (bManualMovementIntentInitialized
 			&& ManualMovementIntent.Type == EAircraftMovementIntentType::Velocity))
 	{
-		const FVector CurrentVelocityCmPerSec = IsSimulatingPhysics()
-			? GetPhysicsLinearVelocity()
+		const FVector CurrentVelocityCmPerSec = ChassisBody
+			&& ChassisBody->IsInstanceSimulatingPhysics()
+			? GetPhysicsLinearVelocity(Model->RootBone)
 			: PreviousAlternativeVelocityCmPerSec;
 		const float HorizontalSpeedCmPerSec = FVector2D(
 			CurrentVelocityCmPerSec.X, CurrentVelocityCmPerSec.Y).Size();
@@ -1165,7 +1245,7 @@ void UAircraftComponent::PushMovementIntentToProxy(float DeltaSeconds)
 		if (DesiredType == EAircraftMovementIntentType::Hold)
 		{
 			ManualMovementIntent.Hold.bCaptureCurrentPosition = false;
-			ManualMovementIntent.Hold.PositionCm = GetComponentLocation();
+			ManualMovementIntent.Hold.PositionCm = CurrentCenterOfMassWorldCm;
 		}
 		bManualMovementIntentInitialized = true;
 		++ManualMovementIntentRevision;
@@ -1385,9 +1465,17 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		{
 			if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel())
 			{
+				const FTransform BodyTransform =
+					Model->FlightController.FrameBinding.GetBodyWorldTransform(
+						GetComponentTransform());
+				const FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+				const FVector CenterOfMassBodyCm = ChassisBody
+					? ChassisBody->GetMassSpaceLocal().GetTranslation()
+					: FVector::ZeroVector;
 				AircraftSimulationProxy->TickKinematicTrajectory_GameThread(
 					DeltaTime, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0,
-					GetComponentTransform(), PreviousAlternativeVelocityCmPerSec,
+					BodyTransform, BodyTransform.TransformPosition(CenterOfMassBodyCm),
+					PreviousAlternativeVelocityCmPerSec,
 					FVector::ZeroVector, *Model);
 			}
 		}

@@ -7,7 +7,7 @@ namespace UE::AircraftLab::Diagnostics::Private
 {
 	static TAutoConsoleVariable<int32> CVarDraw(
 		TEXT("p.Aircraft.Debug.Draw"), 0,
-		TEXT("Aircraft runtime drawing: 0=Off, 1=Aircraft, 2=Autopilot, 3=All."),
+		TEXT("Aircraft runtime drawing: 0=Off, 1=Aircraft (physical RootBone/control axes, COM, rotors, targets), 2=Autopilot, 3=All."),
 		ECVF_Cheat);
 	static TAutoConsoleVariable<bool> CVarCorridor(
 		TEXT("p.Aircraft.Debug.Corridor"), false,

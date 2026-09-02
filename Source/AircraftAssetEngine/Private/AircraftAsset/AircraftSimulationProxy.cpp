@@ -239,10 +239,14 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 	{
 		double TotalMaxThrustN = 0.0;
 		UE_LOG(LogAircraft, Log,
-			TEXT("[AircraftDF.Config] Owner=%s LOD=%d Drive=%s Arm=%d Controller=%d Rotors=%d ForwardAxis=%d AssetMass=%.3fkg AssetCOMNudge=(%+.2f,%+.2f,%+.2f)cm InertiaScale=(%.3f,%.3f,%.3f) ChaosMass=%.3fkg ChaosCOM=(%+.2f,%+.2f,%+.2f)cm ChaosInertia=(%.4f,%.4f,%.4f)kgm2 DampingL=(%.3f,%.3f,%.3f) DampingA=(%.3f,%.3f,%.3f)"),
+			TEXT("[AircraftDF.Config] Owner=%s LOD=%d Drive=%s Arm=%d Controller=%d Rotors=%d ModelForwardAxis=%d BodyAxes(F/R/U)=(%+.2f,%+.2f,%+.2f)/(%+.2f,%+.2f,%+.2f)/(%+.2f,%+.2f,%+.2f) AssetMass=%.3fkg AssetCOMNudge=(%+.2f,%+.2f,%+.2f)cm InertiaScale=(%.3f,%.3f,%.3f) ChaosMass=%.3fkg ChaosCOM=(%+.2f,%+.2f,%+.2f)cm ChaosInertia=(%.4f,%.4f,%.4f)kgm2 DampingL=(%.3f,%.3f,%.3f) DampingA=(%.3f,%.3f,%.3f)"),
 			*AircraftOwnerName, ActiveLodIndex, FAircraftDebug::GetDriveModeLabel(ActiveDriveMode),
 			static_cast<int32>(ArmState), bControllerIsEnabled ? 1 : 0,
-			ControlAllocator.RotorInfoBuffer.Num(), static_cast<int32>(Config.ForwardAxis),
+			ControlAllocator.RotorInfoBuffer.Num(),
+			static_cast<int32>(Config.FrameBinding.GetModelForwardAxis()),
+			Config.GetForwardAxisBody().X, Config.GetForwardAxisBody().Y, Config.GetForwardAxisBody().Z,
+			Config.GetRightAxisBody().X, Config.GetRightAxisBody().Y, Config.GetRightAxisBody().Z,
+			Config.GetUpAxisBody().X, Config.GetUpAxisBody().Y, Config.GetUpAxisBody().Z,
 			ActiveLodModel->Mass.MassKg,
 			ActiveLodModel->Mass.CenterOfMassNudgeCm.X,
 			ActiveLodModel->Mass.CenterOfMassNudgeCm.Y,
@@ -487,8 +491,8 @@ void FAircraftSimulationProxy::RebuildRotorDescriptors_PhysicsThread(
 			FAircraftRotorAllocationInfo Info;
 			Info.RotorName = Rotor.RotorName;
 			Info.bEnabled = Rotor.IsEnabled();
-			Info.PositionFromCenterOfMassBodyCm = Rotor.PositionLocalCm - CenterOfMassBodyCm;
-			Info.ThrustAxisBody = Rotor.GetNormalizedThrustAxisLocal();
+			Info.PositionFromCenterOfMassBodyCm = Rotor.PositionBodyCm - CenterOfMassBodyCm;
+			Info.ThrustAxisBody = Rotor.GetNormalizedThrustAxisBody();
 			Info.MaxPhysicalThrustN = FMath::Max(Rotor.MaxThrustN, 0.0f);
 			Info.MaxAllocatedThrustN = Info.MaxPhysicalThrustN * FMath::Clamp(Rotor.ControlAuthorityScale, 0.0f, 1.0f);
 			Info.ReactionTorqueCoefficientM = FMath::Max(Rotor.ReactionTorqueCoefficientM, 0.0f);
@@ -684,6 +688,7 @@ bool FAircraftSimulationProxy::GetMotionPlan_GameThread(
 
 void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 	float DeltaTime, double TimeSeconds, const FTransform& BodyTransform,
+	const FVector& CenterOfMassWorldCm,
 	const FVector& VelocityCmPerSec, const FVector& AngularVelocityWorldRadPerSec,
 	const FAircraftSimulationLodModel& Model)
 {
@@ -709,7 +714,7 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 		FAircraftVehicleStateSnapshot State;
 		State.TimeSeconds = TimeSeconds;
 		State.Sequence = VehicleStateSequence.fetch_add(1, std::memory_order_relaxed) + 1;
-		State.PositionCm = BodyTransform.GetLocation();
+		State.PositionCm = CenterOfMassWorldCm;
 		State.VelocityCmPerSec = VelocityCmPerSec;
 		State.BodyRotation = BodyTransform.GetRotation();
 		State.AngularVelocityBodyRadPerSec = State.BodyRotation.UnrotateVector(
@@ -1120,7 +1125,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	AngularVelWorldRadPerSec = Handle->W();
 
 	const FQuat WorldQuat = WorldXform.GetRotation();
-	const FVector WorldPosCm = WorldXform.GetLocation();
+	const FVector CenterOfMassWorldCm(
+		Chaos::FParticleUtilitiesGT::GetCoMWorldPosition(Handle));
 	const FVector AngularVelBodyRadPerSec = WorldQuat.UnrotateVector(AngularVelWorldRadPerSec);
 	const FVector AngularVelControllerDegPerSec(
 		FMath::RadiansToDegrees(Config.BodyAngularToController(AngularVelBodyRadPerSec).X),
@@ -1169,7 +1175,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	{
 		FAircraftKinematicState& State = Runtime.EstimatedState.State;
 		State.TimeSeconds = SimTime;
-		State.PositionCm = WorldPosCm;
+		State.PositionCm = CenterOfMassWorldCm;
 		if (Runtime.bHasPreviousLinearVelocity && DeltaTime > UE_SMALL_NUMBER)
 		{
 			State.AccelerationWorldCmPerSecSq = (LinearVelCmPerSec - Runtime.PreviousLinearVelocityCmPerSec) / DeltaTime;
@@ -1212,7 +1218,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 
 		FScopeLock Lock(&OutputCriticalSection);
 		LatestEstimated.State.TimeSeconds = SimTime;
-		LatestEstimated.State.PositionCm = WorldPosCm;
+		LatestEstimated.State.PositionCm = CenterOfMassWorldCm;
 		LatestEstimated.State.VelocityCmPerSec = LinearVelCmPerSec;
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
 		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
@@ -1226,7 +1232,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	FAircraftVehicleStateSnapshot VehicleState;
 	VehicleState.TimeSeconds = SimTime;
 	VehicleState.Sequence = VehicleStateSequence.fetch_add(1, std::memory_order_relaxed) + 1;
-	VehicleState.PositionCm = WorldPosCm;
+	VehicleState.PositionCm = CenterOfMassWorldCm;
 	VehicleState.VelocityCmPerSec = LinearVelCmPerSec;
 	VehicleState.AccelerationCmPerSecSq = Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq;
 	VehicleState.BodyRotation = WorldQuat;
@@ -1317,8 +1323,9 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	if (Capability.bHasExplicitAerodynamics)
 	{
 		Capability.AirDensityKgPerM3 = ActiveLodModel->Aerodynamics.AirDensityKgPerM3;
-		Capability.LinearDragBodyNsPerM = ActiveLodModel->Aerodynamics.LinearDragNsPerM;
-		Capability.DragAreaCoefficientBodyM2 = ActiveLodModel->Aerodynamics.DragAreaCoefficientM2;
+		Capability.AircraftToBodyRotation = Config.GetControlToBodyRotation();
+		Capability.LinearDragAircraftNsPerM = ActiveLodModel->Aerodynamics.LinearDragNsPerM;
+		Capability.DragAreaCoefficientAircraftM2 = ActiveLodModel->Aerodynamics.DragAreaCoefficientM2;
 		Capability.MaxRelativeAirspeedCmPerSec =
 			ActiveLodModel->Aerodynamics.MaxRelativeAirspeedCmPerSec;
 	}
@@ -1382,7 +1389,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Aerodynamics_Apply);
 		const FAircraftAerodynamicWrench AerodynamicWrench = AircraftAerodynamics::ComputeWrench(
-			ActiveLodModel->Aerodynamics, WorldQuat, LinearVelCmPerSec,
+			ActiveLodModel->Aerodynamics, WorldQuat, Config.GetControlToBodyRotation(),
+			LinearVelCmPerSec,
 			FVector::ZeroVector, AngularVelBodyRadPerSec);
 		Handle->AddForce(AircraftPhysicsUnits::NewtonsToChaosForce(
 			AerodynamicWrench.ForceWorldN) * ForceAccumulationScale, false);
@@ -1458,7 +1466,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	{
 		FScopeLock Lock(&OutputCriticalSection);
 		LatestEstimated.State.TimeSeconds = SimTime;
-		LatestEstimated.State.PositionCm = WorldPosCm;
+		LatestEstimated.State.PositionCm = CenterOfMassWorldCm;
 		LatestEstimated.State.VelocityCmPerSec = LinearVelCmPerSec;
 		LatestEstimated.State.AccelerationWorldCmPerSecSq = Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq;
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
@@ -1564,7 +1572,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 
 		// 与权威组件边界一致：合力直接作用于刚体，偏心矩显式按真实 Chaos 质心计算。
 		// 这样物理施加值与分配器的 r×F 定义严格相同，也不会依赖高层位置施力接口的约定。
-		const FVector LocalPosCm = Rotor.PositionLocalCm;
+		const FVector LocalPosCm = Rotor.PositionBodyCm;
 		const FVector WorldPos = WorldXform.TransformPosition(LocalPosCm);
 		const FVector WorldAxis = WorldQuat.RotateVector(Info.ThrustAxisBody).GetSafeNormal();
 
@@ -1573,8 +1581,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		const FVector ForceChaos = AircraftPhysicsUnits::NewtonsToChaosForce(ForceN)
 			* ForceAccumulationScale;
 		Handle->AddForce(ForceChaos, false);
-		const FVector CenterOfMassWorld(Chaos::FParticleUtilitiesGT::GetCoMWorldPosition(Handle));
-		Handle->AddTorque(FVector::CrossProduct(WorldPos - CenterOfMassWorld, ForceChaos), false);
+		Handle->AddTorque(FVector::CrossProduct(WorldPos - CenterOfMassWorldCm, ForceChaos), false);
 
 		const FVector ReactionTorqueWorldNm = WorldAxis
 			* (AppliedThrustN * Info.ReactionTorqueCoefficientM * Info.SpinDirectionSign);
@@ -1604,7 +1611,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	{
 		FScopeLock Lock(&OutputCriticalSection);
 		LatestEstimated.State.TimeSeconds = SimTime;
-		LatestEstimated.State.PositionCm = WorldPosCm;
+		LatestEstimated.State.PositionCm = CenterOfMassWorldCm;
 		LatestEstimated.State.VelocityCmPerSec = LinearVelCmPerSec;
 		LatestEstimated.State.AccelerationWorldCmPerSecSq = Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq;
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;

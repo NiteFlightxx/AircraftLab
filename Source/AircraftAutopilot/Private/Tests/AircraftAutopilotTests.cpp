@@ -368,8 +368,8 @@ bool FAircraftPredictiveReferenceTest::RunTest(const FString& Parameters)
 	Capability.bHasExplicitAerodynamics = true;
 	Capability.AirDensityKgPerM3 = 1.225f;
 	Capability.MaxRelativeAirspeedCmPerSec = 10000.0f;
-	Capability.LinearDragBodyNsPerM = FVector(10.0, 10.0, 10.0);
-	Capability.DragAreaCoefficientBodyM2 = FVector(0.2, 0.2, 0.2);
+	Capability.LinearDragAircraftNsPerM = FVector(10.0, 10.0, 10.0);
+	Capability.DragAreaCoefficientAircraftM2 = FVector(0.2, 0.2, 0.2);
 
 	FAircraftMpccController Controller;
 	TestTrue(TEXT("Velocity intent is accepted"),
@@ -979,8 +979,8 @@ bool FAircraftDeterministicBackendTrajectoryTest::RunTest(const FString& Paramet
 	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
 	Capability.bHasExplicitAerodynamics = true;
 	Capability.AirDensityKgPerM3 = 1.225f;
-	Capability.LinearDragBodyNsPerM = FVector(10.0f);
-	Capability.DragAreaCoefficientBodyM2 = FVector(0.2f);
+	Capability.LinearDragAircraftNsPerM = FVector(10.0f);
+	Capability.DragAreaCoefficientAircraftM2 = FVector(0.2f);
 	Capability.MaxRelativeAirspeedCmPerSec = 10000.0f;
 	FAircraftVehicleStateSnapshot State;
 	State.TimeSeconds = 1.0;

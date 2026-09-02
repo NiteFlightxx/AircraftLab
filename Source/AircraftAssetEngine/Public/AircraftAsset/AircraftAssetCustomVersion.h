@@ -8,6 +8,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftAssetCustomVersion
 	enum Type
 	{
 		InitialSchema = 0,
+		ModelSpaceFrameBinding,
 		VersionPlusOne,
 		LatestVersion = VersionPlusOne - 1
 	};

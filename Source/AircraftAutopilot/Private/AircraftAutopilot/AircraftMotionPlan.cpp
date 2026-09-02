@@ -100,13 +100,13 @@ namespace
 			: SpeedCmPerSec;
 		const float SpeedMps = BoundedSpeedCmPerSec * 0.01f;
 		const float LinearDrag = FMath::Max3(
-			Capability.LinearDragBodyNsPerM.X,
-			Capability.LinearDragBodyNsPerM.Y,
-			Capability.LinearDragBodyNsPerM.Z);
+			Capability.LinearDragAircraftNsPerM.X,
+			Capability.LinearDragAircraftNsPerM.Y,
+			Capability.LinearDragAircraftNsPerM.Z);
 		const float AreaCoefficient = FMath::Max3(
-			Capability.DragAreaCoefficientBodyM2.X,
-			Capability.DragAreaCoefficientBodyM2.Y,
-			Capability.DragAreaCoefficientBodyM2.Z);
+			Capability.DragAreaCoefficientAircraftM2.X,
+			Capability.DragAreaCoefficientAircraftM2.Y,
+			Capability.DragAreaCoefficientAircraftM2.Z);
 		const float DragForceN = FMath::Max(LinearDrag, 0.0f) * SpeedMps
 			+ 0.5f * Capability.AirDensityKgPerM3
 				* FMath::Max(AreaCoefficient, 0.0f) * FMath::Square(SpeedMps);

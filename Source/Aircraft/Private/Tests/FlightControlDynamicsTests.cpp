@@ -61,12 +61,16 @@ bool FAircraftDefaultBodyAxesTest::RunTest(const FString& Parameters)
 {
 	const FAircraftFlightControllerRuntimeConfig Config;
 
-	TestEqual(TEXT("Default model forward axis is +Y (1)"),
-		Config.ForwardAxis, static_cast<uint8>(1));
+	TestEqual(TEXT("Default model forward axis is +Y"),
+		Config.FrameBinding.GetModelForwardAxis(), EAircraftModelForwardAxis::PositiveY);
 	TestTrue(TEXT("Configured forward vector is model-local +Y"),
-		Config.GetForwardAxisBody().Equals(FVector::RightVector, 1.e-4f));
+		Config.FrameBinding.GetForwardAxisModel().Equals(FVector::RightVector, 1.e-4f));
 	TestTrue(TEXT("Configured right vector is model-local -X"),
-		Config.GetRightAxisBody().Equals(-FVector::ForwardVector, 1.e-4f));
+		Config.FrameBinding.GetRightAxisModel().Equals(-FVector::ForwardVector, 1.e-4f));
+	TestTrue(TEXT("Configured up vector is model-local +Z"),
+		Config.FrameBinding.GetUpAxisModel().Equals(FVector::UpVector, 1.e-4f));
+	TestTrue(TEXT("Identity root frame resolves model +Y forward to body +Y"),
+		Config.GetForwardAxisBody().Equals(FVector::RightVector, 1.e-4f));
 	TestTrue(TEXT("Identity model rotation exposes a +90 degree control heading"),
 		FMath::IsNearlyEqual(
 			Config.GetControlWorldRotation(FQuat::Identity).Rotator().Yaw,
@@ -83,12 +87,78 @@ bool FAircraftDefaultBodyAxesTest::RunTest(const FString& Parameters)
 		Config.GetControlWorldRotation(DesiredBodyWorld).Equals(DesiredControlWorld, 1.e-4f));
 
 	FAircraftFlightControllerRuntimeConfig PositiveXAxes;
-	PositiveXAxes.ForwardAxis = 0; // +X
-	TestTrue(TEXT("+X is available as an explicit body-axis configuration"),
+	PositiveXAxes.FrameBinding.Configure(
+		EAircraftModelForwardAxis::PositiveX, FTransform::Identity);
+	TestTrue(TEXT("+X remains available as an explicit model-forward configuration"),
 		PositiveXAxes.GetForwardAxisBody().Equals(FVector::ForwardVector, 1.e-4f));
 	TestTrue(TEXT("+X torque mapping follows the configured body axes"),
 		PositiveXAxes.ControllerTorqueToBody(ControllerTorque).Equals(
 			FVector(-1.0f, -2.0f, 3.0f), 1.e-4f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftThreeAxisBodyFrameTest,
+	"AircraftLab.Control.Axes.ArbitraryRootBoneFrame",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftThreeAxisBodyFrameTest::RunTest(const FString& Parameters)
+{
+	FAircraftFlightControllerRuntimeConfig Config;
+	const FQuat BodyToModelRotation(FRotationMatrix::MakeFromXZ(
+		FVector::UpVector, -FVector::RightVector));
+	const FTransform BodyToModel(
+		BodyToModelRotation, FVector(10.0, 20.0, 30.0), FVector::OneVector);
+	TestTrue(TEXT("A finite RootBone reference transform configures the frame binding"),
+		Config.FrameBinding.Configure(EAircraftModelForwardAxis::PositiveY, BodyToModel));
+
+	TestTrue(TEXT("model +Y forward resolves to bone2 body -Z"),
+		Config.GetForwardAxisBody().Equals(FVector(0.0, 0.0, -1.0), 1.e-4));
+	TestTrue(TEXT("bone2 up is body +X"),
+		Config.GetUpAxisBody().Equals(FVector(1.0, 0.0, 0.0), 1.e-4));
+	TestTrue(TEXT("model -X right resolves to bone2 body +Y"),
+		Config.GetRightAxisBody().Equals(FVector(0.0, 1.0, 0.0), 1.e-4));
+
+	const FVector ControlVector(11.0, 22.0, 33.0);
+	const FVector ExpectedBodyVector(33.0, 22.0, -11.0);
+	TestTrue(TEXT("Control vectors map into the complete bone2 frame"),
+		Config.ControlToBodyVector(ControlVector).Equals(ExpectedBodyVector, 1.e-4));
+	TestTrue(TEXT("Body vectors round-trip through the complete bone2 frame"),
+		Config.BodyToControlVector(ExpectedBodyVector).Equals(ControlVector, 1.e-4));
+
+	const FQuat ControlToBody = Config.GetControlToBodyRotation();
+	TestTrue(TEXT("Control rotation maps Forward to body -Z"),
+		ControlToBody.RotateVector(FVector::ForwardVector).Equals(FVector(0.0, 0.0, -1.0), 1.e-4));
+	TestTrue(TEXT("Control rotation maps Right to body +Y"),
+		ControlToBody.RotateVector(FVector::RightVector).Equals(FVector(0.0, 1.0, 0.0), 1.e-4));
+	TestTrue(TEXT("Control rotation maps Up to body +X"),
+		ControlToBody.RotateVector(FVector::UpVector).Equals(FVector(1.0, 0.0, 0.0), 1.e-4));
+
+	TestTrue(TEXT("Body-axis inertia magnitudes are reordered into Roll Pitch Yaw axes"),
+		Config.BodyAxisMagnitudesToControl(FVector(1.0, 2.0, 3.0)).Equals(
+			FVector(3.0, 2.0, 1.0), 1.e-4));
+
+	const FVector ModelPoint(40.0, -15.0, 8.0);
+	const FVector BodyPoint = Config.FrameBinding.ModelPositionToBody(ModelPoint);
+	TestTrue(TEXT("Model and RootBone positions round-trip through the complete binding"),
+		Config.FrameBinding.BodyPositionToModel(BodyPoint).Equals(ModelPoint, 1.e-4));
+	const FTransform ModelWorld(
+		FRotator(12.0, 47.0, -8.0), FVector(500.0, -250.0, 900.0));
+	const FTransform BodyWorld = Config.FrameBinding.GetBodyWorldTransform(ModelWorld);
+	TestTrue(TEXT("The compiled RootBone origin matches BodyToModel followed by ModelToWorld"),
+		BodyWorld.GetLocation().Equals(
+			ModelWorld.TransformPosition(BodyToModel.GetLocation()), 1.e-4));
+	const FTransform RecoveredModelWorld = Config.FrameBinding.GetModelWorldTransform(BodyWorld);
+	TestTrue(TEXT("Model and RootBone world transforms round-trip"),
+		RecoveredModelWorld.GetLocation().Equals(ModelWorld.GetLocation(), 1.e-4)
+		&& RecoveredModelWorld.GetRotation().Equals(ModelWorld.GetRotation(), 1.e-4));
+
+	FAircraftRotorAllocationInfo UpwardRotor;
+	UpwardRotor.ThrustAxisBody = Config.GetUpAxisBody();
+	UpwardRotor.MaxAllocatedThrustN = 10.0f;
+	const FVector4 Jacobian = FAircraftControlAllocator::BuildJacobianColumn(UpwardRotor, Config);
+	TestEqual(TEXT("Collective authority follows configured body Up instead of hard-coded body +Z"),
+		Jacobian[0], 10.0, 1.e-4);
 	return true;
 }
 

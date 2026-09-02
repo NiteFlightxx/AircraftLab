@@ -10,6 +10,7 @@
 
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
+#include "Engine/SkeletalMesh.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
 #include "UObject/SoftObjectPath.h"
 
@@ -29,10 +30,59 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		return FVector(static_cast<double>(V.X), static_cast<double>(V.Y), static_cast<double>(V.Z));
 	}
 
+	static void CompileFrameBinding(
+		FAircraftSimulationLodModel& Model, const USkeletalMesh* SkeletalMesh)
+	{
+		if (!SkeletalMesh)
+		{
+			Model.FlightController.FrameBinding.Invalidate();
+			return;
+		}
+
+		const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
+		const FName RootBoneName = Model.RootBone.IsNone()
+			? (ReferenceSkeleton.GetNum() > 0 ? ReferenceSkeleton.GetBoneName(0) : NAME_None)
+			: Model.RootBone;
+		if (RootBoneName.IsNone() || ReferenceSkeleton.FindBoneIndex(RootBoneName) == INDEX_NONE)
+		{
+			Model.FlightController.FrameBinding.Invalidate();
+			return;
+		}
+
+		const FTransform BodyToModelTransform(
+			FMatrix(SkeletalMesh->GetComposedRefPoseMatrix(RootBoneName)));
+		Model.FlightController.FrameBinding.Configure(
+			Model.FlightController.FrameBinding.GetModelForwardAxis(), BodyToModelTransform);
+	}
+
+	static bool TryGetSocketModelTransform(
+		const USkeletalMesh* SkeletalMesh, const FName SocketOrBoneName,
+		FTransform& OutSocketToModelTransform)
+	{
+		if (!SkeletalMesh || SocketOrBoneName.IsNone())
+		{
+			return false;
+		}
+
+		const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
+		const bool bIsBone = ReferenceSkeleton.FindBoneIndex(SocketOrBoneName) != INDEX_NONE;
+		const bool bIsSocket = SkeletalMesh->FindSocket(SocketOrBoneName) != nullptr;
+		if (!bIsBone && !bIsSocket)
+		{
+			return false;
+		}
+
+		OutSocketToModelTransform = FTransform(
+			FMatrix(SkeletalMesh->GetComposedRefPoseMatrix(SocketOrBoneName)));
+		OutSocketToModelTransform.NormalizeRotation();
+		return !OutSocketToModelTransform.ContainsNaN();
+	}
+
 	/** 把一个 Aircraft Collection 编译成一个运行时 LOD 模型。 */
 	static void ParseLodModel(
 		const TSharedRef<const FManagedArrayCollection>& InCollection,
-		FAircraftSimulationLodModel& OutModel)
+		FAircraftSimulationLodModel& OutModel,
+		const USkeletalMesh* SkeletalMesh)
 	{
 		OutModel.Reset();
 		const FConstAircraftCollection ConstCollection(InCollection);
@@ -110,8 +160,12 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		const FCollectionAircraftPropertyConstFacade Properties(InCollection);
 		if (Properties.IsValid())
 		{
-			OutModel.FlightController.ForwardAxis = static_cast<uint8>(FMath::Clamp(
-				Properties.GetValue<int32>(TEXT("Frame.ForwardAxis"), OutModel.FlightController.ForwardAxis), 0, 3));
+			OutModel.FlightController.FrameBinding.SetModelForwardAxis(
+				static_cast<EAircraftModelForwardAxis>(FMath::Clamp(
+				Properties.GetValue<int32>(TEXT("Frame.ForwardAxis"),
+					static_cast<int32>(OutModel.FlightController.FrameBinding.GetModelForwardAxis())),
+				static_cast<int32>(EAircraftModelForwardAxis::PositiveX),
+				static_cast<int32>(EAircraftModelForwardAxis::NegativeY))));
 			OutModel.FlightController.MaxRollRateDegreesPerSec = Properties.GetValue<float>(
 				TEXT("FlightController.MaxRollRateDegreesPerSec"), OutModel.FlightController.MaxRollRateDegreesPerSec);
 			OutModel.FlightController.MaxPitchRateDegreesPerSec = Properties.GetValue<float>(
@@ -293,6 +347,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			}
 		}
 
+		CompileFrameBinding(OutModel, SkeletalMesh);
+
 		/* Motors → 临时 map（按 Name 索引），供 Propeller 解析时关联 */
 		TMap<FName, FAircraftMotorModelConfig> MotorByName;
 		const TManagedArray<FName>* MotorNames = ConstCollection.GetMotorName();
@@ -343,10 +399,34 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			Rotor.RotorName = (*PropNames)[i];
 			Rotor.SocketName = (PropSockets && i < PropSockets->Num()) ? (*PropSockets)[i] : NAME_None;
 			Rotor.bUseSocketTransform = (PropUseSockets && i < PropUseSockets->Num()) ? (*PropUseSockets)[i] : false;
-			Rotor.PositionLocalCm = FVector3fToVector(
+			const FVector PositionModelCm = FVector3fToVector(
 				(PropPos && i < PropPos->Num()) ? (*PropPos)[i] : FVector3f::ZeroVector);
-			Rotor.ThrustAxisLocal = FVector3fToVector(
+			const FVector ThrustAxisInstallation = FVector3fToVector(
 				(PropAxes && i < PropAxes->Num()) ? (*PropAxes)[i] : FVector3f(0.f, 0.f, 1.f));
+			Rotor.bInstallationValid = OutModel.FlightController.FrameBinding.IsValid()
+				&& !ThrustAxisInstallation.IsNearlyZero();
+			if (Rotor.bInstallationValid && Rotor.bUseSocketTransform)
+			{
+				FTransform SocketToModelTransform;
+				Rotor.bInstallationValid = TryGetSocketModelTransform(
+					SkeletalMesh, Rotor.SocketName, SocketToModelTransform);
+				if (Rotor.bInstallationValid)
+				{
+					Rotor.PositionBodyCm = OutModel.FlightController.FrameBinding.ModelPositionToBody(
+						SocketToModelTransform.GetTranslation());
+					const FVector ThrustAxisModel = SocketToModelTransform.TransformVectorNoScale(
+						ThrustAxisInstallation).GetSafeNormal();
+					Rotor.ThrustAxisBody = OutModel.FlightController.FrameBinding.ModelVectorToBody(
+						ThrustAxisModel).GetSafeNormal();
+				}
+			}
+			else if (Rotor.bInstallationValid)
+			{
+				Rotor.PositionBodyCm = OutModel.FlightController.FrameBinding.ModelPositionToBody(
+					PositionModelCm);
+				Rotor.ThrustAxisBody = OutModel.FlightController.FrameBinding.ModelVectorToBody(
+					ThrustAxisInstallation).GetSafeNormal();
+			}
 			Rotor.SpinDirection = static_cast<EAircraftRotorSpinDirection>(
 				(PropSpins && i < PropSpins->Num()) ? (*PropSpins)[i] : 0);
 			Rotor.MaxThrustN = (PropMaxThr && i < PropMaxThr->Num()) ? (*PropMaxThr)[i] : 9.f;
@@ -392,14 +472,17 @@ namespace UE::AircraftLab::AircraftAsset::Private
 
 FAircraftSimulationModel::FAircraftSimulationModel(
 	const TArray<TSharedRef<const FManagedArrayCollection>>& InAircraftCollections,
-	FName InAircraftName)
+	FName InAircraftName,
+	USkeletalMesh* InSkeletalMesh)
 {
 	AircraftName = InAircraftName;
+	SkeletalMesh = InSkeletalMesh;
 	LodModels.SetNum(InAircraftCollections.Num());
 	SimulationLOD.LODs.SetNum(InAircraftCollections.Num());
 	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
 	{
-		UE::AircraftLab::AircraftAsset::Private::ParseLodModel(InAircraftCollections[LodIndex], LodModels[LodIndex]);
+		UE::AircraftLab::AircraftAsset::Private::ParseLodModel(
+			InAircraftCollections[LodIndex], LodModels[LodIndex], InSkeletalMesh);
 		SimulationLOD.LODs[LodIndex] = UE::AircraftLab::AircraftAsset::Private::ParseLodSettings(
 			InAircraftCollections[LodIndex], LodIndex);
 	}
