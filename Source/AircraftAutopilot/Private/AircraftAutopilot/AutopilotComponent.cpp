@@ -1,7 +1,7 @@
 #include "AircraftAutopilot/AutopilotComponent.h"
 
 #include "AircraftAutopilot/AircraftMotionPlan.h"
-#include "AircraftDiagnostics/AircraftDebugRuntime.h"
+#include "AircraftDiagnostics/AircraftDebug.h"
 #include "AircraftDiagnostics/AircraftDebugSettings.h"
 #include "GameFramework/Actor.h"
 
@@ -259,6 +259,7 @@ FAircraftMovementIntentHandle UAutopilotComponent::SubmitIntent(
 	ActiveHandle.Id = NextIntentId++;
 	++IntentRevision;
 	ElapsedSeconds = 0.0f;
+	DiagnosticLogAccumulatorSeconds = 0.0f;
 	StableTimeSeconds = 0.0f;
 	InitialDistanceToTargetCm = -1.0f;
 	CurrentResult = {};
@@ -365,6 +366,7 @@ void UAutopilotComponent::Finish(
 	CurrentResult.ElapsedSeconds = ElapsedSeconds;
 	const FAircraftMovementIntentResult FinishedResult = CurrentResult;
 	ActiveHandle = {};
+	DiagnosticLogAccumulatorSeconds = 0.0f;
 	++IntentRevision;
 	OnMovementIntentChanged.Broadcast(FinishedResult);
 }
@@ -510,17 +512,6 @@ void UAutopilotComponent::TickComponent(
 		&& Controller->GetAircraftAutopilotDiagnostics(Diagnostics)
 		&& Diagnostics.ActiveIntentId == ActiveHandle.Id
 		&& Diagnostics.IntentRevision == IntentRevision;
-	if (EnumHasAnyFlags(UE::AircraftLab::Diagnostics::GetRuntimeDebugDrawData(),
-			EAircraftDebugData::Autopilot)
-		&& Controller)
-	{
-		FAircraftDebugFrameSnapshot DebugSnapshot;
-		DebugSnapshot.SubjectName = FString::Printf(TEXT("%s/%s"),
-			*GetNameSafe(FlightControllerComponent->GetOwner()),
-			*FlightControllerComponent->GetName());
-		AppendDebugSnapshot(DebugSnapshot);
-		UE::AircraftLab::Diagnostics::DrawRuntime(GetWorld(), DebugSnapshot);
-	}
 	if (bMatchingDiagnostics)
 	{
 		CurrentResult.PathTrackingState = Diagnostics.PathTrackingState;
@@ -546,6 +537,29 @@ void UAutopilotComponent::TickComponent(
 	{
 		CurrentResult.Status = EAircraftMovementIntentStatus::Planning;
 	}
+	const FAircraftDiagnosticLogSelection LogSelection =
+		UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection();
+	if (LogSelection.IsEnabled(EAircraftDiagnosticLogChannel::Autopilot))
+	{
+		DiagnosticLogAccumulatorSeconds += DeltaTime;
+		if (LogSelection.IntervalSeconds <= UE_SMALL_NUMBER
+			|| DiagnosticLogAccumulatorSeconds + UE_SMALL_NUMBER >= LogSelection.IntervalSeconds)
+		{
+			DiagnosticLogAccumulatorSeconds = 0.0f;
+			FAircraftTrajectoryReference Reference;
+			const bool bHasReference = Controller
+				&& Controller->GetAircraftTrajectoryReference(Reference) && Reference.bValid;
+			UE_LOG(LogAircraft, Log,
+				TEXT("[Aircraft.Autopilot] Owner=%s Intent=%lld Revision=%llu Status=%s Tracking=%s Ref=%d PathProgress=%.3f RouteProgress=%.3f Contour=%.1fcm Lag=%.1fcm Corridor=%.1fcm Predicted=%.1fcm Solve=%.3fms"),
+				*GetNameSafe(GetOwner()), ActiveHandle.Id, IntentRevision,
+				*UEnum::GetDisplayValueAsText(CurrentResult.Status).ToString(),
+				*UEnum::GetDisplayValueAsText(CurrentResult.PathTrackingState).ToString(),
+				bHasReference ? 1 : 0, Reference.PathProgress, Reference.RouteProgress,
+				Diagnostics.ContourErrorCm, Diagnostics.LagErrorCm,
+				Diagnostics.CorridorViolationCm, Diagnostics.PredictedCorridorViolationCm,
+				Diagnostics.LastSolveMilliseconds);
+		}
+	}
 	if (ResolvedIntent.TimeoutSeconds > 0.0f && ElapsedSeconds >= ResolvedIntent.TimeoutSeconds)
 	{
 		Finish(EAircraftMovementIntentStatus::Failed,
@@ -570,9 +584,11 @@ bool UAutopilotComponent::GetAircraftMovementIntent(
 	return true;
 }
 
-void UAutopilotComponent::AppendDebugSnapshot(FAircraftDebugFrameSnapshot& Snapshot) const
+void UAutopilotComponent::AppendDebugSnapshot(const FAircraftDebugCaptureRequest& Request,
+	FAircraftDebugFrameSnapshot& Snapshot) const
 {
-	if (!IsAircraftMovementIntentActive())
+	if (!Request.Requires(EAircraftDebugPayload::AutopilotCore)
+		|| !IsAircraftMovementIntentActive())
 	{
 		return;
 	}
@@ -581,15 +597,43 @@ void UAutopilotComponent::AppendDebugSnapshot(FAircraftDebugFrameSnapshot& Snaps
 	{
 		return;
 	}
-	Snapshot.AvailableData |= EAircraftDebugData::Autopilot;
-	Snapshot.MovementIntent = ActiveHandle.IsValid() ? ResolvedIntent : PassThroughContinuationIntent;
+	Snapshot.AvailablePayloads |= EAircraftDebugPayload::AutopilotCore;
+	const FAircraftMovementIntent& Intent = ActiveHandle.IsValid()
+		? ResolvedIntent : PassThroughContinuationIntent;
+	Snapshot.AutopilotIntentType = Intent.Type;
 	Controller->GetAircraftTrajectoryReference(Snapshot.AutopilotReference);
 	Controller->GetAircraftAutopilotDiagnostics(Snapshot.AutopilotDiagnostics);
-	Controller->GetAircraftMotionPlan(
-		Snapshot.AutopilotPlanSamples,
-		Snapshot.AutopilotPlanDurationSeconds,
-		Snapshot.AutopilotPlanLengthCm,
-		Snapshot.AutopilotPlanRevision);
+	if (Request.Requires(EAircraftDebugPayload::AutopilotPlan))
+	{
+		Controller->GetAircraftMotionPlan(Snapshot.AutopilotPlanSamples,
+			Snapshot.AutopilotPlanDurationSeconds, Snapshot.AutopilotPlanLengthCm,
+			Snapshot.AutopilotPlanRevision);
+		if (Intent.Type == EAircraftMovementIntentType::Route
+			&& Snapshot.AutopilotPlanSamples.IsEmpty())
+		{
+			Snapshot.AutopilotRoutePointsCm = Intent.Route.PointsCm;
+			Snapshot.bAutopilotRouteClosed = Intent.Route.bClosed;
+		}
+		Snapshot.AvailablePayloads |= EAircraftDebugPayload::AutopilotPlan;
+	}
+	if (Request.Requires(EAircraftDebugPayload::AutopilotCorridor))
+	{
+		if (Intent.Type == EAircraftMovementIntentType::Route)
+		{
+			Snapshot.AutopilotCorridor = Intent.Route.Corridor;
+			for (int32 Index = 1; Index < Intent.Route.PointsCm.Num(); ++Index)
+			{
+				Snapshot.AutopilotRouteLengthCm += FVector::Distance(
+					Intent.Route.PointsCm[Index - 1], Intent.Route.PointsCm[Index]);
+			}
+			if (Intent.Route.bClosed && Intent.Route.PointsCm.Num() > 2)
+			{
+				Snapshot.AutopilotRouteLengthCm += FVector::Distance(
+					Intent.Route.PointsCm.Last(), Intent.Route.PointsCm[0]);
+			}
+		}
+		Snapshot.AvailablePayloads |= EAircraftDebugPayload::AutopilotCorridor;
+	}
 }
 
 bool UAutopilotComponent::IsAircraftMovementIntentActive() const

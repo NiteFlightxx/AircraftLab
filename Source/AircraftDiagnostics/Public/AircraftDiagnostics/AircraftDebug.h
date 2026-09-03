@@ -41,12 +41,6 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftPlanningFailureDiagnostics
 /** Runtime diagnostics shared by every Aircraft simulation backend. */
 struct AIRCRAFTDIAGNOSTICS_API FAircraftDebug
 {
-	static bool IsInputLogEnabled();
-	static bool IsDriveLogEnabled();
-	static bool IsFlightLogEnabled();
-	static bool IsRotorLogEnabled();
-	static bool IsConstraintLogEnabled();
-	static float GetLogIntervalSeconds();
 	static void LogPlanningFailure(const FAircraftPlanningFailureDiagnostics& Diagnostics);
 
 	static const TCHAR* GetDriveModeLabel(EAircraftSimulationDriveMode Mode);

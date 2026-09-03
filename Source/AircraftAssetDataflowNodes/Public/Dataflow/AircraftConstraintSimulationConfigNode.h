@@ -14,7 +14,7 @@ struct FAircraftConstraintSimulationConfig
 
 	/** 线性弹簧自然频率（Hz）。运行时转换为 Stiffness=(Strength*2π)^2。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (DisplayName = "Linear Natural Frequency (Hz)", ClampMin = "0.0", Units = "Hz"))
-	float LinearNaturalFrequencyHz = 1.f;
+	float LinearNaturalFrequencyHz = 1.59154943f;
 	/** 线性阻尼比；1 为临界阻尼。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (DisplayName = "Linear Damping Ratio", ClampMin = "0.0"))
 	float LinearDampingRatio = 1.0f;
@@ -32,7 +32,7 @@ struct FAircraftConstraintSimulationConfig
 	float DynamicsFeedForwardScale = 1.0f;
 	/** 显式姿态扭矩控制器自然频率（Hz）。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Torque", meta = (DisplayName = "Attitude Natural Frequency (Hz)", ClampMin = "0.0", Units = "Hz"))
-	float AttitudeNaturalFrequencyHz = 1.f;
+	float AttitudeNaturalFrequencyHz = 1.59154943f;
 	/** 姿态扭矩控制器阻尼比；1 为临界阻尼。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Torque", meta = (DisplayName = "Attitude Damping Ratio", ClampMin = "0.0"))
 	float AttitudeDampingRatio = 1.0f;

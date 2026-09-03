@@ -30,6 +30,22 @@
 class UAircraftComponent;
 struct FBodyInstance;
 
+/** Value-only PT-to-GT diagnostics published with the normal solver output. */
+struct AIRCRAFTASSETENGINE_API FAircraftSimulationControlDiagnostics
+{
+	uint64 PhysicsStateSequence = 0;
+	FVector DesiredForceBodyN = FVector::ZeroVector;
+	FVector DesiredTorqueBodyNm = FVector::ZeroVector;
+	FVector AppliedForceBodyN = FVector::ZeroVector;
+	FVector AppliedTorqueBodyNm = FVector::ZeroVector;
+	FVector ResidualTorqueBodyNm = FVector::ZeroVector;
+	float ResidualMagnitude = 0.0f;
+	int32 SaturatedRotorCount = 0;
+	FAircraftControlAuthorityInfo Authority;
+	bool bHasAerodynamics = false;
+	FAircraftAerodynamicWrench AerodynamicWrench;
+};
+
 /* ===========================================================================
  * =========================================================================== */
 
@@ -86,9 +102,16 @@ public:
 
 	/** 设置指定旋翼的执行器效能；0 表示无输出，1 表示完整输出。 */
 	bool SetRotorEffectiveness_GameThread(FName RotorName, float Effectiveness);
+	/** 仅在调试载荷请求旋翼数据时复制当前执行器效能。 */
+	void GetRotorEffectiveness_GameThread(TMap<FName, float>& OutEffectivenessByName) const;
 
 	void GetEstimatedState_GameThread(FAircraftEstimatedState& OutState) const;
 	void GetControlOutput_GameThread(FAircraftFlightControlOutput& OutOutput) const;
+	void GetControlDiagnostics_GameThread(FAircraftSimulationControlDiagnostics& OutDiagnostics) const;
+	uint64 GetVehicleStateSequence_GameThread() const
+	{
+		return VehicleStateSequence.load(std::memory_order_relaxed);
+	}
 	/** 替代驱动后端（约束/运动学，GT 执行）写回估计状态，覆盖 PT 输出槽。 */
 	void SetEstimatedStateOverride_GameThread(const FAircraftEstimatedState& InState);
 	EAircraftArmState GetArmState_GameThread() const;
@@ -183,6 +206,7 @@ private:
 	FAircraftEstimatedState LatestEstimated;
 	FAircraftFlightControlOutput LatestControlOutput;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
+	FAircraftSimulationControlDiagnostics LatestControlDiagnostics;
 	FAircraftTrajectoryReference LatestTrajectoryReference;
 	FAircraftAutopilotDiagnostics LatestAutopilotDiagnostics;
 	TArray<FAircraftMotionPlanSample> LatestMotionPlanSamples;
@@ -232,5 +256,6 @@ private:
 	/* 调试状态仅由 PT 访问。 */
 	float DebugLogAccumulatorSeconds = 0.0f;
 	bool bDebugConfigurationPending = true;
+	bool bConfigurationWarningPending = true;
 	float DriveGateDebugLogAccumulatorSeconds = 0.0f;
 };

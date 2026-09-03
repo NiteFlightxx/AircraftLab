@@ -30,7 +30,8 @@ public class AircraftAssetDataflowNodes : ModuleRules
                 "UnrealEd",
                 "Chaos",
                 "AircraftAssetEngine",
-                "AircraftAssetTools"
+                "AircraftAssetTools",
+                "AircraftDiagnostics"
             }
         );
     }

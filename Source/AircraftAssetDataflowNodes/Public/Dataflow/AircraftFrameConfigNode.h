@@ -48,4 +48,11 @@ public:
 	FVector3f InertiaTensorScale = FVector3f::OneVector;
 
 	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+#if WITH_EDITOR
+	virtual bool CanDebugDraw() const override { return true; }
+	virtual bool CanDebugDrawViewMode(const FName& ViewModeName) const override;
+	virtual void DebugDraw(UE::Dataflow::FContext& Context,
+		IDataflowDebugDrawInterface& DataflowRenderingInterface,
+		const FDebugDrawParameters& DebugDrawParameters) const override;
+#endif
 };

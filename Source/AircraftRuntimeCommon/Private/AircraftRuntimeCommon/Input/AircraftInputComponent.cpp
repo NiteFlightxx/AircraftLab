@@ -9,6 +9,7 @@
 
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
 #include "AircraftDiagnostics/AircraftDebug.h"
+#include "AircraftDiagnostics/AircraftDebugSettings.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftInputComponent)
 
@@ -21,7 +22,7 @@ void UAircraftInputComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	ResolveFlightController();
-	if (FAircraftDebug::IsInputLogEnabled())
+	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::Input))
 	{
 		UE_LOG(LogAircraft, Display,
 			TEXT("[Aircraft.Input.BeginPlay] Owner=%s Controller=%s Mapping=%s Move=%s Throttle=%s Turn=%s"),
@@ -46,7 +47,8 @@ void UAircraftInputComponent::ResolveFlightController() const
 			if (Component && Component->Implements<UAircraftFlightControllerInterface>())
 			{
 				FlightControllerComponent = Component;
-				if (FAircraftDebug::IsInputLogEnabled())
+				bReportedMissingFlightController = false;
+				if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::Input))
 				{
 					UE_LOG(LogAircraft, Display,
 						TEXT("[Aircraft.Input.Resolve] Owner=%s Controller=%s Result=Found"),
@@ -62,12 +64,9 @@ void UAircraftInputComponent::ApplyMappingContext() const
 {
 	if (!InputMapping)
 	{
-		if (FAircraftDebug::IsInputLogEnabled())
-		{
-			UE_LOG(LogAircraft, Warning,
-				TEXT("[Aircraft.Input.Mapping] Owner=%s Result=MissingInputMapping"),
-				*GetNameSafe(GetOwner()));
-		}
+		UE_LOG(LogAircraft, Warning,
+			TEXT("[Aircraft.Input.Mapping] Owner=%s Result=MissingInputMapping"),
+			*GetNameSafe(GetOwner()));
 		return;
 	}
 	const AActor* const OwnerActor = GetOwner();
@@ -79,7 +78,7 @@ void UAircraftInputComponent::ApplyMappingContext() const
 			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
 		{
 			Subsystem->AddMappingContext(InputMapping, 0);
-			if (FAircraftDebug::IsInputLogEnabled())
+			if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::Input))
 			{
 				UE_LOG(LogAircraft, Display,
 					TEXT("[Aircraft.Input.Mapping] Owner=%s Mapping=%s Result=Applied"),
@@ -87,7 +86,7 @@ void UAircraftInputComponent::ApplyMappingContext() const
 			}
 		}
 	}
-	else if (FAircraftDebug::IsInputLogEnabled())
+	else
 	{
 		UE_LOG(LogAircraft, Warning,
 			TEXT("[Aircraft.Input.Mapping] Owner=%s Result=NoLocalPlayer"),
@@ -100,12 +99,9 @@ void UAircraftInputComponent::BindInput(UInputComponent* PlayerInputComponent)
 	UEnhancedInputComponent* const EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent);
 	if (!EnhancedInput)
 	{
-		if (FAircraftDebug::IsInputLogEnabled())
-		{
-			UE_LOG(LogAircraft, Warning,
-				TEXT("[Aircraft.Input.Bind] Owner=%s InputComponent=%s Result=NotEnhancedInput"),
-				*GetNameSafe(GetOwner()), *GetNameSafe(PlayerInputComponent));
-		}
+		UE_LOG(LogAircraft, Warning,
+			TEXT("[Aircraft.Input.Bind] Owner=%s InputComponent=%s Result=NotEnhancedInput"),
+			*GetNameSafe(GetOwner()), *GetNameSafe(PlayerInputComponent));
 		return;
 	}
 
@@ -127,7 +123,7 @@ void UAircraftInputComponent::BindInput(UInputComponent* PlayerInputComponent)
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Completed, this, &UAircraftInputComponent::ResetTurn);
 		EnhancedInput->BindAction(IA_Turn, ETriggerEvent::Canceled, this, &UAircraftInputComponent::ResetTurn);
 	}
-	if (FAircraftDebug::IsInputLogEnabled())
+	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::Input))
 	{
 		UE_LOG(LogAircraft, Display,
 			TEXT("[Aircraft.Input.Bind] Owner=%s InputComponent=%s Move=%d Throttle=%d Turn=%d Result=Bound"),
@@ -140,12 +136,15 @@ void UAircraftInputComponent::PushPilotInput() const
 {
 	ResolveFlightController();
 	const double NowSeconds = FPlatformTime::Seconds();
-	const bool bShouldLog = FAircraftDebug::IsInputLogEnabled()
-		&& (FAircraftDebug::GetLogIntervalSeconds() <= UE_SMALL_NUMBER
-			|| NowSeconds - InputDebugLastLogTimeSeconds >= FAircraftDebug::GetLogIntervalSeconds());
+	const FAircraftDiagnosticLogSelection LogSelection =
+		UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection();
+	const bool bShouldLog = LogSelection.IsEnabled(EAircraftDiagnosticLogChannel::Input)
+		&& (LogSelection.IntervalSeconds <= UE_SMALL_NUMBER
+			|| NowSeconds - InputDebugLastLogTimeSeconds >= LogSelection.IntervalSeconds);
 	if (IAircraftFlightControllerInterface* const FC =
 		Cast<IAircraftFlightControllerInterface>(FlightControllerComponent.Get()))
 	{
+		bReportedMissingFlightController = false;
 		// (Throttle, Roll, Pitch, Yaw)
 		FC->SetAircraftPilotInputAxes(
 			static_cast<float>(PilotInputAxes.X),
@@ -161,9 +160,9 @@ void UAircraftInputComponent::PushPilotInput() const
 				PilotInputAxes.X, PilotInputAxes.Y, PilotInputAxes.Z, PilotInputAxes.W);
 		}
 	}
-	else if (bShouldLog)
+	else if (!bReportedMissingFlightController)
 	{
-		InputDebugLastLogTimeSeconds = NowSeconds;
+		bReportedMissingFlightController = true;
 		UE_LOG(LogAircraft, Warning,
 			TEXT("[Aircraft.Input.Push] Owner=%s Axes(T/R/P/Y)=(%+.3f,%+.3f,%+.3f,%+.3f) Result=NoFlightController"),
 			*GetNameSafe(GetOwner()), PilotInputAxes.X, PilotInputAxes.Y,

@@ -98,7 +98,8 @@ public:
 	FAircraftMovementIntentResult GetCurrentIntentResult() const { return CurrentResult; }
 
 	/** Adds the current Autopilot state to a game-thread diagnostics snapshot. */
-	void AppendDebugSnapshot(FAircraftDebugFrameSnapshot& Snapshot) const;
+	void AppendDebugSnapshot(const FAircraftDebugCaptureRequest& Request,
+		FAircraftDebugFrameSnapshot& Snapshot) const;
 
 	UPROPERTY(BlueprintAssignable, Category = "Aircraft|Autopilot")
 	FOnAircraftMovementIntentChanged OnMovementIntentChanged;
@@ -121,6 +122,7 @@ private:
 	int64 NextIntentId = 1;
 	float StableTimeSeconds = 0.0f;
 	float ElapsedSeconds = 0.0f;
+	float DiagnosticLogAccumulatorSeconds = 0.0f;
 	float InitialDistanceToTargetCm = -1.0f;
 	uint8 FlightModeBeforeActivation = 0;
 	bool bActive = false;

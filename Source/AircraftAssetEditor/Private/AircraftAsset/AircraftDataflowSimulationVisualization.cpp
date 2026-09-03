@@ -3,6 +3,7 @@
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAutopilot/AutopilotComponent.h"
 #include "AircraftDiagnostics/AircraftDebugDraw.h"
+#include "Dataflow/DataflowEditorToolkit.h"
 #include "Dataflow/DataflowSimulationScene.h"
 #include "Dataflow/DataflowSimulationViewportClient.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -12,10 +13,7 @@
 
 const FName FAircraftDataflowSimulationVisualization::Name(TEXT("Aircraft"));
 
-FName FAircraftDataflowSimulationVisualization::GetName() const
-{
-	return Name;
-}
+FName FAircraftDataflowSimulationVisualization::GetName() const { return Name; }
 
 UAircraftComponent* FAircraftDataflowSimulationVisualization::GetAircraftComponent(
 	const FDataflowSimulationScene* SimulationScene)
@@ -24,28 +22,32 @@ UAircraftComponent* FAircraftDataflowSimulationVisualization::GetAircraftCompone
 	return PreviewActor ? PreviewActor->FindComponentByClass<UAircraftComponent>() : nullptr;
 }
 
-bool FAircraftDataflowSimulationVisualization::CaptureSnapshot(
-	const FDataflowSimulationScene* SimulationScene,
-	FAircraftDebugFrameSnapshot& OutSnapshot)
+void FAircraftDataflowSimulationVisualization::PruneSessions() const
 {
-	UAircraftComponent* const Component = GetAircraftComponent(SimulationScene);
-	if (!Component)
+	for (auto It = Sessions.CreateIterator(); It; ++It)
 	{
-		return false;
+		if (!It.Value().PreviewActor.IsValid()) It.RemoveCurrent();
 	}
-	Component->CaptureDebugSnapshot(OutSnapshot);
-	if (AActor* const PreviewActor = SimulationScene->GetPreviewActor())
-	{
-		if (const UAutopilotComponent* const Autopilot =
-			PreviewActor->FindComponentByClass<UAutopilotComponent>())
-		{
-			Autopilot->AppendDebugSnapshot(OutSnapshot);
-		}
-	}
-	return true;
 }
 
-void FAircraftDataflowSimulationVisualization::SynchronizeOptionState() const
+FAircraftDataflowSimulationVisualization::FSession&
+FAircraftDataflowSimulationVisualization::GetSession(
+	const FDataflowSimulationScene* SimulationScene) const
+{
+	PruneSessions();
+	AActor* const PreviewActor = SimulationScene ? SimulationScene->GetPreviewActor() : nullptr;
+	check(PreviewActor);
+	FSession& Session = Sessions.FindOrAdd(SimulationScene);
+	if (Session.PreviewActor.Get() != PreviewActor)
+	{
+		Session.PreviewActor = PreviewActor;
+		Session.CachedFrameNumber = MAX_uint64;
+	}
+	SynchronizeOptionState(Session);
+	return Session;
+}
+
+void FAircraftDataflowSimulationVisualization::SynchronizeOptionState(FSession& Session)
 {
 	TArray<FAircraftDebugOptionView> Options;
 	FAircraftDebugRegistry::GetOptionViews(Options);
@@ -53,118 +55,130 @@ void FAircraftDataflowSimulationVisualization::SynchronizeOptionState() const
 	for (const FAircraftDebugOptionView& Option : Options)
 	{
 		LiveIds.Add(Option.Id);
-		if (!KnownOptionIds.Contains(Option.Id))
+		if (!Session.KnownOptionIds.Contains(Option.Id))
 		{
-			KnownOptionIds.Add(Option.Id);
-			if (Option.bEditorEnabledByDefault)
-			{
-				EnabledOptionIds.Add(Option.Id);
-			}
+			Session.KnownOptionIds.Add(Option.Id);
+			if (Option.bEditorEnabledByDefault) Session.EnabledOptionIds.Add(Option.Id);
 		}
 	}
-	for (auto It = KnownOptionIds.CreateIterator(); It; ++It)
+	for (auto It = Session.KnownOptionIds.CreateIterator(); It; ++It)
 	{
 		if (!LiveIds.Contains(*It))
 		{
-			EnabledOptionIds.Remove(*It);
+			Session.EnabledOptionIds.Remove(*It);
 			It.RemoveCurrent();
 		}
 	}
 }
 
-void FAircraftDataflowSimulationVisualization::ExtendSimulationVisualizationMenu(
-	const TSharedPtr<FDataflowSimulationViewportClient>& ViewportClient,
-	FMenuBuilder& MenuBuilder)
+bool FAircraftDataflowSimulationVisualization::CaptureSnapshot(
+	const FDataflowSimulationScene* SimulationScene, FSession& Session,
+	const FAircraftDebugCaptureRequest& Request,
+	const FAircraftDebugFrameSnapshot*& OutSnapshot)
 {
-	if (!ViewportClient)
+	UAircraftComponent* const Component = GetAircraftComponent(SimulationScene);
+	if (!Component) return false;
+	if (Session.CachedFrameNumber != GFrameCounter || Session.CachedPayloads != Request.Payloads)
 	{
-		return;
+		Component->CaptureDebugSnapshot(Request, Session.CachedSnapshot);
+		if (AActor* const PreviewActor = SimulationScene->GetPreviewActor())
+		{
+			if (const UAutopilotComponent* const Autopilot = PreviewActor->FindComponentByClass<UAutopilotComponent>())
+			{
+				Autopilot->AppendDebugSnapshot(Request, Session.CachedSnapshot);
+			}
+		}
+		Session.CachedFrameNumber = GFrameCounter;
+		Session.CachedPayloads = Request.Payloads;
 	}
-	SynchronizeOptionState();
+	OutSnapshot = &Session.CachedSnapshot;
+	return true;
+}
+
+void FAircraftDataflowSimulationVisualization::ExtendSimulationVisualizationMenu(
+	const TSharedPtr<FDataflowSimulationViewportClient>& ViewportClient, FMenuBuilder& MenuBuilder)
+{
+	if (!ViewportClient) return;
+	const TSharedPtr<FDataflowEditorToolkit> Toolkit = ViewportClient->GetDataflowEditorToolkit().Pin();
+	const TSharedPtr<FDataflowSimulationScene> Scene = Toolkit ? Toolkit->GetSimulationScene() : nullptr;
+	if (!Scene || !Scene->GetPreviewActor()) return;
+	FSession& Session = GetSession(Scene.Get());
 	TArray<FAircraftDebugOptionView> Options;
 	FAircraftDebugRegistry::GetOptionViews(Options);
 	TWeakPtr<FDataflowSimulationViewportClient> WeakViewportClient = ViewportClient;
+	TWeakPtr<FDataflowSimulationScene> WeakScene = Scene;
 	FName OpenCategory = NAME_None;
 	for (const FAircraftDebugOptionView& Option : Options)
 	{
 		if (Option.Category != OpenCategory)
 		{
-			if (OpenCategory != NAME_None)
-			{
-				MenuBuilder.EndSection();
-			}
+			if (OpenCategory != NAME_None) MenuBuilder.EndSection();
 			OpenCategory = Option.Category;
-			MenuBuilder.BeginSection(
-				FName(*FString::Printf(TEXT("AircraftDiagnostics_%s"), *OpenCategory.ToString())),
+			MenuBuilder.BeginSection(FName(*FString::Printf(TEXT("AircraftDiagnostics_%s"), *OpenCategory.ToString())),
 				Option.CategoryDisplayName);
 		}
 		const FName OptionId = Option.Id;
-		const FExecuteAction Execute = FExecuteAction::CreateLambda(
-			[this, WeakViewportClient, OptionId]()
-			{
-				if (!EnabledOptionIds.Remove(OptionId))
-				{
-					EnabledOptionIds.Add(OptionId);
-				}
-				if (const TSharedPtr<FDataflowSimulationViewportClient> Pinned = WeakViewportClient.Pin())
-				{
-					Pinned->Invalidate();
-				}
-			});
-		const FIsActionChecked IsChecked = FIsActionChecked::CreateLambda(
-			[this, OptionId]() { return EnabledOptionIds.Contains(OptionId); });
 		MenuBuilder.AddMenuEntry(Option.DisplayName, Option.ToolTip, FSlateIcon(),
-			FUIAction(Execute, FCanExecuteAction(), IsChecked), NAME_None,
-			EUserInterfaceActionType::ToggleButton);
+			FUIAction(FExecuteAction::CreateLambda([this, WeakViewportClient, WeakScene, OptionId]()
+			{
+				if (const TSharedPtr<FDataflowSimulationScene> PinnedScene = WeakScene.Pin(); PinnedScene)
+				{
+					if (FSession* Existing = Sessions.Find(PinnedScene.Get()))
+					{
+						if (!Existing->EnabledOptionIds.Remove(OptionId)) Existing->EnabledOptionIds.Add(OptionId);
+						Existing->CachedFrameNumber = MAX_uint64;
+					}
+				}
+				if (const TSharedPtr<FDataflowSimulationViewportClient> Pinned = WeakViewportClient.Pin()) Pinned->Invalidate();
+			}), FCanExecuteAction(), FIsActionChecked::CreateLambda([this, WeakScene, OptionId]()
+			{
+				const TSharedPtr<FDataflowSimulationScene> PinnedScene = WeakScene.Pin();
+				const FSession* Existing = PinnedScene ? Sessions.Find(PinnedScene.Get()) : nullptr;
+				return Existing != nullptr && Existing->EnabledOptionIds.Contains(OptionId);
+			})), NAME_None, EUserInterfaceActionType::ToggleButton);
 	}
-	if (OpenCategory != NAME_None)
-	{
-		MenuBuilder.EndSection();
-	}
+	if (OpenCategory != NAME_None) MenuBuilder.EndSection();
 }
 
 void FAircraftDataflowSimulationVisualization::Draw(
 	const FDataflowSimulationScene* SimulationScene, FPrimitiveDrawInterface* PDI)
 {
-	if (!PDI)
-	{
-		return;
-	}
-	SynchronizeOptionState();
-	FAircraftDebugFrameSnapshot Snapshot;
-	if (!CaptureSnapshot(SimulationScene, Snapshot))
-	{
-		return;
-	}
+	if (!PDI || !SimulationScene || !SimulationScene->GetPreviewActor()) return;
+	FSession& Session = GetSession(SimulationScene);
+	const FAircraftDebugCaptureRequest Request = FAircraftDebugRegistry::BuildCaptureRequest(
+		Session.EnabledOptionIds, EAircraftDebugContext::PreviewSimulation);
+	const FAircraftDebugFrameSnapshot* Snapshot = nullptr;
+	if (!CaptureSnapshot(SimulationScene, Session, Request, Snapshot)) return;
+	FAircraftSimulationDebugDrawBackend Backend(*PDI);
 	FAircraftDebugDrawContext Context;
-	Context.PDI = PDI;
-	FAircraftDebugRegistry::DrawSelected(Snapshot, Context, EnabledOptionIds);
+	Context.Backend = &Backend;
+	FAircraftDebugRegistry::DrawSelected(*Snapshot, Context, Session.EnabledOptionIds);
 }
 
 void FAircraftDataflowSimulationVisualization::DrawCanvas(
-	const FDataflowSimulationScene* SimulationScene, FCanvas* Canvas,
-	const FSceneView* SceneView)
+	const FDataflowSimulationScene* SimulationScene, FCanvas* Canvas, const FSceneView* SceneView)
 {
-	if (!Canvas)
+	if (!Canvas || !SimulationScene || !SimulationScene->GetPreviewActor()) return;
+	FSession& Session = GetSession(SimulationScene);
+	const FAircraftDebugCaptureRequest Request = FAircraftDebugRegistry::BuildCaptureRequest(
+		Session.EnabledOptionIds, EAircraftDebugContext::PreviewSimulation);
+	const FAircraftDebugFrameSnapshot* Snapshot = nullptr;
+	if (CaptureSnapshot(SimulationScene, Session, Request, Snapshot))
 	{
-		return;
-	}
-	SynchronizeOptionState();
-	FAircraftDebugFrameSnapshot Snapshot;
-	if (CaptureSnapshot(SimulationScene, Snapshot))
-	{
-		FAircraftDebugRegistry::DrawCanvasSelected(
-			Snapshot, *Canvas, SceneView, EnabledOptionIds);
+		FAircraftDebugRegistry::DrawCanvasSelected(*Snapshot, *Canvas, SceneView, Session.EnabledOptionIds);
 	}
 }
 
 FText FAircraftDataflowSimulationVisualization::GetDisplayString(
 	const FDataflowSimulationScene* SimulationScene) const
 {
-	SynchronizeOptionState();
-	FAircraftDebugFrameSnapshot Snapshot;
-	return CaptureSnapshot(SimulationScene, Snapshot)
-		? FAircraftDebugRegistry::BuildStatusTextSelected(Snapshot, EnabledOptionIds)
+	if (!SimulationScene || !SimulationScene->GetPreviewActor()) return FText::GetEmpty();
+	FSession& Session = GetSession(SimulationScene);
+	const FAircraftDebugCaptureRequest Request = FAircraftDebugRegistry::BuildCaptureRequest(
+		Session.EnabledOptionIds, EAircraftDebugContext::PreviewSimulation);
+	const FAircraftDebugFrameSnapshot* Snapshot = nullptr;
+	return CaptureSnapshot(SimulationScene, Session, Request, Snapshot)
+		? FAircraftDebugRegistry::BuildStatusTextSelected(*Snapshot, Session.EnabledOptionIds)
 		: FText::GetEmpty();
 }
 

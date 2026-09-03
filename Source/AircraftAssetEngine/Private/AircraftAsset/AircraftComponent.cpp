@@ -25,10 +25,12 @@
 #include "AircraftDiagnostics/AircraftDebug.h"
 #include "AircraftDiagnostics/AircraftDebugRegistry.h"
 #include "AircraftDiagnostics/AircraftDebugRuntime.h"
+#include "AircraftDiagnostics/AircraftDebugSettings.h"
 #include "AircraftAsset/AircraftSimulationGraph.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "AircraftAsset/AircraftSimulationProxy.h"
+#include "AircraftAutopilot/AutopilotComponent.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
 #include "Dataflow/DataflowSimulationManager.h"
 
@@ -194,9 +196,11 @@ void UAircraftComponent::SetPilotInput(const FAircraftPilotInput& InPilotInput)
 {
 	PilotInput = InPilotInput;
 	const double NowSeconds = FPlatformTime::Seconds();
-	if (FAircraftDebug::IsInputLogEnabled()
-		&& (FAircraftDebug::GetLogIntervalSeconds() <= UE_SMALL_NUMBER
-			|| NowSeconds - InputDebugLastLogTimeSeconds >= FAircraftDebug::GetLogIntervalSeconds()))
+	const FAircraftDiagnosticLogSelection InputLogSelection =
+		UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection();
+	if (InputLogSelection.IsEnabled(EAircraftDiagnosticLogChannel::Input)
+		&& (InputLogSelection.IntervalSeconds <= UE_SMALL_NUMBER
+			|| NowSeconds - InputDebugLastLogTimeSeconds >= InputLogSelection.IntervalSeconds))
 	{
 		InputDebugLastLogTimeSeconds = NowSeconds;
 		UE_LOG(LogAircraft, Log,
@@ -429,7 +433,7 @@ void UAircraftComponent::ApplySimulationLOD(int32 LodIndex)
 	}
 	CurrentSimulationLOD = LodIndex;
 	ApplySimulationDriveMode(DriveMode);
-	if (FAircraftDebug::IsDriveLogEnabled())
+	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::SimulationDrive))
 	{
 		UE_LOG(LogAircraft, Display,
 			TEXT("[Aircraft.Drive.LOD] Owner=%s PreviousLOD=%d LOD=%d Drive=%s PhysicsEnabled=%d Simulating=%d Proxy=%d"),
@@ -792,10 +796,10 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	PreviousAlternativeVelocityCmPerSec = DeltaSeconds > UE_SMALL_NUMBER
 		? (NewCenterOfMass - CurrentCenterOfMass) / DeltaSeconds
 		: FVector::ZeroVector;
-	if (FAircraftDebug::IsDriveLogEnabled())
+	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::SimulationDrive))
 	{
 		AlternativeDriveDebugLogAccumulatorSeconds += DeltaSeconds;
-		const float IntervalSeconds = FAircraftDebug::GetLogIntervalSeconds();
+		const float IntervalSeconds = UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IntervalSeconds;
 		if (IntervalSeconds <= UE_SMALL_NUMBER || AlternativeDriveDebugLogAccumulatorSeconds >= IntervalSeconds)
 		{
 			AlternativeDriveDebugLogAccumulatorSeconds = 0.0f;
@@ -933,12 +937,22 @@ bool UAircraftComponent::GetAircraftMotionPlan(
 		OutSamples, OutDurationSeconds, OutLengthCm, OutPlanRevision);
 }
 
-void UAircraftComponent::CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSnapshot)
+void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest& Request,
+	FAircraftDebugFrameSnapshot& OutSnapshot)
 {
 	OutSnapshot = {};
-	OutSnapshot.AvailableData = EAircraftDebugData::Aircraft;
+	OutSnapshot.CaptureFrameNumber = GFrameCounter;
 	OutSnapshot.SubjectName = FString::Printf(TEXT("%s/%s"),
 		*GetNameSafe(GetOwner()), *GetName());
+	if (AircraftSimulationProxy.IsValid())
+	{
+		OutSnapshot.PhysicsStateSequence = AircraftSimulationProxy->GetVehicleStateSequence_GameThread();
+	}
+	if (!Request.Requires(EAircraftDebugPayload::AircraftCore))
+	{
+		return;
+	}
+	OutSnapshot.AvailablePayloads |= EAircraftDebugPayload::AircraftCore;
 
 	const FAircraftSimulationLodModel* const LodModel = GetCurrentLodModel();
 	OutSnapshot.RootBone = LodModel ? LodModel->RootBone : NAME_None;
@@ -971,20 +985,32 @@ void UAircraftComponent::CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSn
 		OutSnapshot.ControlRightAxisBody = Config.GetRightAxisBody();
 		OutSnapshot.ControlUpAxisBody = Config.GetUpAxisBody();
 	}
-	OutSnapshot.Bounds = Bounds.GetBox();
 	OutSnapshot.LinearVelocityCmPerSec = GetPhysicsLinearVelocity(OutSnapshot.RootBone);
 	OutSnapshot.AngularVelocityDegPerSec =
 		GetPhysicsAngularVelocityInDegrees(OutSnapshot.RootBone);
 	OutSnapshot.bHasTrajectoryReference = GetTrajectoryReference(
 		OutSnapshot.TrajectoryReference);
 
-	if (LodModel)
+	FAircraftFlightControlOutput Output;
+	FAircraftSimulationControlDiagnostics ControlDiagnostics;
+	const bool bNeedsControlOutput = Request.Requires(EAircraftDebugPayload::Propulsion)
+		|| Request.Requires(EAircraftDebugPayload::ControlAllocation)
+		|| Request.Requires(EAircraftDebugPayload::Aerodynamics);
+	if (bNeedsControlOutput && AircraftSimulationProxy.IsValid())
 	{
-		FAircraftFlightControlOutput Output;
+		AircraftSimulationProxy->GetControlOutput_GameThread(Output);
+		AircraftSimulationProxy->GetControlDiagnostics_GameThread(ControlDiagnostics);
+		OutSnapshot.PhysicsStateSequence = ControlDiagnostics.PhysicsStateSequence;
+	}
+
+	if (LodModel && Request.Requires(EAircraftDebugPayload::Propulsion))
+	{
+		TMap<FName, float> RotorEffectivenessByName;
 		if (AircraftSimulationProxy.IsValid())
 		{
-			AircraftSimulationProxy->GetControlOutput_GameThread(Output);
+			AircraftSimulationProxy->GetRotorEffectiveness_GameThread(RotorEffectivenessByName);
 		}
+		OutSnapshot.AvailablePayloads |= EAircraftDebugPayload::Propulsion;
 		OutSnapshot.Rotors.Reserve(LodModel->Rotors.Num());
 		for (int32 RotorIndex = 0; RotorIndex < LodModel->Rotors.Num(); ++RotorIndex)
 		{
@@ -998,20 +1024,59 @@ void UAircraftComponent::CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSn
 			RotorSnapshot.ThrustAxisBody = Rotor.GetNormalizedThrustAxisBody();
 			RotorSnapshot.ThrustAxis = OutSnapshot.BodyTransform.TransformVectorNoScale(
 				RotorSnapshot.ThrustAxisBody).GetSafeNormal();
-			RotorSnapshot.ThrustN = Output.RotorCommands.IsValidIndex(RotorIndex)
-				? Output.RotorCommands[RotorIndex].GeneratedThrust
-				: 0.0f;
+			if (Output.RotorCommands.IsValidIndex(RotorIndex))
+			{
+				const FAircraftRotorCommand& Command = Output.RotorCommands[RotorIndex];
+				RotorSnapshot.NormalizedCommand = Command.NormalizedCommand;
+				RotorSnapshot.TargetRpm = Command.TargetRpm;
+				RotorSnapshot.CurrentRpm = Command.CurrentRpm;
+				RotorSnapshot.ThrustN = Command.GeneratedThrust;
+				RotorSnapshot.ReactionTorqueNm = Command.GeneratedReactionTorque;
+			}
+			const float* const Effectiveness = RotorEffectivenessByName.Find(Rotor.RotorName);
+			RotorSnapshot.Effectiveness = Effectiveness ? *Effectiveness : 1.0f;
 			RotorSnapshot.bEnabled = Rotor.IsEnabled();
 		}
 	}
 
-	if (SimulationConstraint.IsValid())
+	if (Request.Requires(EAircraftDebugPayload::ControlAllocation))
 	{
-		OutSnapshot.bHasConstraint = true;
-		OutSnapshot.ConstraintPositionTargetCm =
-			SimulationConstraint->GetLinearPositionTarget();
-		SimulationConstraint->GetConstraintForce(
-			OutSnapshot.ConstraintForce, OutSnapshot.ConstraintTorque);
+		OutSnapshot.AvailablePayloads |= EAircraftDebugPayload::ControlAllocation;
+		OutSnapshot.ControlAllocation.bValid = AircraftSimulationProxy.IsValid();
+		OutSnapshot.ControlAllocation.DesiredForceBodyN = ControlDiagnostics.DesiredForceBodyN;
+		OutSnapshot.ControlAllocation.DesiredTorqueBodyNm = ControlDiagnostics.DesiredTorqueBodyNm;
+		OutSnapshot.ControlAllocation.AppliedForceBodyN = ControlDiagnostics.AppliedForceBodyN;
+		OutSnapshot.ControlAllocation.AppliedTorqueBodyNm = ControlDiagnostics.AppliedTorqueBodyNm;
+		OutSnapshot.ControlAllocation.ResidualTorqueBodyNm = ControlDiagnostics.ResidualTorqueBodyNm;
+		OutSnapshot.ControlAllocation.ResidualMagnitude = ControlDiagnostics.ResidualMagnitude;
+		OutSnapshot.ControlAllocation.SaturatedRotorCount = ControlDiagnostics.SaturatedRotorCount;
+		OutSnapshot.ControlAllocation.PositiveTorqueAuthorityNm = ControlDiagnostics.Authority.PositiveTorqueAuthorityNm;
+		OutSnapshot.ControlAllocation.NegativeTorqueAuthorityNm = ControlDiagnostics.Authority.NegativeTorqueAuthorityNm;
+	}
+
+	if (Request.Requires(EAircraftDebugPayload::Aerodynamics))
+	{
+		OutSnapshot.AvailablePayloads |= EAircraftDebugPayload::Aerodynamics;
+		OutSnapshot.Aerodynamics.bValid = ControlDiagnostics.bHasAerodynamics;
+		OutSnapshot.Aerodynamics.ForceWorldN = ControlDiagnostics.AerodynamicWrench.ForceWorldN;
+		OutSnapshot.Aerodynamics.TorqueBodyNm = ControlDiagnostics.AerodynamicWrench.TorqueBodyNm;
+	}
+
+	if (Request.Requires(EAircraftDebugPayload::ConstraintDrive))
+	{
+		OutSnapshot.AvailablePayloads |= EAircraftDebugPayload::ConstraintDrive;
+		if (SimulationConstraint.IsValid())
+		{
+			FAircraftDebugConstraintSnapshot& Constraint = OutSnapshot.ConstraintDrive;
+			Constraint.bValid = true;
+			Constraint.PositionTargetCm = SimulationConstraint->GetLinearPositionTarget();
+			Constraint.VelocityTargetCmPerSec = SimulationConstraint->GetLinearVelocityTarget();
+			Constraint.OrientationTarget = SimulationConstraint->GetAngularOrientationTarget().Quaternion();
+			Constraint.AngularVelocityTargetRadPerSec = SimulationConstraint->GetAngularVelocityTarget();
+			Constraint.PositionErrorCm = Constraint.PositionTargetCm - OutSnapshot.CenterOfMassCm;
+			Constraint.VelocityErrorCmPerSec = Constraint.VelocityTargetCmPerSec - OutSnapshot.LinearVelocityCmPerSec;
+			SimulationConstraint->GetConstraintForce(Constraint.Force, Constraint.Torque);
+		}
 	}
 
 	OutSnapshot.bSimulationEnabled = IsSimulationEnabled();
@@ -1336,7 +1401,7 @@ void UAircraftComponent::OnRegister()
 	// 与 ChaosClothComponent 一致：组件注册时立即建立 Dataflow Proxy。
 	// PhysicsState 的全局通知稍后仍可到达，管理器的 TSet 注册是幂等的。
 	UE::Dataflow::RegisterSimulationInterface(this);
-	if (FAircraftDebug::IsDriveLogEnabled())
+	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::SimulationDrive))
 	{
 		UE_LOG(LogAircraft, Display,
 			TEXT("[Aircraft.Drive.Register] Owner=%s Component=%s Graph=%s Proxy=%d PhysicsState=%d LOD=%d Drive=%s Arm=%s Controller=%d"),
@@ -1399,16 +1464,10 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 {
 	check(IsInGameThread());
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-	if (FAircraftDebugRegistry::HasAnyRuntimeDrawEnabled())
-	{
-		FAircraftDebugFrameSnapshot DebugSnapshot;
-		CaptureDebugSnapshot(DebugSnapshot);
-		UE::AircraftLab::Diagnostics::DrawRuntime(GetWorld(), DebugSnapshot);
-	}
-	if (FAircraftDebug::IsDriveLogEnabled())
+	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::SimulationDrive))
 	{
 		DriveHeartbeatDebugLogAccumulatorSeconds += DeltaTime;
-		const float IntervalSeconds = FAircraftDebug::GetLogIntervalSeconds();
+		const float IntervalSeconds = UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IntervalSeconds;
 		if (IntervalSeconds <= UE_SMALL_NUMBER || DriveHeartbeatDebugLogAccumulatorSeconds >= IntervalSeconds)
 		{
 			DriveHeartbeatDebugLogAccumulatorSeconds = 0.0f;
@@ -1492,6 +1551,28 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			AircraftSimulationProxy->SetGravity_GameThread(-World->GetGravityZ());
 		}
 
+	}
+
+	const UWorld* const DebugWorld = GetWorld();
+	const FAircraftRuntimeDrawSelection DebugSelection = DebugWorld && DebugWorld->IsGameWorld()
+		? UE::AircraftLab::Diagnostics::GetAircraftRuntimeDrawSelection()
+		: FAircraftRuntimeDrawSelection{};
+	const FAircraftDebugCaptureRequest DebugRequest = DebugWorld && DebugWorld->IsGameWorld()
+		? FAircraftDebugRegistry::BuildRuntimeCaptureRequest(DebugSelection)
+		: FAircraftDebugCaptureRequest{};
+	if (!DebugRequest.IsEmpty())
+	{
+		FAircraftDebugFrameSnapshot DebugSnapshot;
+		CaptureDebugSnapshot(DebugRequest, DebugSnapshot);
+		if (GetOwner())
+		{
+			if (const UAutopilotComponent* const Autopilot =
+				GetOwner()->FindComponentByClass<UAutopilotComponent>())
+			{
+				Autopilot->AppendDebugSnapshot(DebugRequest, DebugSnapshot);
+			}
+		}
+		UE::AircraftLab::Diagnostics::DrawRuntime(GetWorld(), DebugSnapshot, DebugSelection);
 	}
 
 }

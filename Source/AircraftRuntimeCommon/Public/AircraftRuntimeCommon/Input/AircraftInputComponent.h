@@ -62,6 +62,7 @@ private:
 	/** 缓存的飞控契约（Owner 上实现 IAircraftFlightControllerInterface 的组件）。 */
 	mutable TWeakObjectPtr<UActorComponent> FlightControllerComponent;
 	mutable double InputDebugLastLogTimeSeconds = -DBL_MAX;
+	mutable bool bReportedMissingFlightController = false;
 
 	void InputMove(const FInputActionValue& Value);
 	void InputThrottle(const FInputActionValue& Value);

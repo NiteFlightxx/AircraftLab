@@ -2,6 +2,8 @@
 
 #include "Dataflow/DataflowCategoryRegistry.h"
 #include "Dataflow/DataflowNode.h"
+#include "Dataflow/DataflowRenderingViewMode.h"
+#include "Dataflow/AircraftDataflowViewModes.h"
 
 #include "Dataflow/AircraftAssetTerminalNode.h"
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
@@ -26,13 +28,6 @@
 #include "AircraftAsset/ColorScheme.h"
 
 IMPLEMENT_MODULE(FAircraftAssetDataflowNodesModule, AircraftAssetDataflowNodes)
-
-/* 视口渲染回调（AircraftRotorRenderCallbacks.cpp） */
-namespace UE::AircraftLab::DataflowNodes
-{
-	void RegisterAircraftRenderingCallbacks();
-	void DeregisterAircraftRenderingCallbacks();
-}
 
 void FAircraftAssetDataflowNodesModule::StartupModule()
 {
@@ -68,12 +63,14 @@ void FAircraftAssetDataflowNodesModule::StartupModule()
 
 	UE::Dataflow::RegisterNodeFilter(FDataflowTerminalNode::StaticType());
 	UE_DATAFLOW_REGISTER_CATEGORY_FORASSET_TYPE("Aircraft", UAircraftAsset);
+	UE::Dataflow::FRenderingViewModeFactory::GetInstance().RegisterViewMode(
+		MakeUnique<UE::AircraftLab::DataflowNodes::FAircraft3DSimViewMode>());
 
-	UE::AircraftLab::DataflowNodes::RegisterAircraftRenderingCallbacks();
 }
 
 void FAircraftAssetDataflowNodesModule::ShutdownModule()
 {
-	UE::AircraftLab::DataflowNodes::DeregisterAircraftRenderingCallbacks();
+	UE::Dataflow::FRenderingViewModeFactory::GetInstance().DeregisterViewMode(
+		UE::AircraftLab::DataflowNodes::FAircraft3DSimViewMode::Name);
 	IModuleInterface::ShutdownModule();
 }

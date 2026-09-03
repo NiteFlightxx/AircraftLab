@@ -5,56 +5,109 @@
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
 
-enum class EAircraftDebugData : uint8
+enum class EAircraftDebugPayload : uint16
 {
 	None = 0,
-	Aircraft = 1 << 0,
-	Autopilot = 1 << 1
+	AircraftCore = 1 << 0,
+	Propulsion = 1 << 1,
+	ControlAllocation = 1 << 2,
+	Aerodynamics = 1 << 3,
+	ConstraintDrive = 1 << 4,
+	AutopilotCore = 1 << 5,
+	AutopilotPlan = 1 << 6,
+	AutopilotCorridor = 1 << 7
 };
-ENUM_CLASS_FLAGS(EAircraftDebugData);
+ENUM_CLASS_FLAGS(EAircraftDebugPayload);
+
+struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugCaptureRequest
+{
+	EAircraftDebugPayload Payloads = EAircraftDebugPayload::None;
+
+	bool Requires(EAircraftDebugPayload Payload) const
+	{
+		return EnumHasAllFlags(Payloads, Payload);
+	}
+
+	bool IsEmpty() const { return Payloads == EAircraftDebugPayload::None; }
+};
 
 struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugRotorSnapshot
 {
 	FName Name = NAME_None;
-	/** 旋翼施力点与推力轴在当前 LOD 物理 RootBone 坐标系中的值。 */
 	FVector PositionBodyCm = FVector::ZeroVector;
 	FVector ThrustAxisBody = FVector::UpVector;
-	/** 与上述机体系数据严格对应的世界空间值。 */
 	FVector PositionCm = FVector::ZeroVector;
 	FVector ThrustAxis = FVector::UpVector;
+	float NormalizedCommand = 0.0f;
+	float TargetRpm = 0.0f;
+	float CurrentRpm = 0.0f;
 	float ThrustN = 0.0f;
+	float ReactionTorqueNm = 0.0f;
+	float Effectiveness = 1.0f;
 	bool bEnabled = false;
 };
 
-/** Immutable game-thread data consumed by every debug output backend. */
+struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugControlAllocationSnapshot
+{
+	bool bValid = false;
+	FVector DesiredForceBodyN = FVector::ZeroVector;
+	FVector DesiredTorqueBodyNm = FVector::ZeroVector;
+	FVector AppliedForceBodyN = FVector::ZeroVector;
+	FVector AppliedTorqueBodyNm = FVector::ZeroVector;
+	FVector ResidualTorqueBodyNm = FVector::ZeroVector;
+	float ResidualMagnitude = 0.0f;
+	int32 SaturatedRotorCount = 0;
+	FVector PositiveTorqueAuthorityNm = FVector::ZeroVector;
+	FVector NegativeTorqueAuthorityNm = FVector::ZeroVector;
+};
+
+struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugAerodynamicsSnapshot
+{
+	bool bValid = false;
+	FVector ForceWorldN = FVector::ZeroVector;
+	FVector TorqueBodyNm = FVector::ZeroVector;
+};
+
+struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugConstraintSnapshot
+{
+	bool bValid = false;
+	FVector PositionTargetCm = FVector::ZeroVector;
+	FVector VelocityTargetCmPerSec = FVector::ZeroVector;
+	FQuat OrientationTarget = FQuat::Identity;
+	FVector AngularVelocityTargetRadPerSec = FVector::ZeroVector;
+	FVector PositionErrorCm = FVector::ZeroVector;
+	FVector VelocityErrorCmPerSec = FVector::ZeroVector;
+	FVector Force = FVector::ZeroVector;
+	FVector Torque = FVector::ZeroVector;
+};
+
+/** Immutable value-only game-thread data consumed by every debug output backend. */
 struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugFrameSnapshot
 {
-	EAircraftDebugData AvailableData = EAircraftDebugData::None;
+	EAircraftDebugPayload AvailablePayloads = EAircraftDebugPayload::None;
+	uint64 CaptureFrameNumber = 0;
+	uint64 PhysicsStateSequence = 0;
 	FString SubjectName;
 
-	/** 当前 LOD 物理 RootBone 的世界变换，而不是 SkeletalMeshComponent 变换。 */
 	FName RootBone = NAME_None;
 	FTransform ModelTransform = FTransform::Identity;
 	FTransform BodyTransform = FTransform::Identity;
-	/** Aircraft Forward/Right/Up 在蒙皮模型局部空间中的轴；Up 恒为 +Z。 */
 	FVector ControlForwardAxisModel = FVector::RightVector;
 	FVector ControlRightAxisModel = -FVector::ForwardVector;
 	FVector ControlUpAxisModel = FVector::UpVector;
-	/** 飞控 Forward/Right/Up 在物理 RootBone 坐标系中的有符号主轴。 */
 	FVector ControlForwardAxisBody = FVector::ForwardVector;
 	FVector ControlRightAxisBody = FVector::RightVector;
 	FVector ControlUpAxisBody = FVector::UpVector;
 	FVector CenterOfMassCm = FVector::ZeroVector;
-	FBox Bounds = FBox(ForceInit);
 	FVector LinearVelocityCmPerSec = FVector::ZeroVector;
 	FVector AngularVelocityDegPerSec = FVector::ZeroVector;
 	bool bHasTrajectoryReference = false;
 	FAircraftTrajectoryReference TrajectoryReference;
+
 	TArray<FAircraftDebugRotorSnapshot> Rotors;
-	bool bHasConstraint = false;
-	FVector ConstraintPositionTargetCm = FVector::ZeroVector;
-	FVector ConstraintForce = FVector::ZeroVector;
-	FVector ConstraintTorque = FVector::ZeroVector;
+	FAircraftDebugControlAllocationSnapshot ControlAllocation;
+	FAircraftDebugAerodynamicsSnapshot Aerodynamics;
+	FAircraftDebugConstraintSnapshot ConstraintDrive;
 
 	bool bSimulationEnabled = false;
 	bool bSimulationSuspended = false;
@@ -66,11 +119,15 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugFrameSnapshot
 	FText ArmStateText;
 	FRotator EstimatedAttitudeDegrees = FRotator::ZeroRotator;
 
-	FAircraftMovementIntent MovementIntent;
+	EAircraftMovementIntentType AutopilotIntentType = EAircraftMovementIntentType::Hold;
 	FAircraftTrajectoryReference AutopilotReference;
 	FAircraftAutopilotDiagnostics AutopilotDiagnostics;
 	FAircraftFlightKinematicState AutopilotState;
 	TArray<FAircraftMotionPlanSample> AutopilotPlanSamples;
+	TArray<FVector> AutopilotRoutePointsCm;
+	TArray<FAircraftSafeCorridorSegment> AutopilotCorridor;
+	bool bAutopilotRouteClosed = false;
+	float AutopilotRouteLengthCm = 0.0f;
 	float AutopilotPlanDurationSeconds = 0.0f;
 	float AutopilotPlanLengthCm = 0.0f;
 	uint64 AutopilotPlanRevision = 0;

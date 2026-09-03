@@ -2,60 +2,17 @@
 
 #include "Aircraft/ConstraintDriveUtils.h"
 #include "Aircraft/FlightControllerRuntimeConfig.h"
+#include "AircraftDiagnostics/AircraftDebugSettings.h"
 #include "Components/PrimitiveComponent.h"
-#include "HAL/IConsoleManager.h"
 #include "PhysicsEngine/ConstraintInstance.h"
 
 DEFINE_LOG_CATEGORY(LogAircraft);
 
 namespace UE::AircraftLab::Diagnostics::Private
 {
-	static TAutoConsoleVariable<int32> CVarLog(
-		TEXT("p.Aircraft.Debug.Log"), 0,
-		TEXT("Aircraft runtime logging: 0=Off, 1=Input/Drive, 2=Flight/Constraint, 3=All (including per-rotor values)."));
-
-	static TAutoConsoleVariable<float> CVarLogInterval(
-		TEXT("p.Aircraft.Debug.Interval"), 0.2f,
-		TEXT("Aircraft diagnostic interval in seconds. Zero logs every tick."));
-
-	static int32 GetLogMode()
-	{
-		return FMath::Clamp(CVarLog.GetValueOnAnyThread(), 0, 3);
-	}
-
 	static constexpr float MinimumCommandSpeedCmPerSec = 1.0f;
 	static constexpr float MinimumResponseSpeedCmPerSec = 1.0f;
 	static constexpr float UnresponsiveWarningSeconds = 0.5f;
-}
-
-bool FAircraftDebug::IsInputLogEnabled()
-{
-	return (UE::AircraftLab::Diagnostics::Private::GetLogMode() & 1) != 0;
-}
-
-bool FAircraftDebug::IsDriveLogEnabled()
-{
-	return (UE::AircraftLab::Diagnostics::Private::GetLogMode() & 1) != 0;
-}
-
-bool FAircraftDebug::IsFlightLogEnabled()
-{
-	return (UE::AircraftLab::Diagnostics::Private::GetLogMode() & 2) != 0;
-}
-
-bool FAircraftDebug::IsRotorLogEnabled()
-{
-	return UE::AircraftLab::Diagnostics::Private::GetLogMode() == 3;
-}
-
-bool FAircraftDebug::IsConstraintLogEnabled()
-{
-	return (UE::AircraftLab::Diagnostics::Private::GetLogMode() & 2) != 0;
-}
-
-float FAircraftDebug::GetLogIntervalSeconds()
-{
-	return FMath::Max(UE::AircraftLab::Diagnostics::Private::CVarLogInterval.GetValueOnAnyThread(), 0.0f);
 }
 
 void FAircraftDebug::LogPlanningFailure(
@@ -191,6 +148,8 @@ void FAircraftDebug::TickConstraint(
 	float& InOutLogAccumulatorSeconds,
 	float& InOutUnresponsiveSeconds)
 {
+	const FAircraftDiagnosticLogSelection LogSelection =
+		UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection();
 	const FVector BodyPosition = Component.GetComponentLocation();
 	const FVector BodyVelocity = Component.GetPhysicsLinearVelocity();
 	const FVector PositionError = Target.PositionCm - BodyPosition;
@@ -236,10 +195,10 @@ void FAircraftDebug::TickConstraint(
 		InOutUnresponsiveSeconds = 0.0f;
 	}
 
-	if (IsConstraintLogEnabled())
+	if (LogSelection.IsEnabled(EAircraftDiagnosticLogChannel::Constraint))
 	{
 		InOutLogAccumulatorSeconds += DeltaSeconds;
-		const float IntervalSeconds = GetLogIntervalSeconds();
+		const float IntervalSeconds = LogSelection.IntervalSeconds;
 		if (IntervalSeconds <= UE_SMALL_NUMBER || InOutLogAccumulatorSeconds + UE_SMALL_NUMBER >= IntervalSeconds)
 		{
 			InOutLogAccumulatorSeconds = 0.0f;

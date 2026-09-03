@@ -2,15 +2,12 @@
 
 const FLinearColor FAircraftDebugColors::VelocityLinear = FLinearColor::Green;
 const FLinearColor FAircraftDebugColors::VelocityAngular = FLinearColor(1.0f, 0.25f, 1.0f);
-const FLinearColor FAircraftDebugColors::CenterOfMass = FLinearColor::Yellow;
-const FLinearColor FAircraftDebugColors::Bounds = FLinearColor::White;
 const FLinearColor FAircraftDebugColors::ControlForward = FLinearColor(1.0f, 0.45f, 0.0f);
 const FLinearColor FAircraftDebugColors::ControlRight = FLinearColor(0.0f, 1.0f, 1.0f);
 const FLinearColor FAircraftDebugColors::ControlUp = FLinearColor(1.0f, 0.0f, 1.0f);
 const FLinearColor FAircraftDebugColors::MotionTargetPoint = FLinearColor::Yellow;
 const FLinearColor FAircraftDebugColors::MotionTargetLine = FLinearColor::Red;
 const FLinearColor FAircraftDebugColors::MotionTargetVelocity = FLinearColor(0.0f, 1.0f, 1.0f);
-const FLinearColor FAircraftDebugColors::MotionTargetYaw = FLinearColor(1.0f, 0.5f, 0.0f);
 const FLinearColor FAircraftDebugColors::RotorEnabled = FLinearColor::Green;
 const FLinearColor FAircraftDebugColors::RotorDisabled = FLinearColor::Red;
 const FLinearColor FAircraftDebugColors::RotorArm = FLinearColor(0.45f, 0.45f, 0.45f);
@@ -26,9 +23,7 @@ const FLinearColor FAircraftDebugColors::CorridorCurrent = FLinearColor::Green;
 const FLinearColor FAircraftDebugColors::CorridorPredictedViolation = FLinearColor(1.0f, 0.5f, 0.0f);
 const FLinearColor FAircraftDebugColors::CorridorViolation = FLinearColor::Red;
 const FLinearColor FAircraftDebugColors::Setpoint = FLinearColor::Yellow;
-const FLinearColor FAircraftDebugColors::LookAhead = FLinearColor(1.0f, 0.0f, 1.0f);
 const FLinearColor FAircraftDebugColors::TrackingError = FLinearColor::Red;
-const FLinearColor FAircraftDebugColors::DiagnosticsText = FLinearColor::White;
 const FLinearColor FAircraftDebugColors::ReferenceVelocity = FLinearColor::White;
 const FLinearColor FAircraftDebugColors::ToolSelected = FLinearColor::Red;
 const FLinearColor FAircraftDebugColors::ToolUnselectedMotor = FLinearColor::Yellow;

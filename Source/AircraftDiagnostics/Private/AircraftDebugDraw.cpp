@@ -4,9 +4,124 @@
 
 #if ENABLE_DRAW_DEBUG
 #include "DrawDebugHelpers.h"
+#include "Engine/World.h"
 #include "PrimitiveDrawInterface.h"
 #include "PrimitiveDrawingUtils.h"
 #endif
+
+FAircraftRuntimeDebugDrawBackend::FAircraftRuntimeDebugDrawBackend(
+	UWorld& InWorld, const uint8 InDepthPriority)
+	: World(InWorld), DepthPriority(InDepthPriority)
+{
+}
+
+void FAircraftRuntimeDebugDrawBackend::DrawLine(const FVector& Start, const FVector& End,
+	const FLinearColor& Color, const float Thickness)
+{
+#if ENABLE_DRAW_DEBUG
+	DrawDebugLine(&World, Start, End, Color.ToFColor(true), false, -1.0f,
+		DepthPriority, Thickness);
+#endif
+}
+
+void FAircraftRuntimeDebugDrawBackend::DrawPoint(const FVector& Position,
+	const FLinearColor& Color, const float Size)
+{
+#if ENABLE_DRAW_DEBUG
+	DrawDebugPoint(&World, Position, Size, Color.ToFColor(true), false, -1.0f, DepthPriority);
+#endif
+}
+
+void FAircraftRuntimeDebugDrawBackend::DrawSphere(const FVector& Center, const float Radius,
+	const FLinearColor& Color, const int32 Segments, const float Thickness)
+{
+#if ENABLE_DRAW_DEBUG
+	DrawDebugSphere(&World, Center, Radius, Segments, Color.ToFColor(true), false,
+		-1.0f, DepthPriority, Thickness);
+#endif
+}
+
+void FAircraftRuntimeDebugDrawBackend::DrawCapsule(const FVector& AxisStart,
+	const FVector& AxisEnd, const float Radius, const FLinearColor& Color,
+	const int32 Segments, const float Thickness)
+{
+#if ENABLE_DRAW_DEBUG
+	const FVector AxisDelta = AxisEnd - AxisStart;
+	const double AxisLength = AxisDelta.Size();
+	if (AxisLength <= UE_DOUBLE_SMALL_NUMBER || Radius <= 0.0f) return;
+	const FVector Center = 0.5 * (AxisStart + AxisEnd);
+	const FQuat Rotation = FQuat::FindBetweenNormals(FVector::UpVector, AxisDelta / AxisLength);
+	DrawDebugCapsule(&World, Center, 0.5 * AxisLength + Radius, Radius, Rotation,
+		Color.ToFColor(true), false, -1.0f, DepthPriority, Thickness);
+	(void)Segments;
+#endif
+}
+
+void FAircraftRuntimeDebugDrawBackend::DrawString(const FVector& Location,
+	const FString& Text, const FLinearColor& Color, const float FontScale)
+{
+#if ENABLE_DRAW_DEBUG
+	DrawDebugString(&World, Location, Text, nullptr, Color.ToFColor(true),
+		0.0f, false, FontScale);
+#endif
+}
+
+FAircraftSimulationDebugDrawBackend::FAircraftSimulationDebugDrawBackend(
+	FPrimitiveDrawInterface& InPDI, const uint8 InDepthPriority)
+	: PDI(InPDI), DepthPriority(InDepthPriority)
+{
+}
+
+void FAircraftSimulationDebugDrawBackend::DrawLine(const FVector& Start, const FVector& End,
+	const FLinearColor& Color, const float Thickness)
+{
+#if ENABLE_DRAW_DEBUG
+	PDI.DrawLine(Start, End, Color, DepthPriority, Thickness);
+#endif
+}
+
+void FAircraftSimulationDebugDrawBackend::DrawPoint(const FVector& Position,
+	const FLinearColor& Color, const float Size)
+{
+#if ENABLE_DRAW_DEBUG
+	PDI.DrawPoint(Position, Color, Size, DepthPriority);
+#endif
+}
+
+void FAircraftSimulationDebugDrawBackend::DrawSphere(const FVector& Center, const float Radius,
+	const FLinearColor& Color, const int32 Segments, const float Thickness)
+{
+#if ENABLE_DRAW_DEBUG
+	::DrawWireSphere(&PDI, Center, Color, Radius, Segments, DepthPriority, Thickness);
+#endif
+}
+
+void FAircraftSimulationDebugDrawBackend::DrawCapsule(const FVector& AxisStart,
+	const FVector& AxisEnd, const float Radius, const FLinearColor& Color,
+	const int32 Segments, const float Thickness)
+{
+#if ENABLE_DRAW_DEBUG
+	const FVector AxisDelta = AxisEnd - AxisStart;
+	const double AxisLength = AxisDelta.Size();
+	if (AxisLength <= UE_DOUBLE_SMALL_NUMBER || Radius <= 0.0f) return;
+	FVector BasisX;
+	FVector BasisY;
+	const FVector AxisDirection = AxisDelta / AxisLength;
+	AxisDirection.FindBestAxisVectors(BasisX, BasisY);
+	::DrawWireCapsule(&PDI, 0.5 * (AxisStart + AxisEnd), BasisX, BasisY, AxisDirection,
+		Color, Radius, 0.5 * AxisLength + Radius, Segments, DepthPriority, Thickness);
+#endif
+}
+
+void FAircraftSimulationDebugDrawBackend::DrawString(const FVector& Location,
+	const FString& Text, const FLinearColor& Color, const float FontScale)
+{
+	// Simulation 三维文字统一进入同帧 Canvas/Status，PDI 不承担字体渲染。
+	(void)Location;
+	(void)Text;
+	(void)Color;
+	(void)FontScale;
+}
 
 float FAircraftDebugDraw::ResolveThickness(
 	const FAircraftDebugDrawContext& Context, const float Thickness)
@@ -14,13 +129,13 @@ float FAircraftDebugDraw::ResolveThickness(
 	const float Resolved = Thickness >= 0.0f
 		? Thickness
 		: UE::AircraftLab::Diagnostics::DebugLineThickness;
-	return Context.PDI ? Resolved * Context.SizeScale : Resolved;
+	return Resolved * Context.SizeScale;
 }
 
 float FAircraftDebugDraw::ScaleSize(
 	const FAircraftDebugDrawContext& Context, const float Size)
 {
-	return Context.PDI ? Size * Context.SizeScale : Size;
+	return Size * Context.SizeScale;
 }
 
 void FAircraftDebugDraw::DrawLine(
@@ -28,16 +143,8 @@ void FAircraftDebugDraw::DrawLine(
 	const FLinearColor& Color, const float Thickness)
 {
 #if ENABLE_DRAW_DEBUG
-	if (Context.PDI)
-	{
-		Context.PDI->DrawLine(Start, End, Color, Context.DepthPriority,
-			ResolveThickness(Context, Thickness));
-	}
-	else if (Context.World)
-	{
-		DrawDebugLine(Context.World, Start, End, Color.ToFColor(true), false, -1.0f,
-			Context.DepthPriority, ResolveThickness(Context, Thickness));
-	}
+	if (Context.Backend) Context.Backend->DrawLine(
+		Start, End, Color, ResolveThickness(Context, Thickness));
 #endif
 }
 
@@ -46,15 +153,7 @@ void FAircraftDebugDraw::DrawPoint(
 	const FLinearColor& Color, const float Size)
 {
 #if ENABLE_DRAW_DEBUG
-	if (Context.PDI)
-	{
-		Context.PDI->DrawPoint(Position, Color, ScaleSize(Context, Size), Context.DepthPriority);
-	}
-	else if (Context.World)
-	{
-		DrawDebugPoint(Context.World, Position, ScaleSize(Context, Size), Color.ToFColor(true),
-			false, -1.0f, Context.DepthPriority);
-	}
+	if (Context.Backend) Context.Backend->DrawPoint(Position, Color, ScaleSize(Context, Size));
 #endif
 }
 
@@ -70,19 +169,14 @@ void FAircraftDebugDraw::DrawArrow(
 	}
 	const FVector End = Start + Vector;
 	const float ArrowSize = FMath::Clamp(Vector.Size() * 0.15f, 5.0f, 25.0f);
-	if (Context.PDI)
-	{
-		const FRotationMatrix Rotation(Vector.Rotation());
-		FMatrix ArrowTransform = Rotation;
-		ArrowTransform.SetOrigin(Start);
-		::DrawDirectionalArrow(Context.PDI, ArrowTransform, Color, Vector.Size(), ArrowSize,
-			Context.DepthPriority, ResolveThickness(Context, -1.0f));
-	}
-	else if (Context.World)
-	{
-		DrawDebugDirectionalArrow(Context.World, Start, End, ArrowSize, Color.ToFColor(true),
-			false, -1.0f, Context.DepthPriority, ResolveThickness(Context, -1.0f));
-	}
+	if (!Context.Backend) return;
+	DrawLine(Context, Start, End, Color);
+	FVector Side;
+	FVector Other;
+	Vector.GetSafeNormal().FindBestAxisVectors(Side, Other);
+	const FVector Back = -Vector.GetSafeNormal() * ArrowSize;
+	DrawLine(Context, End, End + Back + Side * ArrowSize * 0.4f, Color);
+	DrawLine(Context, End, End + Back - Side * ArrowSize * 0.4f, Color);
 #endif
 }
 
@@ -91,34 +185,11 @@ void FAircraftDebugDraw::DrawAxes(
 	const FRotator& Rotation, const float Length)
 {
 #if ENABLE_DRAW_DEBUG
-	if (Context.PDI)
-	{
-		::DrawCoordinateSystem(Context.PDI, Location, Rotation, Length, Context.DepthPriority,
-			ResolveThickness(Context, -1.0f));
-	}
-	else if (Context.World)
-	{
-		DrawDebugCoordinateSystem(Context.World, Location, Rotation, Length, false, -1.0f,
-			Context.DepthPriority, ResolveThickness(Context, -1.0f));
-	}
-#endif
-}
-
-void FAircraftDebugDraw::DrawWireBox(
-	const FAircraftDebugDrawContext& Context, const FBox& Box,
-	const FLinearColor& Color, const float Thickness)
-{
-#if ENABLE_DRAW_DEBUG
-	if (Context.PDI)
-	{
-		::DrawWireBox(Context.PDI, Box, Color, Context.DepthPriority,
-			ResolveThickness(Context, Thickness));
-	}
-	else if (Context.World)
-	{
-		DrawDebugBox(Context.World, Box.GetCenter(), Box.GetExtent(), Color.ToFColor(true),
-			false, -1.0f, Context.DepthPriority, ResolveThickness(Context, Thickness));
-	}
+	if (!Context.Backend) return;
+	const FRotationMatrix Axes(Rotation);
+	DrawLine(Context, Location, Location + Axes.GetScaledAxis(EAxis::X) * Length, FLinearColor::Red);
+	DrawLine(Context, Location, Location + Axes.GetScaledAxis(EAxis::Y) * Length, FLinearColor::Green);
+	DrawLine(Context, Location, Location + Axes.GetScaledAxis(EAxis::Z) * Length, FLinearColor::Blue);
 #endif
 }
 
@@ -127,16 +198,8 @@ void FAircraftDebugDraw::DrawSphere(
 	const FLinearColor& Color, const int32 Segments, const float Thickness)
 {
 #if ENABLE_DRAW_DEBUG
-	if (Context.PDI)
-	{
-		::DrawWireSphere(Context.PDI, Center, Color, Radius, Segments, Context.DepthPriority,
-			ResolveThickness(Context, Thickness));
-	}
-	else if (Context.World)
-	{
-		DrawDebugSphere(Context.World, Center, Radius, Segments, Color.ToFColor(true), false,
-			-1.0f, Context.DepthPriority, ResolveThickness(Context, Thickness));
-	}
+	if (Context.Backend) Context.Backend->DrawSphere(Center, Radius, Color, Segments,
+		ResolveThickness(Context, Thickness));
 #endif
 }
 
@@ -152,25 +215,8 @@ void FAircraftDebugDraw::DrawCapsule(
 	{
 		return;
 	}
-	const FVector AxisDirection = AxisDelta / AxisLength;
-	const FVector Center = 0.5 * (AxisStart + AxisEnd);
-	const double HalfHeight = 0.5 * AxisLength + Radius;
-	if (Context.PDI)
-	{
-		FVector BasisX;
-		FVector BasisY;
-		AxisDirection.FindBestAxisVectors(BasisX, BasisY);
-		::DrawWireCapsule(Context.PDI, Center, BasisX, BasisY, AxisDirection,
-			Color, Radius, HalfHeight, Segments, Context.DepthPriority,
-			ResolveThickness(Context, Thickness));
-	}
-	else if (Context.World)
-	{
-		const FQuat Rotation = FQuat::FindBetweenNormals(FVector::UpVector, AxisDirection);
-		DrawDebugCapsule(Context.World, Center, HalfHeight, Radius, Rotation,
-			Color.ToFColor(true), false, -1.0f, Context.DepthPriority,
-			ResolveThickness(Context, Thickness));
-	}
+	if (Context.Backend) Context.Backend->DrawCapsule(
+		AxisStart, AxisEnd, Radius, Color, Segments, ResolveThickness(Context, Thickness));
 #endif
 }
 
@@ -200,11 +246,7 @@ void FAircraftDebugDraw::DrawString(
 	const FLinearColor& Color, const float FontScale)
 {
 #if ENABLE_DRAW_DEBUG
-	if (Context.World)
-	{
-		DrawDebugString(Context.World, Location, Text, nullptr, Color.ToFColor(true),
-			0.0f, false, FontScale);
-	}
+	if (Context.Backend) Context.Backend->DrawString(Location, Text, Color, FontScale);
 #endif
 }
 

@@ -3,6 +3,9 @@
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
+#if WITH_EDITOR
+#include "Dataflow/AircraftConstructionDebugDraw.h"
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftFrameConfigNode)
 
@@ -65,3 +68,19 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 
 	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
 }
+
+#if WITH_EDITOR
+bool FAircraftFrameConfigNode::CanDebugDrawViewMode(const FName& ViewModeName) const
+{
+	return UE::AircraftLab::DataflowNodes::IsAircraftConstructionDebugView(ViewModeName);
+}
+
+void FAircraftFrameConfigNode::DebugDraw(UE::Dataflow::FContext& Context,
+	IDataflowDebugDrawInterface& DataflowRenderingInterface,
+	const FDebugDrawParameters& DebugDrawParameters) const
+{
+	if (!DebugDrawParameters.bNodeIsSelected && !DebugDrawParameters.bNodeIsPinned) return;
+	UE::AircraftLab::DataflowNodes::DrawAircraftFrameConfiguration(
+		GetOutputValue(Context, &Collection, Collection), DataflowRenderingInterface);
+}
+#endif

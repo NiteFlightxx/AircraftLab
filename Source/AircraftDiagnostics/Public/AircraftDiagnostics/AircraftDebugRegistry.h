@@ -2,17 +2,28 @@
 
 #include "CoreMinimal.h"
 #include "AircraftDiagnostics/AircraftDebugDraw.h"
+#include "AircraftDiagnostics/AircraftDebugSettings.h"
 #include "AircraftDiagnostics/AircraftDebugSnapshot.h"
 
 class FCanvas;
 class FSceneView;
 
+enum class EAircraftDebugContext : uint8
+{
+	None = 0,
+	PreviewSimulation = 1 << 0,
+	RuntimeWorld = 1 << 1
+};
+ENUM_CLASS_FLAGS(EAircraftDebugContext);
+
 struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugOptionHandle
 {
 	uint64 Value = 0;
 	bool IsValid() const { return Value != 0; }
-	friend bool operator==(const FAircraftDebugOptionHandle& Left,
-		const FAircraftDebugOptionHandle& Right) { return Left.Value == Right.Value; }
+	friend bool operator==(const FAircraftDebugOptionHandle& Left, const FAircraftDebugOptionHandle& Right)
+	{
+		return Left.Value == Right.Value;
+	}
 };
 
 struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugOptionDescriptor
@@ -22,7 +33,10 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugOptionDescriptor
 	FText CategoryDisplayName;
 	FText DisplayName;
 	FText ToolTip;
-	EAircraftDebugData RequiredData = EAircraftDebugData::None;
+	EAircraftDebugPayload RequiredPayloads = EAircraftDebugPayload::None;
+	EAircraftDebugContext SupportedContexts = EAircraftDebugContext::PreviewSimulation | EAircraftDebugContext::RuntimeWorld;
+	EAircraftRuntimeDrawGroup RuntimeGroup = EAircraftRuntimeDrawGroup::None;
+	int32 SortOrder = 0;
 	bool bEditorEnabledByDefault = false;
 
 	TFunction<void(const FAircraftDebugFrameSnapshot&, const FAircraftDebugDrawContext&)> Draw3D;
@@ -37,6 +51,7 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugOptionView
 	FText CategoryDisplayName;
 	FText DisplayName;
 	FText ToolTip;
+	int32 SortOrder = 0;
 	bool bEditorEnabledByDefault = false;
 	bool bHasDraw3D = false;
 	bool bHasCanvasText = false;
@@ -51,9 +66,12 @@ public:
 	static void UnregisterOptions(TArray<FAircraftDebugOptionHandle>& Handles);
 	static void GetOptionViews(TArray<FAircraftDebugOptionView>& OutOptions);
 
-	static bool HasAnyRuntimeDrawEnabled();
+	static FAircraftDebugCaptureRequest BuildRuntimeCaptureRequest(
+		const FAircraftRuntimeDrawSelection& Selection);
+	static FAircraftDebugCaptureRequest BuildCaptureRequest(
+		const TSet<FName>& EnabledIds, EAircraftDebugContext Context);
 	static void DrawRuntime(const FAircraftDebugFrameSnapshot& Snapshot,
-		const FAircraftDebugDrawContext& Context);
+		const FAircraftDebugDrawContext& Context, const FAircraftRuntimeDrawSelection& Selection);
 	static void DrawSelected(const FAircraftDebugFrameSnapshot& Snapshot,
 		const FAircraftDebugDrawContext& Context, const TSet<FName>& EnabledIds);
 	static void DrawCanvasSelected(const FAircraftDebugFrameSnapshot& Snapshot,

@@ -73,7 +73,6 @@ struct FAircraftAirscrewProfileNode : public FDataflowNode
 {
 	GENERATED_BODY()
 	DATAFLOW_NODE_DEFINE_INTERNAL(FAircraftAirscrewProfileNode, "AircraftAirscrewProfile", "Aircraft|Profiles", "Single Airscrew Profile")
-	DATAFLOW_NODE_RENDER_TYPE("RotorRender", FName("FManagedArrayCollection"), "Collection")
 
 public:
 	FAircraftAirscrewProfileNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
@@ -84,4 +83,11 @@ public:
 	FAircraftAirscrewProfileData Profile;
 
 	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+#if WITH_EDITOR
+	virtual bool CanDebugDraw() const override { return true; }
+	virtual bool CanDebugDrawViewMode(const FName& ViewModeName) const override;
+	virtual void DebugDraw(UE::Dataflow::FContext& Context,
+		IDataflowDebugDrawInterface& DataflowRenderingInterface,
+		const FDebugDrawParameters& DebugDrawParameters) const override;
+#endif
 };

@@ -19,6 +19,13 @@
   - [推力配比](#推力配比)
   - [根骨骼 RootBone](#根骨骼-rootbone)
 - [资产编辑器](#资产编辑器)
+- [调试与诊断系统](#调试与诊断系统)
+  - [三种调试环境](#三种调试环境)
+  - [Runtime 绘制控制台变量](#runtime-绘制控制台变量)
+  - [诊断日志控制台变量](#诊断日志控制台变量)
+  - [正式绘制项目](#正式绘制项目)
+  - [常用控制台命令](#常用控制台命令)
+  - [调试绘制排查](#调试绘制排查)
 - [LOD 与驱动模式](#lod-与驱动模式)
 - [节点参数详解](#节点参数详解)
   - [Source / Solver / Frame](#source--solver--frame)
@@ -177,6 +184,156 @@ QuadX 标准布局（俯视，机头朝上）：
 - Simulation 视口预览使用等价 C++ 预览 Actor 类
 
 编辑器设置默认：模拟自动播放开启；异步缓存关闭（避免飞行模拟的缓存陈旧问题）；允许 PIE 内求值。
+
+---
+
+## 调试与诊断系统
+
+`AircraftDiagnostics` 是调试快照、绘制语义、日志策略和调试控制台变量的唯一权威模块。调试系统只读取已经产生的模拟结果，不会修改飞控输入、约束目标、自动驾驶计划、物理状态或 Tick 顺序。
+
+绘制采用按需快照：当前启用的绘制项目会先合并成数据请求，只捕获真正需要的机体、旋翼、控制分配、气动力、约束或自动驾驶数据。调试全部关闭时不会复制路径、走廊和旋翼数组，也不会提交绘制。
+
+### 三种调试环境
+
+| 环境 | 开启方式 | 默认状态 | 说明 |
+|---|---|---|---|
+| **Construction 视口** | 选中或固定支持调试绘制的 Dataflow 节点 | 按节点选择状态 | 使用 Dataflow 原生 `FDataflowNode::DebugDraw()`。`AircraftFrameConfig` 绘制模型、RootBone 和飞控坐标框架；`AircraftAirscrewProfile` 绘制编译后的旋翼安装点、推力轴、力臂与旋转方向。缺少已加载 Mesh、有效 RootBone 或 Socket/Bone 时显示错误，不使用未经编译的局部坐标回退。 |
+| **Dataflow Simulation 视口** | Simulation 视口的 Aircraft 可视化菜单 | `Aircraft.Status`、`Aircraft.Frames`、`Aircraft.ControlReference`、`Aircraft.Propulsion` 默认开启 | 每个 `FDataflowSimulationScene` 独立保存开关状态；多个资产编辑器窗口互不影响。同一帧的 PDI、Canvas 和状态文字复用同一个快照。这里不注册也不读取 Runtime CVar。 |
+| **PIE / Runtime** | 使用下表的 `p.Aircraft.Debug.Runtime.*` CVar | 全部关闭 | 只在 Game World 中生效，由 `UAircraftComponent` 在 Tick 末尾捕获并绘制一次组合快照。Editor Preview World 永远不会进入 Runtime 绘制。 |
+
+> Construction 和 Simulation 的开关属于编辑器会话状态；Runtime CVar 只控制 PIE/Runtime。三者不会互相覆盖或同步。
+
+### Runtime 绘制控制台变量
+
+以下绘制变量只在支持 `ENABLE_DRAW_DEBUG` 的构建中注册。四个绘制开关均为独立布尔值，可以任意组合，默认均为 `0`。
+
+| CVar | 类型 | 默认值 | 详细说明 |
+|---|---:|---:|---|
+| `p.Aircraft.Debug.Runtime.Draw.Aircraft` | bool | `0` | 绘制机体基础诊断组：`Aircraft.Status`、`Aircraft.Frames`、`Aircraft.Propulsion`。包括当前模拟状态、LOD、驱动模式、飞行模式、Arm 状态、RootBone/飞控坐标框架，以及旋翼命令、转速、推力、反扭矩和有效度。 |
+| `p.Aircraft.Debug.Runtime.Draw.FlightControl` | bool | `0` | 绘制飞控诊断组：`Aircraft.ControlReference`、`Aircraft.ControlAllocation`、`Aircraft.Aerodynamics`、`Aircraft.ConstraintDrive`。同一个开关覆盖 FlightController 与 PhysicsConstraint 所需的控制参考、分配残差、气动力和约束目标诊断；当前后端没有对应有效数据时，该项目不会绘制伪数据。 |
+| `p.Aircraft.Debug.Runtime.Draw.Autopilot` | bool | `0` | 绘制自动驾驶诊断组：`Autopilot.Path`、`Autopilot.Reference`、`Autopilot.Tracking`。显示动态可行运动计划、当前位置/速度/偏航参考、实际到参考的跟踪误差及 MPCC 状态。 |
+| `p.Aircraft.Debug.Runtime.Draw.Corridor` | bool | `0` | 独立绘制 `Autopilot.Corridor` 安全走廊。该开关不要求同时打开 Autopilot 绘制组，但必须存在有效的 Route 意图和走廊数据。 |
+| `p.Aircraft.Debug.Runtime.Filter.Aircraft` | string | 空 | 按 Actor 或 `UAircraftComponent` 名称进行**包含匹配**，只绘制匹配的 Aircraft。空字符串表示不过滤。只影响 Runtime 绘制，不影响日志、Construction 或 Simulation。 |
+| `p.Aircraft.Debug.Runtime.Filter.Rotor` | string | 空 | 按完整旋翼名称筛选 `Aircraft.Propulsion`，例如 `Rotor1_FR`。空字符串绘制全部旋翼。只影响 Runtime 旋翼绘制，不影响飞控计算或诊断日志。 |
+
+走廊采用固定状态配色：
+
+| 状态 | 颜色 | 含义 |
+|---|---|---|
+| 当前所在段 | 绿色 | Aircraft 当前进度所处的有效走廊段 |
+| 实际越界 | 红色 | 当前实际位置已经越出当前段的有效范围 |
+| 预测越界 | 橙色 | 当前未越界，但预测轨迹将越出当前段 |
+| 其他走廊段 | 青蓝色 | Route 中非当前段的安全走廊 |
+
+### 诊断日志控制台变量
+
+周期性诊断日志在非 Shipping 构建中注册，默认全部关闭。每个类别独立控制；`LogAircraft` 的 Unreal verbosity 仍是最终日志等级过滤器。
+
+| CVar | 类型 | 默认值 | 详细说明 |
+|---|---:|---:|---|
+| `p.Aircraft.Debug.Log.Input` | bool | `0` | 输出输入组件、Mapping Context、绑定结果、摇杆四轴值以及输入是否成功送达飞控组件。适合排查“按键有响应但 Aircraft 不移动”。 |
+| `p.Aircraft.Debug.Log.SimulationDrive` | bool | `0` | 输出组件生命周期、物理状态、当前 LOD、驱动后端、驱动门控和替代驱动心跳。适合排查 FlightController、PhysicsConstraint 或 Kinematic 后端没有实际执行。 |
+| `p.Aircraft.Debug.Log.FlightControl` | bool | `0` | 输出飞行模式、估计状态、轨迹参考、控制目标、飞控轴指令和控制分配结果。适合排查姿态、高度、速度和偏航控制。 |
+| `p.Aircraft.Debug.Log.Propulsion` | bool | `0` | 输出旋翼命令、目标/实际转速、推力、反扭矩、有效度和饱和情况。可独立于 FlightControl 日志开启。 |
+| `p.Aircraft.Debug.Log.Constraint` | bool | `0` | 输出 PhysicsConstraint 的世界空间位置/速度目标、误差、约束力矩和响应状态。约束创建失败及持续无响应 Warning 不受此开关屏蔽。 |
+| `p.Aircraft.Debug.Log.Autopilot` | bool | `0` | 输出自动驾驶意图、规划版本、路径进度、参考点、轮廓/滞后误差、走廊违反量和求解耗时。适用于全部驱动后端。 |
+| `p.Aircraft.Debug.Log.IntervalSeconds` | float | `0.2` | 所有周期性 `Log`/`Display` 诊断的最小输出间隔，单位秒。`0` 表示每次更新都允许输出；建议只在短时间精细采样时使用。 |
+
+日志边界规则：
+
+- `IntervalSeconds` 只限制周期性 `Log`/`Display`，不限制事件日志。
+- 配置无效、规划失败、约束创建失败、无法悬停、输入配置缺失等 `Warning`/`Error` 始终输出，不受上述调试开关影响。
+- Shipping 中不注册周期性诊断 CVar，但必要的 `Warning`/`Error` 仍保留。
+- 物理线程可能读取的诊断配置统一采用线程安全读取，不需要暂停模拟后再修改。
+
+### 正式绘制项目
+
+| 绘制 ID | Runtime 开关 | 内容 |
+|---|---|---|
+| `Aircraft.Status` | `Draw.Aircraft` | 模拟启停/暂停、LOD、驱动模式、飞行模式、Arm、控制器、Chaos 与物理状态序列 |
+| `Aircraft.Frames` | `Draw.Aircraft` | 物理 RootBone 坐标框架和配置后的 Aircraft Forward/Right/Up 控制框架 |
+| `Aircraft.Propulsion` | `Draw.Aircraft` | 旋翼安装点、力臂、推力轴、有效度、指令、转速、推力和反扭矩 |
+| `Aircraft.ControlReference` | `Draw.FlightControl` | 实际速度、轨迹位置目标、目标速度与位置误差 |
+| `Aircraft.ControlAllocation` | `Draw.FlightControl` | 期望/实际合力和力矩、分配残差、饱和旋翼数及剩余三轴控制权限 |
+| `Aircraft.Aerodynamics` | `Draw.FlightControl` | 显式空气动力学合力和机体系力矩；未启用气动模型时为空 |
+| `Aircraft.ConstraintDrive` | `Draw.FlightControl` | PhysicsConstraint 世界空间目标、位置/速度误差、约束力与力矩 |
+| `Autopilot.Path` | `Draw.Autopilot` | 动态可行运动计划；无计划采样时显示 Route 中心线 |
+| `Autopilot.Corridor` | `Draw.Corridor` | 胶囊体安全走廊及当前段、实际越界、预测越界状态 |
+| `Autopilot.Reference` | `Draw.Autopilot` | 当前自动驾驶位置、速度和偏航参考 |
+| `Autopilot.Tracking` | `Draw.Autopilot` | 实际状态到参考点的跟踪误差与预测控制诊断 |
+
+表中的 `Draw.*` 是对应完整 Runtime CVar 的末段缩写。Simulation 视口菜单直接按绘制 ID 开关，不使用 CVar。
+
+### 常用控制台命令
+
+在 PIE 中打开控制台执行：
+
+```text
+p.Aircraft.Debug.Runtime.Draw.Aircraft 1
+p.Aircraft.Debug.Runtime.Draw.FlightControl 1
+p.Aircraft.Debug.Runtime.Draw.Autopilot 1
+p.Aircraft.Debug.Runtime.Draw.Corridor 1
+```
+
+只绘制名称包含 `BP_AircraftPawnA` 的 Aircraft，并将旋翼绘制限制为 `Rotor1_FR`：
+
+```text
+p.Aircraft.Debug.Runtime.Filter.Aircraft BP_AircraftPawnA
+p.Aircraft.Debug.Runtime.Filter.Rotor Rotor1_FR
+```
+
+使用空字符串清除筛选：
+
+```text
+p.Aircraft.Debug.Runtime.Filter.Aircraft ""
+p.Aircraft.Debug.Runtime.Filter.Rotor ""
+```
+
+同时观察输入、驱动、飞控和旋翼日志，每 `0.1` 秒最多输出一组周期日志：
+
+```text
+p.Aircraft.Debug.Log.Input 1
+p.Aircraft.Debug.Log.SimulationDrive 1
+p.Aircraft.Debug.Log.FlightControl 1
+p.Aircraft.Debug.Log.Propulsion 1
+p.Aircraft.Debug.Log.IntervalSeconds 0.1
+log LogAircraft Log
+```
+
+排查 PhysicsConstraint 自动驾驶时推荐的最小组合：
+
+```text
+p.Aircraft.Debug.Runtime.Draw.FlightControl 1
+p.Aircraft.Debug.Runtime.Draw.Autopilot 1
+p.Aircraft.Debug.Runtime.Draw.Corridor 1
+p.Aircraft.Debug.Log.SimulationDrive 1
+p.Aircraft.Debug.Log.Constraint 1
+p.Aircraft.Debug.Log.Autopilot 1
+```
+
+调试结束后逐项设为 `0`；筛选字符串设为 `""`。所有绘制开关互相独立，没有“总开关”。
+
+### 调试绘制排查
+
+如果控制台命令已经执行但场景中没有绘制，按以下顺序检查：
+
+1. 确认当前是 **PIE/Game World**。资产编辑器的 Construction 和 Simulation 视口不会读取 Runtime CVar。
+2. 确认打开了对应内容所属的开关。例如安全走廊属于 `Draw.Corridor`，不是 `Draw.Autopilot`。
+3. 临时清空 `Filter.Aircraft` 和 `Filter.Rotor`，排除名称不匹配。
+4. 确认当前状态确实产生了所需数据：Autopilot 需要有效意图/计划，Corridor 需要 Route 走廊，Aerodynamics 需要已启用的气动模型，ConstraintDrive 需要 PhysicsConstraint 后端。
+5. 日志不可见时执行 `log LogAircraft Log`，再检查对应 `Debug.Log.*` 开关；Warning/Error 无需开启调试日志。
+6. Shipping 构建不会注册周期性日志开关，通常也不包含 Runtime Debug Draw；请使用 Development 或 DebugGame 调试。
+
+以下旧 CVar 已删除且没有兼容别名：
+
+- `p.Aircraft.Debug.Draw`
+- `p.Aircraft.Debug.Corridor`
+- `p.Aircraft.Debug.AircraftFilter`
+- `p.Aircraft.Debug.RotorFilter`
+- `p.Aircraft.Debug.Log`
+- `p.Aircraft.Debug.Interval`
+
+`p.Aircraft.Reset` 是模拟控制命令，`Aircraft.EnableDataflowEditor` 是编辑器行为设置；两者不属于调试诊断系统。
 
 ---
 
@@ -459,7 +616,7 @@ Chaos 异步物理解算参数。
 
 | 参数 | 类型 | 默认值 | 说明 | 调整建议 |
 |---|---|---|---|---|
-| `LinearNaturalFrequencyHz` | float (Hz) | 1.59154943 | 线性弹簧自然频率 → Stiffness=(ω·2π)² | 跟随刚度；过高震荡 |
+| `LinearNaturalFrequencyHz` | float (Hz) | 1.59154943 | 线性弹簧自然频率 `f` → Stiffness=`(2πf)²` | 跟随刚度；过高震荡 |
 | `LinearDampingRatio` | float | 1.0 | 线性阻尼比（1=临界） | 1 临界无超调 |
 | `LinearExtraDampingPerSecond` | float | 0 | 附加线性阻尼 | 额外抑振 |
 | `LinearForceLimitN` | float (N) | 0 | 合力上限（0 不限） | 限保护 |
@@ -471,7 +628,7 @@ Chaos 异步物理解算参数。
 | `AttitudeTorqueLimitNm` | float (N·m) | 0 | 姿态力矩上限（0 不限） | 限保护 |
 | `bLinearAccelerationMode` | bool | true | 线性加速度模式 | 影响线驱动解释 |
 
-> `1.59154943 Hz` ≈ 10 rad/s，对应刚度 ≈ (10·2π)²，是临界平稳的常用初值。
+> `1.59154943 Hz` 对应角频率 `ω=2πf≈10 rad/s`，因此刚度 `K=ω²≈100`；阻尼比为 1 且附加阻尼为 0 时，阻尼 `D=2ζω≈20`。
 
 #### AircraftKinematicSimulationConfig（运动学驱动）
 直接设位的运动学后端，用于 Kinematic LOD。

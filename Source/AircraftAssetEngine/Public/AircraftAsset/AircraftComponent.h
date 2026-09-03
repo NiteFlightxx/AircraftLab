@@ -157,7 +157,8 @@ public:
 
 	const FAircraftSimulationModel* GetSimulationModel() const;
 	const FAircraftSimulationLodModel* GetCurrentLodModel() const;
-	void CaptureDebugSnapshot(FAircraftDebugFrameSnapshot& OutSnapshot);
+	void CaptureDebugSnapshot(const FAircraftDebugCaptureRequest& Request,
+		FAircraftDebugFrameSnapshot& OutSnapshot);
 
 #if WITH_EDITORONLY_DATA
 	UThumbnailInfo* GetThumbnailInfo() { return ThumbnailInfo; }
