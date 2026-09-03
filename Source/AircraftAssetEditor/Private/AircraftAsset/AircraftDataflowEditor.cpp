@@ -174,10 +174,10 @@ namespace UE::AircraftLab::AircraftAssetEditor::Private
 			FAircraftEstimatedState Estimated;
 			Component->GetEstimatedState(Estimated);
 			return FText::Format(LOCTEXT("BackendStatus",
-				"Playback: {0}\nBackend: {1}  Reason: {2}\nLOD: {3}  Drive: {4}  Root: {5}\nBody: valid={6} simulating={7}\nArm: {8}  Flight mode: {9}\nPosition: {10}\nVelocity: {11}\nAttitude: {12}\nWorld dt: {15}s  Physics dt: {13}s\nControl sequence: {14}"),
+				"Playback: {0}\nBackend: {1}  Detail: {2}\nLOD: {3}  Drive: {4}  Root: {5}\nBody: valid={6} simulating={7}\nArm: {8}  Flight mode: {9}\nPosition: {10}\nVelocity: {11}\nAttitude: {12}\nWorld dt: {15}s  Physics dt: {13}s\nControl sequence: {14}"),
 				Scene->IsSimulationEnabled() ? LOCTEXT("Playing", "Playing") : LOCTEXT("PausedState", "Paused"),
 				UEnum::GetDisplayValueAsText(Status.State),
-				Status.FailureReason.IsEmpty() ? LOCTEXT("None", "None") : FText::FromString(Status.FailureReason),
+				Status.Detail.IsEmpty() ? LOCTEXT("None", "None") : FText::FromString(Status.Detail),
 				FText::AsNumber(Status.LOD), UEnum::GetDisplayValueAsText(Status.DriveMode),
 				FText::FromName(Status.RootBone),
 				Status.bBodyValid ? LOCTEXT("True1", "true") : LOCTEXT("False1", "false"),

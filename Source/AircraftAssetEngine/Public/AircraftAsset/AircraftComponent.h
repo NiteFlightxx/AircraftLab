@@ -25,6 +25,7 @@ class UThumbnailInfo;
 class UPhysicsAsset;
 class USkeletalMesh;
 class FAircraftSimulationProxy;
+class AAircraftDataflowPreviewActor;
 struct FConstraintInstance;
 struct FAircraftSimulationModel;
 struct FAircraftSimulationLodModel;
@@ -64,7 +65,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent")
 	UAircraftAssetBase* GetAsset() const;
 
-	/** 当资产数据被外部改写后，强制组件重新同步骨骼网格、物理资产、仿真模型等状态。 */
+	/** 增量同步资产编译结果；内容未变化时无操作，结构变化时执行一次物理状态事务。 */
 	void RefreshAssetState();
 
 	/* ------- 飞行员输入 / 飞行模式 / 解锁 ------- */
@@ -141,8 +142,6 @@ public:
 	/** Read-only state of the world-Chaos backend. */
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Simulation")
 	FAircraftSimulationBackendStatus GetSimulationBackendStatus() const;
-	/** Refresh value-only backend diagnostics and the fail-closed execution gate immediately. */
-	void RefreshSimulationBackendStatus(float PhysicsDeltaSeconds = 0.0f);
 
 	UPROPERTY(BlueprintAssignable, Category = "AircraftComponent|Simulation LOD")
 	FOnAircraftSimulationLODChanged OnSimulationLODChanged;
@@ -213,6 +212,8 @@ protected:
 	//~ End IAircraftSimulationLODConsumer Interface
 
 private:
+	friend class AAircraftDataflowPreviewActor;
+
 	struct FSimulationStructureSignature
 	{
 		TWeakObjectPtr<USkeletalMesh> SkeletalMesh;
@@ -235,13 +236,15 @@ private:
 	const FBodyInstance* ResolveChassisBodyInstance() const;
 	void BuildSimulationBackend();
 	void ResetSimulationBackend();
-	void SetSimulationBackendFailure(const TCHAR* FailureReason);
-	void PublishSimulationBackendReadiness(bool bReady);
+	void SetSimulationBackendState(EAircraftSimulationBackendState State, const TCHAR* Detail = nullptr);
+	void InvalidateSimulationBackend(EAircraftSimulationBackendState State, const TCHAR* Detail);
+	bool TryActivateSimulationBackend();
 
 
 	/** 创建 6-DOF 物理约束后端（约束参数取自当前 LOD 的 FlightController 配置）。 */
 	bool CreateSimulationConstraint();
 	void UpdateConstraintDriveAuthority(const FAircraftFlightControllerRuntimeConfig& Config);
+	void DisableSimulationConstraintDrive();
 	void DestroySimulationConstraint();
 	void UpdateConstraintSimulation(float DeltaSeconds);
 	void UpdateKinematicSimulation(float DeltaSeconds);
@@ -271,7 +274,9 @@ private:
 
 	/** 把可选的 AircraftSolverConfig 同步到 Chaos BodyInstance；配置缺失时清除组件级覆盖标记。 */
 	void ApplySolverSettingsToBodyInstance();
-	void ReapplyCurrentSimulationLOD();
+	/** 同步组件物理模式，并统一启停 PhysicsAsset 中的全部刚体。 */
+	void SetAircraftPhysicsSimulationEnabled(bool bEnabled);
+	void ApplyCurrentSimulationLOD();
 	void ApplySimulationLOD(int32 LodIndex, bool bQueueProxyConfiguration = true);
 	void ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode);
 
@@ -296,8 +301,10 @@ private:
 
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;
 	FAircraftSimulationBackendStatus SimulationBackendStatus;
+	TWeakPtr<const FAircraftSimulationModel> AppliedSimulationModel;
 	FSimulationStructureSignature AppliedStructureSignature;
 	bool bHasAppliedStructureSignature = false;
+	bool bBackendStructureUpdateInProgress = false;
 	/** 所有驱动后端共享的最新飞行员输入。 */
 	FAircraftPilotInput PilotInput;
 	FAircraftLowLevelControlTargets LowLevelControlTargets;

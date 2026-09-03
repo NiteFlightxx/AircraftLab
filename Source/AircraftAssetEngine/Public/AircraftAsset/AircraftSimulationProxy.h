@@ -27,7 +27,7 @@
 #include "AircraftAsset/AircraftSimulationTypes.h"
 
 class UAircraftComponent;
-struct FBodyInstance;
+struct FBodyInstanceAsyncPhysicsTickHandle;
 
 /** Value-only PT-to-GT diagnostics published with the normal solver output. */
 struct AIRCRAFTASSETENGINE_API FAircraftSimulationControlDiagnostics
@@ -96,8 +96,8 @@ public:
 		const FVector& AngularVelocityWorldRadPerSec,
 		const FAircraftSimulationLodModel& Model);
 	void SetSimulationState_GameThread(bool bEnabled, bool bSuspended);
-	/** True only after the active execution domain has consumed the latest immutable configuration. */
-	bool IsConfigurationApplied_GameThread() const;
+	/** 通知下一物理子步重新捕获新 Chaos 刚体的原生阻尼状态。 */
+	void NotifyPhysicsStateRebuilt_GameThread();
 	/** Fail-closed execution gate published by the component's validated backend lifecycle. */
 	void SetBackendValidated_GameThread(bool bValidated);
 	bool IsControlExecutionAllowed_GameThread() const;
@@ -138,10 +138,9 @@ public:
 	 * FlightController 在此执行 MPCC、PID、分配与旋翼；PhysicsConstraint 在此执行
 	 * 确定性轨迹进度、可选空气动力和显式姿态扭矩。Kinematic 不进入本函数。
 	 */
-	void TickPhysicsThread(float DeltaTime, float SimTime, float ForceAccumulationScale = 1.0f);
+	void TickPhysicsThread(FBodyInstanceAsyncPhysicsTickHandle PhysicsHandle,
+		float DeltaTime, float SimTime, float ForceAccumulationScale = 1.0f);
 	//~ End PhysicsThread API
-
-	void SetAircraftBodyInstance(FBodyInstance* BodyInstance);
 
 private:
 	/** 按 Chaos 当前真实质心展开旋翼分配描述，并复位全部 PT 控制状态。 */
@@ -185,7 +184,6 @@ private:
 	EAircraftSimulationDriveMode PendingDriveMode = EAircraftSimulationDriveMode::FlightController;
 	bool bPendingConfiguration = false;
 	bool bPendingRuntimeReset = false;
-	uint64 PendingConfigurationRevision = 0;
 	bool bArmRequest = true;
 	bool bEmergencyStop = false;
 	TMap<FName, float> PendingRotorEffectivenessByName;
@@ -196,8 +194,7 @@ private:
 	std::atomic<bool> bSimulationSuspended{ false };
 	std::atomic<bool> bControllerEnabled{ true };
 	std::atomic<bool> bBackendValidated{ false };
-	std::atomic<uint64> RequestedConfigurationRevision{ 0 };
-	std::atomic<uint64> AppliedConfigurationRevision{ 0 };
+	std::atomic<bool> bPhysicsStateRebindRequested{ true };
 
 	/* PT → GT 输出缓冲 */
 	mutable FCriticalSection OutputCriticalSection;
@@ -214,8 +211,6 @@ private:
 	std::atomic<uint8> CurrentArmState{ static_cast<uint8>(EAircraftArmState::Armed) };
 	std::atomic<uint8> CurrentFlightMode{ static_cast<uint8>(EAircraftFlightMode::PositionHold) };
 	std::atomic<float> CurrentCollectiveThrustCommand{ 0.0f };
-
-	std::atomic<FBodyInstance*> AircraftBodyInstance{ nullptr };
 
 	std::atomic<float> GravityMagnitudeCmPerSecSq{ 980.0f };
 

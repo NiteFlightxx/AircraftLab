@@ -6,7 +6,6 @@
 #include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "AircraftAsset/AircraftDataflowPreviewActor.h"
 #include "AircraftAsset/AircraftComponent.h"
-#include "AircraftAsset/AircraftSimulationProxy.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
 #include "Dataflow/DataflowSimulationManager.h"
 #include "Misc/AutomationTest.h"
@@ -45,42 +44,13 @@ bool FAircraftWorldChaosBackendOwnershipTest::RunTest(const FString& Parameters)
 		GetDefault<AAircraftDataflowPreviewActor>();
 	TestTrue(TEXT("The preview scenario targets world center of mass (0,0,200)"),
 		PreviewActor->GetPreviewHoldTargetCm().Equals(FVector(0.0, 0.0, 200.0)));
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftProxyConfigurationExecutionDomainTest,
-	"AircraftLab.Dataflow.Preview.ConfigurationExecutionDomain",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FAircraftProxyConfigurationExecutionDomainTest::RunTest(const FString& Parameters)
-{
-	(void)Parameters;
-	UAircraftComponent* const Component = NewObject<UAircraftComponent>();
-	TestNotNull(TEXT("A transient aircraft component can host the proxy lifecycle"), Component);
-	if (!Component)
+	const UAircraftComponent* const PreviewComponent = PreviewActor->GetAircraftComponent();
+	TestNotNull(TEXT("The preview actor owns an aircraft component"), PreviewComponent);
+	if (PreviewComponent)
 	{
-		return false;
+		TestTrue(TEXT("The preview component allows its injected PhysicsAsset to create Chaos bodies"),
+			CollisionEnabledHasPhysics(PreviewComponent->GetCollisionEnabled()));
 	}
-
-	FAircraftSimulationProxy PhysicsProxy(*Component);
-	PhysicsProxy.Initialize_GameThread();
-	TestFalse(TEXT("A queued configuration is not reported as applied"),
-		PhysicsProxy.IsConfigurationApplied_GameThread());
-	PhysicsProxy.TickPhysicsThread(1.0f / 60.0f, 0.0f);
-	TestTrue(TEXT("The physics execution domain acknowledges its queued configuration"),
-		PhysicsProxy.IsConfigurationApplied_GameThread());
-
-	FAircraftSimulationProxy KinematicProxy(*Component);
-	KinematicProxy.Initialize_GameThread();
-	TestFalse(TEXT("The kinematic proxy begins with a queued configuration"),
-		KinematicProxy.IsConfigurationApplied_GameThread());
-	const FAircraftSimulationLodModel KinematicModel;
-	KinematicProxy.TickKinematicTrajectory_GameThread(
-		1.0f / 60.0f, 0.0, FTransform::Identity, FVector::ZeroVector,
-		FVector::ZeroVector, FVector::ZeroVector, KinematicModel);
-	TestTrue(TEXT("The kinematic execution domain acknowledges its queued configuration"),
-		KinematicProxy.IsConfigurationApplied_GameThread());
 	return true;
 }
 

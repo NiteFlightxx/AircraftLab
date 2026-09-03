@@ -3,7 +3,6 @@
 #if WITH_EDITORONLY_DATA
 #include "Animation/AnimationAsset.h"
 #endif
-#include "ComponentReregisterContext.h"
 #include "Engine/SkeletalMesh.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "ReferenceSkeleton.h"
@@ -523,10 +522,15 @@ void UAircraftAssetBase::OnPropertyChanged() const
 {
 }
 
-void UAircraftAssetBase::OnAssetChanged(const bool bReregisterComponents) const
+void UAircraftAssetBase::OnAssetChanged() const
 {
-	const FMultiComponentReregisterContext MultiComponentReregisterContext(
-		bReregisterComponents ? GetDependentComponents() : TArray<UActorComponent*>());
+	for (UAircraftComponent* const Component : GetDependentComponents())
+	{
+		if (IsValid(Component))
+		{
+			Component->RefreshAssetState();
+		}
+	}
 }
 
 void UAircraftAssetBase::UpdateSimulationActor(TObjectPtr<AActor>& SimulationActor) const
@@ -547,9 +551,9 @@ void UAircraftAssetBase::UpdateSimulationActor(TObjectPtr<AActor>& SimulationAct
 	}
 }
 
-TArray<UActorComponent*> UAircraftAssetBase::GetDependentComponents() const
+TArray<UAircraftComponent*> UAircraftAssetBase::GetDependentComponents() const
 {
-	TArray<UActorComponent*> DependentComponents;
+	TArray<UAircraftComponent*> DependentComponents;
 
 	for (TObjectIterator<UAircraftComponent> ObjectIterator; ObjectIterator; ++ObjectIterator)
 	{

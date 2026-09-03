@@ -25,15 +25,15 @@ namespace UE::AircraftLab::Diagnostics::Private
 		const FText State = S.bSimulationSuspended ? LOCTEXT("Suspended", "Suspended")
 			: (S.bSimulationEnabled ? LOCTEXT("Running", "Running") : LOCTEXT("Disabled", "Disabled"));
 		const FText BackendState = UEnum::GetDisplayValueAsText(S.BackendStatus.State);
-		const FText BackendReason = S.BackendStatus.FailureReason.IsEmpty()
+		const FText BackendDetail = S.BackendStatus.Detail.IsEmpty()
 			? LOCTEXT("NoBackendFailure", "None")
-			: FText::FromString(S.BackendStatus.FailureReason);
+			: FText::FromString(S.BackendStatus.Detail);
 		return FText::Format(LOCTEXT("StatusFormat",
 			"Simulation: {0} | Backend: {8} ({9})\nLOD: {1} ({2}) | Root: {10}\nMode: {3} | Arm: {4} | Controller: {5}\nBody: valid={11} simulating={6} | World dt: {14}s | Physics dt: {12}s\nPhysics sequence: {7} | Control sequence: {13}"),
 			State, FText::AsNumber(S.SimulationLOD), S.DriveModeText, S.FlightModeText, S.ArmStateText,
 			S.bControllerEnabled ? LOCTEXT("Enabled", "Enabled") : LOCTEXT("Disabled2", "Disabled"),
 			S.bSimulatingPhysics ? LOCTEXT("Simulating", "Simulating") : LOCTEXT("Inactive", "Inactive"),
-			FText::AsNumber(S.PhysicsStateSequence), BackendState, BackendReason,
+			FText::AsNumber(S.PhysicsStateSequence), BackendState, BackendDetail,
 			FText::FromName(S.BackendStatus.RootBone),
 			S.BackendStatus.bBodyValid ? LOCTEXT("ValidBody", "true") : LOCTEXT("InvalidBody", "false"),
 			FText::AsNumber(S.BackendStatus.PhysicsDeltaSeconds),

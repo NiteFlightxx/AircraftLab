@@ -13,6 +13,10 @@ AAircraftDataflowPreviewActor::AAircraftDataflowPreviewActor(const FObjectInitia
 	: Super(ObjectInitializer)
 {
 	AircraftComponent = CreateDefaultSubobject<UAircraftComponent>(TEXT("AircraftComponent0"));
+	// Dataflow deferred spawning registers this native component before it injects the
+	// Aircraft asset. Enable physics collision up front so the asset-bound
+	// RecreatePhysicsState() creates every body in the injected PhysicsAsset.
+	AircraftComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	RootComponent = AircraftComponent;
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
@@ -72,6 +76,12 @@ void AAircraftDataflowPreviewActor::SyncComponentFromInjectedProperties()
 		AircraftComponent->SetAnimationMode(EAnimationMode::Type::AnimationSingleNode);
 		AircraftComponent->SetAnimation(AnimationAsset);
 	}
+
+	// Deferred Dataflow spawning registers the native component before injecting the
+	// Aircraft asset. The assetless registration may leave its primary tick disabled;
+	// the preview playback state, rather than that temporary registration state, is
+	// authoritative here. A paused scene is frozen immediately by the native manager.
+	AircraftComponent->SetComponentTickEnabled(bPreviewPlaybackEnabled);
 }
 
 void AAircraftDataflowPreviewActor::InitializeDefaultScenarioIfReady()
@@ -223,18 +233,27 @@ void AAircraftDataflowPreviewActor::FreezePreviewSimulation()
 		FrozenBodyTransform, FrozenLinearVelocityCmPerSec,
 		FrozenAngularVelocityRadPerSec);
 	AircraftComponent->SuspendSimulation();
+	AircraftComponent->DestroySimulationConstraint();
 	AircraftComponent->SetComponentTickEnabled(false);
 	if (AircraftComponent->GetCurrentSimulationDriveMode() != EAircraftSimulationDriveMode::Kinematic)
 	{
-		AircraftComponent->SetSimulatePhysics(false);
+		AircraftComponent->SetAircraftPhysicsSimulationEnabled(false);
 	}
-	AircraftComponent->RefreshSimulationBackendStatus();
 }
 
 void AAircraftDataflowPreviewActor::ResumePreviewSimulation()
 {
-	if (!bPreviewFrozen || !AircraftComponent)
+	if (!AircraftComponent)
 	{
+		return;
+	}
+	if (!bPreviewFrozen)
+	{
+		// The native Dataflow manager may already be playing when a fresh preview
+		// actor is spawned. In that case there is no frozen state to restore, but
+		// the component still has to be made an active simulation participant.
+		AircraftComponent->ResumeSimulation();
+		AircraftComponent->SetComponentTickEnabled(true);
 		return;
 	}
 	const EAircraftSimulationDriveMode DriveMode = AircraftComponent->GetCurrentSimulationDriveMode();
@@ -242,7 +261,7 @@ void AAircraftDataflowPreviewActor::ResumePreviewSimulation()
 		FrozenComponentTransform, false, nullptr, ETeleportType::TeleportPhysics);
 	if (DriveMode != EAircraftSimulationDriveMode::Kinematic)
 	{
-		AircraftComponent->SetSimulatePhysics(true);
+		AircraftComponent->SetAircraftPhysicsSimulationEnabled(true);
 		if (bFrozenBodyStateValid)
 		{
 			AircraftComponent->RestoreChassisPhysicsState(
@@ -254,5 +273,4 @@ void AAircraftDataflowPreviewActor::ResumePreviewSimulation()
 	AircraftComponent->ResumeSimulation();
 	AircraftComponent->SetComponentTickEnabled(true);
 	bPreviewFrozen = false;
-	AircraftComponent->RefreshSimulationBackendStatus();
 }

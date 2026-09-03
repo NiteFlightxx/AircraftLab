@@ -9,7 +9,7 @@
 //   4. 摇杆 → FAircraftManualCommand（含航向坐标系变换与保持死区）
 //   5. 串级控制：垂直通道 → 期望姿态 → 航向 → 期望角速率（四元数误差+参考模型）→ 归一化力矩
 //   6. 阻尼伪逆控制分配（效能感知 + 饱和回传抗 windup + 倾斜补偿）
-//   7. 电机一阶滞后 → FChaosEngineInterface 力/扭矩注入（SI→Chaos 边界换算）
+//   7. 电机一阶滞后 → Chaos 物理线程刚体句柄力/扭矩注入（SI→Chaos 边界换算）
 //   8. 估计状态与诊断写回
 
 #include "AircraftAsset/AircraftSimulationProxy.h"
@@ -23,7 +23,6 @@
 #include "AircraftDiagnostics/AircraftDebugSettings.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
-#include "Chaos/ChaosEngineInterface.h"
 #include "Chaos/Particle/ParticleUtilities.h"
 #include "Chaos/PhysicsObject.h"
 #include "PBDRigidsSolver.h"
@@ -95,8 +94,6 @@ void FAircraftSimulationProxy::QueueConfiguration_GameThread(bool bResetRuntime)
 	PendingSimulationModel = MoveTemp(NewSimulationModel);
 	PendingLodIndex = AircraftComponent.GetCurrentSimulationLOD();
 	PendingDriveMode = AircraftComponent.GetCurrentSimulationDriveMode();
-	PendingConfigurationRevision = RequestedConfigurationRevision.fetch_add(
-		1, std::memory_order_acq_rel) + 1;
 	bPendingConfiguration = true;
 	bPendingRuntimeReset |= bResetRuntime;
 	TMap<FName, float> NewEffectiveness;
@@ -143,7 +140,6 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_ExecutionThread()
 	int32 NewLodIndex = INDEX_NONE;
 	EAircraftSimulationDriveMode NewDriveMode = EAircraftSimulationDriveMode::FlightController;
 	bool bResetRuntime = false;
-	uint64 NewConfigurationRevision = 0;
 	{
 		FScopeLock Lock(&InputCriticalSection);
 		if (!bPendingConfiguration)
@@ -154,7 +150,6 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_ExecutionThread()
 		NewLodIndex = PendingLodIndex;
 		NewDriveMode = PendingDriveMode;
 		bResetRuntime = bPendingRuntimeReset;
-		NewConfigurationRevision = PendingConfigurationRevision;
 		bPendingConfiguration = false;
 		bPendingRuntimeReset = false;
 	}
@@ -193,7 +188,6 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_ExecutionThread()
 	LastDriveGateResult = NAME_None;
 	bDebugConfigurationPending = true;
 	bConfigurationWarningPending = true;
-	AppliedConfigurationRevision.store(NewConfigurationRevision, std::memory_order_release);
 
 	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::FlightControl))
 	{
@@ -804,12 +798,9 @@ void FAircraftSimulationProxy::SetSimulationState_GameThread(bool bEnabled, bool
 		bTrajectoryClockRebaseRequested.store(true, std::memory_order_release);
 	}
 }
-
-bool FAircraftSimulationProxy::IsConfigurationApplied_GameThread() const
+void FAircraftSimulationProxy::NotifyPhysicsStateRebuilt_GameThread()
 {
-	const uint64 RequestedRevision = RequestedConfigurationRevision.load(std::memory_order_acquire);
-	return RequestedRevision != 0
-		&& AppliedConfigurationRevision.load(std::memory_order_acquire) == RequestedRevision;
+	bPhysicsStateRebindRequested.store(true, std::memory_order_release);
 }
 
 void FAircraftSimulationProxy::SetBackendValidated_GameThread(const bool bValidated)
@@ -973,7 +964,9 @@ void FAircraftSimulationProxy::GetControlAuthorityInfo_GameThread(FAircraftContr
  * PhysicsThread API
  * ------------------------------------------------------------------------- */
 
-void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime, float ForceAccumulationScale)
+void FAircraftSimulationProxy::TickPhysicsThread(
+	FBodyInstanceAsyncPhysicsTickHandle PhysicsHandle,
+	float DeltaTime, float SimTime, float ForceAccumulationScale)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_PhysicsBackend_Tick);
 	SCOPE_CYCLE_COUNTER(STAT_AircraftPhysicsBackend);
@@ -981,8 +974,13 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	{
 		bMovementIntentActive = false;
 	}
+	if (bPhysicsStateRebindRequested.exchange(false, std::memory_order_acq_rel))
+	{
+		bNativeDampingCaptured = false;
+		bExplicitAerodynamicsApplied = false;
+	}
 	ApplyPendingConfiguration_ExecutionThread();
-	auto LogDriveGate = [this, SimTime](const TCHAR* const Result)
+	auto LogDriveGate = [this, SimTime, &PhysicsHandle](const TCHAR* const Result)
 	{
 		const FAircraftDiagnosticLogSelection LogSelection =
 			UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection();
@@ -997,15 +995,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 			return;
 		}
 		LastDriveGateResult = ResultName;
-		const FBodyInstance* const Body = AircraftBodyInstance.load(std::memory_order_acquire);
 		UE_LOG(LogAircraft, Log,
-			TEXT("[Aircraft.Drive.Physics] t=%.3f Owner=%s LOD=%d Drive=%s Result=%s Enabled=%d Suspended=%d Model=%d Rotors=%d Body=%d BodySimulating=%d Arm=%s Controller=%d"),
+			TEXT("[Aircraft.Drive.Physics] t=%.3f Owner=%s LOD=%d Drive=%s Result=%s Enabled=%d Suspended=%d Model=%d Rotors=%d PhysicsHandle=%d Arm=%s Controller=%d"),
 			SimTime, *AircraftOwnerName, ActiveLodIndex,
 			FAircraftDebug::GetDriveModeLabel(ActiveDriveMode), Result,
 			bSimulationEnabled.load(std::memory_order_relaxed) ? 1 : 0,
 			bSimulationSuspended.load(std::memory_order_relaxed) ? 1 : 0,
 			ActiveLodModel ? 1 : 0, ActiveLodModel ? ActiveLodModel->Rotors.Num() : 0,
-			Body ? 1 : 0, Body && Body->IsInstanceSimulatingPhysics() ? 1 : 0,
+			PhysicsHandle.IsValid() ? 1 : 0,
 			FAircraftDebug::GetArmStateLabel(static_cast<EAircraftArmState>(
 				CurrentArmState.load(std::memory_order_relaxed))),
 			bControllerEnabled.load(std::memory_order_relaxed) ? 1 : 0);
@@ -1049,10 +1046,17 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 			bHasRotorDescriptorCenterOfMass ? RotorDescriptorCenterOfMassBodyCm : FVector::ZeroVector);
 	}
 
-	FBodyInstance* Body = AircraftBodyInstance.load(std::memory_order_acquire);
-	if (!Body || !Body->IsInstanceSimulatingPhysics())
+	if (!PhysicsHandle.IsValid())
 	{
-		LogDriveGate(!Body ? TEXT("NoBodyInstance") : TEXT("BodyNotSimulating"));
+		LogDriveGate(TEXT("NoPhysicsThreadHandle"));
+		return;
+	}
+	Chaos::FRigidBodyHandle_Internal* const Handle = PhysicsHandle.operator->();
+	const Chaos::EObjectStateType ObjectState = Handle->ObjectState();
+	if (ObjectState != Chaos::EObjectStateType::Dynamic
+		&& ObjectState != Chaos::EObjectStateType::Sleeping)
+	{
+		LogDriveGate(TEXT("BodyNotSimulating"));
 		return;
 	}
 	if (!bBackendValidated.load(std::memory_order_acquire))
@@ -1153,18 +1157,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	FVector LinearVelCmPerSec = FVector::ZeroVector;
 	FVector AngularVelWorldRadPerSec = FVector::ZeroVector;
 
-	const FPhysicsActorHandle ActorHandle = Body->GetPhysicsActorHandle();
-	if (!ActorHandle)
-	{
-		LogDriveGate(TEXT("NoPhysicsActorHandle"));
-		return;
-	}
-	Chaos::FRigidBodyHandle_Internal* const Handle = ActorHandle->GetPhysicsThreadAPI();
-	if (!Handle)
-	{
-		LogDriveGate(TEXT("NoPhysicsThreadHandle"));
-		return;
-	}
 	if (!bNativeDampingCaptured)
 	{
 		NativeLinearDamping = static_cast<float>(Handle->LinearEtherDrag());
@@ -1706,14 +1698,4 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		LatestMotionPlanLengthCm = Plan.GetLengthCm();
 		LatestMotionPlanRevision = AutopilotDiagnostics.PlanRevision;
 	}
-}
-
-void FAircraftSimulationProxy::SetAircraftBodyInstance(FBodyInstance* BodyInstance)
-{
-	if (AircraftBodyInstance.load(std::memory_order_acquire) != BodyInstance)
-	{
-		bNativeDampingCaptured = false;
-		bExplicitAerodynamicsApplied = false;
-	}
-	AircraftBodyInstance.store(BodyInstance, std::memory_order_release);
 }

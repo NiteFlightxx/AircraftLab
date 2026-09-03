@@ -13,8 +13,8 @@
 #include "AircraftAssetBase.generated.h"
 
 class AActor;
-class UActorComponent;
 class UAnimationAsset;
+class UAircraftComponent;
 class UDataflow;
 class UPhysicsAsset;
 class USkeletalMesh;
@@ -135,8 +135,8 @@ protected:
 	PURE_VIRTUAL(UAircraftAssetBase::GetSourceSkeletalMesh, return nullptr;);
 
 	void OnPropertyChanged() const;
-	void OnAssetChanged(bool bReregisterComponents = true) const;
-	TArray<UActorComponent*> GetDependentComponents() const;
+	void OnAssetChanged() const;
+	TArray<UAircraftComponent*> GetDependentComponents() const;
 	void UpdateSimulationActor(TObjectPtr<AActor>& SimulationActor) const;
 
 	static FReferenceSkeleton CreateFallbackReferenceSkeleton();

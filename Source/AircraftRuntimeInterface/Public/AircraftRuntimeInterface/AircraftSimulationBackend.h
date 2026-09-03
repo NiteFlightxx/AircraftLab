@@ -11,6 +11,7 @@ enum class EAircraftSimulationBackendState : uint8
 {
 	Uninitialized,
 	WaitingForAsset,
+	WaitingForRegistration,
 	WaitingForPhysicsState,
 	Ready,
 	Failed
@@ -26,7 +27,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationBackendStatus
 	EAircraftSimulationBackendState State = EAircraftSimulationBackendState::Uninitialized;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
-	FString FailureReason;
+	FString Detail;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	int32 LOD = INDEX_NONE;
