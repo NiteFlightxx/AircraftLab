@@ -2,9 +2,7 @@
 
 const FLinearColor FAircraftDebugColors::VelocityLinear = FLinearColor::Green;
 const FLinearColor FAircraftDebugColors::VelocityAngular = FLinearColor(1.0f, 0.25f, 1.0f);
-const FLinearColor FAircraftDebugColors::ControlForward = FLinearColor(1.0f, 0.45f, 0.0f);
-const FLinearColor FAircraftDebugColors::ControlRight = FLinearColor(0.0f, 1.0f, 1.0f);
-const FLinearColor FAircraftDebugColors::ControlUp = FLinearColor(1.0f, 0.0f, 1.0f);
+const FLinearColor FAircraftDebugColors::AerodynamicTorque = FLinearColor(1.0f, 0.0f, 1.0f);
 const FLinearColor FAircraftDebugColors::MotionTargetPoint = FLinearColor::Yellow;
 const FLinearColor FAircraftDebugColors::MotionTargetLine = FLinearColor::Red;
 const FLinearColor FAircraftDebugColors::MotionTargetVelocity = FLinearColor(0.0f, 1.0f, 1.0f);

@@ -43,6 +43,7 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugRotorSnapshot
 	float TargetRpm = 0.0f;
 	float CurrentRpm = 0.0f;
 	float ThrustN = 0.0f;
+	float MaxThrustN = 0.0f;
 	float ReactionTorqueNm = 0.0f;
 	float Effectiveness = 1.0f;
 	bool bEnabled = false;

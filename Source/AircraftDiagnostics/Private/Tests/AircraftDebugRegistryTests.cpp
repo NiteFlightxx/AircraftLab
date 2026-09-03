@@ -15,17 +15,27 @@ namespace
 	class FRecordingAircraftDebugBackend final : public IAircraftDebugDrawBackend
 	{
 	public:
+		struct FRecordedLine
+		{
+			FVector Start = FVector::ZeroVector;
+			FVector End = FVector::ZeroVector;
+			FLinearColor Color = FLinearColor::White;
+		};
+
 		int32 Lines = 0;
 		int32 Points = 0;
 		int32 Spheres = 0;
 		int32 Capsules = 0;
 		int32 Strings = 0;
 		float LastThickness = 0.0f;
+		TArray<FRecordedLine> RecordedLines;
 
-		virtual void DrawLine(const FVector&, const FVector&, const FLinearColor&, float Thickness) override
+		virtual void DrawLine(const FVector& Start, const FVector& End,
+			const FLinearColor& Color, float Thickness) override
 		{
 			++Lines;
 			LastThickness = Thickness;
+			RecordedLines.Add({Start, End, Color});
 		}
 		virtual void DrawPoint(const FVector&, const FLinearColor&, float) override { ++Points; }
 		virtual void DrawSphere(const FVector&, float, const FLinearColor&, int32, float) override { ++Spheres; }
@@ -33,6 +43,91 @@ namespace
 			const FLinearColor&, int32, float) override { ++Capsules; }
 		virtual void DrawString(const FVector&, const FString&, const FLinearColor&, float) override { ++Strings; }
 	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAircraftFrameDebugDrawTest,
+	"AircraftLab.Diagnostics.Draw.ControlFrameOnly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftFrameDebugDrawTest::RunTest(const FString& Parameters)
+{
+	FRecordingAircraftDebugBackend Backend;
+	FAircraftDebugDrawContext Context;
+	Context.Backend = &Backend;
+
+	FAircraftDebugFrameSnapshot Snapshot;
+	Snapshot.AvailablePayloads = EAircraftDebugPayload::AircraftCore;
+	Snapshot.BodyTransform = FTransform(FRotator(20.0, 35.0, 10.0), FVector(-300.0, 80.0, 50.0));
+	Snapshot.ModelTransform = FTransform::Identity;
+	Snapshot.CenterOfMassCm = FVector(100.0, 200.0, 300.0);
+	Snapshot.ControlForwardAxisModel = FVector::RightVector;
+	Snapshot.ControlRightAxisModel = -FVector::ForwardVector;
+	Snapshot.ControlUpAxisModel = FVector::UpVector;
+
+	TSet<FName> EnabledIds;
+	EnabledIds.Add(TEXT("Aircraft.Frames"));
+	FAircraftDebugRegistry::DrawSelected(Snapshot, Context, EnabledIds);
+
+	TestEqual(TEXT("Only the three control arrows are drawn"), Backend.RecordedLines.Num(), 9);
+	if (Backend.RecordedLines.Num() != 9)
+	{
+		return false;
+	}
+
+	const auto TestMainAxis = [this, &Backend, &Snapshot](const int32 LineIndex,
+		const FVector& ExpectedDirection, const FLinearColor& ExpectedColor, const TCHAR* AxisName)
+	{
+		const FRecordingAircraftDebugBackend::FRecordedLine& Line = Backend.RecordedLines[LineIndex];
+		TestTrue(*FString::Printf(TEXT("%s starts at the center of mass"), AxisName),
+			Line.Start.Equals(Snapshot.CenterOfMassCm));
+		TestTrue(*FString::Printf(TEXT("%s uses the configured control direction"), AxisName),
+			(Line.End - Line.Start).Equals(ExpectedDirection * 80.0, UE_KINDA_SMALL_NUMBER));
+		TestTrue(*FString::Printf(TEXT("%s uses the standard axis color"), AxisName),
+			Line.Color.Equals(ExpectedColor));
+	};
+	TestMainAxis(0, FVector::RightVector, FLinearColor::Red, TEXT("Control X/Forward"));
+	TestMainAxis(3, -FVector::ForwardVector, FLinearColor::Green, TEXT("Control Y/Right"));
+	TestMainAxis(6, FVector::UpVector, FLinearColor::Blue, TEXT("Control Z/Up"));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAircraftRotorThrustDebugScaleTest,
+	"AircraftLab.Diagnostics.Draw.RotorThrustNormalizedScale",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftRotorThrustDebugScaleTest::RunTest(const FString& Parameters)
+{
+	FRecordingAircraftDebugBackend Backend;
+	FAircraftDebugDrawContext Context;
+	Context.Backend = &Backend;
+
+	FAircraftDebugFrameSnapshot Snapshot;
+	Snapshot.AvailablePayloads = EAircraftDebugPayload::AircraftCore | EAircraftDebugPayload::Propulsion;
+	Snapshot.CenterOfMassCm = FVector::ZeroVector;
+	FAircraftDebugRotorSnapshot& Rotor = Snapshot.Rotors.AddDefaulted_GetRef();
+	Rotor.Name = TEXT("Rotor0");
+	Rotor.PositionCm = FVector(10.0, 0.0, 0.0);
+	Rotor.ThrustAxis = FVector::UpVector;
+	Rotor.ThrustN = 50.0f;
+	Rotor.MaxThrustN = 100.0f;
+	Rotor.Effectiveness = 1.0f;
+	Rotor.bEnabled = true;
+
+	TSet<FName> EnabledIds;
+	EnabledIds.Add(TEXT("Aircraft.Propulsion"));
+	FAircraftDebugRegistry::DrawSelected(Snapshot, Context, EnabledIds);
+
+	TestTrue(TEXT("Half maximum thrust is rendered as a 50 cm arrow"),
+		Backend.RecordedLines.IsValidIndex(1)
+		&& FMath::IsNearlyEqual((Backend.RecordedLines[1].End - Backend.RecordedLines[1].Start).Size(), 50.0f));
+
+	Backend.RecordedLines.Reset();
+	Rotor.ThrustN = 200.0f;
+	FAircraftDebugRegistry::DrawSelected(Snapshot, Context, EnabledIds);
+	TestTrue(TEXT("Thrust above the physical maximum remains capped at 80 cm"),
+		Backend.RecordedLines.IsValidIndex(1)
+		&& FMath::IsNearlyEqual((Backend.RecordedLines[1].End - Backend.RecordedLines[1].Start).Size(), 80.0f));
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAircraftDebugRegistryLifecycleTest,

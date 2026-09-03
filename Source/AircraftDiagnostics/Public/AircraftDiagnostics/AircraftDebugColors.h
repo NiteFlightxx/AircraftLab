@@ -6,9 +6,7 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugColors
 {
 	static const FLinearColor VelocityLinear;
 	static const FLinearColor VelocityAngular;
-	static const FLinearColor ControlForward;
-	static const FLinearColor ControlRight;
-	static const FLinearColor ControlUp;
+	static const FLinearColor AerodynamicTorque;
 	static const FLinearColor MotionTargetPoint;
 	static const FLinearColor MotionTargetLine;
 	static const FLinearColor MotionTargetVelocity;

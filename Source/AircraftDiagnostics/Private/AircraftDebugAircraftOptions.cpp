@@ -84,18 +84,17 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 		FAircraftDebugOptionDescriptor Option;
 		Option.Id = TEXT("Aircraft.Frames");
 		Option.DisplayName = LOCTEXT("Frames", "Aircraft Frames");
-		Option.ToolTip = LOCTEXT("FramesTip", "Draw physical RootBone and configured Aircraft control frames.");
+		Option.ToolTip = LOCTEXT("FramesTip", "Draw the configured Aircraft control frame at the center of mass (X/Forward red, Y/Right green, Z/Up blue).");
 		Option.bEditorEnabledByDefault = true;
 		Option.Draw3D = [](const FAircraftDebugFrameSnapshot& S, const FAircraftDebugDrawContext& C)
 		{
 			const float Length = UE::AircraftLab::Diagnostics::DebugAxisLengthCm;
-			FAircraftDebugDraw::DrawAxes(C, S.BodyTransform.GetLocation(), S.BodyTransform.Rotator(), Length);
 			const FVector Forward = S.ModelTransform.TransformVectorNoScale(S.ControlForwardAxisModel).GetSafeNormal();
 			const FVector Right = S.ModelTransform.TransformVectorNoScale(S.ControlRightAxisModel).GetSafeNormal();
 			const FVector Up = S.ModelTransform.TransformVectorNoScale(S.ControlUpAxisModel).GetSafeNormal();
-			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm, Forward * Length, FAircraftDebugColors::ControlForward);
-			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm, Right * Length, FAircraftDebugColors::ControlRight);
-			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm, Up * Length, FAircraftDebugColors::ControlUp);
+			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm, Forward * Length, FLinearColor::Red);
+			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm, Right * Length, FLinearColor::Green);
+			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm, Up * Length, FLinearColor::Blue);
 		};
 		Option.CanvasText = [](const FAircraftDebugFrameSnapshot& S)
 		{
@@ -124,8 +123,15 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 					? FAircraftDebugColors::RotorEnabled : FAircraftDebugColors::RotorDisabled;
 				FAircraftDebugDraw::DrawLine(C, S.CenterOfMassCm, Rotor.PositionCm, FAircraftDebugColors::RotorArm);
 				FAircraftDebugDraw::DrawPoint(C, Rotor.PositionCm, Color, 7.0f);
+				const float NormalizedThrust = Rotor.MaxThrustN > UE_SMALL_NUMBER
+					? FMath::Clamp(Rotor.ThrustN / Rotor.MaxThrustN, 0.0f, 1.0f)
+					: 0.0f;
+				const float ThrustLengthCm = FMath::Lerp(
+					UE::AircraftLab::Diagnostics::DebugRotorThrustMinLengthCm,
+					UE::AircraftLab::Diagnostics::DebugRotorThrustMaxLengthCm,
+					NormalizedThrust);
 				FAircraftDebugDraw::DrawArrow(C, Rotor.PositionCm,
-					Rotor.ThrustAxis * FMath::Max(20.0f, Rotor.ThrustN * 5.0f), Color);
+					Rotor.ThrustAxis * ThrustLengthCm, Color);
 				FAircraftDebugDraw::DrawString(C, Rotor.PositionCm,
 					FString::Printf(TEXT("%s  Eff=%.2f Cmd=%.2f RPM=%.0f/%.0f T=%.2fN Q=%+.3fNm"),
 						*Rotor.Name.ToString(), Rotor.Effectiveness, Rotor.NormalizedCommand,
@@ -214,7 +220,7 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 				FAircraftDebugColors::VelocityAngular);
 			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm,
 				S.BodyTransform.TransformVectorNoScale(S.Aerodynamics.TorqueBodyNm) * 20.0f,
-				FAircraftDebugColors::ControlUp);
+				FAircraftDebugColors::AerodynamicTorque);
 		};
 		AddOption(OutHandles, MoveTemp(Option), FlightControlCategory, FlightControlCategoryText,
 			EAircraftDebugPayload::AircraftCore | EAircraftDebugPayload::Aerodynamics,

@@ -54,6 +54,8 @@ namespace UE::AircraftLab::Diagnostics
 	inline constexpr float DebugLineThickness = 1.5f;
 	inline constexpr float DebugVectorScale = 0.25f;
 	inline constexpr float DebugAxisLengthCm = 80.0f;
+	inline constexpr float DebugRotorThrustMinLengthCm = 20.0f;
+	inline constexpr float DebugRotorThrustMaxLengthCm = 80.0f;
 	inline constexpr int32 DebugMaxTrajectorySamples = 256;
 
 	AIRCRAFTDIAGNOSTICS_API FAircraftRuntimeDrawSelection GetAircraftRuntimeDrawSelection();

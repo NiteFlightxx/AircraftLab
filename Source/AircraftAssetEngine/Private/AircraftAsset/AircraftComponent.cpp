@@ -1142,6 +1142,7 @@ void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest
 			RotorSnapshot.ThrustAxisBody = Rotor.GetNormalizedThrustAxisBody();
 			RotorSnapshot.ThrustAxis = OutSnapshot.BodyTransform.TransformVectorNoScale(
 				RotorSnapshot.ThrustAxisBody).GetSafeNormal();
+			RotorSnapshot.MaxThrustN = FMath::Max(Rotor.MaxThrustN, 0.0f);
 			if (Output.RotorCommands.IsValidIndex(RotorIndex))
 			{
 				const FAircraftRotorCommand& Command = Output.RotorCommands[RotorIndex];
