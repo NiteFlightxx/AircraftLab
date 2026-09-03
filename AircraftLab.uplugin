@@ -56,6 +56,16 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "AircraftAssetDataflowNodes",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Linux",
+				"Mac"
+			]
+		},
+		{
 			"Name": "AircraftAssetEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default",
@@ -67,16 +77,6 @@
 		},
 		{
 			"Name": "AircraftAssetEditorTools",
-			"Type": "Editor",
-			"LoadingPhase": "Default",
-			"PlatformAllowList": [
-				"Win64",
-				"Linux",
-				"Mac"
-			]
-		},
-		{
-			"Name": "AircraftAssetDataflowNodes",
 			"Type": "Editor",
 			"LoadingPhase": "Default",
 			"PlatformAllowList": [

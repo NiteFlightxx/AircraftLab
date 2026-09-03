@@ -177,9 +177,16 @@ FText FAircraftDataflowSimulationVisualization::GetDisplayString(
 	const FAircraftDebugCaptureRequest Request = FAircraftDebugRegistry::BuildCaptureRequest(
 		Session.EnabledOptionIds, EAircraftDebugContext::PreviewSimulation);
 	const FAircraftDebugFrameSnapshot* Snapshot = nullptr;
-	return CaptureSnapshot(SimulationScene, Session, Request, Snapshot)
-		? FAircraftDebugRegistry::BuildStatusTextSelected(*Snapshot, Session.EnabledOptionIds)
-		: FText::GetEmpty();
+	if (!CaptureSnapshot(SimulationScene, Session, Request, Snapshot))
+	{
+		return FText::GetEmpty();
+	}
+	const FText Playback = SimulationScene->IsSimulationEnabled()
+		? LOCTEXT("PlaybackPlaying", "Playing")
+		: LOCTEXT("PlaybackPaused", "Paused");
+	return FText::Format(LOCTEXT("SimulationStatus", "Playback: {0}\n{1}"),
+		Playback,
+		FAircraftDebugRegistry::BuildStatusTextSelected(*Snapshot, Session.EnabledOptionIds));
 }
 
 #undef LOCTEXT_NAMESPACE

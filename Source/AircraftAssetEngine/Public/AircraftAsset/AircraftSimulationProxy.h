@@ -13,7 +13,6 @@
 #include <atomic>
 
 #include "CoreMinimal.h"
-#include "Dataflow/Interfaces/DataflowPhysicsSolver.h"
 #include "HAL/CriticalSection.h"
 #include "Templates/SharedPointer.h"
 
@@ -57,11 +56,11 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationControlDiagnostics
  *   - PhysicsThread 内单线程执行：估计状态刷新 → 串级 PID（含参考模型与阻尼前馈）
  *     → 阻尼伪逆控制分配（含效能感知与饱和回传）→ 电机一阶滞后 → Chaos 力/扭矩注入。
  */
-class AIRCRAFTASSETENGINE_API FAircraftSimulationProxy : public FDataflowPhysicsSolverProxy
+class AIRCRAFTASSETENGINE_API FAircraftSimulationProxy
 {
 public:
 	explicit FAircraftSimulationProxy(const UAircraftComponent& InAircraftComponent);
-	virtual ~FAircraftSimulationProxy() override;
+	~FAircraftSimulationProxy();
 
 	FAircraftSimulationProxy() = delete;
 	FAircraftSimulationProxy(const FAircraftSimulationProxy&) = delete;
@@ -97,6 +96,10 @@ public:
 		const FVector& AngularVelocityWorldRadPerSec,
 		const FAircraftSimulationLodModel& Model);
 	void SetSimulationState_GameThread(bool bEnabled, bool bSuspended);
+	/** True only after the active execution domain has consumed the latest immutable configuration. */
+	bool IsConfigurationApplied_GameThread() const;
+	/** Fail-closed execution gate published by the component's validated backend lifecycle. */
+	void SetBackendValidated_GameThread(bool bValidated);
 	bool IsControlExecutionAllowed_GameThread() const;
 	void InvalidateTrajectoryReference_GameThread();
 
@@ -111,6 +114,14 @@ public:
 	uint64 GetVehicleStateSequence_GameThread() const
 	{
 		return VehicleStateSequence.load(std::memory_order_relaxed);
+	}
+	uint64 GetControlSequence_GameThread() const
+	{
+		return ControlSequence.load(std::memory_order_relaxed);
+	}
+	float GetLastPhysicsDeltaSeconds_GameThread() const
+	{
+		return LastPhysicsDeltaSeconds.load(std::memory_order_relaxed);
 	}
 	/** 替代驱动后端（约束/运动学，GT 执行）写回估计状态，覆盖 PT 输出槽。 */
 	void SetEstimatedStateOverride_GameThread(const FAircraftEstimatedState& InState);
@@ -132,30 +143,13 @@ public:
 
 	void SetAircraftBodyInstance(FBodyInstance* BodyInstance);
 
-protected:
-	/**
-	 * FDataflowPhysicsSolverProxy::AdvanceSolverDatas —— 刻意保持空实现。
-	 *
-	 * Simulation 图每帧经 AdvancePhysicsSolvers 节点回调本函数，但无人机与布料的分工不同：
-	 * 布料把整求解器（含碰撞约束）放在代理内、一帧一次自洽推进；
-	 * 无人机机体是世界 Chaos 刚体，由世界物理场景积分并处理场景碰撞 ——
-	 * 控制力必须与积分/碰撞同一 pass 注入，因此推进保留在 AsyncPhysicsTickComponent
-	 * （物理子步、恒定 Δt）调用 TickPhysicsThread。
-	 * Simulation 图在此仅作"注册/调度壳"：让组件注册进 UDataflowSimulationManager，
-	 * 获得编辑器 Simulation 场景的 Play/Pause 门控与每帧 GT 桥接。
-	 */
-	virtual void AdvanceSolverDatas(const float DeltaTime) override
-	{
-		(void)DeltaTime;
-	}
-
 private:
 	/** 按 Chaos 当前真实质心展开旋翼分配描述，并复位全部 PT 控制状态。 */
 	void RebuildRotorDescriptors_PhysicsThread(const FVector& CenterOfMassBodyCm);
 	void QueueConfiguration_GameThread(bool bResetRuntime);
 	void RefreshControlAuthority_PhysicsThread(
 		const FAircraftFlightControllerRuntimeConfig& Config);
-	void ApplyPendingConfiguration_PhysicsThread();
+	void ApplyPendingConfiguration_ExecutionThread();
 	/** 由飞行模式推导能力缓存与姿态模式。 */
 	void UpdateModeCapabilities(EAircraftFlightMode Mode);
 	/** 按控制台开关限频输出权威飞控同口径的运行诊断。 */
@@ -191,6 +185,7 @@ private:
 	EAircraftSimulationDriveMode PendingDriveMode = EAircraftSimulationDriveMode::FlightController;
 	bool bPendingConfiguration = false;
 	bool bPendingRuntimeReset = false;
+	uint64 PendingConfigurationRevision = 0;
 	bool bArmRequest = true;
 	bool bEmergencyStop = false;
 	TMap<FName, float> PendingRotorEffectivenessByName;
@@ -200,6 +195,9 @@ private:
 	std::atomic<bool> bSimulationEnabled{ true };
 	std::atomic<bool> bSimulationSuspended{ false };
 	std::atomic<bool> bControllerEnabled{ true };
+	std::atomic<bool> bBackendValidated{ false };
+	std::atomic<uint64> RequestedConfigurationRevision{ 0 };
+	std::atomic<uint64> AppliedConfigurationRevision{ 0 };
 
 	/* PT → GT 输出缓冲 */
 	mutable FCriticalSection OutputCriticalSection;
@@ -221,7 +219,7 @@ private:
 
 	std::atomic<float> GravityMagnitudeCmPerSecSq{ 980.0f };
 
-	/* ---- PT 内部状态（只在 PT 上访问，不需要锁）---- */
+	/* ---- 执行域内部状态（物理驱动在 Chaos 回调，Kinematic 在 GT；两者互斥）---- */
 
 	/** 级联控制解算器（PID 状态 + 参考模型状态）。 */
 	FAircraftFlightControlSolver ControlSolver;
@@ -243,7 +241,10 @@ private:
 	uint64 ActiveMovementIntentRevision = 0;
 	int64 ActiveMovementIntentId = 0;
 	std::atomic<uint64> VehicleStateSequence{ 0 };
+	std::atomic<uint64> ControlSequence{ 0 };
+	std::atomic<float> LastPhysicsDeltaSeconds{ 0.0f };
 	std::atomic<bool> bTrajectoryRebindRequested{ false };
+	std::atomic<bool> bTrajectoryClockRebaseRequested{ false };
 	bool bMovementIntentActive = false;
 	float NativeLinearDamping = 0.0f;
 	float NativeAngularDamping = 0.0f;
@@ -257,5 +258,5 @@ private:
 	float DebugLogAccumulatorSeconds = 0.0f;
 	bool bDebugConfigurationPending = true;
 	bool bConfigurationWarningPending = true;
-	float DriveGateDebugLogAccumulatorSeconds = 0.0f;
+	FName LastDriveGateResult = NAME_None;
 };

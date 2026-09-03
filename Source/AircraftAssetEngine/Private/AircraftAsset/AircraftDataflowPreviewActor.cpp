@@ -4,6 +4,8 @@
 #include "Engine/SkeletalMesh.h"
 #include "AircraftAsset/AircraftAsset.h"   
 #include "AircraftAsset/AircraftComponent.h"
+#include "AircraftAsset/AircraftSimulationModel.h"
+#include "Aircraft/AircraftPhysicsUnits.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftDataflowPreviewActor)
 
@@ -12,6 +14,9 @@ AAircraftDataflowPreviewActor::AAircraftDataflowPreviewActor(const FObjectInitia
 {
 	AircraftComponent = CreateDefaultSubobject<UAircraftComponent>(TEXT("AircraftComponent0"));
 	RootComponent = AircraftComponent;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
+	PreviewMovementIntentHandle.Id = 1;
 }
 
 void AAircraftDataflowPreviewActor::OnConstruction(const FTransform& Transform)
@@ -22,6 +27,12 @@ void AAircraftDataflowPreviewActor::OnConstruction(const FTransform& Transform)
 	// SetActorProperties 覆写完三个注入属性之后才 FinishSpawning → 到达这里时
 	// DataflowAsset / SkeletalMesh / AnimationAsset 均已就位。
 	SyncComponentFromInjectedProperties();
+}
+
+void AAircraftDataflowPreviewActor::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	InitializeDefaultScenarioIfReady();
 }
 
 #if WITH_EDITOR
@@ -42,8 +53,12 @@ void AAircraftDataflowPreviewActor::SyncComponentFromInjectedProperties()
 	// 1) 资产绑定：UAircraftComponent::SetAsset 内部会同步骨骼网格/物理资产/仿真模型。
 	if (AircraftComponent->GetAsset() != DataflowAsset)
 	{
+		bDefaultScenarioInitialized = false;
+		bPreviewIntentActive = false;
+		++PreviewMovementIntentRevision;
 		AircraftComponent->SetAsset(DataflowAsset);
 	}
+	AircraftComponent->SetMovementIntentProvider(this);
 
 	// 2) 预览网格覆盖：编辑器内容面板上用户可另行指定预览网格（与布料的 SkeletalMesh 变量语义一致）。
 	if (SkeletalMesh && AircraftComponent->GetSkeletalMeshAsset() != SkeletalMesh)
@@ -57,4 +72,187 @@ void AAircraftDataflowPreviewActor::SyncComponentFromInjectedProperties()
 		AircraftComponent->SetAnimationMode(EAnimationMode::Type::AnimationSingleNode);
 		AircraftComponent->SetAnimation(AnimationAsset);
 	}
+}
+
+void AAircraftDataflowPreviewActor::InitializeDefaultScenarioIfReady()
+{
+	if (bDefaultScenarioInitialized || !AircraftComponent)
+	{
+		return;
+	}
+	const FAircraftSimulationBackendStatus Status = AircraftComponent->GetSimulationBackendStatus();
+	if (Status.State != EAircraftSimulationBackendState::Ready)
+	{
+		return;
+	}
+
+	if (const FAircraftSimulationLodModel* const Model = AircraftComponent->GetCurrentLodModel())
+	{
+		const FQuat BodyRotation = Model->FlightController.FrameBinding.GetBodyWorldTransform(
+			AircraftComponent->GetComponentTransform()).GetRotation();
+		PreviewFixedYawDegrees = Model->FlightController.GetControlWorldRotation(
+			BodyRotation).Rotator().Yaw;
+	}
+	PreviewMovementIntent = FAircraftMovementIntent();
+	PreviewMovementIntent.Type = EAircraftMovementIntentType::Hold;
+	PreviewMovementIntent.Hold.PositionCm = PreviewHoldTargetCm;
+	PreviewMovementIntent.Hold.bCaptureCurrentPosition = false;
+	PreviewMovementIntent.bHasRequestedMotionLimits = false;
+	PreviewMovementIntent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+	PreviewMovementIntent.Heading.FixedYawDegrees = PreviewFixedYawDegrees;
+	PreviewMovementIntent.TimeoutSeconds = 0.0f;
+	++PreviewMovementIntentRevision;
+	bPreviewIntentActive = true;
+	bDefaultScenarioInitialized = true;
+	AircraftComponent->SetControllerEnabled(true);
+	AircraftComponent->SetFlightMode(EAircraftFlightMode::PositionHold);
+	AircraftComponent->Arm();
+	if (!bPreviewPlaybackEnabled)
+	{
+		FreezePreviewSimulation();
+	}
+}
+
+void AAircraftDataflowPreviewActor::ApplyPreviewHoldTarget(
+	const FVector& PositionCm, const float FixedYawDegrees)
+{
+	PreviewHoldTargetCm = PositionCm;
+	PreviewFixedYawDegrees = FixedYawDegrees;
+	PreviewMovementIntent.Type = EAircraftMovementIntentType::Hold;
+	PreviewMovementIntent.Hold.PositionCm = PositionCm;
+	PreviewMovementIntent.Hold.bCaptureCurrentPosition = false;
+	PreviewMovementIntent.bHasRequestedMotionLimits = false;
+	PreviewMovementIntent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+	PreviewMovementIntent.Heading.FixedYawDegrees = FixedYawDegrees;
+	PreviewMovementIntent.TimeoutSeconds = 0.0f;
+	++PreviewMovementIntentRevision;
+	bPreviewIntentActive = true;
+}
+
+void AAircraftDataflowPreviewActor::SetPreviewArmed(const bool bArmed)
+{
+	if (AircraftComponent)
+	{
+		bArmed ? AircraftComponent->Arm() : AircraftComponent->Disarm();
+	}
+}
+
+void AAircraftDataflowPreviewActor::SetPreviewFlightMode(const EAircraftFlightMode FlightMode)
+{
+	if (AircraftComponent)
+	{
+		AircraftComponent->SetFlightMode(FlightMode);
+	}
+}
+
+bool AAircraftDataflowPreviewActor::SetPreviewRotorEffectiveness(
+	const FName RotorName, const float Effectiveness)
+{
+	return AircraftComponent
+		&& AircraftComponent->SetRotorEffectiveness(RotorName, Effectiveness);
+}
+
+void AAircraftDataflowPreviewActor::ApplyPreviewForceAndTorque(
+	const FVector& ForceWorldN, const FVector& TorqueWorldNm)
+{
+	if (!AircraftComponent || bPreviewFrozen)
+	{
+		return;
+	}
+	const FName BoneName = GetChassisBoneName();
+	AircraftComponent->AddForce(
+		AircraftPhysicsUnits::NewtonsToChaosForce(ForceWorldN), BoneName, false);
+	AircraftComponent->AddTorqueInRadians(
+		AircraftPhysicsUnits::NewtonMetersToChaosTorque(TorqueWorldNm), BoneName, false);
+}
+
+void AAircraftDataflowPreviewActor::OnDataflowSimulationEnabledChanged_Implementation(
+	const bool bSimulationEnabled)
+{
+	bPreviewPlaybackEnabled = bSimulationEnabled;
+	if (bSimulationEnabled)
+	{
+		ResumePreviewSimulation();
+	}
+	else
+	{
+		FreezePreviewSimulation();
+	}
+}
+
+bool AAircraftDataflowPreviewActor::GetAircraftMovementIntent(
+	FAircraftMovementIntent& OutIntent, FAircraftMovementIntentHandle& OutHandle,
+	uint64& OutRevision) const
+{
+	if (!bPreviewIntentActive)
+	{
+		return false;
+	}
+	OutIntent = PreviewMovementIntent;
+	OutHandle = PreviewMovementIntentHandle;
+	OutRevision = PreviewMovementIntentRevision;
+	return true;
+}
+
+bool AAircraftDataflowPreviewActor::IsAircraftMovementIntentActive() const
+{
+	return bPreviewIntentActive;
+}
+
+FName AAircraftDataflowPreviewActor::GetChassisBoneName() const
+{
+	if (AircraftComponent)
+	{
+		if (const FAircraftSimulationLodModel* const Model = AircraftComponent->GetCurrentLodModel())
+		{
+			return Model->RootBone;
+		}
+	}
+	return NAME_None;
+}
+
+void AAircraftDataflowPreviewActor::FreezePreviewSimulation()
+{
+	if (bPreviewFrozen || !AircraftComponent)
+	{
+		return;
+	}
+	bPreviewFrozen = true;
+	FrozenComponentTransform = AircraftComponent->GetComponentTransform();
+	bFrozenBodyStateValid = AircraftComponent->CaptureChassisPhysicsState(
+		FrozenBodyTransform, FrozenLinearVelocityCmPerSec,
+		FrozenAngularVelocityRadPerSec);
+	AircraftComponent->SuspendSimulation();
+	AircraftComponent->SetComponentTickEnabled(false);
+	if (AircraftComponent->GetCurrentSimulationDriveMode() != EAircraftSimulationDriveMode::Kinematic)
+	{
+		AircraftComponent->SetSimulatePhysics(false);
+	}
+	AircraftComponent->RefreshSimulationBackendStatus();
+}
+
+void AAircraftDataflowPreviewActor::ResumePreviewSimulation()
+{
+	if (!bPreviewFrozen || !AircraftComponent)
+	{
+		return;
+	}
+	const EAircraftSimulationDriveMode DriveMode = AircraftComponent->GetCurrentSimulationDriveMode();
+	AircraftComponent->SetWorldTransform(
+		FrozenComponentTransform, false, nullptr, ETeleportType::TeleportPhysics);
+	if (DriveMode != EAircraftSimulationDriveMode::Kinematic)
+	{
+		AircraftComponent->SetSimulatePhysics(true);
+		if (bFrozenBodyStateValid)
+		{
+			AircraftComponent->RestoreChassisPhysicsState(
+				FrozenBodyTransform, FrozenLinearVelocityCmPerSec,
+				FrozenAngularVelocityRadPerSec);
+		}
+		AircraftComponent->WakeAllRigidBodies();
+	}
+	AircraftComponent->ResumeSimulation();
+	AircraftComponent->SetComponentTickEnabled(true);
+	bPreviewFrozen = false;
+	AircraftComponent->RefreshSimulationBackendStatus();
 }

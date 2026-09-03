@@ -4,6 +4,7 @@
 #include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
+#include "AircraftRuntimeInterface/AircraftSimulationBackend.h"
 
 enum class EAircraftDebugPayload : uint16
 {
@@ -87,6 +88,8 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugFrameSnapshot
 	EAircraftDebugPayload AvailablePayloads = EAircraftDebugPayload::None;
 	uint64 CaptureFrameNumber = 0;
 	uint64 PhysicsStateSequence = 0;
+	float WorldDeltaSeconds = 0.0f;
+	FAircraftSimulationBackendStatus BackendStatus;
 	FString SubjectName;
 
 	FName RootBone = NAME_None;

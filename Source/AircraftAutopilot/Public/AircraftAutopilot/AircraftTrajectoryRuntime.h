@@ -16,6 +16,8 @@ public:
 		const FAircraftVehicleStateSnapshot& State,
 		const FAircraftDynamicCapabilitySnapshot& Capability);
 	void Reset();
+	/** Rebase absolute clocks after a pause while preserving the active plan and cursor. */
+	void RebaseTime(double TimeSeconds);
 
 	bool UpdateFlightController(const FAircraftVehicleStateSnapshot& State,
 		const FAircraftDynamicCapabilitySnapshot& Capability,

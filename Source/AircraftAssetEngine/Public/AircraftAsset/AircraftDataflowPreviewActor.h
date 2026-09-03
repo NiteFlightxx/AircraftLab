@@ -16,6 +16,8 @@
 #include "CoreMinimal.h"
 #include "AircraftAsset.h"
 #include "AircraftComponent.h"
+#include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
+#include "Dataflow/DataflowSimulationManager.h"
 #include "GameFramework/Actor.h"
 
 #include "AircraftDataflowPreviewActor.generated.h"
@@ -25,7 +27,10 @@
  * Dataflow 编辑器 Simulation 视口的多旋翼预览 Actor。
  */
 UCLASS()
-class AIRCRAFTASSETENGINE_API AAircraftDataflowPreviewActor : public AActor
+class AIRCRAFTASSETENGINE_API AAircraftDataflowPreviewActor
+	: public AActor
+	, public IDataflowSimulationActor
+	, public IAircraftMovementIntentProvider
 {
 	GENERATED_BODY()
 
@@ -34,16 +39,40 @@ public:
 
 	UAircraftComponent* GetAircraftComponent() const { return AircraftComponent; }
 
+	FVector GetPreviewHoldTargetCm() const { return PreviewHoldTargetCm; }
+	float GetPreviewFixedYawDegrees() const { return PreviewFixedYawDegrees; }
+	bool IsPreviewPlaybackEnabled() const { return bPreviewPlaybackEnabled; }
+	void ApplyPreviewHoldTarget(const FVector& PositionCm, float FixedYawDegrees);
+	void SetPreviewArmed(bool bArmed);
+	void SetPreviewFlightMode(EAircraftFlightMode FlightMode);
+	bool SetPreviewRotorEffectiveness(FName RotorName, float Effectiveness);
+	void ApplyPreviewForceAndTorque(const FVector& ForceWorldN, const FVector& TorqueWorldNm);
+
 	//~ Begin AActor Interface
 	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void Tick(float DeltaSeconds) override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 	//~ End AActor Interface
 
+	//~ Begin IDataflowSimulationActor Interface
+	virtual void OnDataflowSimulationEnabledChanged_Implementation(bool bSimulationEnabled) override;
+	//~ End IDataflowSimulationActor Interface
+
+	//~ Begin IAircraftMovementIntentProvider Interface
+	virtual bool GetAircraftMovementIntent(FAircraftMovementIntent& OutIntent,
+		FAircraftMovementIntentHandle& OutHandle, uint64& OutRevision) const override;
+	virtual bool IsAircraftMovementIntentActive() const override;
+	//~ End IAircraftMovementIntentProvider Interface
+
 private:
 	/** 把引擎注入的三个属性同步到 UAircraftComponent。 */
 	void SyncComponentFromInjectedProperties();
+	void InitializeDefaultScenarioIfReady();
+	void FreezePreviewSimulation();
+	void ResumePreviewSimulation();
+	FName GetChassisBoneName() const;
 
 	/**
 	 * 引擎注入点（UDataflowBaseContent::SetActorProperties）：
@@ -62,4 +91,19 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAircraftComponent> AircraftComponent;
+
+	FVector PreviewHoldTargetCm = FVector(0.0, 0.0, 200.0);
+	float PreviewFixedYawDegrees = 0.0f;
+	FAircraftMovementIntent PreviewMovementIntent;
+	FAircraftMovementIntentHandle PreviewMovementIntentHandle;
+	uint64 PreviewMovementIntentRevision = 1;
+	bool bPreviewIntentActive = false;
+	bool bDefaultScenarioInitialized = false;
+	bool bPreviewPlaybackEnabled = true;
+	bool bPreviewFrozen = false;
+	FTransform FrozenComponentTransform = FTransform::Identity;
+	FTransform FrozenBodyTransform = FTransform::Identity;
+	FVector FrozenLinearVelocityCmPerSec = FVector::ZeroVector;
+	FVector FrozenAngularVelocityRadPerSec = FVector::ZeroVector;
+	bool bFrozenBodyStateValid = false;
 };

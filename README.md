@@ -185,6 +185,25 @@ QuadX 标准布局（俯视，机头朝上）：
 
 编辑器设置默认：模拟自动播放开启；异步缓存关闭（避免飞行模拟的缓存陈旧问题）；允许 PIE 内求值。
 
+### Dataflow Simulation 执行模型
+
+Dataflow Simulation 负责预览场景和编辑器控制，世界 Chaos 物理场景是三种驱动模式唯一的物理权威。`UAircraftComponent` 不注册为 Dataflow Physics Solver，也不存在额外的程序化 SimulationGraph；飞控仍只在 `AsyncPhysicsTickComponent()` 的 Chaos 物理子步中推进，避免 Dataflow Task 与世界物理重复解算。
+
+PreviewActor 完成初始化并确认 Backend Ready 后，会自动 Arm、切换到 `PositionHold`，并提交正式的世界空间质心 Hold 意图，默认目标为 `(0, 0, 200)` cm。FlightController、PhysicsConstraint 和 Kinematic 都消费同一份 MovementIntent，不使用预览专用的移动算法，也不会通过 `SetActorLocation()` 瞬移到目标。
+
+左侧 `Aircraft Simulation` 面板按编辑器窗口独立绑定对应的 `FDataflowSimulationScene`，提供：
+
+- Arm/Disarm、FlightMode、世界质心 Hold 目标和 Fixed Yaw。
+- LOD 选择；DriveMode 只读显示当前 LOD 的资产配置结果。
+- 单旋翼 effectiveness 调节，以及一帧世界空间力（N）/力矩（N·m）扰动。
+- Backend 状态、失败原因、RootBone、刚体有效性、当前位置/速度/姿态、World Delta、Physics Delta 和控制序列号。
+
+Play、Pause、Step、Stop 和 Reset 统一使用 Dataflow 编辑器原生工具栏。PreviewActor 通过
+`IDataflowSimulationActor` 接收原生播放状态：Pause 冻结刚体姿态与速度，恢复时保持轨迹连续，
+Reset 由 Dataflow 正式重建流程重新生成 PreviewActor；Aircraft 面板不提供重复的播放控制入口。
+
+配置刷新分为两类：Mesh、PhysicsAsset、当前 RootBone 或 DriveMode 改变时执行冻结后的 PhysicsState 重建事务；飞控、旋翼、空气动力、约束、运动学和轨迹数值变化只向现有代理提交不可变配置快照，不替换刚体。
+
 ---
 
 ## 调试与诊断系统

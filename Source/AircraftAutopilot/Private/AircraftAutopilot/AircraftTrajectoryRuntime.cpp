@@ -130,6 +130,12 @@ void FAircraftTrajectoryRuntime::Reset()
 	LastUpdateTimeSeconds = 0.0;
 }
 
+void FAircraftTrajectoryRuntime::RebaseTime(const double TimeSeconds)
+{
+	MpccController.RebaseTime(TimeSeconds);
+	LastUpdateTimeSeconds = TimeSeconds;
+}
+
 bool FAircraftTrajectoryRuntime::UpdateFlightController(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability,

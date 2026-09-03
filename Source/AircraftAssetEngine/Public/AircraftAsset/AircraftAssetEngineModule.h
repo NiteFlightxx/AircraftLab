@@ -11,8 +11,5 @@ class FAircraftAssetEngineModule : public IModuleInterface
 	virtual void ShutdownModule() override;
 
 private:
-	void HandlePreExit();
-
-	FDelegateHandle PreExitDelegateHandle;
 	IConsoleObject* SimulationResetCommand = nullptr;
 };

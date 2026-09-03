@@ -136,6 +136,80 @@ bool FAircraftAutopilotTypedIntentApiTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftTrajectoryPauseClockRebaseTest,
+	"AircraftAutopilot.Trajectory.PauseClockRebase",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftTrajectoryPauseClockRebaseTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftTrajectoryRuntime Runtime;
+	FAircraftMovementIntent Intent = MakeRouteIntent(2000.0f);
+	FAircraftAutopilotRuntimeConfig Config;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	TestTrue(TEXT("Route intent is accepted"),
+		Runtime.SetIntent(Intent, 1, 1, Config, State, Capability));
+
+	State.TimeSeconds = 1.05;
+	FAircraftTrajectoryReference BeforePause;
+	TestTrue(TEXT("Reference advances before pause"),
+		Runtime.UpdateKinematic(State, Capability, BeforePause));
+
+	State.TimeSeconds = 101.05;
+	Runtime.RebaseTime(State.TimeSeconds);
+	FAircraftTrajectoryReference AfterResume;
+	TestTrue(TEXT("Reference remains valid after resume"),
+		Runtime.UpdateKinematic(State, Capability, AfterResume));
+	TestTrue(TEXT("Pause duration does not advance the trajectory cursor"),
+		AfterResume.PositionCm.Equals(BeforePause.PositionCm, 0.01));
+	TestTrue(TEXT("Pause duration does not change the planned velocity"),
+		AfterResume.VelocityCmPerSec.Equals(BeforePause.VelocityCmPerSec, 0.01));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMpccPauseClockRebaseTest,
+	"AircraftAutopilot.MPCC.PauseClockRebase",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMpccPauseClockRebaseTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(2000.0f);
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.Sequence = 1;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftMpccController Controller;
+	TestTrue(TEXT("Flight-controller route intent is accepted"),
+		Controller.SetIntent(Intent, 2, 1, Config, State, Capability));
+
+	State.TimeSeconds = 1.001;
+	State.Sequence = 2;
+	FAircraftTrajectoryReference BeforePause;
+	TestTrue(TEXT("MPCC reference is solved before pause"),
+		Controller.Update(State, Capability, BeforePause));
+
+	State.TimeSeconds = 101.001;
+	State.Sequence = 3;
+	Controller.RebaseTime(State.TimeSeconds);
+	FAircraftTrajectoryReference AfterResume;
+	TestTrue(TEXT("MPCC reference remains valid after resume"),
+		Controller.Update(State, Capability, AfterResume));
+	TestEqual(TEXT("Resume reuses the scheduled reference instead of solving early"),
+		AfterResume.StateSequence, BeforePause.StateSequence);
+	TestTrue(TEXT("Resume preserves the MPCC position reference"),
+		AfterResume.PositionCm.Equals(BeforePause.PositionCm, 0.01));
+	TestTrue(TEXT("Resume preserves the MPCC velocity reference"),
+		AfterResume.VelocityCmPerSec.Equals(BeforePause.VelocityCmPerSec, 0.01));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftSpatialPathContinuityTest,
 	"AircraftAutopilot.Path.C2Continuity",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

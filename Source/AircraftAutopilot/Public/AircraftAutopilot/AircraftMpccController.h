@@ -15,6 +15,8 @@ public:
 	bool Update(const FAircraftVehicleStateSnapshot& State,
 		const FAircraftDynamicCapabilitySnapshot& Capability,
 		FAircraftTrajectoryReference& OutReference);
+	/** Rebase absolute clocks after a simulation pause without changing plan progress. */
+	void RebaseTime(double TimeSeconds);
 	bool RefreshPlan(const FAircraftVehicleStateSnapshot& State,
 		const FAircraftDynamicCapabilitySnapshot& Capability)
 	{

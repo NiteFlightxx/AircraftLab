@@ -32,6 +32,7 @@
 #include "UObject/UObjectGlobals.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftDataflowPreviewActor.h"
+#include "AircraftAsset/AircraftDataflowEditor.h"
 #include "Dataflow/DataflowEditor.h"
 #include "Dataflow/DataflowEditorToolkit.h"
 #include "Dataflow/DataflowSimulationScene.h"
@@ -515,7 +516,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 
 		if (UAssetEditorSubsystem* const AssetEditorSubsystem = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr)
 		{
-			if (UDataflowEditor* const AssetEditor = NewObject<UDataflowEditor>(AssetEditorSubsystem, NAME_None, RF_Transient))
+			if (UAircraftDataflowEditor* const AssetEditor = NewObject<UAircraftDataflowEditor>(AssetEditorSubsystem, NAME_None, RF_Transient))
 			{
 				if (UDataflowSimulationSettings* const SimulationSettings = NewObject<UDataflowSimulationSettings>())
 				{

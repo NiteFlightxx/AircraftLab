@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/ConstraintInstance.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Chaos/Framework/PhysicsSolverBase.h"
@@ -26,13 +27,11 @@
 #include "AircraftDiagnostics/AircraftDebugRegistry.h"
 #include "AircraftDiagnostics/AircraftDebugRuntime.h"
 #include "AircraftDiagnostics/AircraftDebugSettings.h"
-#include "AircraftAsset/AircraftSimulationGraph.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "AircraftAsset/AircraftSimulationProxy.h"
 #include "AircraftAutopilot/AutopilotComponent.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
-#include "Dataflow/DataflowSimulationManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftComponent)
 
@@ -67,15 +66,51 @@ void UAircraftComponent::SetAsset(UAircraftAssetBase* InAsset)
 		return;
 	}
 
+	const bool bWasRegistered = IsRegistered();
+	const bool bWasSuspended = bSuspendSimulation;
+	const bool bWasComponentTickEnabled = IsComponentTickEnabled();
+	if (bWasRegistered)
+	{
+		SuspendSimulation();
+		SetComponentTickEnabled(false);
+	}
+
 	Asset = InAsset;
 	SyncSkeletalMeshComponentFromAsset();
+	if (!bWasRegistered)
+	{
+		SimulationBackendStatus.State = Asset
+			? EAircraftSimulationBackendState::WaitingForPhysicsState
+			: EAircraftSimulationBackendState::WaitingForAsset;
+		SimulationBackendStatus.FailureReason.Reset();
+		AppliedStructureSignature = BuildSimulationStructureSignature();
+		bHasAppliedStructureSignature = true;
+		return;
+	}
+
+	// A registered component owns live Chaos state. Recreate it as one structural transaction
+	// after the new mesh and PhysicsAsset have been bound.
 	ReapplyCurrentSimulationLOD();
+	RecreatePhysicsState();
+	ApplyMassPropertiesToBodyInstance();
 	ApplySolverSettingsToBodyInstance();
 
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->Initialize_GameThread();
 	}
+	else
+	{
+		BuildSimulationBackend();
+	}
+	RefreshSimulationBackendStatus();
+	AppliedStructureSignature = BuildSimulationStructureSignature();
+	bHasAppliedStructureSignature = true;
+	if (!bWasSuspended)
+	{
+		ResumeSimulation();
+	}
+	SetComponentTickEnabled(bWasComponentTickEnabled);
 }
 
 UAircraftAssetBase* UAircraftComponent::GetAsset() const
@@ -85,8 +120,33 @@ UAircraftAssetBase* UAircraftComponent::GetAsset() const
 
 void UAircraftComponent::RefreshAssetState()
 {
+	const FSimulationStructureSignature NewSignature = BuildSimulationStructureSignature();
+	if (!IsRegistered())
+	{
+		SyncSkeletalMeshComponentFromAsset();
+		SimulationBackendStatus.State = Asset
+			? EAircraftSimulationBackendState::WaitingForPhysicsState
+			: EAircraftSimulationBackendState::WaitingForAsset;
+		SimulationBackendStatus.FailureReason.Reset();
+		AppliedStructureSignature = NewSignature;
+		bHasAppliedStructureSignature = true;
+		return;
+	}
+	const bool bStructureChanged = !bHasAppliedStructureSignature
+		|| !(AppliedStructureSignature == NewSignature);
+	const bool bWasSuspended = bSuspendSimulation;
+	const bool bWasComponentTickEnabled = IsComponentTickEnabled();
+	if (bStructureChanged)
+	{
+		SuspendSimulation();
+		SetComponentTickEnabled(false);
+	}
 	SyncSkeletalMeshComponentFromAsset();
 	ReapplyCurrentSimulationLOD();
+	if (bStructureChanged)
+	{
+		RecreatePhysicsState();
+	}
 
 	// 把 FrameConfig 中的 MassKg / CenterOfMass / InertiaDiagonal 重新写入 BodyInstance —
 	// 与 ChaosCloth 在 RefreshAssetState 中重新同步质量/惯性属性的语义一致。
@@ -95,7 +155,29 @@ void UAircraftComponent::RefreshAssetState()
 
 	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->Initialize_GameThread();
+		if (bStructureChanged)
+		{
+			AircraftSimulationProxy->Initialize_GameThread();
+		}
+		else
+		{
+			AircraftSimulationProxy->ReconfigureForLod_GameThread();
+		}
+	}
+	else
+	{
+		BuildSimulationBackend();
+	}
+	RefreshSimulationBackendStatus();
+	AppliedStructureSignature = BuildSimulationStructureSignature();
+	bHasAppliedStructureSignature = true;
+	if (bStructureChanged)
+	{
+		if (!bWasSuspended)
+		{
+			ResumeSimulation();
+		}
+		SetComponentTickEnabled(bWasComponentTickEnabled);
 	}
 }
 
@@ -399,11 +481,13 @@ void UAircraftComponent::ReapplyCurrentSimulationLOD()
 	const FAircraftSimulationModel* const Model = GetSimulationModel();
 	if (Model && Model->GetNumLods() > 0)
 	{
-		ApplySimulationLOD(FMath::Clamp(RequestedLOD, 0, Model->GetNumLods() - 1));
+		ApplySimulationLOD(
+			FMath::Clamp(RequestedLOD, 0, Model->GetNumLods() - 1), false);
 	}
 }
 
-void UAircraftComponent::ApplySimulationLOD(int32 LodIndex)
+void UAircraftComponent::ApplySimulationLOD(
+	const int32 LodIndex, const bool bQueueProxyConfiguration)
 {
 	const FAircraftSimulationModel* const Model = GetSimulationModel();
 	if (!Model || !Model->IsValidLodIndex(LodIndex))
@@ -450,9 +534,10 @@ void UAircraftComponent::ApplySimulationLOD(int32 LodIndex)
 		OnSimulationLODChanged.Broadcast(PreviousLOD, CurrentSimulationLOD);
 	}
 
-	if (AircraftSimulationProxy.IsValid())
+	if (bQueueProxyConfiguration && AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->ReconfigureForLod_GameThread();
+		RefreshSimulationBackendStatus();
 	}
 }
 
@@ -476,6 +561,7 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 	// 让物理状态创建回调能按 Dataflow LOD 配置建立对应后端。
 	SimulationDriveMode = NewDriveMode;
 	bSimulationPhysicsEnabled = bEnablePhysics;
+	bDriveModeTransitionInProgress = true;
 
 	if (bEnablePhysics)
 	{
@@ -491,13 +577,11 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 				? FVector(0.0f, 0.0f, FMath::DegreesToRadians(Target.YawRateDegPerSec))
 				: FVector::ZeroVector;
 		}
+		// Simulation belongs to the complete PhysicsAsset. RootBone only selects the
+		// controlled body; it does not define or reduce the set of simulated bodies.
+		SetSimulatePhysics(true);
 		if (!bChassisWasSimulating)
 		{
-			SetSimulatePhysics(true);
-			if (PreviousDriveMode == EAircraftSimulationDriveMode::Kinematic)
-			{
-				ResetAllBodiesSimulatePhysics();
-			}
 			SetPhysicsLinearVelocity(
 				SavedSimulationLinearVelocityCmPerSec, false, RootBone);
 			SetPhysicsAngularVelocityInRadians(
@@ -514,7 +598,6 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 				GetPhysicsAngularVelocityInRadians(RootBone);
 		}
 		SetSimulatePhysics(false);
-		SetAllBodiesSimulatePhysics(false);
 	}
 
 	if (SimulationDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
@@ -529,6 +612,39 @@ void UAircraftComponent::ApplySimulationDriveMode(EAircraftSimulationDriveMode N
 	SetComponentTickEnabled(true);
 	SetAsyncPhysicsTickEnabled(
 		SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic);
+	bDriveModeTransitionInProgress = false;
+}
+
+bool UAircraftComponent::CaptureChassisPhysicsState(
+	FTransform& OutBodyTransform, FVector& OutLinearVelocityCmPerSec,
+	FVector& OutAngularVelocityRadPerSec) const
+{
+	const FBodyInstance* const Body = ResolveChassisBodyInstance();
+	if (!Body || !Body->IsValidBodyInstance())
+	{
+		return false;
+	}
+	OutBodyTransform = Body->GetUnrealWorldTransform();
+	const FName RootBone = GetCurrentLodModel() ? GetCurrentLodModel()->RootBone : NAME_None;
+	OutLinearVelocityCmPerSec = GetPhysicsLinearVelocity(RootBone);
+	OutAngularVelocityRadPerSec = GetPhysicsAngularVelocityInRadians(RootBone);
+	return true;
+}
+
+bool UAircraftComponent::RestoreChassisPhysicsState(
+	const FTransform& BodyTransform, const FVector& LinearVelocityCmPerSec,
+	const FVector& AngularVelocityRadPerSec)
+{
+	FBodyInstance* const Body = ResolveChassisBodyInstance();
+	if (!Body || !Body->IsValidBodyInstance())
+	{
+		return false;
+	}
+	Body->SetBodyTransform(BodyTransform, ETeleportType::TeleportPhysics);
+	const FName RootBone = GetCurrentLodModel() ? GetCurrentLodModel()->RootBone : NAME_None;
+	SetPhysicsLinearVelocity(LinearVelocityCmPerSec, false, RootBone);
+	SetPhysicsAngularVelocityInRadians(AngularVelocityRadPerSec, false, RootBone);
+	return true;
 }
 
 bool UAircraftComponent::CreateSimulationConstraint()
@@ -942,6 +1058,7 @@ void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest
 {
 	OutSnapshot = {};
 	OutSnapshot.CaptureFrameNumber = GFrameCounter;
+	OutSnapshot.WorldDeltaSeconds = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
 	OutSnapshot.SubjectName = FString::Printf(TEXT("%s/%s"),
 		*GetNameSafe(GetOwner()), *GetName());
 	if (AircraftSimulationProxy.IsValid())
@@ -1080,6 +1197,7 @@ void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest
 	}
 
 	OutSnapshot.bSimulationEnabled = IsSimulationEnabled();
+	OutSnapshot.BackendStatus = SimulationBackendStatus;
 	OutSnapshot.bSimulationSuspended = IsSimulationSuspended();
 	OutSnapshot.bControllerEnabled = IsControllerEnabled();
 	OutSnapshot.bSimulatingPhysics = ChassisBody
@@ -1389,23 +1507,16 @@ void UAircraftComponent::OnRegister()
 	PrimaryComponentTick.bRunOnAnyThread = false;
 	bAllowConcurrentTick = false;
 
-	// PhysicsState 在 OnRegister 返回后创建；在此提供默认图，使 Dataflow 全局委托
-	// 能在随后的 PhysicsState 创建通知中构建并注册 Proxy。
-	if (!SimulationAsset.DataflowAsset)
-	{
-		SimulationAsset.DataflowAsset = UE::AircraftLab::AircraftAsset::GetOrCreateAircraftSimulationGraph();
-		SimulationAsset.SimulationGroups = { UE::AircraftLab::AircraftAsset::AircraftSimulationGroupName };
-	}
-
 	ReapplyCurrentSimulationLOD();
-	// 与 ChaosClothComponent 一致：组件注册时立即建立 Dataflow Proxy。
-	// PhysicsState 的全局通知稍后仍可到达，管理器的 TSet 注册是幂等的。
-	UE::Dataflow::RegisterSimulationInterface(this);
+	AppliedStructureSignature = BuildSimulationStructureSignature();
+	bHasAppliedStructureSignature = true;
+	BuildSimulationBackend();
+	RefreshSimulationBackendStatus();
 	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::SimulationDrive))
 	{
 		UE_LOG(LogAircraft, Display,
-			TEXT("[Aircraft.Drive.Register] Owner=%s Component=%s Graph=%s Proxy=%d PhysicsState=%d LOD=%d Drive=%s Arm=%s Controller=%d"),
-			*GetNameSafe(GetOwner()), *GetName(), *GetNameSafe(SimulationAsset.DataflowAsset),
+			TEXT("[Aircraft.Drive.Register] Owner=%s Component=%s Proxy=%d PhysicsState=%d LOD=%d Drive=%s Arm=%s Controller=%d"),
+			*GetNameSafe(GetOwner()), *GetName(),
 			AircraftSimulationProxy.IsValid() ? 1 : 0, HasValidPhysicsState() ? 1 : 0,
 			CurrentSimulationLOD, FAircraftDebug::GetDriveModeLabel(SimulationDriveMode),
 			FAircraftDebug::GetArmStateLabel(GetArmState()), IsControllerEnabled() ? 1 : 0);
@@ -1416,18 +1527,16 @@ void UAircraftComponent::OnUnregister()
 {
 	DestroySimulationConstraint();
 	MovementIntentProviderObject = nullptr;
-	UE::Dataflow::UnregisterSimulationInterface(this);
+	ResetSimulationBackend();
 	Super::OnUnregister();
+	SimulationBackendStatus = FAircraftSimulationBackendStatus();
+	bHasAppliedStructureSignature = false;
 }
 
 void UAircraftComponent::OnCreatePhysicsState()
 {
 	Super::OnCreatePhysicsState();
-	if (SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic)
-	{
-		SetSimulatePhysics(false);
-		SetAllBodiesSimulatePhysics(false);
-	}
+	SetSimulatePhysics(SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic);
 
 	ApplyMassPropertiesToBodyInstance();
 	ApplySolverSettingsToBodyInstance();
@@ -1445,6 +1554,10 @@ void UAircraftComponent::OnCreatePhysicsState()
 			TEXT("[AircraftDF.LOD] Owner=%s LOD=%d could not create its PhysicsConstraint backend after physics-state creation."),
 			*GetNameSafe(GetOwner()), CurrentSimulationLOD);
 	}
+	if (!bDriveModeTransitionInProgress)
+	{
+		RefreshSimulationBackendStatus();
+	}
 }
 
 void UAircraftComponent::OnDestroyPhysicsState()
@@ -1458,6 +1571,10 @@ void UAircraftComponent::OnDestroyPhysicsState()
 	}
 
 	Super::OnDestroyPhysicsState();
+	if (!bDriveModeTransitionInProgress)
+	{
+		RefreshSimulationBackendStatus();
+	}
 }
 
 void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -1490,6 +1607,25 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	}
 
 	PushMovementIntentToProxy(DeltaTime);
+	// Kinematic disables AsyncPhysicsTickComponent, so its game-thread execution domain must
+	// consume queued configuration before the shared readiness/control gate is evaluated.
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic
+		&& AircraftSimulationProxy.IsValid())
+	{
+		if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel())
+		{
+			const FTransform BodyTransform =
+				Model->FlightController.FrameBinding.GetBodyWorldTransform(GetComponentTransform());
+			const FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
+			const FVector CenterOfMassBodyCm = ChassisBody
+				? ChassisBody->GetMassSpaceLocal().GetTranslation()
+				: FVector::ZeroVector;
+			AircraftSimulationProxy->TickKinematicTrajectory_GameThread(
+				DeltaTime, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0,
+				BodyTransform, BodyTransform.TransformPosition(CenterOfMassBodyCm),
+				PreviousAlternativeVelocityCmPerSec, FVector::ZeroVector, *Model);
+		}
+	}
 	const bool bControlExecutionAllowed = AircraftSimulationProxy.IsValid()
 		&& AircraftSimulationProxy->IsControlExecutionAllowed_GameThread();
 	if (!bControlExecutionAllowed && AircraftSimulationProxy.IsValid())
@@ -1519,24 +1655,6 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			PreviousAlternativeVelocityCmPerSec = FVector::ZeroVector;
 			UpdateAlternativeDriveEstimatedState(DeltaTime);
 			break;
-		}
-		if (AircraftSimulationProxy.IsValid())
-		{
-			if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel())
-			{
-				const FTransform BodyTransform =
-					Model->FlightController.FrameBinding.GetBodyWorldTransform(
-						GetComponentTransform());
-				const FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
-				const FVector CenterOfMassBodyCm = ChassisBody
-					? ChassisBody->GetMassSpaceLocal().GetTranslation()
-					: FVector::ZeroVector;
-				AircraftSimulationProxy->TickKinematicTrajectory_GameThread(
-					DeltaTime, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0,
-					BodyTransform, BodyTransform.TransformPosition(CenterOfMassBodyCm),
-					PreviousAlternativeVelocityCmPerSec,
-					FVector::ZeroVector, *Model);
-			}
 		}
 		UpdateKinematicSimulation(DeltaTime);
 		break;
@@ -1574,7 +1692,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		}
 		UE::AircraftLab::Diagnostics::DrawRuntime(GetWorld(), DebugSnapshot, DebugSelection);
 	}
-
+	RefreshSimulationBackendStatus();
 }
 
 void UAircraftComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTime)
@@ -1589,71 +1707,29 @@ void UAircraftComponent::AsyncPhysicsTickComponent(float DeltaTime, float SimTim
 	}
 }
 
-/* ============================ IDataflowPhysicsSolverInterface ============================ */
-
-FDataflowSimulationProxy* UAircraftComponent::GetSimulationProxy()
-{
-	return AircraftSimulationProxy.Get();
-}
-
-const FDataflowSimulationProxy* UAircraftComponent::GetSimulationProxy() const
-{
-	return AircraftSimulationProxy.Get();
-}
-
-void UAircraftComponent::BuildSimulationProxy()
+void UAircraftComponent::BuildSimulationBackend()
 {
 	if (!AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy = MakeShared<FAircraftSimulationProxy>(*this);
 		AircraftSimulationProxy->Initialize_GameThread();
 		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
-		UE_LOG(LogAircraft, Display,
-			TEXT("[AircraftDF.Proxy.Build] Owner=%s Component=%s Proxy=%p Graph=%s"),
-			*GetNameSafe(GetOwner()), *GetName(), AircraftSimulationProxy.Get(),
-			*GetNameSafe(SimulationAsset.DataflowAsset));
+		UE_LOG(LogAircraft, Verbose,
+			TEXT("[Aircraft.Backend.Build] Owner=%s Component=%s Proxy=%p"),
+			*GetNameSafe(GetOwner()), *GetName(), AircraftSimulationProxy.Get());
 	}
+	AircraftSimulationProxy->SetAircraftBodyInstance(ResolveChassisBodyInstance());
 }
 
-void UAircraftComponent::ResetSimulationProxy()
+void UAircraftComponent::ResetSimulationBackend()
 {
 	check(IsInGameThread());
-
-	// Dataflow context stores raw proxy pointers during graph evaluation. Destruction and physics-state
-	// recreation must not release the proxy while the world's asynchronous graph task is still using it.
-	if (UWorld* const World = GetWorld())
-	{
-		if (UDataflowSimulationManager* const SimulationManager = World->GetSubsystem<UDataflowSimulationManager>())
-		{
-			SimulationManager->CompleteSimulationTasks();
-		}
-	}
-
-	UE_LOG(LogAircraft, Display,
-		TEXT("[AircraftDF.Proxy.Reset] Owner=%s Component=%s Proxy=%p Graph=%s"),
-		*GetNameSafe(GetOwner()), *GetName(), AircraftSimulationProxy.Get(),
-		*GetNameSafe(SimulationAsset.DataflowAsset));
-	AircraftSimulationProxy.Reset();
-}
-
-void UAircraftComponent::WriteToSimulation(const float /*DeltaTime*/, const bool /*bAsyncTask*/)
-{
-	// 管理器 enabled 时每帧调用：把 GT 侧最新控制目标推入代理双缓冲
-	// （主输入通路仍是 TG_PrePhysics 推送，本路径仅保证管理器调度流下目标不丢帧）。
 	if (AircraftSimulationProxy.IsValid())
 	{
-		AircraftSimulationProxy->SetLowLevelTargets_GameThread(LowLevelControlTargets);
+		AircraftSimulationProxy->SetAircraftBodyInstance(nullptr);
 	}
+	AircraftSimulationProxy.Reset();
 }
-
-void UAircraftComponent::ReadFromSimulation(const float /*DeltaTime*/, const bool /*bAsyncTask*/)
-{
-	// 估计状态由代理在 PT 子步直接写入输出槽（GetEstimatedState 即时读取），
-	// 无需在此拷贝；保留空实现（与 ChaosCloth 的按需同步语义分歧点，已在设计文档记录）。
-}
-
-void UAircraftComponent::PreProcessSimulation(const float /*DeltaTime*/) {}
-void UAircraftComponent::PostProcessSimulation(const float /*DeltaTime*/) {}
 
 /* ============================ Helpers ============================ */
 
@@ -1694,15 +1770,182 @@ void UAircraftComponent::SyncSkeletalMeshComponentFromAsset()
 	SetPhysicsAsset(Asset->GetPhysicsAsset());
 }
 
+UAircraftComponent::FSimulationStructureSignature
+UAircraftComponent::BuildSimulationStructureSignature() const
+{
+	FSimulationStructureSignature Signature;
+	const FAircraftSimulationModel* const Model = GetSimulationModel();
+	Signature.SkeletalMesh = Model ? Model->SkeletalMesh : nullptr;
+#if WITH_EDITORONLY_DATA
+	if (!Signature.SkeletalMesh.IsValid() && Asset)
+	{
+		Signature.SkeletalMesh = Asset->GetPreviewSceneSkeletalMesh();
+	}
+#endif
+	Signature.PhysicsAsset = Asset ? Asset->GetPhysicsAsset() : nullptr;
+	const FAircraftSimulationLodModel* const LodModel = Model
+		? Model->GetLodModel(CurrentSimulationLOD == INDEX_NONE ? 0 : CurrentSimulationLOD)
+		: nullptr;
+	Signature.RootBone = LodModel ? LodModel->RootBone : NAME_None;
+	if (Model && !Model->SimulationLOD.LODs.IsEmpty())
+	{
+		const int32 LodIndex = FMath::Clamp(
+			CurrentSimulationLOD == INDEX_NONE ? 0 : CurrentSimulationLOD,
+			0, Model->SimulationLOD.LODs.Num() - 1);
+		Signature.DriveMode = Model->SimulationLOD.LODs[LodIndex].DriveMode;
+	}
+	return Signature;
+}
+
 FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance()
 {
 	if (const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
 		Model && !Model->RootBone.IsNone())
 	{
-		if (FBodyInstance* const RootBody = GetBodyInstance(Model->RootBone))
-		{
-			return RootBody;
-		}
+		return GetBodyInstance(Model->RootBone);
 	}
 	return GetBodyInstance();
+}
+
+const FBodyInstance* UAircraftComponent::ResolveChassisBodyInstance() const
+{
+	return const_cast<UAircraftComponent*>(this)->ResolveChassisBodyInstance();
+}
+
+FAircraftSimulationBackendStatus UAircraftComponent::GetSimulationBackendStatus() const
+{
+	return SimulationBackendStatus;
+}
+
+void UAircraftComponent::SetSimulationBackendFailure(const TCHAR* const FailureReason)
+{
+	PublishSimulationBackendReadiness(false);
+	const FString NewReason(FailureReason);
+	const bool bChanged = SimulationBackendStatus.State != EAircraftSimulationBackendState::Failed
+		|| SimulationBackendStatus.FailureReason != NewReason;
+	SimulationBackendStatus.State = EAircraftSimulationBackendState::Failed;
+	SimulationBackendStatus.FailureReason = NewReason;
+	if (bChanged)
+	{
+		UE_LOG(LogAircraft, Error,
+			TEXT("[Aircraft.Backend.Failed] Owner=%s Component=%s Reason=%s LOD=%d Drive=%s RootBone=%s"),
+			*GetNameSafe(GetOwner()), *GetName(), *NewReason, CurrentSimulationLOD,
+			FAircraftDebug::GetDriveModeLabel(SimulationDriveMode),
+			*SimulationBackendStatus.RootBone.ToString());
+	}
+}
+
+void UAircraftComponent::PublishSimulationBackendReadiness(const bool bReady)
+{
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->SetBackendValidated_GameThread(bReady);
+	}
+	if (!bReady)
+	{
+		DestroySimulationConstraint();
+	}
+}
+
+void UAircraftComponent::RefreshSimulationBackendStatus(float PhysicsDeltaSeconds)
+{
+	SimulationBackendStatus.LOD = CurrentSimulationLOD;
+	SimulationBackendStatus.DriveMode = SimulationDriveMode;
+	const FAircraftSimulationLodModel* const Model = GetCurrentLodModel();
+	SimulationBackendStatus.RootBone = Model ? Model->RootBone : NAME_None;
+	if (AircraftSimulationProxy.IsValid())
+	{
+		SimulationBackendStatus.ControlSequence = static_cast<int64>(
+			AircraftSimulationProxy->GetControlSequence_GameThread());
+		SimulationBackendStatus.PhysicsDeltaSeconds = PhysicsDeltaSeconds > 0.0f
+			? PhysicsDeltaSeconds
+			: AircraftSimulationProxy->GetLastPhysicsDeltaSeconds_GameThread();
+	}
+
+	const FBodyInstance* const Body = ResolveChassisBodyInstance();
+	SimulationBackendStatus.bBodyExists = Body != nullptr;
+	SimulationBackendStatus.bBodyValid = Body && Body->IsValidBodyInstance();
+	SimulationBackendStatus.bBodySimulating = Body && Body->IsInstanceSimulatingPhysics();
+
+	if (!Asset)
+	{
+		PublishSimulationBackendReadiness(false);
+		SimulationBackendStatus.State = EAircraftSimulationBackendState::WaitingForAsset;
+		SimulationBackendStatus.FailureReason.Reset();
+		return;
+	}
+	if (!GetSimulationModel() || !Model)
+	{
+		SetSimulationBackendFailure(TEXT("SimulationModelInvalid"));
+		return;
+	}
+	if (!IsRegistered())
+	{
+		PublishSimulationBackendReadiness(false);
+		SimulationBackendStatus.State = EAircraftSimulationBackendState::WaitingForPhysicsState;
+		SimulationBackendStatus.FailureReason.Reset();
+		return;
+	}
+	if (!AircraftSimulationProxy.IsValid())
+	{
+		PublishSimulationBackendReadiness(false);
+		SimulationBackendStatus.State = EAircraftSimulationBackendState::WaitingForPhysicsState;
+		SimulationBackendStatus.FailureReason.Reset();
+		return;
+	}
+	if (!AircraftSimulationProxy->IsConfigurationApplied_GameThread())
+	{
+		PublishSimulationBackendReadiness(false);
+		SimulationBackendStatus.State = EAircraftSimulationBackendState::WaitingForPhysicsState;
+		SimulationBackendStatus.FailureReason = TEXT("ProxyConfigurationPending");
+		return;
+	}
+	if (bSuspendSimulation)
+	{
+		PublishSimulationBackendReadiness(false);
+		SimulationBackendStatus.State = EAircraftSimulationBackendState::WaitingForPhysicsState;
+		SimulationBackendStatus.FailureReason = TEXT("SimulationSuspended");
+		return;
+	}
+	if (SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic && !GetPhysicsAsset())
+	{
+		SetSimulationBackendFailure(TEXT("PhysicsAssetMissing"));
+		return;
+	}
+	if (SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic && !HasValidPhysicsState())
+	{
+		PublishSimulationBackendReadiness(false);
+		SimulationBackendStatus.State = EAircraftSimulationBackendState::WaitingForPhysicsState;
+		SimulationBackendStatus.FailureReason.Reset();
+		return;
+	}
+	if (!Model->RootBone.IsNone() && !Body)
+	{
+		SetSimulationBackendFailure(TEXT("ConfiguredRootBoneHasNoPhysicsBody"));
+		return;
+	}
+	if (SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic)
+	{
+		if (!Body || !Body->IsValidBodyInstance())
+		{
+			SetSimulationBackendFailure(TEXT("ChassisBodyInvalid"));
+			return;
+		}
+		if (!Body->IsInstanceSimulatingPhysics())
+		{
+			const UBodySetup* const ChassisBodySetup = Body->GetBodySetup();
+			SetSimulationBackendFailure(ChassisBodySetup && ChassisBodySetup->PhysicsType == PhysType_Kinematic
+				? TEXT("ChassisBodyConfiguredKinematic")
+				: TEXT("ChassisBodyNotSimulating"));
+			return;
+		}
+		if (!CollisionEnabledHasPhysics(Body->GetCollisionEnabled()))
+		{
+			SetSimulationBackendFailure(TEXT("ChassisCollisionDoesNotIncludePhysics"));
+			return;
+		}
+	}
+	SimulationBackendStatus.State = EAircraftSimulationBackendState::Ready;
+	SimulationBackendStatus.FailureReason.Reset();
+	PublishSimulationBackendReadiness(true);
 }

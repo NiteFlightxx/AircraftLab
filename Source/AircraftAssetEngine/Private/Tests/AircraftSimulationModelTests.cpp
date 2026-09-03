@@ -4,10 +4,85 @@
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
-#include "AircraftAsset/AircraftSimulationGraph.h"
+#include "AircraftAsset/AircraftDataflowPreviewActor.h"
+#include "AircraftAsset/AircraftComponent.h"
+#include "AircraftAsset/AircraftSimulationProxy.h"
+#include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
+#include "Dataflow/DataflowSimulationManager.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftDataflowPreviewActorProtocolsTest,
+	"AircraftLab.Dataflow.Preview.ActorProtocols",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftDataflowPreviewActorProtocolsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	const UClass* const PreviewActorClass = AAircraftDataflowPreviewActor::StaticClass();
+	TestTrue(TEXT("The preview actor receives Dataflow play, pause, and step state"),
+		PreviewActorClass->ImplementsInterface(UDataflowSimulationActor::StaticClass()));
+	TestTrue(TEXT("The preview actor supplies the authoritative preview movement intent"),
+		PreviewActorClass->ImplementsInterface(UAircraftMovementIntentProvider::StaticClass()));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftWorldChaosBackendOwnershipTest,
+	"AircraftLab.Dataflow.Preview.WorldChaosBackendOwnership",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftWorldChaosBackendOwnershipTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	const UAircraftComponent* const Component = GetDefault<UAircraftComponent>();
+	TestEqual(TEXT("An unregistered component has no initialized backend"),
+		Component->GetSimulationBackendStatus().State,
+		EAircraftSimulationBackendState::Uninitialized);
+	const AAircraftDataflowPreviewActor* const PreviewActor =
+		GetDefault<AAircraftDataflowPreviewActor>();
+	TestTrue(TEXT("The preview scenario targets world center of mass (0,0,200)"),
+		PreviewActor->GetPreviewHoldTargetCm().Equals(FVector(0.0, 0.0, 200.0)));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftProxyConfigurationExecutionDomainTest,
+	"AircraftLab.Dataflow.Preview.ConfigurationExecutionDomain",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftProxyConfigurationExecutionDomainTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	UAircraftComponent* const Component = NewObject<UAircraftComponent>();
+	TestNotNull(TEXT("A transient aircraft component can host the proxy lifecycle"), Component);
+	if (!Component)
+	{
+		return false;
+	}
+
+	FAircraftSimulationProxy PhysicsProxy(*Component);
+	PhysicsProxy.Initialize_GameThread();
+	TestFalse(TEXT("A queued configuration is not reported as applied"),
+		PhysicsProxy.IsConfigurationApplied_GameThread());
+	PhysicsProxy.TickPhysicsThread(1.0f / 60.0f, 0.0f);
+	TestTrue(TEXT("The physics execution domain acknowledges its queued configuration"),
+		PhysicsProxy.IsConfigurationApplied_GameThread());
+
+	FAircraftSimulationProxy KinematicProxy(*Component);
+	KinematicProxy.Initialize_GameThread();
+	TestFalse(TEXT("The kinematic proxy begins with a queued configuration"),
+		KinematicProxy.IsConfigurationApplied_GameThread());
+	const FAircraftSimulationLodModel KinematicModel;
+	KinematicProxy.TickKinematicTrajectory_GameThread(
+		1.0f / 60.0f, 0.0, FTransform::Identity, FVector::ZeroVector,
+		FVector::ZeroVector, FVector::ZeroVector, KinematicModel);
+	TestTrue(TEXT("The kinematic execution domain acknowledges its queued configuration"),
+		KinematicProxy.IsConfigurationApplied_GameThread());
+	return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftDataflowDefaultAxesTest,
@@ -327,21 +402,6 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	TestEqual(TEXT("Constraint linear-damping feed-forward compiles"),
 		Config.ConstraintDynamicsFeedForwardScale, 0.6f);
 	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftProgrammaticSimulationGraphLifetimeTest,
-	"AircraftLab.Dataflow.Runtime.ProgrammaticSimulationGraphLifetime",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FAircraftProgrammaticSimulationGraphLifetimeTest::RunTest(const FString& Parameters)
-{
-	(void)Parameters;
-	UDataflow* const SimulationGraph =
-		UE::AircraftLab::AircraftAsset::GetOrCreateAircraftSimulationGraph();
-	TestNotNull(TEXT("Programmatic simulation graph is created and kept alive until pre-exit"),
-		SimulationGraph);
-	return SimulationGraph != nullptr;
 }
 
 #endif

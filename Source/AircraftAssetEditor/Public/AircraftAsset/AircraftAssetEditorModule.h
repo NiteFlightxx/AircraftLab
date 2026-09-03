@@ -4,6 +4,7 @@
 #include "ComponentAssetBroker.h"
 
 class UAircraftAssetBase;
+class FLayoutExtender;
 
 namespace UE::AircraftLab::AircraftAsset
 {
@@ -22,8 +23,10 @@ public:
 	virtual void ShutdownModule() override;
 
 private:
+	void RegisterLayoutExtensions(FLayoutExtender& Extender);
 	TWeakObjectPtr<UAircraftAssetBase> ActiveAircraftAsset;
 	TSharedPtr<IComponentAssetBroker> AircraftAssetComponentBroker;
 	TUniquePtr<UE::AircraftLab::AircraftAsset::IAircraftDataflowTemplateProvider> TemplateProvider;
 	FDelegateHandle DataflowAssetMenusHandle;
+	FDelegateHandle LayoutExtensionsHandle;
 };

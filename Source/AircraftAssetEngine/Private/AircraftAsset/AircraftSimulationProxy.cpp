@@ -95,6 +95,8 @@ void FAircraftSimulationProxy::QueueConfiguration_GameThread(bool bResetRuntime)
 	PendingSimulationModel = MoveTemp(NewSimulationModel);
 	PendingLodIndex = AircraftComponent.GetCurrentSimulationLOD();
 	PendingDriveMode = AircraftComponent.GetCurrentSimulationDriveMode();
+	PendingConfigurationRevision = RequestedConfigurationRevision.fetch_add(
+		1, std::memory_order_acq_rel) + 1;
 	bPendingConfiguration = true;
 	bPendingRuntimeReset |= bResetRuntime;
 	TMap<FName, float> NewEffectiveness;
@@ -134,13 +136,14 @@ void FAircraftSimulationProxy::QueueConfiguration_GameThread(bool bResetRuntime)
 	}
 }
 
-void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
+void FAircraftSimulationProxy::ApplyPendingConfiguration_ExecutionThread()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_LOD_ApplyConfiguration);
 	TSharedPtr<const FAircraftSimulationModel> NewSimulationModel;
 	int32 NewLodIndex = INDEX_NONE;
 	EAircraftSimulationDriveMode NewDriveMode = EAircraftSimulationDriveMode::FlightController;
 	bool bResetRuntime = false;
+	uint64 NewConfigurationRevision = 0;
 	{
 		FScopeLock Lock(&InputCriticalSection);
 		if (!bPendingConfiguration)
@@ -151,6 +154,7 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 		NewLodIndex = PendingLodIndex;
 		NewDriveMode = PendingDriveMode;
 		bResetRuntime = bPendingRuntimeReset;
+		NewConfigurationRevision = PendingConfigurationRevision;
 		bPendingConfiguration = false;
 		bPendingRuntimeReset = false;
 	}
@@ -186,9 +190,10 @@ void FAircraftSimulationProxy::ApplyPendingConfiguration_PhysicsThread()
 	}
 	bHasRotorDescriptorCenterOfMass = false;
 	DebugLogAccumulatorSeconds = 0.0f;
-	DriveGateDebugLogAccumulatorSeconds = 0.0f;
+	LastDriveGateResult = NAME_None;
 	bDebugConfigurationPending = true;
 	bConfigurationWarningPending = true;
+	AppliedConfigurationRevision.store(NewConfigurationRevision, std::memory_order_release);
 
 	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::FlightControl))
 	{
@@ -685,6 +690,17 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 	const FVector& VelocityCmPerSec, const FVector& AngularVelocityWorldRadPerSec,
 	const FAircraftSimulationLodModel& Model)
 {
+	ApplyPendingConfiguration_ExecutionThread();
+	if (!IsControlExecutionAllowed_GameThread())
+	{
+		FScopeLock OutputLock(&OutputCriticalSection);
+		LatestTrajectoryReference = FAircraftTrajectoryReference();
+		return;
+	}
+	LastPhysicsDeltaSeconds.store(DeltaTime, std::memory_order_relaxed);
+	ControlSequence.fetch_add(1, std::memory_order_relaxed);
+	const bool bRebaseTrajectoryClock =
+		bTrajectoryClockRebaseRequested.exchange(false, std::memory_order_acq_rel);
 	if (bTrajectoryRebindRequested.exchange(false, std::memory_order_acq_rel))
 	{
 		bMovementIntentActive = false;
@@ -706,6 +722,10 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 	{
 		FAircraftVehicleStateSnapshot State;
 		State.TimeSeconds = TimeSeconds;
+		if (bRebaseTrajectoryClock)
+		{
+			TrajectoryRuntime.RebaseTime(TimeSeconds);
+		}
 		State.Sequence = VehicleStateSequence.fetch_add(1, std::memory_order_relaxed) + 1;
 		State.PositionCm = CenterOfMassWorldCm;
 		State.VelocityCmPerSec = VelocityCmPerSec;
@@ -777,13 +797,35 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 void FAircraftSimulationProxy::SetSimulationState_GameThread(bool bEnabled, bool bSuspended)
 {
 	bSimulationEnabled.store(bEnabled, std::memory_order_relaxed);
-	bSimulationSuspended.store(bSuspended, std::memory_order_relaxed);
+	const bool bWasSuspended = bSimulationSuspended.exchange(
+		bSuspended, std::memory_order_acq_rel);
+	if (bWasSuspended && !bSuspended)
+	{
+		bTrajectoryClockRebaseRequested.store(true, std::memory_order_release);
+	}
+}
+
+bool FAircraftSimulationProxy::IsConfigurationApplied_GameThread() const
+{
+	const uint64 RequestedRevision = RequestedConfigurationRevision.load(std::memory_order_acquire);
+	return RequestedRevision != 0
+		&& AppliedConfigurationRevision.load(std::memory_order_acquire) == RequestedRevision;
+}
+
+void FAircraftSimulationProxy::SetBackendValidated_GameThread(const bool bValidated)
+{
+	bBackendValidated.store(bValidated, std::memory_order_release);
+	if (!bValidated)
+	{
+		InvalidateTrajectoryReference_GameThread();
+	}
 }
 
 bool FAircraftSimulationProxy::IsControlExecutionAllowed_GameThread() const
 {
 	return bSimulationEnabled.load(std::memory_order_relaxed)
 		&& !bSimulationSuspended.load(std::memory_order_relaxed)
+		&& bBackendValidated.load(std::memory_order_acquire)
 		&& bControllerEnabled.load(std::memory_order_relaxed)
 		&& static_cast<EAircraftArmState>(CurrentArmState.load(std::memory_order_relaxed))
 			== EAircraftArmState::Armed;
@@ -939,23 +981,22 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	{
 		bMovementIntentActive = false;
 	}
-	ApplyPendingConfiguration_PhysicsThread();
-	auto LogDriveGate = [this, DeltaTime, SimTime](const TCHAR* const Result)
+	ApplyPendingConfiguration_ExecutionThread();
+	auto LogDriveGate = [this, SimTime](const TCHAR* const Result)
 	{
 		const FAircraftDiagnosticLogSelection LogSelection =
 			UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection();
 		if (!LogSelection.IsEnabled(EAircraftDiagnosticLogChannel::SimulationDrive))
 		{
+			LastDriveGateResult = NAME_None;
 			return;
 		}
-		DriveGateDebugLogAccumulatorSeconds += DeltaTime;
-		const float IntervalSeconds = LogSelection.IntervalSeconds;
-		if (IntervalSeconds > UE_SMALL_NUMBER
-			&& DriveGateDebugLogAccumulatorSeconds + UE_SMALL_NUMBER < IntervalSeconds)
+		const FName ResultName(Result);
+		if (LastDriveGateResult == ResultName)
 		{
 			return;
 		}
-		DriveGateDebugLogAccumulatorSeconds = 0.0f;
+		LastDriveGateResult = ResultName;
 		const FBodyInstance* const Body = AircraftBodyInstance.load(std::memory_order_acquire);
 		UE_LOG(LogAircraft, Log,
 			TEXT("[Aircraft.Drive.Physics] t=%.3f Owner=%s LOD=%d Drive=%s Result=%s Enabled=%d Suspended=%d Model=%d Rotors=%d Body=%d BodySimulating=%d Arm=%s Controller=%d"),
@@ -1014,6 +1055,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 		LogDriveGate(!Body ? TEXT("NoBodyInstance") : TEXT("BodyNotSimulating"));
 		return;
 	}
+	if (!bBackendValidated.load(std::memory_order_acquire))
+	{
+		LogDriveGate(TEXT("BackendNotValidated"));
+		return;
+	}
+	LastPhysicsDeltaSeconds.store(DeltaTime, std::memory_order_relaxed);
+	ControlSequence.fetch_add(1, std::memory_order_relaxed);
+	LogDriveGate(TEXT("Running"));
 
 	const FAircraftFlightControllerRuntimeConfig& Config = ActiveLodModel->FlightController;
 
@@ -1240,6 +1289,10 @@ void FAircraftSimulationProxy::TickPhysicsThread(float DeltaTime, float SimTime,
 	 * ---------------------------------------------------------------------- */
 	FAircraftVehicleStateSnapshot VehicleState;
 	VehicleState.TimeSeconds = SimTime;
+	if (bTrajectoryClockRebaseRequested.exchange(false, std::memory_order_acq_rel))
+	{
+		TrajectoryRuntime.RebaseTime(SimTime);
+	}
 	VehicleState.Sequence = VehicleStateSequence.fetch_add(1, std::memory_order_relaxed) + 1;
 	VehicleState.PositionCm = CenterOfMassWorldCm;
 	VehicleState.VelocityCmPerSec = LinearVelCmPerSec;

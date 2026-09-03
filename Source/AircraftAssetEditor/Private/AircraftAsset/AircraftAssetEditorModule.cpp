@@ -4,13 +4,17 @@
 #include "AircraftAsset/AircraftAsset.h"
 #include "AircraftAsset/AircraftAssetBase.h"
 #include "AircraftAsset/AircraftDataflowSimulationVisualization.h"
+#include "AircraftAsset/AircraftDataflowEditor.h"
 #include "AircraftAsset/AircraftAssetThumbnailRenderer.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftDataflowAssetEditorUtils.h"
 #include "AircraftAsset/AircraftDataflowTemplateProvider.h"
 #include "Dataflow/AssetDefinition_DataflowAsset.h"
 #include "Dataflow/DataflowSimulationVisualization.h"
+#include "Dataflow/DataflowEditorModeUILayer.h"
+#include "Dataflow/DataflowEditorModule.h"
 #include "Features/IModularFeatures.h"
+#include "Framework/Docking/LayoutExtender.h"
 
 IMPLEMENT_MODULE(FAircraftAssetEditorModule, AircraftAssetEditor)
 
@@ -89,10 +93,24 @@ void FAircraftAssetEditorModule::StartupModule()
 
 	DataflowAssetMenusHandle = UE::DataflowAssetDefinitionHelpers::RegisterDataflowAssetMenus(
 		UAircraftAsset::StaticClass());
+
+	FDataflowEditorModule& DataflowEditorModule =
+		FModuleManager::LoadModuleChecked<FDataflowEditorModule>(TEXT("DataflowEditor"));
+	LayoutExtensionsHandle = DataflowEditorModule.OnRegisterLayoutExtensions().AddRaw(
+		this, &FAircraftAssetEditorModule::RegisterLayoutExtensions);
 }
 
 void FAircraftAssetEditorModule::ShutdownModule()
 {
+	if (LayoutExtensionsHandle.IsValid())
+	{
+		if (FDataflowEditorModule* const DataflowEditorModule =
+			FModuleManager::GetModulePtr<FDataflowEditorModule>(TEXT("DataflowEditor")))
+		{
+			DataflowEditorModule->OnRegisterLayoutExtensions().Remove(LayoutExtensionsHandle);
+		}
+		LayoutExtensionsHandle.Reset();
+	}
 	UE::Dataflow::FDataflowSimulationVisualizationRegistry::GetInstance()
 		.DeregisterVisualization(FAircraftDataflowSimulationVisualization::Name);
 
@@ -119,4 +137,14 @@ void FAircraftAssetEditorModule::ShutdownModule()
 	ActiveAircraftAsset.Reset();
 
 	FBaseCharacterFXEditorModule::ShutdownModule();
+}
+
+void FAircraftAssetEditorModule::RegisterLayoutExtensions(FLayoutExtender& Extender)
+{
+	Extender.ExtendStack(
+		UDataflowEditorUISubsystem::EditorSidePanelAreaName,
+		ELayoutExtensionPosition::After,
+		FTabManager::FTab(
+			FTabId(UAircraftDataflowEditor::SimulationPanelTabId),
+			ETabState::ClosedTab));
 }

@@ -828,6 +828,22 @@ bool FAircraftMpccController::SolvePlan(
 	return true;
 }
 
+void FAircraftMpccController::RebaseTime(const double TimeSeconds)
+{
+	const double PausedDuration = FMath::Max(TimeSeconds - LastPlanSolveTimeSeconds, 0.0);
+	PlanStartTimeSeconds += PausedDuration;
+	LastPlanSolveTimeSeconds = TimeSeconds;
+	if (LastReference.bValid)
+	{
+		LastReference.GeneratedAtSeconds += PausedDuration;
+		LastReference.ValidUntilSeconds += PausedDuration;
+	}
+	if (NextSolveTimeSeconds > -DBL_MAX)
+	{
+		NextSolveTimeSeconds += PausedDuration;
+	}
+}
+
 bool FAircraftMpccController::Update(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability,

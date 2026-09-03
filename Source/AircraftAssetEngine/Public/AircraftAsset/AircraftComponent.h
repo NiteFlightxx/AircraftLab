@@ -10,8 +10,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Dataflow/Interfaces/DataflowPhysicsSolver.h"
-
+#include "AircraftRuntimeInterface/AircraftSimulationBackend.h"
 #include "AircraftAsset/AircraftSimulationTypes.h"
 #include "AircraftDiagnostics/AircraftDebugSnapshot.h"
 #include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
@@ -23,6 +22,8 @@
 
 class UAircraftAssetBase;
 class UThumbnailInfo;
+class UPhysicsAsset;
+class USkeletalMesh;
 class FAircraftSimulationProxy;
 struct FConstraintInstance;
 struct FAircraftSimulationModel;
@@ -45,7 +46,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 UCLASS(ClassGroup = (Aircraft), meta = (BlueprintSpawnableComponent))
 class AIRCRAFTASSETENGINE_API UAircraftComponent
 	: public USkeletalMeshComponent
-	, public IDataflowPhysicsSolverInterface
 	, public IAircraftFlightControllerInterface
 	, public IAircraftSimulationLODConsumer
 {
@@ -138,6 +138,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Simulation LOD")
 	EAircraftSimulationDriveMode GetCurrentSimulationDriveMode() const;
 
+	/** Read-only state of the world-Chaos backend. */
+	UFUNCTION(BlueprintPure, Category = "AircraftComponent|Simulation")
+	FAircraftSimulationBackendStatus GetSimulationBackendStatus() const;
+	/** Refresh value-only backend diagnostics and the fail-closed execution gate immediately. */
+	void RefreshSimulationBackendStatus(float PhysicsDeltaSeconds = 0.0f);
+
 	UPROPERTY(BlueprintAssignable, Category = "AircraftComponent|Simulation LOD")
 	FOnAircraftSimulationLODChanged OnSimulationLODChanged;
 
@@ -157,6 +163,12 @@ public:
 
 	const FAircraftSimulationModel* GetSimulationModel() const;
 	const FAircraftSimulationLodModel* GetCurrentLodModel() const;
+	bool CaptureChassisPhysicsState(FTransform& OutBodyTransform,
+		FVector& OutLinearVelocityCmPerSec,
+		FVector& OutAngularVelocityRadPerSec) const;
+	bool RestoreChassisPhysicsState(const FTransform& BodyTransform,
+		const FVector& LinearVelocityCmPerSec,
+		const FVector& AngularVelocityRadPerSec);
 	void CaptureDebugSnapshot(const FAircraftDebugCaptureRequest& Request,
 		FAircraftDebugFrameSnapshot& OutSnapshot);
 
@@ -180,20 +192,6 @@ protected:
 	virtual void AsyncPhysicsTickComponent(float DeltaTime, float SimTime) override;
 	//~ End UActorComponent Interface
 
-	//~ Begin IDataflowPhysicsSolverInterface Interface
-	virtual FString GetSimulationName() const override { return GetName(); }
-	virtual FDataflowSimulationAsset& GetSimulationAsset() override { return SimulationAsset; }
-	virtual const FDataflowSimulationAsset& GetSimulationAsset() const override { return SimulationAsset; }
-	virtual FDataflowSimulationProxy* GetSimulationProxy() override;
-	virtual const FDataflowSimulationProxy* GetSimulationProxy() const override;
-	virtual void BuildSimulationProxy() override;
-	virtual void ResetSimulationProxy() override;
-	virtual void WriteToSimulation(const float DeltaTime, const bool bAsyncTask) override;
-	virtual void ReadFromSimulation(const float DeltaTime, const bool bAsyncTask) override;
-	virtual void PreProcessSimulation(const float DeltaTime) override;
-	virtual void PostProcessSimulation(const float DeltaTime) override;
-	//~ End IDataflowPhysicsSolverInterface Interface
-
 	//~ Begin IAircraftFlightControllerInterface Interface（Autopilot 窄契约）
 	virtual bool GetAircraftAutopilotRuntimeConfig(
 		FAircraftAutopilotRuntimeConfig& OutConfig) const override;
@@ -215,8 +213,30 @@ protected:
 	//~ End IAircraftSimulationLODConsumer Interface
 
 private:
+	struct FSimulationStructureSignature
+	{
+		TWeakObjectPtr<USkeletalMesh> SkeletalMesh;
+		TWeakObjectPtr<UPhysicsAsset> PhysicsAsset;
+		FName RootBone = NAME_None;
+		EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
+
+		bool operator==(const FSimulationStructureSignature& Other) const
+		{
+			return SkeletalMesh == Other.SkeletalMesh
+				&& PhysicsAsset == Other.PhysicsAsset
+				&& RootBone == Other.RootBone
+				&& DriveMode == Other.DriveMode;
+		}
+	};
+
 	void SyncSkeletalMeshComponentFromAsset();
+	FSimulationStructureSignature BuildSimulationStructureSignature() const;
 	FBodyInstance* ResolveChassisBodyInstance();
+	const FBodyInstance* ResolveChassisBodyInstance() const;
+	void BuildSimulationBackend();
+	void ResetSimulationBackend();
+	void SetSimulationBackendFailure(const TCHAR* FailureReason);
+	void PublishSimulationBackendReadiness(bool bReady);
 
 
 	/** 创建 6-DOF 物理约束后端（约束参数取自当前 LOD 的 FlightController 配置）。 */
@@ -252,7 +272,7 @@ private:
 	/** 把可选的 AircraftSolverConfig 同步到 Chaos BodyInstance；配置缺失时清除组件级覆盖标记。 */
 	void ApplySolverSettingsToBodyInstance();
 	void ReapplyCurrentSimulationLOD();
-	void ApplySimulationLOD(int32 LodIndex);
+	void ApplySimulationLOD(int32 LodIndex, bool bQueueProxyConfiguration = true);
 	void ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode);
 
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
@@ -274,24 +294,10 @@ private:
 	UPROPERTY(VisibleInstanceOnly, Category = "AircraftComponent|Simulation LOD")
 	int32 CurrentSimulationLOD = 0;
 
-	/**
-	 *
-	 * 默认填充（OnRegister 惰性进行）：DataflowAsset 为空时自动填入插件共享的程序化
-	 * Simulation 图（UE::AircraftLab::AircraftAsset::GetOrCreateAircraftSimulationGraph，
-	 * 纯代码、无二进制资产依赖，与布料 DF_ClothSolver.uasset 同构的三节点调度链）。
-	 * 填充后由 Dataflow 的 PhysicsState 全局委托注册进管理器，
-	 * 获得每帧 GT 输入桥接；预览组件/PIE/放置 Pawn 均自动生效，零手动步骤。
-	 *
-	 * 逐实例覆盖：在此指定自定义 Simulation 图资产即可（默认填充只在为空时发生）。
-	 * SimulationGroups 需与图内 GetPhysicsSolvers 节点的过滤组一致（默认 "Aircraft"）。
-	 *
-	 * 推进节奏：控制+力注入始终在 AsyncPhysicsTickComponent（Chaos 物理子步）执行，
-	 * 与碰撞解算同一 pass；图的 AdvancePhysicsSolvers 不承担控制计算。
-	 */
-	//UPROPERTY(EditAnywhere, Category = AircraftComponent, meta = (EditConditionHides), AdvancedDisplay)
-	FDataflowSimulationAsset SimulationAsset;
-
 	TSharedPtr<FAircraftSimulationProxy> AircraftSimulationProxy;
+	FAircraftSimulationBackendStatus SimulationBackendStatus;
+	FSimulationStructureSignature AppliedStructureSignature;
+	bool bHasAppliedStructureSignature = false;
 	/** 所有驱动后端共享的最新飞行员输入。 */
 	FAircraftPilotInput PilotInput;
 	FAircraftLowLevelControlTargets LowLevelControlTargets;
@@ -305,6 +311,7 @@ private:
 	/** 当前模拟驱动后端，由当前 LOD 表项直接决定。 */
 	EAircraftSimulationDriveMode SimulationDriveMode = EAircraftSimulationDriveMode::FlightController;
 	bool bSimulationPhysicsEnabled = true;
+	bool bDriveModeTransitionInProgress = false;
 
 	/** 物理约束后端（PhysicsConstraint 驱动模式按需创建）。 */
 	TSharedPtr<FConstraintInstance> SimulationConstraint;
