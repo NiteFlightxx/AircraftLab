@@ -1,29 +1,18 @@
 #include "Dataflow/AircraftPositionControllerConfigNode.h"
 
-#include "AircraftAsset/AircraftCollection.h"
-#include "AircraftAsset/CollectionAircraftConstFacade.h"
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
-
 #include "FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftPositionControllerConfigNode)
 
 FAircraftPositionControllerConfigNode::FAircraftPositionControllerConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftPositionControllerConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftPositionControllerConfigNode::ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	auto IsValidPid = [](const FAircraftPidChannelConfig& Pid)
 	{
 		return FMath::IsFinite(Pid.Kp) && FMath::IsFinite(Pid.Ki) && FMath::IsFinite(Pid.Kd)
@@ -39,15 +28,10 @@ void FAircraftPositionControllerConfigNode::Evaluate(UE::Dataflow::FContext& Con
 		|| Config.DampingAccelerationReserveFraction < 0.0f
 		|| Config.DampingAccelerationReserveFraction > 0.9f)
 	{
-		Context.Error(FText::FromString(TEXT("Position-controller PID or damping values are outside their valid range.")), this);
-		SetValue(Context, InputCollection, &Collection);
-		return;
+		return Context.Error(TEXT("Position-controller PID or damping values are outside their valid range."));
 	}
 
-	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		InputCollection);
-	FCollectionAircraftFacade Facade(AircraftCollection);
-	Facade.DefineSchema();
+	auto& Facade = Context.GetAircraft();
 #define UE_AIRCRAFT_WRITE_POSITION(GetterName, Value) if (TArrayView<FVector3f> Values = Facade.Get##GetterName(); !Values.IsEmpty()) { Values[0] = Value; }
 	UE_AIRCRAFT_WRITE_POSITION(FcPositionKp, FVector3f(Config.PositionX.Kp, Config.PositionY.Kp, 0.0f))
 	UE_AIRCRAFT_WRITE_POSITION(FcPositionKi, FVector3f(Config.PositionX.Ki, Config.PositionY.Ki, 0.0f))
@@ -57,8 +41,7 @@ void FAircraftPositionControllerConfigNode::Evaluate(UE::Dataflow::FContext& Con
 	UE_AIRCRAFT_WRITE_POSITION(FcVelocityKd, FVector3f(Config.VelocityX.Kd, Config.VelocityY.Kd, 0.0f))
 #undef UE_AIRCRAFT_WRITE_POSITION
 
-	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	SetConfigProperty(Properties, TEXT("FlightController.Position.PositionKff"), FVector3f(Config.PositionX.Kff, Config.PositionY.Kff, 0.0f));
 	SetConfigProperty(Properties, TEXT("FlightController.Position.PositionIntegralLimit"), FVector3f(Config.PositionX.IntegralLimit, Config.PositionY.IntegralLimit, 0.0f));
 	SetConfigProperty(Properties, TEXT("FlightController.Position.PositionOutputLimit"), FVector3f(Config.PositionX.OutputLimit, Config.PositionY.OutputLimit, 0.0f));
@@ -73,5 +56,5 @@ void FAircraftPositionControllerConfigNode::Evaluate(UE::Dataflow::FContext& Con
 	SetConfigProperty(Properties, TEXT("FlightController.Position.VelocityYFreezeIntegralWhenSaturated"), Config.VelocityY.bFreezeIntegralWhenSaturated);
 	SetConfigProperty(Properties, TEXT("FlightController.Position.LinearDampingFeedForwardScale"), Config.LinearDampingFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("FlightController.Position.DampingAccelerationReserveFraction"), Config.DampingAccelerationReserveFraction);
-	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	return true;
 }

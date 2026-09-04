@@ -189,7 +189,7 @@ namespace UE::AircraftLab::DataflowNodes
 
 	static void DrawPhysicsBodyShapes(const FAircraftSimulationModel& Model,
 		const FAircraftSimulationLodModel& Lod, IDataflowDebugDrawInterface& DrawInterface,
-		const FAircraftDebugDrawContext& Context)
+		const FAircraftDebugDrawContext& Context, bool bDrawAllBodies, bool bHighlightRootBody)
 	{
 		if (!Model.PhysicsAsset)
 		{
@@ -209,6 +209,8 @@ namespace UE::AircraftLab::DataflowNodes
 		for (const TObjectPtr<USkeletalBodySetup>& BodySetup : Model.PhysicsAsset->SkeletalBodySetups)
 		{
 			if (!BodySetup) continue;
+			const bool bRootBody = BodySetup->BoneName == Lod.RootBone;
+			if (!bDrawAllBodies && !bRootBody) continue;
 			const int32 BoneIndex = Model.SkeletalMesh->GetRefSkeleton().FindBoneIndex(BodySetup->BoneName);
 			if (BoneIndex == INDEX_NONE)
 			{
@@ -218,9 +220,8 @@ namespace UE::AircraftLab::DataflowNodes
 				continue;
 			}
 
-			const bool bRootBody = BodySetup->BoneName == Lod.RootBone;
 			bFoundRootBody |= bRootBody;
-			const FLinearColor BodyColor = bRootBody
+			const FLinearColor BodyColor = bRootBody && bHighlightRootBody
 				? FLinearColor(1.0f, 0.75f, 0.0f)
 				: FLinearColor(0.35f, 0.65f, 1.0f);
 			DrawInterface.SetColor(BodyColor);
@@ -268,7 +269,7 @@ namespace UE::AircraftLab::DataflowNodes
 			}
 
 			FAircraftDebugDraw::DrawPoint(Context, BoneToModel.GetLocation(), BodyColor,
-				bRootBody ? 9.0f : 5.0f);
+				bRootBody && bHighlightRootBody ? 9.0f : 5.0f);
 			FAircraftDebugDraw::DrawString(Context, BoneToModel.GetLocation(),
 				FString::Printf(TEXT("%s%s"), *BodySetup->BoneName.ToString(),
 					bRootBody ? TEXT(" [RootBody]") : TEXT("")), BodyColor, 0.8f);
@@ -281,13 +282,65 @@ namespace UE::AircraftLab::DataflowNodes
 		}
 	}
 
+	static void DrawControlFrame(const FAircraftFrameBinding& Frame,
+		const FAircraftDebugDrawContext& Context)
+	{
+		const FTransform BodyToModel = Frame.GetBodyToModelTransform();
+		FAircraftDebugDraw::DrawArrow(Context, BodyToModel.GetLocation(),
+			Frame.GetForwardAxisModel() * 90.0f, FLinearColor::Red);
+		FAircraftDebugDraw::DrawArrow(Context, BodyToModel.GetLocation(),
+			Frame.GetRightAxisModel() * 90.0f, FLinearColor::Green);
+		FAircraftDebugDraw::DrawArrow(Context, BodyToModel.GetLocation(),
+			Frame.GetUpAxisModel() * 90.0f, FLinearColor::Blue);
+	}
+
+	static void DrawRotors(const FAircraftSimulationLodModel& Lod,
+		const FAircraftFrameBinding& Frame, FName HighlightedRotor, bool bDrawAllRotors,
+		IDataflowDebugDrawInterface& DrawInterface, const FAircraftDebugDrawContext& Context)
+	{
+		const FVector RootOrigin = Frame.GetBodyToModelTransform().GetLocation();
+		for (const FAircraftRotorDefinition& Rotor : Lod.Rotors)
+		{
+			const bool bHighlighted = Rotor.RotorName == HighlightedRotor;
+			if (!bDrawAllRotors && !bHighlighted) continue;
+			if (!Rotor.bInstallationValid)
+			{
+				DrawInterface.DrawOverlayText(FString::Printf(
+					TEXT("Aircraft debug draw: rotor '%s' socket/bone '%s' cannot be resolved."),
+					*Rotor.RotorName.ToString(), *Rotor.SocketName.ToString()));
+				continue;
+			}
+			const FLinearColor Color = !Rotor.IsEnabled() ? FAircraftDebugColors::RotorDisabled
+				: (bHighlighted ? FAircraftDebugColors::ToolSelected : FAircraftDebugColors::ToolUnselectedMotor);
+			const FVector Position = Frame.BodyPositionToModel(Rotor.PositionBodyCm);
+			const FVector Axis = Frame.BodyVectorToModel(Rotor.GetNormalizedThrustAxisBody()).GetSafeNormal();
+			FAircraftDebugDraw::DrawLine(Context, RootOrigin, Position,
+				bHighlighted ? FAircraftDebugColors::RotorArm : FAircraftDebugColors::ToolUnselectedThrust);
+			FAircraftDebugDraw::DrawPoint(Context, Position, Color, bHighlighted ? 10.0f : 6.0f);
+			FAircraftDebugDraw::DrawArrow(Context, Position, Axis * (bHighlighted ? 65.0f : 40.0f), Color);
+			FVector Radial;
+			FVector Tangential;
+			Axis.FindBestAxisVectors(Radial, Tangential);
+			const float SpinSign = Rotor.GetSpinDirectionSign();
+			FAircraftDebugDraw::DrawArrow(Context, Position + Radial * 18.0f,
+				Tangential * SpinSign * 24.0f, Color);
+			FAircraftDebugDraw::DrawString(Context, Position,
+				FString::Printf(TEXT("%s [%s]"), *Rotor.RotorName.ToString(),
+					SpinSign < 0.0f ? TEXT("CW") : TEXT("CCW")), Color, 0.8f);
+		}
+	}
+
 	bool IsAircraftConstructionDebugView(const FName ViewModeName)
 	{
 		return ViewModeName == UE::Dataflow::FDataflowConstruction3DViewMode::Name
 			|| ViewModeName == FAircraft3DSimViewMode::Name;
 	}
 
-	void DrawAircraftFrameConfiguration(const FManagedArrayCollection& Collection,
+	void DrawAircraftConfigurationContext(
+		const FManagedArrayCollection& Collection,
+		bool bDrawSharedContext,
+		bool bHighlightRootBody,
+		FName HighlightedRotor,
 		IDataflowDebugDrawInterface& DrawInterface)
 	{
 		TOptional<FAircraftSimulationModel> Model = CompileModel(Collection, DrawInterface);
@@ -304,63 +357,19 @@ namespace UE::AircraftLab::DataflowNodes
 		FConstructionDrawBackend Backend(DrawInterface);
 		FAircraftDebugDrawContext Context;
 		Context.Backend = &Backend;
-		DrawPhysicsBodyShapes(*Model, Lod, DrawInterface, Context);
-		const FTransform BodyToModel = Frame.GetBodyToModelTransform();
-		FAircraftDebugDraw::DrawArrow(Context, BodyToModel.GetLocation(), Frame.GetForwardAxisModel() * 90.0f,
-			FLinearColor::Red);
-		FAircraftDebugDraw::DrawArrow(Context, BodyToModel.GetLocation(), Frame.GetRightAxisModel() * 90.0f,
-			FLinearColor::Green);
-		FAircraftDebugDraw::DrawArrow(Context, BodyToModel.GetLocation(), Frame.GetUpAxisModel() * 90.0f,
-			FLinearColor::Blue);
-		FAircraftDebugDraw::DrawString(Context, BodyToModel.GetLocation(),
-			FString::Printf(TEXT("RootBone: %s"), *Lod.RootBone.ToString()), FLinearColor::White, 1.0f);
-	}
-
-	void DrawAircraftRotorConfiguration(const FManagedArrayCollection& Collection,
-		FName SelectedRotor, IDataflowDebugDrawInterface& DrawInterface)
-	{
-		TOptional<FAircraftSimulationModel> Model = CompileModel(Collection, DrawInterface);
-		if (!Model.IsSet() || Model->LodModels.IsEmpty()) return;
-		const FAircraftSimulationLodModel& Lod = Model->LodModels[0];
-		const FAircraftFrameBinding& Frame = Lod.FlightController.FrameBinding;
-		if (!Frame.IsValid())
+		if (bDrawSharedContext || bHighlightRootBody)
 		{
-			DrawInterface.DrawOverlayText(FString::Printf(
-				TEXT("Aircraft debug draw: RootBone '%s' cannot be resolved in the loaded skeletal mesh."),
-				*Lod.RootBone.ToString()));
-			return;
+			DrawPhysicsBodyShapes(*Model, Lod, DrawInterface, Context,
+				bDrawSharedContext, bHighlightRootBody);
+			DrawControlFrame(Frame, Context);
+			FAircraftDebugDraw::DrawString(Context, Frame.GetBodyToModelTransform().GetLocation(),
+				FString::Printf(TEXT("RootBone: %s"), *Lod.RootBone.ToString()),
+				FLinearColor::White, 1.0f);
 		}
-		const FVector RootOrigin = Frame.GetBodyToModelTransform().GetLocation();
-		FConstructionDrawBackend Backend(DrawInterface);
-		FAircraftDebugDrawContext Context;
-		Context.Backend = &Backend;
-		for (const FAircraftRotorDefinition& Rotor : Lod.Rotors)
+		if (bDrawSharedContext || !HighlightedRotor.IsNone())
 		{
-			if (!Rotor.bInstallationValid)
-			{
-				DrawInterface.DrawOverlayText(FString::Printf(
-					TEXT("Aircraft debug draw: rotor '%s' socket/bone '%s' cannot be resolved."),
-					*Rotor.RotorName.ToString(), *Rotor.SocketName.ToString()));
-				continue;
-			}
-			const bool bSelected = Rotor.RotorName == SelectedRotor;
-			const FLinearColor Color = !Rotor.IsEnabled() ? FAircraftDebugColors::RotorDisabled
-				: (bSelected ? FAircraftDebugColors::ToolSelected : FAircraftDebugColors::ToolUnselectedMotor);
-			const FVector Position = Frame.BodyPositionToModel(Rotor.PositionBodyCm);
-			const FVector Axis = Frame.BodyVectorToModel(Rotor.GetNormalizedThrustAxisBody()).GetSafeNormal();
-			FAircraftDebugDraw::DrawLine(Context, RootOrigin, Position,
-				bSelected ? FAircraftDebugColors::RotorArm : FAircraftDebugColors::ToolUnselectedThrust);
-			FAircraftDebugDraw::DrawPoint(Context, Position, Color, bSelected ? 10.0f : 6.0f);
-			FAircraftDebugDraw::DrawArrow(Context, Position, Axis * (bSelected ? 65.0f : 40.0f), Color);
-			FVector Radial;
-			FVector Tangential;
-			Axis.FindBestAxisVectors(Radial, Tangential);
-			const float SpinSign = Rotor.GetSpinDirectionSign();
-			FAircraftDebugDraw::DrawArrow(Context, Position + Radial * 18.0f,
-				Tangential * SpinSign * 24.0f, Color);
-			FAircraftDebugDraw::DrawString(Context, Position,
-				FString::Printf(TEXT("%s [%s]"), *Rotor.RotorName.ToString(),
-					SpinSign < 0.0f ? TEXT("CW") : TEXT("CCW")), Color, 0.8f);
+			DrawRotors(Lod, Frame, HighlightedRotor, bDrawSharedContext,
+				DrawInterface, Context);
 		}
 	}
 }

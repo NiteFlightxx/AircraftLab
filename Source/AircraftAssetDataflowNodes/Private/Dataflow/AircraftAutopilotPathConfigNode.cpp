@@ -1,30 +1,20 @@
 #include "Dataflow/AircraftAutopilotPathConfigNode.h"
 
-#include "AircraftAsset/CollectionAircraftConstFacade.h"
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "Dataflow/FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAutopilotPathConfigNode)
 
 FAircraftAutopilotPathConfigNode::FAircraftAutopilotPathConfigNode(
 	const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftAutopilotPathConfigNode::Evaluate(
-	UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftAutopilotPathConfigNode::ApplyToAircraftCollection(
+	FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-
-	const FManagedArrayCollection Input = GetValue<FManagedArrayCollection>(Context, &Collection);
 	const float Scalars[] = { Config.ResampleSpacingCm, Config.MinimumSegmentLengthCm,
 		Config.CorridorSafetyMarginCm, Config.ProjectionBacktrackToleranceCm,
 		Config.ProjectionSearchDistanceCm, Config.ContourErrorGovernorScaleCm,
@@ -48,14 +38,10 @@ void FAircraftAutopilotPathConfigNode::Evaluate(
 	}
 	if (bInvalid)
 	{
-		Context.Error(FText::FromString(TEXT("Spatial path and tracking configuration is invalid.")), this);
-		SetValue(Context, Input, &Collection);
-		return;
+		return Context.Error(TEXT("Spatial path and tracking configuration is invalid."));
 	}
 
-	const TSharedRef<FManagedArrayCollection> Output = MakeShared<FManagedArrayCollection>(Input);
-	FCollectionAircraftPropertyMutableFacade Properties(Output);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	SetConfigProperty(Properties, TEXT("Autopilot.Path.ResampleSpacingCm"), Config.ResampleSpacingCm);
 	SetConfigProperty(Properties, TEXT("Autopilot.Path.MinimumSegmentLengthCm"), Config.MinimumSegmentLengthCm);
 	SetConfigProperty(Properties, TEXT("Autopilot.Path.CorridorSafetyMarginCm"), Config.CorridorSafetyMarginCm);
@@ -68,5 +54,5 @@ void FAircraftAutopilotPathConfigNode::Evaluate(
 	SetConfigProperty(Properties, TEXT("Autopilot.Path.SnapWeight"), Config.SnapWeight);
 	SetConfigProperty(Properties, TEXT("Autopilot.Path.MaxIterations"), Config.MaxIterations);
 	SetConfigProperty(Properties, TEXT("Autopilot.Path.ConvergenceToleranceCm"), Config.ConvergenceToleranceCm);
-	SetValue(Context, MoveTemp(*Output), &Collection);
+	return true;
 }

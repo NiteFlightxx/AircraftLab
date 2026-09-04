@@ -1,49 +1,32 @@
 #include "Dataflow/AircraftControlAllocatorConfigNode.h"
 
-#include "AircraftAsset/AircraftCollection.h"
-#include "AircraftAsset/CollectionAircraftConstFacade.h"
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
-
 #include "FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftControlAllocatorConfigNode)
 
 FAircraftControlAllocatorConfigNode::FAircraftControlAllocatorConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftControlAllocatorConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftControlAllocatorConfigNode::ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	if (!FMath::IsFinite(Config.DampedPseudoInverseLambda) || !FMath::IsFinite(Config.MinimumCosTilt)
 		|| Config.DampedPseudoInverseLambda < 0.0f || Config.MinimumCosTilt < 0.05f || Config.MinimumCosTilt > 1.0f)
 	{
-		Context.Error(FText::FromString(TEXT("Control-allocator values are outside their valid range.")), this);
-		SetValue(Context, InputCollection, &Collection);
-		return;
+		return Context.Error(TEXT("Control-allocator values are outside their valid range."));
 	}
 
-	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		InputCollection);
-	FCollectionAircraftFacade Facade(AircraftCollection);
-	Facade.DefineSchema();
+	auto& Facade = Context.GetAircraft();
 	if (TArrayView<float> Values = Facade.GetFcAllocationDamping(); !Values.IsEmpty())
 	{
 		Values[0] = Config.DampedPseudoInverseLambda;
 	}
 
-	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	SetConfigProperty(Properties, TEXT("FlightController.Allocator.EnableTiltCompensation"), Config.bEnableTiltCompensation);
 	SetConfigProperty(Properties, TEXT("FlightController.Allocator.MinimumCosTilt"), Config.MinimumCosTilt);
-	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	return true;
 }

@@ -1,4 +1,9 @@
+#include "AircraftAsset/AircraftCollection.h"
 #include "Dataflow/AircraftAirscrewProfileNode.h"
+#include "Dataflow/AircraftAerodynamicsConfigNode.h"
+#include "Dataflow/AircraftAutopilotMpccConfigNode.h"
+#include "Dataflow/AircraftAutopilotPathConfigNode.h"
+#include "Dataflow/AircraftAutopilotTimingConfigNode.h"
 #include "Dataflow/AircraftFlightControlLimitsConfigNode.h"
 #include "Dataflow/AircraftPositionControllerConfigNode.h"
 #include "Dataflow/AircraftAttitudeControllerConfigNode.h"
@@ -10,9 +15,107 @@
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 #include "Dataflow/AircraftSolverConfigNode.h"
+#include "Dataflow/DataflowNodeParameters.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
+
+namespace
+{
+	FManagedArrayCollection EvaluateConfigNode(const TSharedRef<const FAircraftConfigNodeBase>& Node)
+	{
+		UE::Dataflow::FContextSingle Context;
+		const FDataflowOutput* const Output = Node->FindOutput(FName(TEXT("Collection")));
+		check(Output);
+		return Output->GetValue<FManagedArrayCollection>(Context, FManagedArrayCollection());
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftConfigNodeArchitectureTest,
+	"AircraftLab.Dataflow.ConfigNodes.UnifiedArchitecture",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftConfigNodeArchitectureTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+#define TEST_AIRCRAFT_CONFIG_NODE(NodeType) \
+	TestTrue(TEXT(#NodeType " derives from FAircraftConfigNodeBase"), \
+		TIsDerivedFrom<NodeType, FAircraftConfigNodeBase>::Value); \
+	{ \
+		const NodeType Node(UE::Dataflow::FNodeParameters{}); \
+		TestEqual(TEXT(#NodeType " owns one Collection input"), Node.GetNumInputs(), 1); \
+		TestEqual(TEXT(#NodeType " owns one Collection output"), Node.NumOutputs(), 1); \
+		TestTrue(TEXT(#NodeType " supports Construction debug draw"), Node.CanDebugDraw()); \
+	}
+
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftFrameConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftAirscrewProfileNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftAerodynamicsConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftControllerInputConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftPositionControllerConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftAttitudeControllerConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftAltitudeControllerConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftControlAllocatorConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftFlightControlLimitsConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftConstraintSimulationConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftKinematicSimulationConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftAutopilotPathConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftAutopilotTimingConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftAutopilotMpccConfigNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftSimulationLODProfileNode);
+	TEST_AIRCRAFT_CONFIG_NODE(FAircraftSolverConfigNode);
+
+#undef TEST_AIRCRAFT_CONFIG_NODE
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftConfigNodeTransactionTest,
+	"AircraftLab.Dataflow.ConfigNodes.TransactionalEvaluation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftConfigNodeTransactionTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FManagedArrayCollection SentinelCollection;
+	SentinelCollection.AddGroup(TEXT("Sentinel"));
+	SentinelCollection.AddElements(1, TEXT("Sentinel"));
+	SentinelCollection.AddAttribute<int32>(TEXT("Value"), TEXT("Sentinel"))[0] = 42;
+
+	const TSharedRef<FAircraftFrameConfigNode> InvalidFrame =
+		MakeShared<FAircraftFrameConfigNode>(UE::Dataflow::FNodeParameters{});
+	InvalidFrame->Collection = SentinelCollection;
+	InvalidFrame->MassKg = -1.0f;
+	const FManagedArrayCollection FrameResult = EvaluateConfigNode(InvalidFrame);
+	TestEqual(TEXT("Invalid frame preserves the original sentinel"),
+		FrameResult.GetAttribute<int32>(TEXT("Value"), TEXT("Sentinel"))[0], 42);
+	TestFalse(TEXT("Invalid frame does not leak the transaction's Frame schema"),
+		FrameResult.HasGroup(UE::AircraftLab::AircraftAsset::AircraftCollectionGroup::Frame));
+
+	const TSharedRef<FAircraftAirscrewProfileNode> FirstRotor =
+		MakeShared<FAircraftAirscrewProfileNode>(UE::Dataflow::FNodeParameters{});
+	FirstRotor->Collection = SentinelCollection;
+	FirstRotor->Profile.Name = TEXT("RotorA");
+	const FManagedArrayCollection OneRotorCollection = EvaluateConfigNode(FirstRotor);
+	TestEqual(TEXT("Valid airscrew appends one motor"),
+		OneRotorCollection.NumElements(UE::AircraftLab::AircraftAsset::AircraftCollectionGroup::Motors), 1);
+	TestEqual(TEXT("Valid airscrew appends one propeller"),
+		OneRotorCollection.NumElements(UE::AircraftLab::AircraftAsset::AircraftCollectionGroup::Propellers), 1);
+
+	const TSharedRef<FAircraftAirscrewProfileNode> DuplicateRotor =
+		MakeShared<FAircraftAirscrewProfileNode>(UE::Dataflow::FNodeParameters{});
+	DuplicateRotor->Collection = OneRotorCollection;
+	DuplicateRotor->Profile.Name = TEXT("RotorA");
+	const FManagedArrayCollection DuplicateResult = EvaluateConfigNode(DuplicateRotor);
+	TestEqual(TEXT("Duplicate airscrew does not leak a motor"),
+		DuplicateResult.NumElements(UE::AircraftLab::AircraftAsset::AircraftCollectionGroup::Motors), 1);
+	TestEqual(TEXT("Duplicate airscrew does not leak a propeller"),
+		DuplicateResult.NumElements(UE::AircraftLab::AircraftAsset::AircraftCollectionGroup::Propellers), 1);
+	return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftDataflowProfileDefaultsTest,

@@ -1,30 +1,18 @@
 #include "Dataflow/AircraftFlightControlLimitsConfigNode.h"
 
-#include "AircraftAsset/AircraftCollection.h"
-#include "AircraftAsset/CollectionAircraftConstFacade.h"
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
-
 #include "FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftFlightControlLimitsConfigNode)
 
 FAircraftFlightControlLimitsConfigNode::FAircraftFlightControlLimitsConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftFlightControlLimitsConfigNode::ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-
-	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	const float LimitValues[] = {
 		Config.MaxTiltAngleDegrees, Config.MaxYawRateDegreesPerSec, Config.MaxRollRateDegreesPerSec,
 		Config.MaxPitchRateDegreesPerSec, Config.MaxClimbRateCmPerSec, Config.MaxDescentRateCmPerSec,
@@ -53,15 +41,10 @@ void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Co
 	bInvalid |= Config.HoverThrustMin >= Config.HoverThrustMax;
 	if (bInvalid)
 	{
-		Context.Error(FText::FromString(TEXT("Flight-control limits must be finite, non-negative, and satisfy 0 <= Min <= Hover <= Max <= 1.")), this);
-		SetValue(Context, InputCollection, &Collection);
-		return;
+		return Context.Error(TEXT("Flight-control limits must be finite, non-negative, and satisfy 0 <= Min <= Hover <= Max <= 1."));
 	}
 
-	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		InputCollection);
-	FCollectionAircraftFacade Facade(AircraftCollection);
-	Facade.DefineSchema();
+	auto& Facade = Context.GetAircraft();
 
 #define UE_AIRCRAFT_WRITE_LIMIT(GetterName, Value) if (TArrayView<float> Values = Facade.Get##GetterName(); !Values.IsEmpty()) { Values[0] = Value; }
 	UE_AIRCRAFT_WRITE_LIMIT(FcMaxTiltAngleDegrees, Config.MaxTiltAngleDegrees)
@@ -71,8 +54,7 @@ void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Co
 	UE_AIRCRAFT_WRITE_LIMIT(FcMaxHorizontalSpeedCmPerSec, Config.MaxHorizontalSpeedCmPerSec)
 #undef UE_AIRCRAFT_WRITE_LIMIT
 
-	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	SetConfigProperty(Properties, TEXT("FlightController.MaxRollRateDegreesPerSec"), Config.MaxRollRateDegreesPerSec);
 	SetConfigProperty(Properties, TEXT("FlightController.MaxPitchRateDegreesPerSec"), Config.MaxPitchRateDegreesPerSec);
 	SetConfigProperty(Properties, TEXT("FlightController.MaxHorizontalAccelerationCmPerSecSq"), Config.MaxHorizontalAccelerationCmPerSecSq);
@@ -93,5 +75,5 @@ void FAircraftFlightControlLimitsConfigNode::Evaluate(UE::Dataflow::FContext& Co
 	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.MinHoverThrust"), Config.HoverThrustMin);
 	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.MaxHoverThrust"), Config.HoverThrustMax);
 
-	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	return true;
 }

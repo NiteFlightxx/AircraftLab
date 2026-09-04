@@ -1,29 +1,18 @@
 #include "Dataflow/AircraftControllerInputConfigNode.h"
 
-#include "AircraftAsset/AircraftCollection.h"
-#include "AircraftAsset/CollectionAircraftConstFacade.h"
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
-
 #include "FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftControllerInputConfigNode)
 
 FAircraftControllerInputConfigNode::FAircraftControllerInputConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftControllerInputConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftControllerInputConfigNode::ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	if (!FMath::IsFinite(Config.HorizontalHoldStickDeadband)
 		|| !FMath::IsFinite(Config.VerticalHoldStickDeadband)
 		|| !FMath::IsFinite(Config.YawHoldStickDeadband)
@@ -35,18 +24,10 @@ void FAircraftControllerInputConfigNode::Evaluate(UE::Dataflow::FContext& Contex
 		|| Config.VerticalHoldStickDeadband < 0.0f || Config.VerticalHoldStickDeadband > 1.0f
 		|| Config.YawHoldStickDeadband < 0.0f || Config.YawHoldStickDeadband > 1.0f)
 	{
-		Context.Error(FText::FromString(TEXT("Controller-input deadbands or brake-to-hold speed are outside their valid range.")), this);
-		SetValue(Context, InputCollection, &Collection);
-		return;
+		return Context.Error(TEXT("Controller-input deadbands or brake-to-hold speed are outside their valid range."));
 	}
 
-	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		InputCollection);
-	FCollectionAircraftFacade Facade(AircraftCollection);
-	Facade.DefineSchema();
-
-	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	SetConfigProperty(Properties, TEXT("FlightController.Input.HorizontalHoldStickDeadband"), Config.HorizontalHoldStickDeadband);
 	SetConfigProperty(Properties, TEXT("FlightController.Input.VerticalHoldStickDeadband"), Config.VerticalHoldStickDeadband);
 	SetConfigProperty(Properties, TEXT("FlightController.Input.YawHoldStickDeadband"), Config.YawHoldStickDeadband);
@@ -55,5 +36,5 @@ void FAircraftControllerInputConfigNode::Evaluate(UE::Dataflow::FContext& Contex
 	SetConfigProperty(Properties, TEXT("FlightController.Execution.ControllerEnabledByDefault"), Config.bControllerEnabledByDefault);
 	SetConfigProperty(Properties, TEXT("Aircraft.Initial.StartArmed"), Config.bStartArmed);
 	SetConfigProperty(Properties, TEXT("Aircraft.Initial.FlightMode"), static_cast<int32>(Config.InitialFlightMode));
-	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	return true;
 }

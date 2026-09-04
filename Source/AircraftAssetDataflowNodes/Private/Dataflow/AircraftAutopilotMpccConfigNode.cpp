@@ -1,29 +1,20 @@
 #include "Dataflow/AircraftAutopilotMpccConfigNode.h"
 
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "Dataflow/FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAutopilotMpccConfigNode)
 
 FAircraftAutopilotMpccConfigNode::FAircraftAutopilotMpccConfigNode(
 	const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftAutopilotMpccConfigNode::Evaluate(
-	UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftAutopilotMpccConfigNode::ApplyToAircraftCollection(
+	FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-
-	const FManagedArrayCollection Input = GetValue<FManagedArrayCollection>(Context, &Collection);
 	const float Weights[] = { Config.ContourErrorWeight, Config.CorridorViolationWeight,
 		Config.LagErrorWeight,
 		Config.SpeedTrackingWeight, Config.AccelerationWeight, Config.JerkWeight,
@@ -42,14 +33,10 @@ void FAircraftAutopilotMpccConfigNode::Evaluate(
 	}
 	if (bInvalid)
 	{
-		Context.Error(FText::FromString(TEXT("MPCC configuration is invalid.")), this);
-		SetValue(Context, Input, &Collection);
-		return;
+		return Context.Error(TEXT("MPCC configuration is invalid."));
 	}
 
-	const TSharedRef<FManagedArrayCollection> Output = MakeShared<FManagedArrayCollection>(Input);
-	FCollectionAircraftPropertyMutableFacade Properties(Output);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 #define SET_MPCC(Name) SetConfigProperty(Properties, TEXT("Autopilot.Mpcc." #Name), Config.Name)
 	SET_MPCC(UpdateRateHz);
 	SET_MPCC(HorizonSeconds);
@@ -69,5 +56,5 @@ void FAircraftAutopilotMpccConfigNode::Evaluate(
 	SET_MPCC(MaxConsecutiveFailures);
 	SET_MPCC(MaximumReferenceAgeSeconds);
 #undef SET_MPCC
-	SetValue(Context, MoveTemp(*Output), &Collection);
+	return true;
 }

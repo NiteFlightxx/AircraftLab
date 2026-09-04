@@ -1,29 +1,20 @@
 #include "Dataflow/AircraftAerodynamicsConfigNode.h"
 
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "Dataflow/FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAerodynamicsConfigNode)
 
 FAircraftAerodynamicsConfigNode::FAircraftAerodynamicsConfigNode(
 	const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftAerodynamicsConfigNode::Evaluate(
-	UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftAerodynamicsConfigNode::ApplyToAircraftCollection(
+	FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-
-	const FManagedArrayCollection Input = GetValue<FManagedArrayCollection>(Context, &Collection);
 	auto IsNonNegativeVector = [](const FVector& Value)
 	{
 		return !Value.ContainsNaN() && Value.GetMin() >= 0.0;
@@ -38,14 +29,10 @@ void FAircraftAerodynamicsConfigNode::Evaluate(
 		|| Config.MaxRelativeAirspeedCmPerSec <= 0.0f;
 	if (bInvalid)
 	{
-		Context.Error(FText::FromString(TEXT("Aerodynamics configuration is invalid.")), this);
-		SetValue(Context, Input, &Collection);
-		return;
+		return Context.Error(TEXT("Aerodynamics configuration is invalid."));
 	}
 
-	const TSharedRef<FManagedArrayCollection> Output = MakeShared<FManagedArrayCollection>(Input);
-	FCollectionAircraftPropertyMutableFacade Properties(Output);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	SetConfigProperty(Properties, TEXT("Aerodynamics.Configured"), true);
 	SetConfigProperty(Properties, TEXT("Aerodynamics.AirDensityKgPerM3"), Config.AirDensityKgPerM3);
 	SetConfigProperty(Properties, TEXT("Aerodynamics.LinearDragNsPerM"), FVector3f(Config.LinearDragNsPerM));
@@ -53,5 +40,5 @@ void FAircraftAerodynamicsConfigNode::Evaluate(
 	SetConfigProperty(Properties, TEXT("Aerodynamics.AngularDragNmPerRadPerSec"), FVector3f(Config.AngularDragNmPerRadPerSec));
 	SetConfigProperty(Properties, TEXT("Aerodynamics.QuadraticAngularDragNmPerRadPerSecSq"), FVector3f(Config.QuadraticAngularDragNmPerRadPerSecSq));
 	SetConfigProperty(Properties, TEXT("Aerodynamics.MaxRelativeAirspeedCmPerSec"), Config.MaxRelativeAirspeedCmPerSec);
-	SetValue(Context, MoveTemp(*Output), &Collection);
+	return true;
 }

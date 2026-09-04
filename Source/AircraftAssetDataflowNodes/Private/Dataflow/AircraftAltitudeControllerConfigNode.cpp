@@ -1,29 +1,18 @@
 #include "Dataflow/AircraftAltitudeControllerConfigNode.h"
 
-#include "AircraftAsset/AircraftCollection.h"
-#include "AircraftAsset/CollectionAircraftConstFacade.h"
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
-
 #include "FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAltitudeControllerConfigNode)
 
 FAircraftAltitudeControllerConfigNode::FAircraftAltitudeControllerConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftAltitudeControllerConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftAltitudeControllerConfigNode::ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	auto IsValidPid = [](const auto& Pid)
 	{
 		return FMath::IsFinite(Pid.Kp) && FMath::IsFinite(Pid.Ki) && FMath::IsFinite(Pid.Kd)
@@ -36,15 +25,10 @@ void FAircraftAltitudeControllerConfigNode::Evaluate(UE::Dataflow::FContext& Con
 		|| !FMath::IsFinite(Config.VerticalDampingFeedForwardScale)
 		|| Config.VerticalDampingFeedForwardScale < 0.0f)
 	{
-		Context.Error(FText::FromString(TEXT("Altitude-controller PID or damping values are outside their valid range.")), this);
-		SetValue(Context, InputCollection, &Collection);
-		return;
+		return Context.Error(TEXT("Altitude-controller PID or damping values are outside their valid range."));
 	}
 
-	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		InputCollection);
-	FCollectionAircraftFacade Facade(AircraftCollection);
-	Facade.DefineSchema();
+	auto& Facade = Context.GetAircraft();
 #define UE_AIRCRAFT_WRITE_ALTITUDE(GetterName, Value) if (TArrayView<float> Values = Facade.Get##GetterName(); !Values.IsEmpty()) { Values[0] = Value; }
 	UE_AIRCRAFT_WRITE_ALTITUDE(FcAltitudeKp, Config.Altitude.Kp)
 	UE_AIRCRAFT_WRITE_ALTITUDE(FcAltitudeKi, Config.Altitude.Ki)
@@ -54,8 +38,7 @@ void FAircraftAltitudeControllerConfigNode::Evaluate(UE::Dataflow::FContext& Con
 	UE_AIRCRAFT_WRITE_ALTITUDE(FcVerticalVelocityKd, Config.VerticalVelocity.Kd)
 #undef UE_AIRCRAFT_WRITE_ALTITUDE
 
-	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	SetConfigProperty(Properties, TEXT("FlightController.Altitude.AltitudeKff"), Config.Altitude.Kff);
 	SetConfigProperty(Properties, TEXT("FlightController.Altitude.AltitudeIntegralLimit"), Config.Altitude.IntegralLimit);
 	SetConfigProperty(Properties, TEXT("FlightController.Altitude.AltitudeOutputLimit"), Config.Altitude.OutputLimit);
@@ -66,5 +49,5 @@ void FAircraftAltitudeControllerConfigNode::Evaluate(UE::Dataflow::FContext& Con
 	SetConfigProperty(Properties, TEXT("FlightController.Altitude.VerticalVelocityDerivativeCutoffHz"), Config.VerticalVelocity.DerivativeCutoffHz);
 	SetConfigProperty(Properties, TEXT("FlightController.Altitude.VerticalVelocityFreezeIntegralWhenSaturated"), Config.VerticalVelocity.bFreezeIntegralWhenSaturated);
 	SetConfigProperty(Properties, TEXT("FlightController.Altitude.VerticalDampingFeedForwardScale"), Config.VerticalDampingFeedForwardScale);
-	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	return true;
 }

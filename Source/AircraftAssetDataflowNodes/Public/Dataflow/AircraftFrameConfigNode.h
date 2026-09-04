@@ -4,15 +4,13 @@
 
 #include "CoreMinimal.h"
 #include "Aircraft/AircraftFrameBinding.h"
-#include "Dataflow/DataflowEngine.h"
-#include "Dataflow/DataflowNode.h"
-#include "GeometryCollection/ManagedArrayCollection.h"
+#include "Dataflow/AircraftConfigNodeBase.h"
 
 #include "AircraftFrameConfigNode.generated.h"
 
 /** 机架配置节点：写入物理绑定、控制轴约定、质量、质心和惯量。 */
 USTRUCT(meta = (DataflowAircraft))
-struct FAircraftFrameConfigNode : public FDataflowNode
+struct FAircraftFrameConfigNode : public FAircraftConfigNodeBase
 {
 	GENERATED_BODY()
 	DATAFLOW_NODE_DEFINE_INTERNAL(
@@ -23,9 +21,6 @@ struct FAircraftFrameConfigNode : public FDataflowNode
 
 public:
 	FAircraftFrameConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
-
-	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DisplayName = "Collection", DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
-	FManagedArrayCollection Collection;
 
 	/** 机体根骨骼，用于物理刚体绑定。 */
 	UPROPERTY(EditAnywhere, Category = "Frame", meta = (DisplayName = "Root Bone"))
@@ -47,12 +42,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Frame|MassInertia", meta = (DisplayName = "Inertia Tensor Scale", ClampMin = "0.01"))
 	FVector3f InertiaTensorScale = FVector3f::OneVector;
 
-	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+protected:
+	virtual bool ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const override;
 #if WITH_EDITOR
-	virtual bool CanDebugDraw() const override { return true; }
-	virtual bool CanDebugDrawViewMode(const FName& ViewModeName) const override;
-	virtual void DebugDraw(UE::Dataflow::FContext& Context,
-		IDataflowDebugDrawInterface& DataflowRenderingInterface,
-		const FDebugDrawParameters& DebugDrawParameters) const override;
+	virtual bool HighlightsRootBodyInConstruction() const override { return true; }
 #endif
 };

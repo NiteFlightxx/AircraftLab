@@ -1,29 +1,18 @@
 #include "Dataflow/AircraftConstraintSimulationConfigNode.h"
 
-#include "AircraftAsset/AircraftCollection.h"
-#include "AircraftAsset/CollectionAircraftConstFacade.h"
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
-
 #include "FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftConstraintSimulationConfigNode)
 
 FAircraftConstraintSimulationConfigNode::FAircraftConstraintSimulationConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftConstraintSimulationConfigNode::ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-	const FManagedArrayCollection InputCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	const float Values[] = { Config.LinearNaturalFrequencyHz, Config.LinearDampingRatio,
 		Config.LinearExtraDampingPerSecond, Config.LinearForceLimitN,
 		Config.GravityFeedForwardScale, Config.DynamicsFeedForwardScale,
@@ -33,17 +22,10 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	{
 		if (!FMath::IsFinite(Value) || Value < 0.0f)
 		{
-			Context.Error(FText::FromString(TEXT("Constraint strength, damping, limits, and feed-forward scales must be finite and non-negative.")), this);
-			SetValue(Context, InputCollection, &Collection);
-			return;
+			return Context.Error(TEXT("Constraint strength, damping, limits, and feed-forward scales must be finite and non-negative."));
 		}
 	}
-	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(
-		InputCollection);
-	FCollectionAircraftFacade Facade(AircraftCollection);
-	Facade.DefineSchema();
-	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.Linear.NaturalFrequencyHz"), Config.LinearNaturalFrequencyHz);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.Linear.DampingRatio"), Config.LinearDampingRatio);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.Linear.ExtraDampingPerSecond"), Config.LinearExtraDampingPerSecond);
@@ -55,5 +37,5 @@ void FAircraftConstraintSimulationConfigNode::Evaluate(UE::Dataflow::FContext& C
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.Attitude.ExtraDampingPerSecond"), Config.AttitudeExtraDampingPerSecond);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.Attitude.TorqueLimitNm"), Config.AttitudeTorqueLimitNm);
 	SetConfigProperty(Properties, TEXT("FlightController.Constraint.Linear.AccelerationMode"), Config.bLinearAccelerationMode);
-	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	return true;
 }

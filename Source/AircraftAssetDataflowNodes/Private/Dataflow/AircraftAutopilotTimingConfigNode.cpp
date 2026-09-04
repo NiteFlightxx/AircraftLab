@@ -1,29 +1,20 @@
 #include "Dataflow/AircraftAutopilotTimingConfigNode.h"
 
-#include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "Dataflow/FlightControllerConfigNodeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAutopilotTimingConfigNode)
 
 FAircraftAutopilotTimingConfigNode::FAircraftAutopilotTimingConfigNode(
 	const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftAutopilotTimingConfigNode::Evaluate(
-	UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftAutopilotTimingConfigNode::ApplyToAircraftCollection(
+	FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
 	using namespace UE::AircraftLab::AircraftAsset::Private;
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-
-	const FManagedArrayCollection Input = GetValue<FManagedArrayCollection>(Context, &Collection);
 	auto IsReserveValid = [](float Value) { return FMath::IsFinite(Value) && Value >= 0.0f && Value < 1.0f; };
 	const bool bInvalid = !FMath::IsFinite(Config.SampleSpacingCm) || Config.SampleSpacingCm <= 0.0f
 		|| !IsReserveValid(Config.ThrustReserveFraction)
@@ -34,19 +25,15 @@ void FAircraftAutopilotTimingConfigNode::Evaluate(
 		|| Config.SpeedConvergenceToleranceCmPerSec <= 0.0f;
 	if (bInvalid)
 	{
-		Context.Error(FText::FromString(TEXT("Dynamic trajectory timing configuration is invalid.")), this);
-		SetValue(Context, Input, &Collection);
-		return;
+		return Context.Error(TEXT("Dynamic trajectory timing configuration is invalid."));
 	}
 
-	const TSharedRef<FManagedArrayCollection> Output = MakeShared<FManagedArrayCollection>(Input);
-	FCollectionAircraftPropertyMutableFacade Properties(Output);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	SetConfigProperty(Properties, TEXT("Autopilot.Timing.SampleSpacingCm"), Config.SampleSpacingCm);
 	SetConfigProperty(Properties, TEXT("Autopilot.Timing.ThrustReserveFraction"), Config.ThrustReserveFraction);
 	SetConfigProperty(Properties, TEXT("Autopilot.Timing.CurvatureAccelerationReserveFraction"), Config.CurvatureAccelerationReserveFraction);
 	SetConfigProperty(Properties, TEXT("Autopilot.Timing.BrakingReserveFraction"), Config.BrakingReserveFraction);
 	SetConfigProperty(Properties, TEXT("Autopilot.Timing.MaxIterations"), Config.MaxIterations);
 	SetConfigProperty(Properties, TEXT("Autopilot.Timing.SpeedConvergenceToleranceCmPerSec"), Config.SpeedConvergenceToleranceCmPerSec);
-	SetValue(Context, MoveTemp(*Output), &Collection);
+	return true;
 }

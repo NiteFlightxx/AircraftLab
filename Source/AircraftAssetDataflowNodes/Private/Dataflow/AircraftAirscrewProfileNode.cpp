@@ -1,60 +1,24 @@
 #include "Dataflow/AircraftAirscrewProfileNode.h"
 
 #include "AircraftAsset/AircraftCollection.h"
-#include "AircraftAsset/CollectionAircraftConstFacade.h"
-#if WITH_EDITOR
-#include "Dataflow/AircraftConstructionDebugDraw.h"
-#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAirscrewProfileNode)
 
 FAircraftAirscrewProfileNode::FAircraftAirscrewProfileNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-#if WITH_EDITOR
-bool FAircraftAirscrewProfileNode::CanDebugDrawViewMode(const FName& ViewModeName) const
-{
-	return UE::AircraftLab::DataflowNodes::IsAircraftConstructionDebugView(ViewModeName);
-}
-
-void FAircraftAirscrewProfileNode::DebugDraw(UE::Dataflow::FContext& Context,
-	IDataflowDebugDrawInterface& DataflowRenderingInterface,
-	const FDebugDrawParameters& DebugDrawParameters) const
-{
-	if (!DebugDrawParameters.bNodeIsSelected && !DebugDrawParameters.bNodeIsPinned) return;
-	UE::AircraftLab::DataflowNodes::DrawAircraftRotorConfiguration(
-		GetOutputValue(Context, &Collection, Collection), Profile.Name, DataflowRenderingInterface);
-}
-#endif
-
-void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftAirscrewProfileNode::ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-
-	FManagedArrayCollection InCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
-	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(MoveTemp(InCollection));
-	FCollectionAircraftFacade Facade(AircraftCollection);
-	Facade.DefineSchema();
-
-	auto ReturnInputCollection = [&Context, &AircraftCollection, this]()
-	{
-		SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
-	};
+	auto& AircraftCollection = Context.GetCollection();
+	auto& Facade = Context.GetAircraft();
 
 	if (Profile.Name.IsNone())
 	{
-		Context.Error(FText::FromString(TEXT("Airscrew Profile must have a name.")), this);
-		ReturnInputCollection();
-		return;
+		return Context.Error(TEXT("Airscrew Profile must have a name."));
 	}
 
 	const auto IsFiniteVector = [](const FVector3f& Value)
@@ -76,20 +40,16 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 		|| Profile.Motor.SpinDownTimeSeconds <= 0.0f || Profile.Motor.CommandExponent <= 0.0f
 		|| Profile.Motor.MaxCommandSlewPerSecond < 0.0f)
 	{
-		Context.Error(FText::FromString(FString::Printf(
+		return Context.Error(FString::Printf(
 			TEXT("Airscrew Profile '%s' contains invalid rotor, installation, or motor parameters."),
-			*Profile.Name.ToString())), this);
-		ReturnInputCollection();
-		return;
+			*Profile.Name.ToString()));
 	}
 
-	const int32 MotorCount = AircraftCollection->NumElements(AircraftCollectionGroup::Motors);
-	const int32 PropellerCount = AircraftCollection->NumElements(AircraftCollectionGroup::Propellers);
+	const int32 MotorCount = AircraftCollection.NumElements(AircraftCollectionGroup::Motors);
+	const int32 PropellerCount = AircraftCollection.NumElements(AircraftCollectionGroup::Propellers);
 	if (MotorCount != PropellerCount)
 	{
-		Context.Error(FText::FromString(TEXT("Motor and Propeller collection counts must match before appending an Airscrew Profile.")), this);
-		ReturnInputCollection();
-		return;
+		return Context.Error(TEXT("Motor and Propeller collection counts must match before appending an Airscrew Profile."));
 	}
 
 	const FName MotorName(*FString::Printf(TEXT("%s_Motor"), *Profile.Name.ToString()));
@@ -97,20 +57,16 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 	{
 		if (ExistingName == Profile.Name)
 		{
-			Context.Error(FText::FromString(FString::Printf(
-				TEXT("Airscrew Profile name '%s' is duplicated."), *Profile.Name.ToString())), this);
-			ReturnInputCollection();
-			return;
+			return Context.Error(FString::Printf(
+				TEXT("Airscrew Profile name '%s' is duplicated."), *Profile.Name.ToString()));
 		}
 	}
 	for (const FName ExistingMotorName : Facade.GetMotorName())
 	{
 		if (ExistingMotorName == MotorName)
 		{
-			Context.Error(FText::FromString(FString::Printf(
-				TEXT("Airscrew motor name '%s' is duplicated."), *MotorName.ToString())), this);
-			ReturnInputCollection();
-			return;
+			return Context.Error(FString::Printf(
+				TEXT("Airscrew motor name '%s' is duplicated."), *MotorName.ToString()));
 		}
 	}
 
@@ -118,25 +74,24 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 	Facade.AddElements(1, AircraftCollectionGroup::Propellers);
 	const int32 Index = PropellerCount;
 
-	FCollectionAircraftFacade WriteFacade(AircraftCollection);
-	TArrayView<FName> MotorNames = WriteFacade.GetMotorName();
-	TManagedArray<bool>* MotorEnabled = WriteFacade.GetMotorEnabled();
-	TArrayView<float> MotorIdleRpm = WriteFacade.GetMotorIdleRpm();
-	TArrayView<float> MotorMaxRpm = WriteFacade.GetMotorMaxRpm();
-	TArrayView<float> MotorSpinUp = WriteFacade.GetMotorSpinUpTimeSeconds();
-	TArrayView<float> MotorSpinDown = WriteFacade.GetMotorSpinDownTimeSeconds();
-	TArrayView<float> MotorExponent = WriteFacade.GetMotorCommandExponent();
-	TArrayView<float> MotorSlew = WriteFacade.GetMotorMaxCommandSlewPerSecond();
-	TArrayView<FName> PropellerNames = WriteFacade.GetPropellerName();
-	TArrayView<FName> PropellerMotorNames = WriteFacade.GetPropellerMotorName();
-	TArrayView<FName> Sockets = WriteFacade.GetPropellerSocketName();
-	TManagedArray<bool>* UseSockets = WriteFacade.GetPropellerUseSocketTransform();
-	TArrayView<FVector3f> Positions = WriteFacade.GetPropellerPositionLocalCm();
-	TArrayView<FVector3f> ThrustAxes = WriteFacade.GetPropellerThrustAxisLocal();
-	TArrayView<uint8> SpinDirections = WriteFacade.GetPropellerSpinDirection();
-	TArrayView<float> MaxThrust = WriteFacade.GetPropellerMaxThrustN();
-	TArrayView<float> ReactionTorqueCoefficientM = WriteFacade.GetPropellerReactionTorqueCoefficientM();
-	TArrayView<float> Authority = WriteFacade.GetPropellerControlAuthorityScale();
+	TArrayView<FName> MotorNames = Facade.GetMotorName();
+	TManagedArray<bool>* MotorEnabled = Facade.GetMotorEnabled();
+	TArrayView<float> MotorIdleRpm = Facade.GetMotorIdleRpm();
+	TArrayView<float> MotorMaxRpm = Facade.GetMotorMaxRpm();
+	TArrayView<float> MotorSpinUp = Facade.GetMotorSpinUpTimeSeconds();
+	TArrayView<float> MotorSpinDown = Facade.GetMotorSpinDownTimeSeconds();
+	TArrayView<float> MotorExponent = Facade.GetMotorCommandExponent();
+	TArrayView<float> MotorSlew = Facade.GetMotorMaxCommandSlewPerSecond();
+	TArrayView<FName> PropellerNames = Facade.GetPropellerName();
+	TArrayView<FName> PropellerMotorNames = Facade.GetPropellerMotorName();
+	TArrayView<FName> Sockets = Facade.GetPropellerSocketName();
+	TManagedArray<bool>* UseSockets = Facade.GetPropellerUseSocketTransform();
+	TArrayView<FVector3f> Positions = Facade.GetPropellerPositionLocalCm();
+	TArrayView<FVector3f> ThrustAxes = Facade.GetPropellerThrustAxisLocal();
+	TArrayView<uint8> SpinDirections = Facade.GetPropellerSpinDirection();
+	TArrayView<float> MaxThrust = Facade.GetPropellerMaxThrustN();
+	TArrayView<float> ReactionTorqueCoefficientM = Facade.GetPropellerReactionTorqueCoefficientM();
+	TArrayView<float> Authority = Facade.GetPropellerControlAuthorityScale();
 	MotorNames[Index] = MotorName;
 	(*MotorEnabled)[Index] = Profile.bEnabled;
 	MotorIdleRpm[Index] = Profile.Motor.IdleRpm;
@@ -157,5 +112,5 @@ void FAircraftAirscrewProfileNode::Evaluate(UE::Dataflow::FContext& Context, con
 	ReactionTorqueCoefficientM[Index] = Profile.ReactionTorqueCoefficientM;
 	Authority[Index] = Profile.ControlAuthorityScale;
 
-	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	return true;
 }

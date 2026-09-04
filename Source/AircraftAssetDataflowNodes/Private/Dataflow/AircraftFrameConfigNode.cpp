@@ -1,44 +1,27 @@
 #include "Dataflow/AircraftFrameConfigNode.h"
 
 #include "AircraftAsset/AircraftCollection.h"
-#include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
-#if WITH_EDITOR
-#include "Dataflow/AircraftConstructionDebugDraw.h"
-#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftFrameConfigNode)
 
 FAircraftFrameConfigNode::FAircraftFrameConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftFrameConfigNode::ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-
-	FManagedArrayCollection InCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	if (!FMath::IsFinite(MassKg) || MassKg <= 0.0f
 		|| !FMath::IsFinite(CenterOfMassNudgeCm.X) || !FMath::IsFinite(CenterOfMassNudgeCm.Y) || !FMath::IsFinite(CenterOfMassNudgeCm.Z)
 		|| !FMath::IsFinite(InertiaTensorScale.X) || !FMath::IsFinite(InertiaTensorScale.Y) || !FMath::IsFinite(InertiaTensorScale.Z)
 		|| InertiaTensorScale.X <= 0.0f || InertiaTensorScale.Y <= 0.0f || InertiaTensorScale.Z <= 0.0f)
 	{
-		Context.Error(FText::FromString(TEXT("Aircraft frame mass and inertia tensor scale values must be finite and positive.")), this);
-		SetValue(Context, MoveTemp(InCollection), &Collection);
-		return;
+		return Context.Error(TEXT("Aircraft frame mass and inertia tensor scale values must be finite and positive."));
 	}
-	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(MoveTemp(InCollection));
-
-	FCollectionAircraftFacade Facade(AircraftCollection);
-	Facade.DefineSchema();
+	auto& Facade = Context.GetAircraft();
 
 	// Frame 是单元素组，DefineSchema 已 AddElements(1)，直接写入第 0 行。
 	if (TArrayView<FName> RootBoneArr = Facade.GetFrameRootBone(); RootBoneArr.Num() > 0)
@@ -57,8 +40,7 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	{
 		InertiaScaleArr[0] = InertiaTensorScale;
 	}
-	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 	int32 ForwardAxisIndex = Properties.GetKeyNameIndex(TEXT("Frame.ForwardAxis"));
 	if (ForwardAxisIndex == INDEX_NONE)
 	{
@@ -66,21 +48,5 @@ void FAircraftFrameConfigNode::Evaluate(UE::Dataflow::FContext& Context, const F
 	}
 	Properties.SetValue(ForwardAxisIndex, static_cast<int32>(ForwardAxis));
 
-	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	return true;
 }
-
-#if WITH_EDITOR
-bool FAircraftFrameConfigNode::CanDebugDrawViewMode(const FName& ViewModeName) const
-{
-	return UE::AircraftLab::DataflowNodes::IsAircraftConstructionDebugView(ViewModeName);
-}
-
-void FAircraftFrameConfigNode::DebugDraw(UE::Dataflow::FContext& Context,
-	IDataflowDebugDrawInterface& DataflowRenderingInterface,
-	const FDebugDrawParameters& DebugDrawParameters) const
-{
-	if (!DebugDrawParameters.bNodeIsSelected && !DebugDrawParameters.bNodeIsPinned) return;
-	UE::AircraftLab::DataflowNodes::DrawAircraftFrameConfiguration(
-		GetOutputValue(Context, &Collection, Collection), DataflowRenderingInterface);
-}
-#endif

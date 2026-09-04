@@ -1,9 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Dataflow/DataflowEngine.h"
-#include "Dataflow/DataflowNode.h"
-#include "GeometryCollection/ManagedArrayCollection.h"
+#include "Dataflow/AircraftConfigNodeBase.h"
 
 #include "AircraftAerodynamicsConfigNode.generated.h"
 
@@ -33,7 +31,7 @@ struct FAircraftAerodynamicsConfig
 };
 
 USTRUCT(meta = (DataflowAircraft))
-struct FAircraftAerodynamicsConfigNode : public FDataflowNode
+struct FAircraftAerodynamicsConfigNode : public FAircraftConfigNodeBase
 {
 	GENERATED_BODY()
 	DATAFLOW_NODE_DEFINE_INTERNAL(FAircraftAerodynamicsConfigNode, "AircraftAerodynamicsConfig", "Aircraft|Dynamics", "Aerodynamics")
@@ -41,11 +39,9 @@ struct FAircraftAerodynamicsConfigNode : public FDataflowNode
 public:
 	FAircraftAerodynamicsConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DisplayName = "Collection", DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
-	FManagedArrayCollection Collection;
-
 	UPROPERTY(EditAnywhere, Category = "Config", meta = (ShowOnlyInnerProperties))
 	FAircraftAerodynamicsConfig Config;
 
-	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+protected:
+	virtual bool ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const override;
 };

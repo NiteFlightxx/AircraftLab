@@ -1,13 +1,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Dataflow/DataflowEngine.h"
 #include "Dataflow/AircraftConfigNodeBase.h"
 
 #include "AircraftSolverConfigNode.generated.h"
 
 USTRUCT(meta = (DataflowAircraft))
-struct  FAircraftSolverConfigNode : public FAircraftConfigNodeBase
+struct FAircraftSolverConfigNode : public FAircraftConfigNodeBase
 {
 	GENERATED_BODY()
 	DATAFLOW_NODE_DEFINE_INTERNAL(
@@ -47,9 +46,5 @@ public:
 	int32 ProjectionSolverIterationCount = 1;
 
 protected:
-	virtual void AddProperties(FPropertyHelper& PropertyHelper) const override;
-	virtual void EvaluateAircraftCollection(
-		UE::Dataflow::FContext& Context,
-		const TSharedRef<FManagedArrayCollection>& AircraftCollection,
-		FAircraftConfigNodeBase::FAircraftFacade& InFacade) const override;
+	virtual bool ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const override;
 };

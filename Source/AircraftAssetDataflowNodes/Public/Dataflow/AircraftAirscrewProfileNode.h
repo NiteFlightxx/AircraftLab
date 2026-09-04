@@ -1,9 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Dataflow/DataflowEngine.h"
-#include "Dataflow/DataflowNode.h"
-#include "GeometryCollection/ManagedArrayCollection.h"
+#include "Dataflow/AircraftConfigNodeBase.h"
 
 #include "AircraftAirscrewProfileNode.generated.h"
 
@@ -69,7 +67,7 @@ struct FAircraftAirscrewProfileData
 
 /** 单旋翼 Profile 节点。多个旋翼通过串联多个节点逐个追加。 */
 USTRUCT(meta = (DataflowAircraft))
-struct FAircraftAirscrewProfileNode : public FDataflowNode
+struct FAircraftAirscrewProfileNode : public FAircraftConfigNodeBase
 {
 	GENERATED_BODY()
 	DATAFLOW_NODE_DEFINE_INTERNAL(FAircraftAirscrewProfileNode, "AircraftAirscrewProfile", "Aircraft|Profiles", "Single Airscrew Profile")
@@ -77,17 +75,12 @@ struct FAircraftAirscrewProfileNode : public FDataflowNode
 public:
 	FAircraftAirscrewProfileNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DisplayName = "Collection", DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
-	FManagedArrayCollection Collection;
 	UPROPERTY(EditAnywhere, Category = "Profile", meta = (DisplayName = "Profile", ShowOnlyInnerProperties))
 	FAircraftAirscrewProfileData Profile;
 
-	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+protected:
+	virtual bool ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const override;
 #if WITH_EDITOR
-	virtual bool CanDebugDraw() const override { return true; }
-	virtual bool CanDebugDrawViewMode(const FName& ViewModeName) const override;
-	virtual void DebugDraw(UE::Dataflow::FContext& Context,
-		IDataflowDebugDrawInterface& DataflowRenderingInterface,
-		const FDebugDrawParameters& DebugDrawParameters) const override;
+	virtual FName GetHighlightedRotorInConstruction() const override { return Profile.Name; }
 #endif
 };

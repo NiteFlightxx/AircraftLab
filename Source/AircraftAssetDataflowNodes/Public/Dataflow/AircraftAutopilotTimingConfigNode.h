@@ -1,9 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Dataflow/DataflowEngine.h"
-#include "Dataflow/DataflowNode.h"
-#include "GeometryCollection/ManagedArrayCollection.h"
+#include "Dataflow/AircraftConfigNodeBase.h"
 
 #include "AircraftAutopilotTimingConfigNode.generated.h"
 
@@ -32,7 +30,7 @@ struct FAircraftAutopilotTimingConfig
 };
 
 USTRUCT(meta = (DataflowAircraft))
-struct FAircraftAutopilotTimingConfigNode : public FDataflowNode
+struct FAircraftAutopilotTimingConfigNode : public FAircraftConfigNodeBase
 {
 	GENERATED_BODY()
 	DATAFLOW_NODE_DEFINE_INTERNAL(FAircraftAutopilotTimingConfigNode, "AircraftAutopilotTimingConfig", "Aircraft|Autopilot", "Dynamic Trajectory Timing")
@@ -40,11 +38,9 @@ struct FAircraftAutopilotTimingConfigNode : public FDataflowNode
 public:
 	FAircraftAutopilotTimingConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DisplayName = "Collection", DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
-	FManagedArrayCollection Collection;
-
 	UPROPERTY(EditAnywhere, Category = "Config", meta = (DisplayName = "Config", ShowOnlyInnerProperties))
 	FAircraftAutopilotTimingConfig Config;
 
-	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+protected:
+	virtual bool ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const override;
 };

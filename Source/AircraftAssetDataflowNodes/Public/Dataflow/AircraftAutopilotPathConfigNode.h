@@ -1,9 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Dataflow/DataflowEngine.h"
-#include "Dataflow/DataflowNode.h"
-#include "GeometryCollection/ManagedArrayCollection.h"
+#include "Dataflow/AircraftConfigNodeBase.h"
 
 #include "AircraftAutopilotPathConfigNode.generated.h"
 
@@ -53,7 +51,7 @@ struct FAircraftAutopilotPathConfig
 };
 
 USTRUCT(meta = (DataflowAircraft))
-struct FAircraftAutopilotPathConfigNode : public FDataflowNode
+struct FAircraftAutopilotPathConfigNode : public FAircraftConfigNodeBase
 {
 	GENERATED_BODY()
 	DATAFLOW_NODE_DEFINE_INTERNAL(FAircraftAutopilotPathConfigNode, "AircraftAutopilotPathConfig", "Aircraft|Autopilot", "Spatial Path and Tracking")
@@ -61,11 +59,9 @@ struct FAircraftAutopilotPathConfigNode : public FDataflowNode
 public:
 	FAircraftAutopilotPathConfigNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DisplayName = "Collection", DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
-	FManagedArrayCollection Collection;
-
 	UPROPERTY(EditAnywhere, Category = "Config", meta = (DisplayName = "Config", ShowOnlyInnerProperties))
 	FAircraftAutopilotPathConfig Config;
 
-	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+protected:
+	virtual bool ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const override;
 };

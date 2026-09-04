@@ -10,10 +10,12 @@ struct FManagedArrayCollection;
 namespace UE::AircraftLab::DataflowNodes
 {
 	bool IsAircraftConstructionDebugView(FName ViewModeName);
-	void DrawAircraftFrameConfiguration(const FManagedArrayCollection& Collection,
+	void DrawAircraftConfigurationContext(
+		const FManagedArrayCollection& Collection,
+		bool bDrawSharedContext,
+		bool bHighlightRootBody,
+		FName HighlightedRotor,
 		IDataflowDebugDrawInterface& DrawInterface);
-	void DrawAircraftRotorConfiguration(const FManagedArrayCollection& Collection,
-		FName SelectedRotor, IDataflowDebugDrawInterface& DrawInterface);
 }
 
 #endif

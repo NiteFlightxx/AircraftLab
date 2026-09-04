@@ -1,9 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Dataflow/DataflowEngine.h"
-#include "Dataflow/DataflowNode.h"
-#include "GeometryCollection/ManagedArrayCollection.h"
+#include "Dataflow/AircraftConfigNodeBase.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
 #include "AircraftSimulationLODProfileNode.generated.h"
@@ -23,7 +21,7 @@ struct FAircraftSimulationLODProfileData
 };
 
 USTRUCT(meta = (DataflowAircraft))
-struct FAircraftSimulationLODProfileNode : public FDataflowNode
+struct FAircraftSimulationLODProfileNode : public FAircraftConfigNodeBase
 {
 	GENERATED_BODY()
 	DATAFLOW_NODE_DEFINE_INTERNAL(FAircraftSimulationLODProfileNode, "AircraftSimulationLODProfile", "Aircraft|Profiles", "Simulation LOD Profile")
@@ -31,10 +29,9 @@ struct FAircraftSimulationLODProfileNode : public FDataflowNode
 public:
 	FAircraftSimulationLODProfileNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
 
-	UPROPERTY(EditAnywhere, Category = "Aircraft", meta = (DisplayName = "Collection", DataflowInput, DataflowOutput, DataflowPassthrough = "Collection"))
-	FManagedArrayCollection Collection;
 	UPROPERTY(EditAnywhere, Category = "Profile", meta = (DisplayName = "Profile", ShowOnlyInnerProperties))
 	FAircraftSimulationLODProfileData Profile;
 
-	virtual void Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+protected:
+	virtual bool ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const override;
 };

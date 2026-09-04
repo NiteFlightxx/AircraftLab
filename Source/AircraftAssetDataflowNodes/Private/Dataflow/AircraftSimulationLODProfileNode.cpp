@@ -31,34 +31,21 @@ namespace
 }
 
 FAircraftSimulationLODProfileNode::FAircraftSimulationLODProfileNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
-	: FDataflowNode(InParam, InGuid)
+	: FAircraftConfigNodeBase(InParam, InGuid)
 {
-	RegisterInputConnection(&Collection);
-	RegisterOutputConnection(&Collection, &Collection);
+	RegisterAircraftConnections();
 }
 
-void FAircraftSimulationLODProfileNode::Evaluate(UE::Dataflow::FContext& Context, const FDataflowOutput* Out) const
+bool FAircraftSimulationLODProfileNode::ApplyToAircraftCollection(FAircraftConfigEvaluationContext& Context) const
 {
-	using namespace UE::AircraftLab::AircraftAsset;
-
-	if (!Out || !Out->IsA<FManagedArrayCollection>(&Collection))
-	{
-		return;
-	}
-
-	FManagedArrayCollection InCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
 	if (Profile.Name.IsNone())
 	{
-		Context.Error(FText::FromString(TEXT("Simulation LOD requires a name.")), this);
-		SetValue(Context, MoveTemp(InCollection), &Collection);
-		return;
+		return Context.Error(TEXT("Simulation LOD requires a name."));
 	}
-	const TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(MoveTemp(InCollection));
-	FCollectionAircraftPropertyMutableFacade Properties(AircraftCollection);
-	Properties.DefineSchema();
+	auto& Properties = Context.GetProperties();
 
 	SetLODStringProperty(Properties, TEXT("SimulationLOD.Name"), Profile.Name.ToString());
 	SetLODProperty(Properties, TEXT("SimulationLOD.DriveMode"), static_cast<int32>(Profile.DriveMode));
 	SetLODProperty(Properties, TEXT("SimulationLOD.CollisionMode"), static_cast<int32>(Profile.CollisionMode));
-	SetValue(Context, MoveTemp(*AircraftCollection), &Collection);
+	return true;
 }
