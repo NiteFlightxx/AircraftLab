@@ -276,6 +276,12 @@ private:
 	void ApplySolverSettingsToBodyInstance();
 	/** 同步组件物理模式，并统一启停 PhysicsAsset 中的全部刚体。 */
 	void SetAircraftPhysicsSimulationEnabled(bool bEnabled);
+
+	/** 根据 LastAppliedSimulationBudget 重新计算并施加代理仿真状态与物理启用状态。
+	 *  所有可覆盖预算的路径（SetEnableSimulation/Resume/OnCreatePhysicsState 等）统一调用此函数，
+	 *  确保网络代理抑制不被覆盖。 */
+	void ApplyBudgetToSimulationState();
+
 	void ApplyCurrentSimulationLOD();
 	void ApplySimulationLOD(int32 LodIndex, bool bQueueProxyConfiguration = true);
 	void ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode);
@@ -319,6 +325,10 @@ private:
 	EAircraftSimulationDriveMode SimulationDriveMode = EAircraftSimulationDriveMode::FlightController;
 	bool bSimulationPhysicsEnabled = true;
 	bool bDriveModeTransitionInProgress = false;
+
+	/** 最近一次施加的仿真预算。非网络代理时为默认值；网络代理时持久化，
+	 *  防止后续 SetEnableSimulation/Resume/Backend 重建覆盖代理抑制。 */
+	FAircraftSimulationBudget LastAppliedSimulationBudget;
 
 	/** 物理约束后端（PhysicsConstraint 驱动模式按需创建）。 */
 	TSharedPtr<FConstraintInstance> SimulationConstraint;

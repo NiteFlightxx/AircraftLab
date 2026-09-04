@@ -105,6 +105,18 @@ void UAircraftComponent::RefreshAssetState()
 	const bool bWasComponentTickEnabled = IsComponentTickEnabled();
 	if (bStructureChanged)
 	{
+		// 保存物理运动状态——RecreatePhysicsState 会销毁并重建刚体，速度/变换将丢失。
+		FVector SavedLinearVelocity = FVector::ZeroVector;
+		FVector SavedAngularVelocity = FVector::ZeroVector;
+		FTransform SavedTransform = FTransform::Identity;
+		const bool bHadPhysicsState = HasValidPhysicsState() && IsSimulatingPhysics();
+		if (bHadPhysicsState)
+		{
+			SavedLinearVelocity = GetPhysicsLinearVelocity();
+			SavedAngularVelocity = GetPhysicsAngularVelocityInRadians();
+			SavedTransform = GetComponentTransform();
+		}
+
 		SuspendSimulation();
 		SetComponentTickEnabled(false);
 		bBackendStructureUpdateInProgress = true;
@@ -113,13 +125,28 @@ void UAircraftComponent::RefreshAssetState()
 				? EAircraftSimulationBackendState::Uninitialized
 				: EAircraftSimulationBackendState::WaitingForPhysicsState,
 			TEXT("StructureUpdate"));
-	}
 
-	SyncSkeletalMeshComponentFromAsset();
-	ApplyCurrentSimulationLOD();
-	if (bStructureChanged)
-	{
+		SyncSkeletalMeshComponentFromAsset();
+		ApplyCurrentSimulationLOD();
 		RecreatePhysicsState();
+
+		// 恢复物理运动状态。
+		if (bHadPhysicsState
+			&& HasValidPhysicsState()
+			&& SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic)
+		{
+			SetWorldLocationAndRotation(
+				SavedTransform.GetLocation(),
+				SavedTransform.GetRotation().Rotator(),
+				false, nullptr, ETeleportType::ResetPhysics);
+			SetPhysicsLinearVelocity(SavedLinearVelocity);
+			SetPhysicsAngularVelocityInRadians(SavedAngularVelocity);
+		}
+	}
+	else
+	{
+		SyncSkeletalMeshComponentFromAsset();
+		ApplyCurrentSimulationLOD();
 	}
 
 	// 把 FrameConfig 中的 MassKg / CenterOfMass / InertiaDiagonal 重新写入 BodyInstance —
@@ -157,15 +184,13 @@ void UAircraftComponent::RefreshAssetState()
 		{
 			if (SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic)
 			{
-				SetAircraftPhysicsSimulationEnabled(true);
 				WakeAllRigidBodies();
 			}
 			ResumeSimulation();
 		}
-		else if (AircraftSimulationProxy.IsValid())
+		else
 		{
-			AircraftSimulationProxy->SetSimulationState_GameThread(
-				bEnableSimulation, true);
+			ApplyBudgetToSimulationState();
 		}
 	}
 	if (!bStructureChanged || bWasSuspended)
@@ -404,10 +429,7 @@ void UAircraftComponent::GetEstimatedState(FAircraftEstimatedState& OutState) co
 void UAircraftComponent::SetEnableSimulation(bool bEnable)
 {
 	bEnableSimulation = bEnable;
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
-	}
+	ApplyBudgetToSimulationState();
 }
 
 bool UAircraftComponent::IsSimulationEnabled() const
@@ -418,19 +440,13 @@ bool UAircraftComponent::IsSimulationEnabled() const
 void UAircraftComponent::SuspendSimulation()
 {
 	bSuspendSimulation = true;
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
-	}
+	ApplyBudgetToSimulationState();
 }
 
 void UAircraftComponent::ResumeSimulation()
 {
 	bSuspendSimulation = false;
-	if (AircraftSimulationProxy.IsValid())
-	{
-		AircraftSimulationProxy->SetSimulationState_GameThread(bEnableSimulation, bSuspendSimulation);
-	}
+	ApplyBudgetToSimulationState();
 	TryActivateSimulationBackend();
 }
 
@@ -451,7 +467,12 @@ void UAircraftComponent::SoftResetSimulation()
 
 void UAircraftComponent::HardResetSimulation()
 {
-	// 保持代理实例与物理线程生命周期稳定，重建请求由下一物理子步消费。
+	// 先重置代理运行时状态（PID/电机/悬停估计/轨迹/分配器），即使资产模型和结构签名
+	// 未变也不会变成 no-op；再刷新资产结构（若签名变了则重建物理后端）。
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->Initialize_GameThread();
+	}
 	RefreshAssetState();
 }
 
@@ -1468,17 +1489,29 @@ FAircraftControlAuthorityInfo UAircraftComponent::GetControlAuthorityInfo() cons
 
 void UAircraftComponent::ApplyAircraftSimulationBudget_Implementation(const FAircraftSimulationBudget& Budget)
 {
+	LastAppliedSimulationBudget = Budget;
 	const FAircraftSimulationModel* const Model = GetSimulationModel();
 	if (Budget.LODIndex != INDEX_NONE && Model && Model->IsValidLodIndex(Budget.LODIndex))
 	{
 		ApplySimulationLOD(Budget.LODIndex);
 	}
+	ApplyBudgetToSimulationState();
+}
+
+void UAircraftComponent::ApplyBudgetToSimulationState()
+{
+	const bool bIsProxy = LastAppliedSimulationBudget.bIsNetworkProxy;
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->SetSimulationState_GameThread(
-			bEnableSimulation && !Budget.bIsNetworkProxy,
-			bSuspendSimulation || Budget.bIsNetworkProxy);
+			bEnableSimulation && !bIsProxy,
+			bSuspendSimulation || bIsProxy);
 	}
+	// bEnablePhysics 消费：网络代理按预算决定是否启用物理；非代理按驱动模式决定。
+	const bool bPhysicsWanted = bIsProxy
+		? LastAppliedSimulationBudget.bEnablePhysics
+		: (SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic);
+	SetAircraftPhysicsSimulationEnabled(bPhysicsWanted && !bSuspendSimulation);
 }
 
 /* ============================ UObject ============================ */
@@ -1568,9 +1601,7 @@ void UAircraftComponent::OnUnregister()
 void UAircraftComponent::OnCreatePhysicsState()
 {
 	Super::OnCreatePhysicsState();
-	SetAircraftPhysicsSimulationEnabled(
-		SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic
-		&& !bSuspendSimulation);
+	ApplyBudgetToSimulationState();
 
 	ApplyMassPropertiesToBodyInstance();
 	ApplySolverSettingsToBodyInstance();
@@ -1592,15 +1623,19 @@ void UAircraftComponent::OnCreatePhysicsState()
 void UAircraftComponent::OnDestroyPhysicsState()
 {
 	// 约束引用当前 Chaos 刚体，必须在引擎销毁 PhysicsState 前失效；Proxy 不缓存刚体指针。
+	const bool bKinematic = (SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic);
 	InvalidateSimulationBackend(
-		SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic
-			? EAircraftSimulationBackendState::Uninitialized
-			: EAircraftSimulationBackendState::WaitingForPhysicsState,
-		SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic
-			? TEXT("PhysicsStateNotRequired")
-			: TEXT("PhysicsStateDestroyed"));
+		bKinematic ? EAircraftSimulationBackendState::Uninitialized : EAircraftSimulationBackendState::WaitingForPhysicsState,
+		bKinematic ? TEXT("PhysicsStateNotRequired") : TEXT("PhysicsStateDestroyed"));
 
 	Super::OnDestroyPhysicsState();
+
+	// Kinematic 不依赖 PhysicsState（运动学扫描走 SetWorldLocationAndRotation），
+	// PhysicsState 销毁后立即重新激活，避免永久停在 Uninitialized。
+	if (bKinematic && !bDriveModeTransitionInProgress && !bBackendStructureUpdateInProgress)
+	{
+		TryActivateSimulationBackend();
+	}
 }
 
 void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)

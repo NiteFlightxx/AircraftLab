@@ -133,6 +133,11 @@ void FAircraftAssetEditorModule::ShutdownModule()
 		FComponentAssetBrokerage::UnregisterBroker(AircraftAssetComponentBroker);
 	}
 
+	if (UObjectInitialized())
+	{
+		UThumbnailManager::Get().UnregisterCustomRenderer(UAircraftAsset::StaticClass());
+	}
+
 	AircraftAssetComponentBroker.Reset();
 	ActiveAircraftAsset.Reset();
 

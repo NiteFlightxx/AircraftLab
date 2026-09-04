@@ -102,6 +102,10 @@ private:
 	void SynchronizeAssetStateFromCollections();
 	void BuildAircraftSimulationModel();
 
+	/** 局部构建 SimulationModel（不写入成员），用于 Build 事务化：验证通过后才交换到成员。 */
+	TSharedPtr<FAircraftSimulationModel> BuildAircraftSimulationModelLocal(
+		const TArray<TSharedRef<const FManagedArrayCollection>>& Collections) const;
+
 private:
 	UPROPERTY(EditAnywhere, Setter = SetSkeleton, Category = Skeleton)
 	TObjectPtr<USkeleton> Skeleton;

@@ -976,6 +976,19 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 	}
 	if (bPhysicsStateRebindRequested.exchange(false, std::memory_order_acq_rel))
 	{
+		// 物理状态重建：若此前已将原生阻尼置零，先恢复再清标志，
+		// 避免新 Body 继承零阻尼。
+		if (bExplicitAerodynamicsApplied
+			&& bNativeDampingCaptured
+			&& PhysicsHandle.IsValid())
+		{
+			Chaos::FRigidBodyHandle_Internal* const RebindHandle = PhysicsHandle.operator->();
+			if (RebindHandle)
+			{
+				RebindHandle->SetLinearEtherDrag(NativeLinearDamping);
+				RebindHandle->SetAngularEtherDrag(NativeAngularDamping);
+			}
+		}
 		bNativeDampingCaptured = false;
 		bExplicitAerodynamicsApplied = false;
 	}
@@ -1011,6 +1024,20 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 	if (!bSimulationEnabled.load(std::memory_order_relaxed)
 		|| bSimulationSuspended.load(std::memory_order_relaxed))
 	{
+		// 若此前已将 Chaos 原生阻尼置零（显式气动模式），在退出前恢复，
+		// 避免仿真禁用/挂起时 Body 保留零阻尼。
+		if (bExplicitAerodynamicsApplied
+			&& bNativeDampingCaptured
+			&& PhysicsHandle.IsValid())
+		{
+			Chaos::FRigidBodyHandle_Internal* const DampingHandle = PhysicsHandle.operator->();
+			if (DampingHandle)
+			{
+				DampingHandle->SetLinearEtherDrag(NativeLinearDamping);
+				DampingHandle->SetAngularEtherDrag(NativeAngularDamping);
+			}
+		}
+		bExplicitAerodynamicsApplied = false;
 		LogDriveGate(bSimulationSuspended.load(std::memory_order_relaxed)
 			? TEXT("SimulationSuspended") : TEXT("SimulationDisabled"));
 		return;

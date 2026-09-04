@@ -65,9 +65,11 @@ void AAircraftDataflowPreviewActor::SyncComponentFromInjectedProperties()
 	AircraftComponent->SetMovementIntentProvider(this);
 
 	// 2) 预览网格覆盖：编辑器内容面板上用户可另行指定预览网格（与布料的 SkeletalMesh 变量语义一致）。
+	//    覆盖后必须刷新结构签名并重建后端，否则 RootBone、Socket、力臂和飞控轴可能基于不同骨架。
 	if (SkeletalMesh && AircraftComponent->GetSkeletalMeshAsset() != SkeletalMesh)
 	{
 		AircraftComponent->SetSkeletalMeshAsset(SkeletalMesh);
+		AircraftComponent->RefreshAssetState();
 	}
 
 	// 3) 预览动画（无人机通常不播动画，但保持与布料预览一致的通路）。

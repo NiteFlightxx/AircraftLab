@@ -1,6 +1,7 @@
 #include "Dataflow/AircraftAirscrewProfileNode.h"
 
 #include "AircraftAsset/AircraftCollection.h"
+#include "Engine/SkeletalMesh.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftAirscrewProfileNode)
 
@@ -67,6 +68,28 @@ bool FAircraftAirscrewProfileNode::ApplyToAircraftCollection(FAircraftConfigEval
 		{
 			return Context.Error(FString::Printf(
 				TEXT("Airscrew motor name '%s' is duplicated."), *MotorName.ToString()));
+		}
+	}
+
+	// 若启用 Socket Transform 且指定了 SocketName，校验骨骼/socket 是否存在于源骨架。
+	// 无效配置在此节点级即报错，而非推迟到 Terminal 编译。
+	if (Profile.bUseSocketTransform && !Profile.SocketName.IsNone())
+	{
+		TArrayView<const FSoftObjectPath> MeshPaths = Facade.GetSkeletalMeshSoftObjectPathName();
+		if (MeshPaths.Num() > 0)
+		{
+			const FSoftObjectPath& MeshPath = MeshPaths[0];
+			if (const USkeletalMesh* SourceMesh = Cast<USkeletalMesh>(MeshPath.TryLoad()))
+			{
+				const bool bHasSocket = (SourceMesh->FindSocket(Profile.SocketName) != nullptr);
+				const bool bHasBone = (SourceMesh->GetRefSkeleton().FindBoneIndex(Profile.SocketName) != INDEX_NONE);
+				if (!bHasSocket && !bHasBone)
+				{
+					return Context.Error(FString::Printf(
+						TEXT("Airscrew Profile '%s' references Socket/Bone '%s' that does not exist in the source Skeletal Mesh."),
+						*Profile.Name.ToString(), *Profile.SocketName.ToString()));
+				}
+			}
 		}
 	}
 
