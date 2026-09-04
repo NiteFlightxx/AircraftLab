@@ -12,6 +12,7 @@
 #include "Dataflow/AircraftConstraintSimulationConfigNode.h"
 #include "Dataflow/AircraftControllerInputConfigNode.h"
 #include "Dataflow/AircraftFrameConfigNode.h"
+#include "Dataflow/AircraftKinematicSimulationConfigNode.h"
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 #include "Dataflow/AircraftSolverConfigNode.h"
