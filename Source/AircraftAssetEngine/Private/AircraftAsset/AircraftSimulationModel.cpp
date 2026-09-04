@@ -476,7 +476,6 @@ FAircraftSimulationModel::FAircraftSimulationModel(
 	USkeletalMesh* InSkeletalMesh)
 {
 	AircraftName = InAircraftName;
-	SkeletalMesh = InSkeletalMesh;
 	LodModels.SetNum(InAircraftCollections.Num());
 	SimulationLOD.LODs.SetNum(InAircraftCollections.Num());
 	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)

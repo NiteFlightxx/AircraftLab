@@ -42,7 +42,10 @@ public:
 	FVector GetPreviewHoldTargetCm() const { return PreviewHoldTargetCm; }
 	float GetPreviewFixedYawDegrees() const { return PreviewFixedYawDegrees; }
 	bool IsPreviewPlaybackEnabled() const { return bPreviewPlaybackEnabled; }
+	bool HasPreviewMeshMismatch() const { return bPreviewMeshMismatch; }
+	void RefreshPreviewAssetState();
 	void ApplyPreviewHoldTarget(const FVector& PositionCm, float FixedYawDegrees);
+	void ApplyPreviewSimulationLOD(int32 LodIndex);
 	void SetPreviewArmed(bool bArmed);
 	void SetPreviewFlightMode(EAircraftFlightMode FlightMode);
 	bool SetPreviewRotorEffectiveness(FName RotorName, float Effectiveness);
@@ -64,6 +67,9 @@ public:
 	virtual bool GetAircraftMovementIntent(FAircraftMovementIntent& OutIntent,
 		FAircraftMovementIntentHandle& OutHandle, uint64& OutRevision) const override;
 	virtual bool IsAircraftMovementIntentActive() const override;
+	virtual void OnAircraftMovementIntentInterrupted(
+		FAircraftMovementIntentHandle Handle,
+		EAircraftMovementFailureReason Reason) override;
 	//~ End IAircraftMovementIntentProvider Interface
 
 private:
@@ -101,9 +107,6 @@ private:
 	bool bDefaultScenarioInitialized = false;
 	bool bPreviewPlaybackEnabled = true;
 	bool bPreviewFrozen = false;
-	FTransform FrozenComponentTransform = FTransform::Identity;
-	FTransform FrozenBodyTransform = FTransform::Identity;
-	FVector FrozenLinearVelocityCmPerSec = FVector::ZeroVector;
-	FVector FrozenAngularVelocityRadPerSec = FVector::ZeroVector;
-	bool bFrozenBodyStateValid = false;
+	bool bPreviewMeshMismatch = false;
+	FAircraftPhysicsStateSnapshot FrozenPhysicsState;
 };

@@ -3,6 +3,7 @@
 #if WITH_EDITOR
 
 #include "AircraftAsset/AircraftSimulationModel.h"
+#include "AircraftAsset/AircraftBodyBinding.h"
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftDiagnostics/AircraftDebugColors.h"
 #include "AircraftDiagnostics/AircraftDebugDraw.h"
@@ -78,7 +79,14 @@ namespace UE::AircraftLab::DataflowNodes
 		IDataflowDebugDrawInterface& Interface;
 	};
 
-	static TOptional<FAircraftSimulationModel> CompileModel(
+	struct FConstructionAircraftModel
+	{
+		FAircraftSimulationModel SimulationModel;
+		USkeletalMesh* SkeletalMesh = nullptr;
+		UPhysicsAsset* PhysicsAsset = nullptr;
+	};
+
+	static TOptional<FConstructionAircraftModel> CompileModel(
 		const FManagedArrayCollection& Collection, IDataflowDebugDrawInterface& DrawInterface)
 	{
 		const TSharedRef<const FManagedArrayCollection> SharedCollection =
@@ -99,12 +107,15 @@ namespace UE::AircraftLab::DataflowNodes
 		}
 		TArray<TSharedRef<const FManagedArrayCollection>> Collections;
 		Collections.Add(SharedCollection);
-		FAircraftSimulationModel Model(Collections, TEXT("ConstructionPreview"), Mesh);
+		FConstructionAircraftModel Result;
+		Result.SkeletalMesh = Mesh;
+		Result.SimulationModel = FAircraftSimulationModel(
+			Collections, TEXT("ConstructionPreview"), Mesh);
 		const TConstArrayView<FSoftObjectPath> PhysicsAssetPaths = Facade.GetPhysicsAssetSoftObjectPathName();
-		Model.PhysicsAsset = PhysicsAssetPaths.IsEmpty()
+		Result.PhysicsAsset = PhysicsAssetPaths.IsEmpty()
 			? Mesh->GetPhysicsAsset()
 			: Cast<UPhysicsAsset>(PhysicsAssetPaths[0].ResolveObject());
-		return Model;
+		return Result;
 	}
 
 	static void DrawSimpleMesh(IDataflowDebugDrawInterface& DrawInterface,
@@ -187,7 +198,7 @@ namespace UE::AircraftLab::DataflowNodes
 		}
 	}
 
-	static void DrawPhysicsBodyShapes(const FAircraftSimulationModel& Model,
+	static void DrawPhysicsBodyShapes(const FConstructionAircraftModel& Model,
 		const FAircraftSimulationLodModel& Lod, IDataflowDebugDrawInterface& DrawInterface,
 		const FAircraftDebugDrawContext& Context, bool bDrawAllBodies, bool bHighlightRootBody)
 	{
@@ -205,11 +216,14 @@ namespace UE::AircraftLab::DataflowNodes
 		DrawInterface.SetWireframe(true);
 		DrawInterface.SetShaded(false);
 		DrawInterface.SetTranslucent(false);
+		const FName ChassisBodyName =
+			UE::AircraftLab::AircraftAsset::ResolveAircraftChassisBodyName(
+				Model.SkeletalMesh, Model.PhysicsAsset, Lod.RootBone);
 		bool bFoundRootBody = false;
 		for (const TObjectPtr<USkeletalBodySetup>& BodySetup : Model.PhysicsAsset->SkeletalBodySetups)
 		{
 			if (!BodySetup) continue;
-			const bool bRootBody = BodySetup->BoneName == Lod.RootBone;
+			const bool bRootBody = BodySetup->BoneName == ChassisBodyName;
 			if (!bDrawAllBodies && !bRootBody) continue;
 			const int32 BoneIndex = Model.SkeletalMesh->GetRefSkeleton().FindBoneIndex(BodySetup->BoneName);
 			if (BoneIndex == INDEX_NONE)
@@ -277,7 +291,7 @@ namespace UE::AircraftLab::DataflowNodes
 		if (!bFoundRootBody)
 		{
 			DrawInterface.DrawOverlayText(FString::Printf(
-				TEXT("Aircraft debug draw: RootBone '%s' has no PhysicsAsset body."),
+				TEXT("Aircraft debug draw: chassis body for RootBone '%s' cannot be resolved."),
 				*Lod.RootBone.ToString()));
 		}
 	}
@@ -343,9 +357,9 @@ namespace UE::AircraftLab::DataflowNodes
 		FName HighlightedRotor,
 		IDataflowDebugDrawInterface& DrawInterface)
 	{
-		TOptional<FAircraftSimulationModel> Model = CompileModel(Collection, DrawInterface);
-		if (!Model.IsSet() || Model->LodModels.IsEmpty()) return;
-		const FAircraftSimulationLodModel& Lod = Model->LodModels[0];
+		TOptional<FConstructionAircraftModel> Model = CompileModel(Collection, DrawInterface);
+		if (!Model.IsSet() || Model->SimulationModel.LodModels.IsEmpty()) return;
+		const FAircraftSimulationLodModel& Lod = Model->SimulationModel.LodModels[0];
 		const FAircraftFrameBinding& Frame = Lod.FlightController.FrameBinding;
 		if (!Frame.IsValid())
 		{

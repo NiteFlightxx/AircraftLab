@@ -24,4 +24,7 @@ public:
 		FAircraftMovementIntentHandle& OutHandle,
 		uint64& OutRevision) const = 0;
 	virtual bool IsAircraftMovementIntentActive() const = 0;
+	virtual void OnAircraftMovementIntentInterrupted(
+		FAircraftMovementIntentHandle Handle,
+		EAircraftMovementFailureReason Reason) = 0;
 };

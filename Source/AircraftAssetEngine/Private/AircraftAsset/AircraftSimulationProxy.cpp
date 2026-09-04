@@ -77,8 +77,9 @@ void FAircraftSimulationProxy::Initialize_GameThread()
 void FAircraftSimulationProxy::ReconfigureForLod_GameThread()
 {
 	QueueConfiguration_GameThread(false);
-	// 下一次规划使用新 LOD 的 Autopilot 配置；控制器自身不 Reset，SetIntent 会按
-	// 同一 handle/type 保留路径进度并从旧进度做局部投影。
+	// Force the execution thread to bind the component's newly published intent against
+	// the new LOD configuration. A real LOD transition publishes an internal current-COM
+	// Hold before this call, so no old route progress can survive the reconfiguration.
 	bTrajectoryRebindRequested.store(true, std::memory_order_release);
 }
 
@@ -687,8 +688,7 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 	ApplyPendingConfiguration_ExecutionThread();
 	if (!IsControlExecutionAllowed_GameThread())
 	{
-		FScopeLock OutputLock(&OutputCriticalSection);
-		LatestTrajectoryReference = FAircraftTrajectoryReference();
+		PublishEmptyOutputFrame_ExecutionThread();
 		return;
 	}
 	LastPhysicsDeltaSeconds.store(DeltaTime, std::memory_order_relaxed);
@@ -779,6 +779,9 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 	FAircraftAutopilotDiagnostics AutopilotDiagnostics;
 	AutopilotDiagnostics = TrajectoryRuntime.GetDiagnostics();
 	FScopeLock OutputLock(&OutputCriticalSection);
+	LatestControlOutput.Reset();
+	LatestControlDiagnostics = {};
+	LatestAuthorityInfo = {};
 	LatestTrajectoryReference = Reference;
 	LatestAutopilotDiagnostics = AutopilotDiagnostics;
 	const FAircraftMotionPlan& Plan = TrajectoryRuntime.GetPlan();
@@ -786,6 +789,8 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 	LatestMotionPlanDurationSeconds = Plan.GetDurationSeconds();
 	LatestMotionPlanLengthCm = Plan.GetLengthCm();
 	LatestMotionPlanRevision = AutopilotDiagnostics.PlanRevision;
+	StampLatestOutputMetadata_NoLock(
+		VehicleStateSequence.load(std::memory_order_relaxed));
 }
 
 void FAircraftSimulationProxy::SetSimulationState_GameThread(bool bEnabled, bool bSuspended)
@@ -827,6 +832,36 @@ void FAircraftSimulationProxy::InvalidateTrajectoryReference_GameThread()
 	bTrajectoryRebindRequested.store(true, std::memory_order_release);
 	FScopeLock OutputLock(&OutputCriticalSection);
 	LatestTrajectoryReference = FAircraftTrajectoryReference();
+	LatestAutopilotDiagnostics = FAircraftAutopilotDiagnostics();
+	LatestMotionPlanSamples.Reset();
+	LatestMotionPlanDurationSeconds = 0.0f;
+	LatestMotionPlanLengthCm = 0.0f;
+	LatestMotionPlanRevision = 0;
+}
+
+void FAircraftSimulationProxy::PublishEmptyOutputFrame_ExecutionThread()
+{
+	FScopeLock OutputLock(&OutputCriticalSection);
+	LatestControlOutput.Reset();
+	LatestControlDiagnostics = {};
+	LatestTrajectoryReference = {};
+	LatestAutopilotDiagnostics = {};
+	LatestAuthorityInfo = {};
+	LatestMotionPlanSamples.Reset();
+	LatestMotionPlanDurationSeconds = 0.0f;
+	LatestMotionPlanLengthCm = 0.0f;
+	LatestMotionPlanRevision = 0;
+	StampLatestOutputMetadata_NoLock(0);
+}
+
+void FAircraftSimulationProxy::StampLatestOutputMetadata_NoLock(
+	const uint64 PhysicsStateSequence)
+{
+	LatestPhysicsStateSequence = PhysicsStateSequence;
+	LatestControlSequence = ControlSequence.load(std::memory_order_relaxed);
+	LatestDriveMode = ActiveDriveMode;
+	LatestArmState = static_cast<EAircraftArmState>(
+		CurrentArmState.load(std::memory_order_relaxed));
 }
 
 void FAircraftSimulationProxy::SetFlightMode_GameThread(EAircraftFlightMode InMode)
@@ -923,20 +958,36 @@ void FAircraftSimulationProxy::SetEstimatedStateOverride_GameThread(const FAircr
 {
 	FScopeLock Lock(&OutputCriticalSection);
 	LatestEstimated = InState;
+	StampLatestOutputMetadata_NoLock(
+		VehicleStateSequence.load(std::memory_order_relaxed));
 }
 
-void FAircraftSimulationProxy::GetControlOutput_GameThread(
-	FAircraftFlightControlOutput& OutOutput) const
+void FAircraftSimulationProxy::GetSimulationOutputFrame_GameThread(
+	FAircraftSimulationOutputFrame& OutFrame) const
 {
 	FScopeLock Lock(&OutputCriticalSection);
-	OutOutput = LatestControlOutput;
-}
-
-void FAircraftSimulationProxy::GetControlDiagnostics_GameThread(
-	FAircraftSimulationControlDiagnostics& OutDiagnostics) const
-{
-	FScopeLock Lock(&OutputCriticalSection);
-	OutDiagnostics = LatestControlDiagnostics;
+	OutFrame = {};
+	OutFrame.PhysicsStateSequence = LatestPhysicsStateSequence;
+	OutFrame.ControlSequence = LatestControlSequence;
+	OutFrame.DriveMode = LatestDriveMode;
+	OutFrame.ArmState = LatestArmState;
+	OutFrame.EstimatedState = LatestEstimated;
+	OutFrame.ControlOutput = LatestControlOutput;
+	OutFrame.ControlDiagnostics = LatestControlDiagnostics;
+	OutFrame.TrajectoryReference = LatestTrajectoryReference;
+	OutFrame.AutopilotDiagnostics = LatestAutopilotDiagnostics;
+	OutFrame.AuthorityInfo = LatestAuthorityInfo;
+	OutFrame.ValidPayloads = EAircraftDebugPayload::AircraftCore
+		| EAircraftDebugPayload::AutopilotCore;
+	if (!LatestControlOutput.RotorCommands.IsEmpty())
+	{
+		OutFrame.ValidPayloads |= EAircraftDebugPayload::Propulsion
+			| EAircraftDebugPayload::ControlAllocation;
+	}
+	if (LatestControlDiagnostics.bHasAerodynamics)
+	{
+		OutFrame.ValidPayloads |= EAircraftDebugPayload::Aerodynamics;
+	}
 }
 
 EAircraftArmState FAircraftSimulationProxy::GetArmState_GameThread() const
@@ -976,19 +1027,8 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 	}
 	if (bPhysicsStateRebindRequested.exchange(false, std::memory_order_acq_rel))
 	{
-		// 物理状态重建：若此前已将原生阻尼置零，先恢复再清标志，
-		// 避免新 Body 继承零阻尼。
-		if (bExplicitAerodynamicsApplied
-			&& bNativeDampingCaptured
-			&& PhysicsHandle.IsValid())
-		{
-			Chaos::FRigidBodyHandle_Internal* const RebindHandle = PhysicsHandle.operator->();
-			if (RebindHandle)
-			{
-				RebindHandle->SetLinearEtherDrag(NativeLinearDamping);
-				RebindHandle->SetAngularEtherDrag(NativeAngularDamping);
-			}
-		}
+		// 新 PhysicsState 的 handle 拥有自己的原生阻尼；旧 Body 的缓存绝不能写入新 Body。
+		// 下一次通过有效 handle 时重新捕获，再按当前气动配置决定是否临时置零。
 		bNativeDampingCaptured = false;
 		bExplicitAerodynamicsApplied = false;
 	}
@@ -1040,6 +1080,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		bExplicitAerodynamicsApplied = false;
 		LogDriveGate(bSimulationSuspended.load(std::memory_order_relaxed)
 			? TEXT("SimulationSuspended") : TEXT("SimulationDisabled"));
+		PublishEmptyOutputFrame_ExecutionThread();
 		return;
 	}
 
@@ -1059,12 +1100,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 	if (!ActiveLodModel)
 	{
 		LogDriveGate(TEXT("NoLodModel"));
+		PublishEmptyOutputFrame_ExecutionThread();
 		return;
 	}
 	if (ActiveDriveMode == EAircraftSimulationDriveMode::FlightController
 		&& ActiveLodModel->Rotors.IsEmpty())
 	{
 		LogDriveGate(TEXT("NoRotors"));
+		PublishEmptyOutputFrame_ExecutionThread();
 		return;
 	}
 	if (RotorStates.Num() != ActiveLodModel->Rotors.Num())
@@ -1076,6 +1119,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 	if (!PhysicsHandle.IsValid())
 	{
 		LogDriveGate(TEXT("NoPhysicsThreadHandle"));
+		PublishEmptyOutputFrame_ExecutionThread();
 		return;
 	}
 	Chaos::FRigidBodyHandle_Internal* const Handle = PhysicsHandle.operator->();
@@ -1084,11 +1128,13 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		&& ObjectState != Chaos::EObjectStateType::Sleeping)
 	{
 		LogDriveGate(TEXT("BodyNotSimulating"));
+		PublishEmptyOutputFrame_ExecutionThread();
 		return;
 	}
 	if (!bBackendValidated.load(std::memory_order_acquire))
 	{
 		LogDriveGate(TEXT("BackendNotValidated"));
+		PublishEmptyOutputFrame_ExecutionThread();
 		return;
 	}
 	LastPhysicsDeltaSeconds.store(DeltaTime, std::memory_order_relaxed);
@@ -1300,6 +1346,12 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
 		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
 		LatestControlOutput.Reset();
+		LatestControlDiagnostics = {};
+		LatestTrajectoryReference = {};
+		LatestAutopilotDiagnostics = {};
+		LatestAuthorityInfo = {};
+		StampLatestOutputMetadata_NoLock(
+			VehicleStateSequence.load(std::memory_order_relaxed));
 		return;
 	}
 
@@ -1556,6 +1608,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		LatestEstimated.State.AccelerationWorldCmPerSecSq = Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq;
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
 		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
+		LatestControlOutput.Reset();
 		LatestTrajectoryReference = TrajectoryReference;
 		LatestAutopilotDiagnostics = AutopilotDiagnostics;
 		const FAircraftMotionPlan& Plan = TrajectoryRuntime.GetPlan();
@@ -1565,6 +1618,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		LatestMotionPlanRevision = AutopilotDiagnostics.PlanRevision;
 		LatestAuthorityInfo = RotorEffectivenessManager.AuthorityInfo;
 		LatestControlDiagnostics = MoveTemp(StepDiagnostics);
+		StampLatestOutputMetadata_NoLock(VehicleState.Sequence);
 		return;
 	}
 
@@ -1724,5 +1778,6 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		LatestMotionPlanDurationSeconds = Plan.GetDurationSeconds();
 		LatestMotionPlanLengthCm = Plan.GetLengthCm();
 		LatestMotionPlanRevision = AutopilotDiagnostics.PlanRevision;
+		StampLatestOutputMetadata_NoLock(VehicleState.Sequence);
 	}
 }

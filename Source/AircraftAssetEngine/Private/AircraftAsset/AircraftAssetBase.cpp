@@ -7,6 +7,7 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "ReferenceSkeleton.h"
 #include "AircraftAsset/AircraftComponent.h"
+#include "AircraftAsset/AircraftDataflowPreviewActor.h"
 
 namespace
 {
@@ -76,7 +77,7 @@ void UAircraftAssetBase::WriteDataflowContent(const TObjectPtr<UDataflowBaseCont
 
 #if WITH_EDITORONLY_DATA
 		SkeletalContent->SetAnimationAsset(GetPreviewSceneAnimation());
-		SkeletalContent->SetSkeletalMesh(GetPreviewSceneSkeletalMesh());
+		SkeletalContent->SetSkeletalMesh(GetSimulationSkeletalMesh());
 #endif
 	}
 }
@@ -87,7 +88,6 @@ void UAircraftAssetBase::ReadDataflowContent(const TObjectPtr<UDataflowBaseConte
 	{
 #if WITH_EDITORONLY_DATA
 		PreviewSceneAnimation = SkeletalContent->GetAnimationAsset();
-		PreviewSceneSkeletalMesh = SkeletalContent->GetSkeletalMesh();
 #endif
 	}
 }
@@ -149,7 +149,7 @@ const UDataflow* UAircraftAssetBase::GetDataflow() const
 
 FReferenceSkeleton& UAircraftAssetBase::GetRefSkeleton()
 {
-	if (const USkeletalMesh* SourceSkeletalMesh = GetSourceSkeletalMesh())
+	if (const USkeletalMesh* SourceSkeletalMesh = GetSimulationSkeletalMesh())
 	{
 		return const_cast<FReferenceSkeleton&>(SourceSkeletalMesh->GetRefSkeleton());
 	}
@@ -159,7 +159,7 @@ FReferenceSkeleton& UAircraftAssetBase::GetRefSkeleton()
 
 const FReferenceSkeleton& UAircraftAssetBase::GetRefSkeleton() const
 {
-	if (const USkeletalMesh* SourceSkeletalMesh = GetSourceSkeletalMesh())
+	if (const USkeletalMesh* SourceSkeletalMesh = GetSimulationSkeletalMesh())
 	{
 		return SourceSkeletalMesh->GetRefSkeleton();
 	}
@@ -497,16 +497,6 @@ const FPerPlatformBool& UAircraftAssetBase::GetDisableBelowMinLodStripping() con
 }
 
 #if WITH_EDITORONLY_DATA
-void UAircraftAssetBase::SetPreviewSceneSkeletalMesh(USkeletalMesh* Mesh)
-{
-	PreviewSceneSkeletalMesh = Mesh;
-}
-
-USkeletalMesh* UAircraftAssetBase::GetPreviewSceneSkeletalMesh() const
-{
-	return PreviewSceneSkeletalMesh.LoadSynchronous();
-}
-
 void UAircraftAssetBase::SetPreviewSceneAnimation(UAnimationAsset* Animation)
 {
 	PreviewSceneAnimation = Animation;
@@ -518,17 +508,21 @@ UAnimationAsset* UAircraftAssetBase::GetPreviewSceneAnimation() const
 }
 #endif
 
-void UAircraftAssetBase::OnPropertyChanged() const
-{
-}
-
 void UAircraftAssetBase::OnAssetChanged() const
 {
 	for (UAircraftComponent* const Component : GetDependentComponents())
 	{
 		if (IsValid(Component))
 		{
-			Component->RefreshAssetState();
+			if (AAircraftDataflowPreviewActor* const PreviewActor =
+				Cast<AAircraftDataflowPreviewActor>(Component->GetOwner()))
+			{
+				PreviewActor->RefreshPreviewAssetState();
+			}
+			else
+			{
+				Component->RefreshAssetState();
+			}
 		}
 	}
 }
@@ -541,7 +535,15 @@ void UAircraftAssetBase::UpdateSimulationActor(TObjectPtr<AActor>& SimulationAct
 		if (Component->GetAsset() == this)
 		{
 #if WITH_EDITOR
-			Component->RefreshAssetState();
+			if (AAircraftDataflowPreviewActor* const PreviewActor =
+				Cast<AAircraftDataflowPreviewActor>(SimulationActor.Get()))
+			{
+				PreviewActor->RefreshPreviewAssetState();
+			}
+			else
+			{
+				Component->RefreshAssetState();
+			}
 #endif
 		}
 		else if (!Component->GetAsset())

@@ -30,6 +30,22 @@ bool FAircraftSimulationBackendStatusContractTest::RunTest(const FString& Parame
 			FindFProperty<FStrProperty>(StatusStruct, TEXT("Detail")));
 		TestNull(TEXT("The obsolete failure-only field is removed"),
 			FindFProperty<FStrProperty>(StatusStruct, TEXT("FailureReason")));
+		TestNotNull(TEXT("Execution state is distinct from backend readiness"),
+			FindFProperty<FBoolProperty>(StatusStruct, TEXT("bExecutionEnabled")));
+		TestNotNull(TEXT("Suspend state is reported independently"),
+			FindFProperty<FBoolProperty>(StatusStruct, TEXT("bSimulationSuspended")));
+		TestNotNull(TEXT("Network proxy policy is observable"),
+			FindFProperty<FBoolProperty>(StatusStruct, TEXT("bNetworkProxy")));
+		TestNotNull(TEXT("Physics policy is observable"),
+			FindFProperty<FBoolProperty>(StatusStruct, TEXT("bPhysicsRequested")));
+		TestNotNull(TEXT("Constraint readiness is observable"),
+			FindFProperty<FBoolProperty>(StatusStruct, TEXT("bConstraintReady")));
+		TestNotNull(TEXT("LOD transition hold is observable"),
+			FindFProperty<FBoolProperty>(StatusStruct, TEXT("bLodTransitionHoldActive")));
+		TestNotNull(TEXT("Backend generation is reported"),
+			FindFProperty<FInt64Property>(StatusStruct, TEXT("BackendGeneration")));
+		TestNotNull(TEXT("Configuration revision is reported"),
+			FindFProperty<FInt64Property>(StatusStruct, TEXT("ConfigurationRevision")));
 	}
 
 	return true;

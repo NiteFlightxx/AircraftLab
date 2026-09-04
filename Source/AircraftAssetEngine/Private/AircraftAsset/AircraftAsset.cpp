@@ -7,8 +7,10 @@
 #include "UObject/SoftObjectPath.h"
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/AircraftAssetCustomVersion.h"
+#include "AircraftAsset/AircraftBodyBinding.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "AircraftAsset/AircraftSimulationModel.h"
+#include "AircraftDiagnostics/AircraftDebug.h"
 
 #define LOCTEXT_NAMESPACE "AircraftAsset"
 
@@ -109,6 +111,7 @@ namespace
 		MissingSkeletalMesh,
 		MissingLod,
 		InvalidRootBone,
+		MissingRootBody,
 		InvalidRotorInstallation
 	};
 
@@ -122,7 +125,9 @@ namespace
 	};
 
 	FCompiledAircraftModelValidation ValidateCompiledAircraftModel(
-		const FAircraftSimulationModel* Model)
+		const FAircraftSimulationModel* Model,
+		const USkeletalMesh* SkeletalMesh,
+		const UPhysicsAsset* PhysicsAsset)
 	{
 		FCompiledAircraftModelValidation Result;
 		if (!Model)
@@ -130,7 +135,7 @@ namespace
 			Result.Error = ECompiledAircraftModelError::MissingModel;
 			return Result;
 		}
-		if (!Model->SkeletalMesh)
+		if (!SkeletalMesh)
 		{
 			Result.Error = ECompiledAircraftModelError::MissingSkeletalMesh;
 			return Result;
@@ -150,6 +155,14 @@ namespace
 				Result.RootBone = LodModel.RootBone;
 				return Result;
 			}
+			if (UE::AircraftLab::AircraftAsset::ResolveAircraftChassisBodyName(
+				SkeletalMesh, PhysicsAsset, LodModel.RootBone).IsNone())
+			{
+				Result.Error = ECompiledAircraftModelError::MissingRootBody;
+				Result.LodIndex = LodIndex;
+				Result.RootBone = LodModel.RootBone;
+				return Result;
+			}
 			for (const FAircraftRotorDefinition& Rotor : LodModel.Rotors)
 			{
 				if (Rotor.bEnabled && !Rotor.bInstallationValid)
@@ -163,6 +176,39 @@ namespace
 			}
 		}
 		return Result;
+	}
+
+	struct FCompiledAircraftAssetCandidate
+	{
+		TArray<TSharedRef<const FManagedArrayCollection>> Collections;
+		TObjectPtr<USkeletalMesh> SkeletalMesh;
+		TObjectPtr<UPhysicsAsset> PhysicsAsset;
+		TSharedPtr<FAircraftSimulationModel> SimulationModel;
+	};
+
+	FCompiledAircraftAssetCandidate CompileAircraftAssetCandidate(
+		const TArray<TSharedRef<const FManagedArrayCollection>>& InputCollections,
+		const FName AircraftName)
+	{
+		check(IsInGameThread());
+		FCompiledAircraftAssetCandidate Candidate;
+		Candidate.Collections.Reserve(InputCollections.Num());
+		for (const TSharedRef<const FManagedArrayCollection>& InputCollection : InputCollections)
+		{
+			TSharedRef<FManagedArrayCollection> Collection =
+				MakeShared<FManagedArrayCollection>(*InputCollection);
+			UE::AircraftLab::AircraftAsset::FAircraftCollection(Collection).DefineSchema();
+			Candidate.Collections.Emplace(MoveTemp(Collection));
+		}
+		Candidate.SkeletalMesh = ResolveSourceSkeletalMesh(Candidate.Collections);
+		Candidate.PhysicsAsset = ResolveSourcePhysicsAsset(Candidate.Collections);
+		if (!Candidate.PhysicsAsset && Candidate.SkeletalMesh)
+		{
+			Candidate.PhysicsAsset = Candidate.SkeletalMesh->GetPhysicsAsset();
+		}
+		Candidate.SimulationModel = MakeShared<FAircraftSimulationModel>(
+			Candidate.Collections, AircraftName, Candidate.SkeletalMesh);
+		return Candidate;
 	}
 
 }
@@ -188,9 +234,9 @@ FString UAircraftAsset::BuildDerivedDataKey(const ITargetPlatform* TargetPlatfor
 {
 	(void)TargetPlatform;
 
-	const USkeletalMesh* const SourceSkeletalMesh = GetSourceSkeletalMesh();
-	const FString SkeletalMeshKey = SourceSkeletalMesh
-		? SourceSkeletalMesh->GetOutermost()->GetPersistentGuid().ToString() : TEXT("None");
+	const USkeletalMesh* const SourceMesh = GetSourceSkeletalMesh();
+	const FString SkeletalMeshKey = SourceMesh
+		? SourceMesh->GetOutermost()->GetPersistentGuid().ToString() : TEXT("None");
 	const FString PhysicsAssetKey = PhysicsAsset
 		? PhysicsAsset->GetOutermost()->GetPersistentGuid().ToString() : TEXT("None");
 
@@ -219,6 +265,7 @@ void UAircraftAsset::Build(
 	FText* ErrorText,
 	FText* VerboseText)
 {
+	check(IsInGameThread());
 	if (ErrorText)
 	{
 		*ErrorText = FText::GetEmpty();
@@ -227,6 +274,17 @@ void UAircraftAsset::Build(
 	{
 		*VerboseText = FText::GetEmpty();
 	}
+	CompileAndCommitAircraftState(
+		InAircraftCollections, ErrorText, VerboseText, true);
+}
+
+bool UAircraftAsset::CompileAndCommitAircraftState(
+	const TArray<TSharedRef<const FManagedArrayCollection>>& InAircraftCollections,
+	FText* const ErrorText,
+	FText* const VerboseText,
+	const bool bBroadcastChange)
+{
+	check(IsInGameThread());
 
 	auto AppendValidationError = [ErrorText, VerboseText](int32 LodIndex, const FText& ValidationError)
 	{
@@ -251,40 +309,17 @@ void UAircraftAsset::Build(
 	if (InAircraftCollections.IsEmpty())
 	{
 		AppendValidationError(0, LOCTEXT("MissingAircraftCollection", "At least one aircraft collection is required."));
-		return;
+		return false;
 	}
 
 	// ── 事务构建：局部构建 → 验证 → 一次性交换 → 广播 ──────────────
 	// 先在局部完成所有构建与验证，验证失败时不写入任何成员，保持旧资产状态。
-	TArray<TSharedRef<const FManagedArrayCollection>> BuiltAircraftCollections;
-	BuiltAircraftCollections.Reserve(InAircraftCollections.Num());
-
-	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
-	{
-		TSharedRef<FManagedArrayCollection> AircraftCollection = MakeShared<FManagedArrayCollection>(*InAircraftCollections[LodIndex]);
-		FAircraftCollection AircraftFacade(AircraftCollection);
-		AircraftFacade.DefineSchema();
-		BuiltAircraftCollections.Emplace(MoveTemp(AircraftCollection));
-	}
-
-	// 从候选 Collections 局部解析 SkeletalMesh/PhysicsAsset（不写入成员）。
-	USkeletalMesh* const CandidateSkeletalMesh = ResolveSourceSkeletalMesh(BuiltAircraftCollections);
-	UPhysicsAsset* CandidatePhysicsAsset = ResolveSourcePhysicsAsset(BuiltAircraftCollections);
-	if (!CandidatePhysicsAsset && CandidateSkeletalMesh)
-	{
-		CandidatePhysicsAsset = CandidateSkeletalMesh->GetPhysicsAsset();
-	}
-
-	// 局部构建候选 SimulationModel（不写入成员）。
-	const TSharedPtr<FAircraftSimulationModel> CandidateModel = MakeShared<FAircraftSimulationModel>(
-		BuiltAircraftCollections, GetFName(), CandidateSkeletalMesh);
-	if (CandidateModel.IsValid())
-	{
-		CandidateModel->PhysicsAsset = CandidatePhysicsAsset;
-	}
+	FCompiledAircraftAssetCandidate Candidate = CompileAircraftAssetCandidate(
+		InAircraftCollections, GetFName());
 
 	// 验证候选模型。
-	const FCompiledAircraftModelValidation Validation = ValidateCompiledAircraftModel(CandidateModel.Get());
+	const FCompiledAircraftModelValidation Validation = ValidateCompiledAircraftModel(
+		Candidate.SimulationModel.Get(), Candidate.SkeletalMesh, Candidate.PhysicsAsset);
 	switch (Validation.Error)
 	{
 	case ECompiledAircraftModelError::None:
@@ -294,31 +329,44 @@ void UAircraftAsset::Build(
 			LOCTEXT("InvalidRootBoneFrame",
 				"Root Bone '{0}' cannot be resolved in the skeletal mesh reference pose."),
 			FText::FromName(Validation.RootBone)));
-		return; // 不写入成员，保持旧状态
+		return false;
 	case ECompiledAircraftModelError::InvalidRotorInstallation:
 		AppendValidationError(Validation.LodIndex, FText::Format(
 			LOCTEXT("InvalidRotorInstallation",
 				"Rotor '{0}' has an invalid installation frame '{1}'."),
 			FText::FromName(Validation.RotorName),
 			FText::FromName(Validation.InstallationName)));
-		return;
+		return false;
+	case ECompiledAircraftModelError::MissingRootBody:
+	{
+		const FText MissingBodyText = Validation.RootBone.IsNone()
+			? LOCTEXT("MissingDefaultRootBody",
+				"The Physics Asset has no body that can be resolved in skeletal hierarchy order.")
+			: FText::Format(LOCTEXT("MissingRootBody",
+				"Root Bone '{0}' has no corresponding body in the Physics Asset."),
+				FText::FromName(Validation.RootBone));
+		AppendValidationError(Validation.LodIndex, MissingBodyText);
+		return false;
+	}
 	default:
 		AppendValidationError(Validation.LodIndex,
 			LOCTEXT("InvalidCompiledAircraftModel",
 				"Aircraft frame compilation requires a skeletal mesh and at least one LOD."));
-		return;
+		return false;
 	}
 
 	// 验证通过：一次性交换成员状态。
-	GetAircraftCollectionsInternal() = MoveTemp(BuiltAircraftCollections);
-	PhysicsAsset = CandidatePhysicsAsset;
-	SetSkeleton(CandidateSkeletalMesh ? CandidateSkeletalMesh->GetSkeleton() : nullptr);
-#if WITH_EDITORONLY_DATA
-	SetPreviewSceneSkeletalMesh(CandidateSkeletalMesh);
-#endif
-	AircraftSimulationModel = CandidateModel;
+	GetAircraftCollectionsInternal() = MoveTemp(Candidate.Collections);
+	SourceSkeletalMesh = Candidate.SkeletalMesh;
+	PhysicsAsset = Candidate.PhysicsAsset;
+	SetSkeleton(SourceSkeletalMesh ? SourceSkeletalMesh->GetSkeleton() : nullptr);
+	AircraftSimulationModel = MoveTemp(Candidate.SimulationModel);
 
-	OnAssetChanged();
+	if (bBroadcastChange)
+	{
+		OnAssetChanged();
+	}
+	return true;
 }
 
 void UAircraftAsset::Serialize(FArchive& Ar)
@@ -342,7 +390,8 @@ void UAircraftAsset::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 
 bool UAircraftAsset::HasValidAircraftSimulationModels() const
 {
-	return ValidateCompiledAircraftModel(AircraftSimulationModel.Get()).Error
+	return ValidateCompiledAircraftModel(
+		AircraftSimulationModel.Get(), SourceSkeletalMesh, PhysicsAsset).Error
 		== ECompiledAircraftModelError::None;
 }
 
@@ -364,21 +413,6 @@ const TArray<TSharedRef<const FManagedArrayCollection>>& UAircraftAsset::GetAirc
 void UAircraftAsset::SetAircraftCollections(TArray<TSharedRef<const FManagedArrayCollection>>&& InAircraftCollections)
 {
 	AircraftCollections = MoveTemp(InAircraftCollections);
-	OnPropertyChanged();
-}
-
-USkeletalMesh* UAircraftAsset::GetSourceSkeletalMesh() const
-{
-	if (AircraftSimulationModel.IsValid() && AircraftSimulationModel->SkeletalMesh != nullptr)
-	{
-		return AircraftSimulationModel->SkeletalMesh;
-	}
-
-#if WITH_EDITORONLY_DATA
-	return GetPreviewSceneSkeletalMesh();
-#else
-	return nullptr;
-#endif
 }
 
 void UAircraftAsset::BeginPostLoadInternal(FSkinnedAssetPostLoadContext& Context)
@@ -423,47 +457,23 @@ void UAircraftAsset::EnsureCollectionsInitialized()
 
 void UAircraftAsset::SynchronizeAssetStateFromCollections()
 {
-	USkeletalMesh* const SkeletalMesh = ResolveSourceSkeletalMesh(GetAircraftCollectionsInternal());
-
-	PhysicsAsset = ResolveSourcePhysicsAsset(GetAircraftCollectionsInternal());
-	if (!PhysicsAsset && SkeletalMesh)
+	FText ErrorText;
+	FText VerboseText;
+	if (!CompileAndCommitAircraftState(
+		GetAircraftCollectionsInternal(), &ErrorText, &VerboseText, false))
 	{
-		PhysicsAsset = SkeletalMesh->GetPhysicsAsset();
+		UE_LOG(LogAircraft, Error,
+			TEXT("[Aircraft.Asset.PostLoadCompileFailed] Asset=%s Error=%s Detail=%s"),
+			*GetPathName(), *ErrorText.ToString(), *VerboseText.ToString());
 	}
-
-	SetSkeleton(SkeletalMesh ? SkeletalMesh->GetSkeleton() : nullptr);
-
-#if WITH_EDITORONLY_DATA
-	SetPreviewSceneSkeletalMesh(SkeletalMesh);
-#endif
-
-	BuildAircraftSimulationModel();
-}
-
-TSharedPtr<FAircraftSimulationModel> UAircraftAsset::BuildAircraftSimulationModelLocal(
-	const TArray<TSharedRef<const FManagedArrayCollection>>& Collections) const
-{
-	USkeletalMesh* const SkeletalMesh = ResolveSourceSkeletalMesh(Collections);
-	TSharedPtr<FAircraftSimulationModel> LocalModel = MakeShared<FAircraftSimulationModel>(
-		Collections, GetFName(), SkeletalMesh);
-	if (LocalModel.IsValid())
-	{
-		LocalModel->PhysicsAsset = PhysicsAsset;
-	}
-	return LocalModel;
-}
-
-void UAircraftAsset::BuildAircraftSimulationModel()
-{
-	AircraftSimulationModel = BuildAircraftSimulationModelLocal(GetAircraftCollections());
 }
 
 #if WITH_EDITORONLY_DATA
 FSkeletalMeshModel* UAircraftAsset::GetImportedModel() const
 {
-	if (const USkeletalMesh* const SourceSkeletalMesh = GetSourceSkeletalMesh())
+	if (const USkeletalMesh* const SourceMesh = GetSimulationSkeletalMesh())
 	{
-		return SourceSkeletalMesh->GetImportedModel();
+		return SourceMesh->GetImportedModel();
 	}
 
 	return nullptr;

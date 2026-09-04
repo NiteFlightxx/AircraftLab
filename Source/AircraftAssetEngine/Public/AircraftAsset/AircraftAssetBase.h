@@ -53,6 +53,10 @@ public:
 
 	virtual const TArray<TSharedRef<const FManagedArrayCollection>>& GetCollections(int32 ModelIndex) const
 	PURE_VIRTUAL(UAircraftAssetBase::GetCollections, static const TArray<TSharedRef<const FManagedArrayCollection>> EmptyArray; return EmptyArray;);
+
+	/** Strongly owned skeletal mesh used to compile and execute the simulation. */
+	virtual USkeletalMesh* GetSimulationSkeletalMesh() const
+	PURE_VIRTUAL(UAircraftAssetBase::GetSimulationSkeletalMesh, return nullptr;);
 	//~ End UAircraftAssetBase interface
 
 	//~ Begin IDataflowContentOwner interface
@@ -123,18 +127,13 @@ public:
 	//~ End USkinnedAsset interface
 
 #if WITH_EDITORONLY_DATA
-	void SetPreviewSceneSkeletalMesh(USkeletalMesh* Mesh);
-	USkeletalMesh* GetPreviewSceneSkeletalMesh() const;
-
 	void SetPreviewSceneAnimation(UAnimationAsset* Animation);
 	UAnimationAsset* GetPreviewSceneAnimation() const;
 #endif
 
 protected:
-	virtual USkeletalMesh* GetSourceSkeletalMesh() const
-	PURE_VIRTUAL(UAircraftAssetBase::GetSourceSkeletalMesh, return nullptr;);
+	USkeletalMesh* GetSourceSkeletalMesh() const { return GetSimulationSkeletalMesh(); }
 
-	void OnPropertyChanged() const;
 	void OnAssetChanged() const;
 	TArray<UAircraftComponent*> GetDependentComponents() const;
 	void UpdateSimulationActor(TObjectPtr<AActor>& SimulationActor) const;
@@ -147,9 +146,6 @@ protected:
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(VisibleAnywhere, Category = Dataflow)
 	bool bHasDataflowAsset = false;
-
-	UPROPERTY(DuplicateTransient, AssetRegistrySearchable)
-	TSoftObjectPtr<USkeletalMesh> PreviewSceneSkeletalMesh;
 
 	UPROPERTY(DuplicateTransient, AssetRegistrySearchable)
 	TSoftObjectPtr<UAnimationAsset> PreviewSceneAnimation;

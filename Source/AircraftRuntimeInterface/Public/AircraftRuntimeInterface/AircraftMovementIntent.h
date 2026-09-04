@@ -64,7 +64,8 @@ enum class EAircraftMovementFailureReason : uint8
 	SolverFailed,
 	Timeout,
 	Replaced,
-	CancelledByCaller
+	CancelledByCaller,
+	SimulationLODChanged
 };
 
 /** 本次运动请求的软限制。飞控硬限制和实时控制权限始终具有更高优先级。 */

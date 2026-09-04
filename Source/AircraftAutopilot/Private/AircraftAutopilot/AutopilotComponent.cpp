@@ -640,3 +640,33 @@ bool UAutopilotComponent::IsAircraftMovementIntentActive() const
 {
 	return bActive && (ActiveHandle.IsValid() || PassThroughContinuationHandle.IsValid());
 }
+
+void UAutopilotComponent::OnAircraftMovementIntentInterrupted(
+	const FAircraftMovementIntentHandle Handle,
+	const EAircraftMovementFailureReason Reason)
+{
+	if (Handle == ActiveHandle)
+	{
+		PassThroughContinuationHandle = {};
+		Finish(EAircraftMovementIntentStatus::Interrupted, Reason);
+		SourceIntent = {};
+		ResolvedIntent = {};
+		PassThroughContinuationIntent = {};
+		StableTimeSeconds = 0.0f;
+		InitialDistanceToTargetCm = -1.0f;
+	}
+	else if (Handle == PassThroughContinuationHandle)
+	{
+		PassThroughContinuationHandle = {};
+		SourceIntent = {};
+		ResolvedIntent = {};
+		PassThroughContinuationIntent = {};
+		StableTimeSeconds = 0.0f;
+		InitialDistanceToTargetCm = -1.0f;
+		CurrentResult.Handle = Handle;
+		CurrentResult.Status = EAircraftMovementIntentStatus::Interrupted;
+		CurrentResult.FailureReason = Reason;
+		++IntentRevision;
+		OnMovementIntentChanged.Broadcast(CurrentResult);
+	}
+}

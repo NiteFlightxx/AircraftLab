@@ -2,7 +2,6 @@
 
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftAsset/AircraftDataflowPreviewActor.h"
-#include "AircraftRuntimeInterface/AircraftSimulationLODConsumer.h"
 #include "Dataflow/DataflowEditorToolkit.h"
 #include "Dataflow/DataflowSimulationScene.h"
 #include "Framework/Docking/TabManager.h"
@@ -171,10 +170,11 @@ namespace UE::AircraftLab::AircraftAssetEditor::Private
 				return LOCTEXT("Waiting", "Waiting for Aircraft preview actor...");
 			}
 			const FAircraftSimulationBackendStatus Status = Component->GetSimulationBackendStatus();
+			const AAircraftDataflowPreviewActor* const PreviewActor = GetPreviewActor();
 			FAircraftEstimatedState Estimated;
 			Component->GetEstimatedState(Estimated);
 			return FText::Format(LOCTEXT("BackendStatus",
-				"Playback: {0}\nBackend: {1}  Detail: {2}\nLOD: {3}  Drive: {4}  Root: {5}\nBody: valid={6} simulating={7}\nArm: {8}  Flight mode: {9}\nPosition: {10}\nVelocity: {11}\nAttitude: {12}\nWorld dt: {15}s  Physics dt: {13}s\nControl sequence: {14}"),
+				"Playback: {0}\nBackend: {1}  Detail: {2}\nLOD: {3}  Drive: {4}  Root: {5}\nBody: valid={6} simulating={7}\nExecution: enabled={16} suspended={17} network-proxy={18}\nLOD Hold: {19}  Target: {20}\nPreview mesh mismatch: {21}\nArm: {8}  Flight mode: {9}\nPosition: {10}\nVelocity: {11}\nAttitude: {12}\nWorld dt: {15}s  Physics dt: {13}s\nControl sequence: {14}"),
 				Scene->IsSimulationEnabled() ? LOCTEXT("Playing", "Playing") : LOCTEXT("PausedState", "Paused"),
 				UEnum::GetDisplayValueAsText(Status.State),
 				Status.Detail.IsEmpty() ? LOCTEXT("None", "None") : FText::FromString(Status.Detail),
@@ -188,7 +188,14 @@ namespace UE::AircraftLab::AircraftAssetEditor::Private
 				FText::FromString(Estimated.State.VelocityCmPerSec.ToCompactString()),
 				FText::FromString(Estimated.State.AttitudeDegrees.ToCompactString()),
 				FText::AsNumber(Status.PhysicsDeltaSeconds), FText::AsNumber(Status.ControlSequence),
-				FText::AsNumber(Scene->GetWorld() ? Scene->GetWorld()->GetDeltaSeconds() : 0.0f));
+				FText::AsNumber(Scene->GetWorld() ? Scene->GetWorld()->GetDeltaSeconds() : 0.0f),
+				Status.bExecutionEnabled ? LOCTEXT("True3", "true") : LOCTEXT("False3", "false"),
+				Status.bSimulationSuspended ? LOCTEXT("True4", "true") : LOCTEXT("False4", "false"),
+				Status.bNetworkProxy ? LOCTEXT("True5", "true") : LOCTEXT("False5", "false"),
+				Status.bLodTransitionHoldActive ? LOCTEXT("Active", "active") : LOCTEXT("Inactive", "inactive"),
+				FText::FromString(Status.LodTransitionHoldPositionCm.ToCompactString()),
+				PreviewActor && PreviewActor->HasPreviewMeshMismatch()
+					? LOCTEXT("True6", "true") : LOCTEXT("False6", "false"));
 		}
 
 		FReply Arm() { if (AAircraftDataflowPreviewActor* A = GetPreviewActor()) A->SetPreviewArmed(true); return FReply::Handled(); }
@@ -196,11 +203,9 @@ namespace UE::AircraftLab::AircraftAssetEditor::Private
 		FReply ApplyTarget() { if (AAircraftDataflowPreviewActor* A = GetPreviewActor()) A->ApplyPreviewHoldTarget(TargetCm, FixedYawDegrees); return FReply::Handled(); }
 		FReply ApplyLOD()
 		{
-			if (UAircraftComponent* C = GetComponent())
+			if (AAircraftDataflowPreviewActor* A = GetPreviewActor())
 			{
-				FAircraftSimulationBudget Budget;
-				Budget.LODIndex = RequestedLOD;
-				IAircraftSimulationLODConsumer::Execute_ApplyAircraftSimulationBudget(C, Budget);
+				A->ApplyPreviewSimulationLOD(RequestedLOD);
 			}
 			return FReply::Handled();
 		}

@@ -1129,4 +1129,35 @@ bool FAircraftDeterministicBackendTrajectoryTest::RunTest(const FString& Paramet
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAutopilotLodInterruptionTest,
+	"AircraftLab.Autopilot.Intent.LodInterruption",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAutopilotLodInterruptionTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	UAutopilotComponent* const Autopilot = NewObject<UAutopilotComponent>();
+	Autopilot->SetAutopilotActive(true);
+
+	FAircraftHoldIntent Hold;
+	Hold.PositionCm = FVector(100.0, 200.0, 300.0);
+	const FAircraftMovementIntentHandle Handle = Autopilot->SubmitHoldIntent(
+		Hold, FAircraftMovementIntentSettings(), FAircraftCompletionPolicy());
+	TestTrue(TEXT("The source intent is active before the LOD transition"),
+		Autopilot->IsAircraftMovementIntentActive());
+
+	Autopilot->OnAircraftMovementIntentInterrupted(
+		Handle, EAircraftMovementFailureReason::SimulationLODChanged);
+
+	const FAircraftMovementIntentResult Result = Autopilot->GetCurrentIntentResult();
+	TestEqual(TEXT("LOD transition interrupts the source intent"),
+		Result.Status, EAircraftMovementIntentStatus::Interrupted);
+	TestEqual(TEXT("The interruption reports the LOD reason"),
+		Result.FailureReason, EAircraftMovementFailureReason::SimulationLODChanged);
+	TestFalse(TEXT("The interrupted source intent cannot be pushed again"),
+		Autopilot->IsAircraftMovementIntentActive());
+	return true;
+}
+
 #endif

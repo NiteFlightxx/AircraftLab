@@ -21,6 +21,7 @@
 #include "Aircraft/RotorModel.h"
 #include "Aircraft/RotorEffectivenessManager.h"
 #include "AircraftAutopilot/AircraftTrajectoryRuntime.h"
+#include "AircraftDiagnostics/AircraftDebugSnapshot.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
 
 #include "AircraftAsset/AircraftSimulationModel.h"
@@ -43,6 +44,22 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationControlDiagnostics
 	FAircraftControlAuthorityInfo Authority;
 	bool bHasAerodynamics = false;
 	FAircraftAerodynamicWrench AerodynamicWrench;
+};
+
+/** One coherently published execution-frame snapshot. Contains values only. */
+struct AIRCRAFTASSETENGINE_API FAircraftSimulationOutputFrame
+{
+	uint64 PhysicsStateSequence = 0;
+	uint64 ControlSequence = 0;
+	EAircraftSimulationDriveMode DriveMode = EAircraftSimulationDriveMode::FlightController;
+	EAircraftArmState ArmState = EAircraftArmState::Disarmed;
+	EAircraftDebugPayload ValidPayloads = EAircraftDebugPayload::None;
+	FAircraftEstimatedState EstimatedState;
+	FAircraftFlightControlOutput ControlOutput;
+	FAircraftSimulationControlDiagnostics ControlDiagnostics;
+	FAircraftTrajectoryReference TrajectoryReference;
+	FAircraftAutopilotDiagnostics AutopilotDiagnostics;
+	FAircraftControlAuthorityInfo AuthorityInfo;
 };
 
 /* ===========================================================================
@@ -109,8 +126,8 @@ public:
 	void GetRotorEffectiveness_GameThread(TMap<FName, float>& OutEffectivenessByName) const;
 
 	void GetEstimatedState_GameThread(FAircraftEstimatedState& OutState) const;
-	void GetControlOutput_GameThread(FAircraftFlightControlOutput& OutOutput) const;
-	void GetControlDiagnostics_GameThread(FAircraftSimulationControlDiagnostics& OutDiagnostics) const;
+	void GetSimulationOutputFrame_GameThread(
+		FAircraftSimulationOutputFrame& OutFrame) const;
 	uint64 GetVehicleStateSequence_GameThread() const
 	{
 		return VehicleStateSequence.load(std::memory_order_relaxed);
@@ -149,6 +166,8 @@ private:
 	void RefreshControlAuthority_PhysicsThread(
 		const FAircraftFlightControllerRuntimeConfig& Config);
 	void ApplyPendingConfiguration_ExecutionThread();
+	void PublishEmptyOutputFrame_ExecutionThread();
+	void StampLatestOutputMetadata_NoLock(uint64 PhysicsStateSequence);
 	/** 由飞行模式推导能力缓存与姿态模式。 */
 	void UpdateModeCapabilities(EAircraftFlightMode Mode);
 	/** 按控制台开关限频输出权威飞控同口径的运行诊断。 */
@@ -204,6 +223,10 @@ private:
 	FAircraftSimulationControlDiagnostics LatestControlDiagnostics;
 	FAircraftTrajectoryReference LatestTrajectoryReference;
 	FAircraftAutopilotDiagnostics LatestAutopilotDiagnostics;
+	uint64 LatestPhysicsStateSequence = 0;
+	uint64 LatestControlSequence = 0;
+	EAircraftSimulationDriveMode LatestDriveMode = EAircraftSimulationDriveMode::FlightController;
+	EAircraftArmState LatestArmState = EAircraftArmState::Disarmed;
 	TArray<FAircraftMotionPlanSample> LatestMotionPlanSamples;
 	float LatestMotionPlanDurationSeconds = 0.0f;
 	float LatestMotionPlanLengthCm = 0.0f;

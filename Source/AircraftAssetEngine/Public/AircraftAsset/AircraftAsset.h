@@ -86,27 +86,28 @@ public:
 
 	virtual void SetCollections(TArray<TSharedRef<const FManagedArrayCollection>>&& InCollections) override;
 	virtual const TArray<TSharedRef<const FManagedArrayCollection>>& GetCollections(int32 /*ModelIndex*/) const override;
+	virtual USkeletalMesh* GetSimulationSkeletalMesh() const override { return SourceSkeletalMesh; }
 	//~ End UAircraftAssetBase interface
 
 	const TArray<TSharedRef<const FManagedArrayCollection>>& GetAircraftCollections() const;
 	void SetAircraftCollections(TArray<TSharedRef<const FManagedArrayCollection>>&& InAircraftCollections);
-
-protected:
-	virtual USkeletalMesh* GetSourceSkeletalMesh() const override;
 
 private:
 	virtual void BeginPostLoadInternal(FSkinnedAssetPostLoadContext& Context) override;
 
 	TArray<TSharedRef<const FManagedArrayCollection>>& GetAircraftCollectionsInternal();
 	void EnsureCollectionsInitialized();
+	bool CompileAndCommitAircraftState(
+		const TArray<TSharedRef<const FManagedArrayCollection>>& InAircraftCollections,
+		FText* ErrorText,
+		FText* VerboseText,
+		bool bBroadcastChange);
 	void SynchronizeAssetStateFromCollections();
-	void BuildAircraftSimulationModel();
-
-	/** 局部构建 SimulationModel（不写入成员），用于 Build 事务化：验证通过后才交换到成员。 */
-	TSharedPtr<FAircraftSimulationModel> BuildAircraftSimulationModelLocal(
-		const TArray<TSharedRef<const FManagedArrayCollection>>& Collections) const;
 
 private:
+	UPROPERTY(VisibleAnywhere, Category = Mesh)
+	TObjectPtr<USkeletalMesh> SourceSkeletalMesh;
+
 	UPROPERTY(EditAnywhere, Setter = SetSkeleton, Category = Skeleton)
 	TObjectPtr<USkeleton> Skeleton;
 

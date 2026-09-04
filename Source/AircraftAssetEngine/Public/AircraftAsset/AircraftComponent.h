@@ -36,6 +36,21 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	int32, PreviousLOD,
 	int32, NewLOD);
 
+struct FAircraftBodyMotionState
+{
+	FName BoneName = NAME_None;
+	FTransform WorldTransform = FTransform::Identity;
+	FVector LinearVelocityCmPerSec = FVector::ZeroVector;
+	FVector AngularVelocityRadPerSec = FVector::ZeroVector;
+	bool bWasAwake = true;
+};
+
+struct FAircraftPhysicsStateSnapshot
+{
+	FTransform ComponentTransform = FTransform::Identity;
+	TArray<FAircraftBodyMotionState> Bodies;
+};
+
 /**
  * 多旋翼组件
  *
@@ -162,12 +177,6 @@ public:
 
 	const FAircraftSimulationModel* GetSimulationModel() const;
 	const FAircraftSimulationLodModel* GetCurrentLodModel() const;
-	bool CaptureChassisPhysicsState(FTransform& OutBodyTransform,
-		FVector& OutLinearVelocityCmPerSec,
-		FVector& OutAngularVelocityRadPerSec) const;
-	bool RestoreChassisPhysicsState(const FTransform& BodyTransform,
-		const FVector& LinearVelocityCmPerSec,
-		const FVector& AngularVelocityRadPerSec);
 	void CaptureDebugSnapshot(const FAircraftDebugCaptureRequest& Request,
 		FAircraftDebugFrameSnapshot& OutSnapshot);
 
@@ -230,7 +239,30 @@ private:
 		}
 	};
 
+	struct FSimulationExecutionPolicy
+	{
+		bool bControllerExecutionEnabled = false;
+		bool bPhysicsSimulationEnabled = false;
+		bool bConstraintRequired = false;
+		bool bRequiresSimulatingChassis = false;
+	};
+
+	struct FLodTransitionHold
+	{
+		FAircraftMovementIntent Intent;
+		TWeakObjectPtr<UObject> InterruptedProvider;
+		FAircraftMovementIntentHandle InterruptedHandle;
+		uint64 InterruptedRevision = 0;
+		uint64 PilotInputRevision = 0;
+		bool bActive = false;
+	};
+
 	void SyncSkeletalMeshComponentFromAsset();
+	bool RebuildSimulationStructure(
+		const FAircraftPhysicsStateSnapshot& PhysicsSnapshot,
+		bool bRestoreVelocities,
+		bool bReplaceProxy,
+		bool bResetControllerRuntime);
 	FSimulationStructureSignature BuildSimulationStructureSignature() const;
 	FBodyInstance* ResolveChassisBodyInstance();
 	const FBodyInstance* ResolveChassisBodyInstance() const;
@@ -239,6 +271,17 @@ private:
 	void SetSimulationBackendState(EAircraftSimulationBackendState State, const TCHAR* Detail = nullptr);
 	void InvalidateSimulationBackend(EAircraftSimulationBackendState State, const TCHAR* Detail);
 	bool TryActivateSimulationBackend();
+	FSimulationExecutionPolicy ResolveExecutionPolicy() const;
+	void ApplyExecutionPolicy();
+	void ReplayRequestedControlState();
+	void CapturePhysicsStateSnapshot(FAircraftPhysicsStateSnapshot& OutSnapshot) const;
+	void RestorePhysicsStateSnapshot(const FAircraftPhysicsStateSnapshot& Snapshot,
+		bool bRestoreVelocities);
+	bool CaptureLodTransitionHold();
+	void ClearLodTransitionHold();
+	bool HasNewMovementRequestAfterLodTransition(
+		UObject* Provider, const FAircraftMovementIntentHandle& Handle,
+		uint64 Revision) const;
 
 
 	/** 创建 6-DOF 物理约束后端（约束参数取自当前 LOD 的 FlightController 配置）。 */
@@ -280,11 +323,7 @@ private:
 	/** 根据 LastAppliedSimulationBudget 重新计算并施加代理仿真状态与物理启用状态。
 	 *  所有可覆盖预算的路径（SetEnableSimulation/Resume/OnCreatePhysicsState 等）统一调用此函数，
 	 *  确保网络代理抑制不被覆盖。 */
-	void ApplyBudgetToSimulationState();
-
-	void ApplyCurrentSimulationLOD();
-	void ApplySimulationLOD(int32 LodIndex, bool bQueueProxyConfiguration = true);
-	void ApplySimulationDriveMode(EAircraftSimulationDriveMode NewDriveMode);
+	void ApplySimulationLOD(int32 LodIndex);
 
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
 	TObjectPtr<UAircraftAssetBase> Asset;
@@ -311,20 +350,34 @@ private:
 	FSimulationStructureSignature AppliedStructureSignature;
 	bool bHasAppliedStructureSignature = false;
 	bool bBackendStructureUpdateInProgress = false;
+	uint64 BackendGeneration = 0;
+	uint64 ConfigurationRevision = 0;
 	/** 所有驱动后端共享的最新飞行员输入。 */
 	FAircraftPilotInput PilotInput;
+	uint64 PilotInputRevision = 0;
 	FAircraftLowLevelControlTargets LowLevelControlTargets;
+	EAircraftFlightMode RequestedFlightMode = EAircraftFlightMode::PositionHold;
+	bool bRequestedArm = false;
+	bool bRequestedEmergencyStop = false;
+	bool bRequestedControllerEnabled = true;
+	bool bRequestedControlStateInitialized = false;
+	TMap<FName, float> RequestedRotorEffectiveness;
 
 	/* ------- Autopilot / 替代驱动后端状态 ------- */
 
 	/** 唯一高层 MovementIntent 提供者。 */
 	UPROPERTY(Transient)
 	TObjectPtr<UObject> MovementIntentProviderObject;
+	TWeakObjectPtr<UObject> LastPushedMovementIntentProvider;
+	FAircraftMovementIntentHandle LastPushedMovementIntentHandle;
+	uint64 LastPushedMovementIntentRevision = 0;
+	FLodTransitionHold LodTransitionHold;
 
 	/** 当前模拟驱动后端，由当前 LOD 表项直接决定。 */
 	EAircraftSimulationDriveMode SimulationDriveMode = EAircraftSimulationDriveMode::FlightController;
-	bool bSimulationPhysicsEnabled = true;
-	bool bDriveModeTransitionInProgress = false;
+	bool bSimulationPhysicsEnabled = false;
+	bool bHasAppliedPhysicsExecutionPolicy = false;
+	bool bApplyingExecutionPolicy = false;
 
 	/** 最近一次施加的仿真预算。非网络代理时为默认值；网络代理时持久化，
 	 *  防止后续 SetEnableSimulation/Resume/Backend 重建覆盖代理抑制。 */
@@ -346,9 +399,6 @@ private:
 	bool bMovementIntentWasPushed = false;
 	FAircraftMovementIntent ManualMovementIntent;
 
-	/** 驱动切换时保存/恢复的物理速度（Kinematic↔物理 切换连续性）。 */
-	FVector SavedSimulationLinearVelocityCmPerSec = FVector::ZeroVector;
-	FVector SavedSimulationAngularVelocityRadPerSec = FVector::ZeroVector;
 	/** 替代驱动下的估计速度跟踪。 */
 	FVector PreviousAlternativeVelocityCmPerSec = FVector::ZeroVector;
 

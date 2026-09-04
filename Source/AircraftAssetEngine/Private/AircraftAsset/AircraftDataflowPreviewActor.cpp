@@ -14,8 +14,8 @@ AAircraftDataflowPreviewActor::AAircraftDataflowPreviewActor(const FObjectInitia
 {
 	AircraftComponent = CreateDefaultSubobject<UAircraftComponent>(TEXT("AircraftComponent0"));
 	// Dataflow deferred spawning registers this native component before it injects the
-	// Aircraft asset. Enable physics collision up front so the asset-bound
-	// RecreatePhysicsState() creates every body in the injected PhysicsAsset.
+	// Aircraft asset. Enable physics collision up front so the asset-bound component
+	// lifecycle creates every body in the injected PhysicsAsset.
 	AircraftComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	RootComponent = AircraftComponent;
 	PrimaryActorTick.bCanEverTick = true;
@@ -64,15 +64,10 @@ void AAircraftDataflowPreviewActor::SyncComponentFromInjectedProperties()
 	}
 	AircraftComponent->SetMovementIntentProvider(this);
 
-	// 2) 预览网格覆盖：编辑器内容面板上用户可另行指定预览网格（与布料的 SkeletalMesh 变量语义一致）。
-	//    覆盖后必须刷新结构签名并重建后端，否则 RootBone、Socket、力臂和飞控轴可能基于不同骨架。
-	if (SkeletalMesh && AircraftComponent->GetSkeletalMeshAsset() != SkeletalMesh)
-	{
-		AircraftComponent->SetSkeletalMeshAsset(SkeletalMesh);
-		AircraftComponent->RefreshAssetState();
-	}
-
-	// 3) 预览动画（无人机通常不播动画，但保持与布料预览一致的通路）。
+	// 注入的 SkeletalMesh 只镜像 Dataflow Content。模拟资源始终由 Aircraft Asset 唯一决定。
+	bPreviewMeshMismatch = SkeletalMesh && DataflowAsset
+		&& SkeletalMesh != DataflowAsset->GetSimulationSkeletalMesh();
+	// 预览动画（无人机通常不播动画，但保持与布料预览一致的通路）。
 	if (AnimationAsset && AircraftComponent->AnimationData.AnimToPlay != AnimationAsset)
 	{
 		AircraftComponent->SetAnimationMode(EAnimationMode::Type::AnimationSingleNode);
@@ -125,6 +120,21 @@ void AAircraftDataflowPreviewActor::InitializeDefaultScenarioIfReady()
 	}
 }
 
+void AAircraftDataflowPreviewActor::RefreshPreviewAssetState()
+{
+	if (!AircraftComponent)
+	{
+		return;
+	}
+	AircraftComponent->RefreshAssetState();
+	if (bPreviewFrozen
+		&& AircraftComponent->GetCurrentSimulationDriveMode()
+			!= EAircraftSimulationDriveMode::Kinematic)
+	{
+		AircraftComponent->SetAircraftPhysicsSimulationEnabled(false);
+	}
+}
+
 void AAircraftDataflowPreviewActor::ApplyPreviewHoldTarget(
 	const FVector& PositionCm, const float FixedYawDegrees)
 {
@@ -139,6 +149,24 @@ void AAircraftDataflowPreviewActor::ApplyPreviewHoldTarget(
 	PreviewMovementIntent.TimeoutSeconds = 0.0f;
 	++PreviewMovementIntentRevision;
 	bPreviewIntentActive = true;
+}
+
+void AAircraftDataflowPreviewActor::ApplyPreviewSimulationLOD(const int32 LodIndex)
+{
+	if (!AircraftComponent)
+	{
+		return;
+	}
+	FAircraftSimulationBudget Budget;
+	Budget.LODIndex = LodIndex;
+	IAircraftSimulationLODConsumer::Execute_ApplyAircraftSimulationBudget(
+		AircraftComponent, Budget);
+	if (bPreviewFrozen
+		&& AircraftComponent->GetCurrentSimulationDriveMode()
+			!= EAircraftSimulationDriveMode::Kinematic)
+	{
+		AircraftComponent->SetAircraftPhysicsSimulationEnabled(false);
+	}
 }
 
 void AAircraftDataflowPreviewActor::SetPreviewArmed(const bool bArmed)
@@ -211,6 +239,18 @@ bool AAircraftDataflowPreviewActor::IsAircraftMovementIntentActive() const
 	return bPreviewIntentActive;
 }
 
+void AAircraftDataflowPreviewActor::OnAircraftMovementIntentInterrupted(
+	const FAircraftMovementIntentHandle Handle,
+	const EAircraftMovementFailureReason Reason)
+{
+	(void)Reason;
+	if (Handle == PreviewMovementIntentHandle)
+	{
+		bPreviewIntentActive = false;
+		++PreviewMovementIntentRevision;
+	}
+}
+
 FName AAircraftDataflowPreviewActor::GetChassisBoneName() const
 {
 	if (AircraftComponent)
@@ -230,10 +270,7 @@ void AAircraftDataflowPreviewActor::FreezePreviewSimulation()
 		return;
 	}
 	bPreviewFrozen = true;
-	FrozenComponentTransform = AircraftComponent->GetComponentTransform();
-	bFrozenBodyStateValid = AircraftComponent->CaptureChassisPhysicsState(
-		FrozenBodyTransform, FrozenLinearVelocityCmPerSec,
-		FrozenAngularVelocityRadPerSec);
+	AircraftComponent->CapturePhysicsStateSnapshot(FrozenPhysicsState);
 	AircraftComponent->SuspendSimulation();
 	AircraftComponent->DestroySimulationConstraint();
 	AircraftComponent->SetComponentTickEnabled(false);
@@ -259,19 +296,11 @@ void AAircraftDataflowPreviewActor::ResumePreviewSimulation()
 		return;
 	}
 	const EAircraftSimulationDriveMode DriveMode = AircraftComponent->GetCurrentSimulationDriveMode();
-	AircraftComponent->SetWorldTransform(
-		FrozenComponentTransform, false, nullptr, ETeleportType::TeleportPhysics);
 	if (DriveMode != EAircraftSimulationDriveMode::Kinematic)
 	{
 		AircraftComponent->SetAircraftPhysicsSimulationEnabled(true);
-		if (bFrozenBodyStateValid)
-		{
-			AircraftComponent->RestoreChassisPhysicsState(
-				FrozenBodyTransform, FrozenLinearVelocityCmPerSec,
-				FrozenAngularVelocityRadPerSec);
-		}
-		AircraftComponent->WakeAllRigidBodies();
 	}
+	AircraftComponent->RestorePhysicsStateSnapshot(FrozenPhysicsState, true);
 	AircraftComponent->ResumeSimulation();
 	AircraftComponent->SetComponentTickEnabled(true);
 	bPreviewFrozen = false;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AircraftRuntimeInterface/AircraftMovementIntent.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODTypes.h"
 
 #include "AircraftSimulationBackend.generated.h"
@@ -46,6 +47,36 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationBackendStatus
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	bool bBodySimulating = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	bool bExecutionEnabled = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	bool bSimulationSuspended = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	bool bNetworkProxy = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	bool bPhysicsRequested = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	bool bConstraintReady = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	bool bLodTransitionHoldActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation", meta = (Units = "cm"))
+	FVector LodTransitionHoldPositionCm = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	EAircraftMovementFailureReason LodInterruptionReason = EAircraftMovementFailureReason::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	int64 BackendGeneration = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	int64 ConfigurationRevision = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	int64 ControlSequence = 0;

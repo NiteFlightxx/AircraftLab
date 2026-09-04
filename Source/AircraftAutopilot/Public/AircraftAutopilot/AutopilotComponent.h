@@ -107,6 +107,9 @@ public:
 	virtual bool GetAircraftMovementIntent(FAircraftMovementIntent& OutIntent,
 		FAircraftMovementIntentHandle& OutHandle, uint64& OutRevision) const override;
 	virtual bool IsAircraftMovementIntentActive() const override;
+	virtual void OnAircraftMovementIntentInterrupted(
+		FAircraftMovementIntentHandle Handle,
+		EAircraftMovementFailureReason Reason) override;
 
 private:
 	UPROPERTY(Transient)

@@ -286,8 +286,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 		USkeletalMesh* InSkeletalMesh = nullptr);
 
 	FName AircraftName = NAME_None;
-	USkeletalMesh* SkeletalMesh = nullptr;
-	UPhysicsAsset* PhysicsAsset = nullptr;
 	FAircraftSimulationLODProfileRuntimeConfig SimulationLOD;
 	TArray<FAircraftSimulationLodModel> LodModels;
 
