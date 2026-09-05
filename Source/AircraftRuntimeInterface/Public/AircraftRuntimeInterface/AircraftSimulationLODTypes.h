@@ -45,6 +45,13 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftSimulationBudget
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	bool bIsNetworkProxy = false;
 
+	/**
+	 * 是否在实际 LOD 变化时恢复切换前的 PhysicsAsset 姿态/速度，并以切换瞬间的
+	 * 世界空间质心创建内部 Hold。默认关闭，切换后使用新 LOD 自身的初始化状态与现有 Intent。
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
+	bool bPreserveSimulationState = false;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aircraft|Simulation")
 	EAircraftSimulationCollisionMode CollisionMode = EAircraftSimulationCollisionMode::Disabled;
 

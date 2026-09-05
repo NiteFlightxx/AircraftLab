@@ -121,7 +121,7 @@ void UAircraftComponent::RefreshAssetState()
 			? FMath::Clamp(CurrentSimulationLOD, 0, NewModel->GetNumLods() - 1)
 			: INDEX_NONE;
 		SimulationDriveMode = NewSignature.DriveMode;
-		RebuildSimulationStructure(PhysicsSnapshot, true, false, true);
+		RebuildSimulationStructure(&PhysicsSnapshot, true, false, true);
 	}
 	else
 	{
@@ -447,7 +447,7 @@ void UAircraftComponent::HardResetSimulation()
 	FAircraftPhysicsStateSnapshot PhysicsSnapshot;
 	CapturePhysicsStateSnapshot(PhysicsSnapshot);
 	RebuildSimulationStructure(
-		PhysicsSnapshot, false, true, true);
+		&PhysicsSnapshot, false, true, true);
 }
 
 const FAircraftSimulationModel* UAircraftComponent::GetSimulationModel() const
@@ -472,7 +472,9 @@ EAircraftSimulationDriveMode UAircraftComponent::GetCurrentSimulationDriveMode()
 	return SimulationDriveMode;
 }
 
-void UAircraftComponent::ApplySimulationLOD(const int32 LodIndex)
+void UAircraftComponent::ApplySimulationLOD(
+	const int32 LodIndex,
+	const bool bPreserveSimulationState)
 {
 	check(IsInGameThread());
 	const FAircraftSimulationModel* const Model = GetSimulationModel();
@@ -495,28 +497,43 @@ void UAircraftComponent::ApplySimulationLOD(const int32 LodIndex)
 		return;
 	}
 	FAircraftPhysicsStateSnapshot PhysicsSnapshot;
-	CapturePhysicsStateSnapshot(PhysicsSnapshot);
+	if (bPreserveSimulationState)
+	{
+		CapturePhysicsStateSnapshot(PhysicsSnapshot);
+	}
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->SetSimulationState_GameThread(false, true);
 	}
 	if (bLODChanged)
 	{
-		CaptureLodTransitionHold();
+		if (bPreserveSimulationState)
+		{
+			CaptureLodTransitionHold();
+		}
+		else
+		{
+			ClearLodTransitionHold();
+		}
 	}
 
 	const int32 PreviousLOD = CurrentSimulationLOD;
 	CurrentSimulationLOD = LodIndex;
 	SimulationDriveMode = DriveMode;
-	RebuildSimulationStructure(PhysicsSnapshot, true, false, false);
+	RebuildSimulationStructure(
+		bPreserveSimulationState ? &PhysicsSnapshot : nullptr,
+		true,
+		false,
+		false);
 	AppliedStructureSignature = BuildSimulationStructureSignature();
 	bHasAppliedStructureSignature = true;
 	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::SimulationDrive))
 	{
 		UE_LOG(LogAircraft, Display,
-			TEXT("[Aircraft.Drive.LOD] Owner=%s PreviousLOD=%d LOD=%d Drive=%s PhysicsEnabled=%d Simulating=%d Proxy=%d"),
+			TEXT("[Aircraft.Drive.LOD] Owner=%s PreviousLOD=%d LOD=%d Drive=%s PreserveState=%d PhysicsEnabled=%d Simulating=%d Proxy=%d"),
 			*GetNameSafe(GetOwner()), PreviousLOD, CurrentSimulationLOD,
 			FAircraftDebug::GetDriveModeLabel(SimulationDriveMode),
+			bPreserveSimulationState ? 1 : 0,
 			bSimulationPhysicsEnabled ? 1 : 0, IsSimulatingPhysics() ? 1 : 0,
 			AircraftSimulationProxy.IsValid() ? 1 : 0);
 	}
@@ -1557,7 +1574,7 @@ void UAircraftComponent::ApplyAircraftSimulationBudget_Implementation(const FAir
 	const FAircraftSimulationModel* const Model = GetSimulationModel();
 	if (Budget.LODIndex != INDEX_NONE && Model && Model->IsValidLodIndex(Budget.LODIndex))
 	{
-		ApplySimulationLOD(Budget.LODIndex);
+		ApplySimulationLOD(Budget.LODIndex, Budget.bPreserveSimulationState);
 	}
 	ApplyExecutionPolicy();
 	if (IsRegistered() && !bBackendStructureUpdateInProgress)
@@ -1960,7 +1977,7 @@ void UAircraftComponent::ResetSimulationBackend()
 /* ============================ Helpers ============================ */
 
 bool UAircraftComponent::RebuildSimulationStructure(
-	const FAircraftPhysicsStateSnapshot& PhysicsSnapshot,
+	const FAircraftPhysicsStateSnapshot* const PhysicsSnapshot,
 	const bool bRestoreVelocities,
 	const bool bReplaceProxy,
 	const bool bResetControllerRuntime)
@@ -2020,7 +2037,10 @@ bool UAircraftComponent::RebuildSimulationStructure(
 		AircraftSimulationProxy->ReconfigureForLod_GameThread();
 	}
 	ReplayRequestedControlState();
-	RestorePhysicsStateSnapshot(PhysicsSnapshot, bRestoreVelocities);
+	if (PhysicsSnapshot)
+	{
+		RestorePhysicsStateSnapshot(*PhysicsSnapshot, bRestoreVelocities);
+	}
 
 	AppliedStructureSignature = BuildSimulationStructureSignature();
 	bHasAppliedStructureSignature = true;

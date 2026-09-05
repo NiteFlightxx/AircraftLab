@@ -92,4 +92,33 @@ bool FAircraftNetworkReplicationContractTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftSimulationLodPreservationPolicyContractTest,
+	"AircraftLab.SimulationLOD.PreservationPolicyContract",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftSimulationLodPreservationPolicyContractTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	const UFunction* const SetLodFunction =
+		UAircraftSimulationLODComponent::StaticClass()->FindFunctionByName(TEXT("SetSimulationLOD"));
+	TestNotNull(TEXT("SetSimulationLOD exists"), SetLodFunction);
+	if (SetLodFunction)
+	{
+		TestNotNull(TEXT("SetSimulationLOD exposes the preservation policy"),
+			FindFProperty<FBoolProperty>(SetLodFunction, TEXT("bPreserveSimulationState")));
+		TestEqual(TEXT("Blueprint preservation policy defaults to false"),
+			SetLodFunction->GetMetaData(TEXT("CPP_Default_bPreserveSimulationState")),
+			FString(TEXT("false")));
+	}
+
+	TestNotNull(TEXT("Simulation budget carries the preservation policy"),
+		FindFProperty<FBoolProperty>(
+			FAircraftSimulationBudget::StaticStruct(), TEXT("bPreserveSimulationState")));
+	const FAircraftSimulationBudget DefaultBudget;
+	TestFalse(TEXT("Simulation state preservation is disabled by default"),
+		DefaultBudget.bPreserveSimulationState);
+	return true;
+}
+
 #endif

@@ -50,9 +50,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Aircraft|Simulation")
 	int32 GetCurrentSimulationLOD() const { return CurrentLODIndex; }
 
-	/** 由服务器或 Standalone 显式选择 LOD；索引无效时不改变当前状态。 */
+	/**
+	 * 由服务器或 Standalone 显式选择 LOD；索引无效时不改变当前状态。
+	 * bPreserveSimulationState 为 true 时恢复 PhysicsAsset 姿态/速度，并在切换点生成内部 Hold；
+	 * 默认 false，让新 LOD 使用自身的初始化状态且不替换现有 MovementIntent。
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Aircraft|Simulation")
-	bool SetSimulationLOD(int32 NewLODIndex);
+	bool SetSimulationLOD(int32 NewLODIndex, bool bPreserveSimulationState = false);
 
 	UPROPERTY(BlueprintAssignable, Category = "Aircraft|Simulation")
 	FOnAircraftLODSelectionChanged OnLODSelectionChanged;
@@ -100,7 +104,10 @@ private:
 	void RefreshConsumerCache();
 	void RefreshCollisionComponents();
 	void ApplyCollisionBudget(const FAircraftSimulationBudget& Budget);
-	bool ApplyCurrentLOD(int32 PreviousLODIndex, bool bBroadcastChange);
+	bool ApplyCurrentLOD(
+		int32 PreviousLODIndex,
+		bool bBroadcastChange,
+		bool bPreserveSimulationState);
 	void ApplyCurrentNetworkSettings();
 	FAircraftSimulationLODNetworkSettings GetNetworkSettings(int32 LODIndex) const;
 };

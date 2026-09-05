@@ -38,7 +38,7 @@ void UAircraftSimulationLODComponent::BeginPlay()
 		{
 			CurrentLODIndex = 0;
 		}
-		ApplyCurrentLOD(CurrentLODIndex, false);
+		ApplyCurrentLOD(CurrentLODIndex, false, false);
 	}
 }
 
@@ -57,7 +57,9 @@ void UAircraftSimulationLODComponent::GetLifetimeReplicatedProps(
 	DOREPLIFETIME(UAircraftSimulationLODComponent, CurrentLODIndex);
 }
 
-bool UAircraftSimulationLODComponent::SetSimulationLOD(int32 NewLODIndex)
+bool UAircraftSimulationLODComponent::SetSimulationLOD(
+	const int32 NewLODIndex,
+	const bool bPreserveSimulationState)
 {
 	AActor* const Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
@@ -80,13 +82,16 @@ bool UAircraftSimulationLODComponent::SetSimulationLOD(int32 NewLODIndex)
 
 	const int32 PreviousLODIndex = CurrentLODIndex;
 	CurrentLODIndex = NewLODIndex;
-	return ApplyCurrentLOD(PreviousLODIndex, PreviousLODIndex != CurrentLODIndex);
+	return ApplyCurrentLOD(
+		PreviousLODIndex,
+		PreviousLODIndex != CurrentLODIndex,
+		bPreserveSimulationState);
 }
 
 void UAircraftSimulationLODComponent::OnRep_CurrentLODIndex(int32 PreviousLODIndex)
 {
 	bHasAppliedBudget = false;
-	ApplyCurrentLOD(PreviousLODIndex, PreviousLODIndex != CurrentLODIndex);
+	ApplyCurrentLOD(PreviousLODIndex, PreviousLODIndex != CurrentLODIndex, false);
 }
 
 void UAircraftSimulationLODComponent::RefreshConsumerCache()
@@ -168,7 +173,8 @@ void UAircraftSimulationLODComponent::ApplyCollisionBudget(const FAircraftSimula
 
 bool UAircraftSimulationLODComponent::ApplyCurrentLOD(
 	int32 PreviousLODIndex,
-	bool bBroadcastChange)
+	bool bBroadcastChange,
+	bool bPreserveSimulationState)
 {
 	RefreshConsumerCache();
 	const UAircraftComponent* const Aircraft = AircraftComponent.Get();
@@ -188,6 +194,7 @@ bool UAircraftSimulationLODComponent::ApplyCurrentLOD(
 	FAircraftSimulationBudget Budget;
 	Budget.LODIndex = CurrentLODIndex;
 	Budget.bIsNetworkProxy = bNetworkProxyBudget;
+	Budget.bPreserveSimulationState = bPreserveSimulationState && !bNetworkProxyBudget;
 	Budget.DriveMode = Entry.DriveMode;
 	Budget.bEnablePhysics = bNetworkProxyBudget
 		? bClientProxyUsesDefaultPhysicsReplication && bPhysicalDrive

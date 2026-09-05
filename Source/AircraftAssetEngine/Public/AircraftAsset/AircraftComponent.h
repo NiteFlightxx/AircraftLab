@@ -259,7 +259,7 @@ private:
 
 	void SyncSkeletalMeshComponentFromAsset();
 	bool RebuildSimulationStructure(
-		const FAircraftPhysicsStateSnapshot& PhysicsSnapshot,
+		const FAircraftPhysicsStateSnapshot* PhysicsSnapshot,
 		bool bRestoreVelocities,
 		bool bReplaceProxy,
 		bool bResetControllerRuntime);
@@ -323,7 +323,7 @@ private:
 	/** 根据 LastAppliedSimulationBudget 重新计算并施加代理仿真状态与物理启用状态。
 	 *  所有可覆盖预算的路径（SetEnableSimulation/Resume/OnCreatePhysicsState 等）统一调用此函数，
 	 *  确保网络代理抑制不被覆盖。 */
-	void ApplySimulationLOD(int32 LodIndex);
+	void ApplySimulationLOD(int32 LodIndex, bool bPreserveSimulationState);
 
 	UPROPERTY(EditAnywhere, Setter = SetAsset, BlueprintSetter = SetAsset, Getter = GetAsset, BlueprintGetter = GetAsset, Category = AircraftComponent)
 	TObjectPtr<UAircraftAssetBase> Asset;
