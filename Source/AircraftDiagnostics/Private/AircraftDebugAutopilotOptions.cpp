@@ -118,12 +118,36 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAutopilotOptions(
 		Option.Draw3D = [](const FAircraftDebugFrameSnapshot& S, const FAircraftDebugDrawContext& C)
 		{
 			if (!S.AutopilotReference.bValid) return;
+			if (S.NavigationGuidanceStatus.State != EAircraftNavigationGuidanceState::Inactive
+				&& S.AutopilotNominalReference.bValid)
+			{
+				FAircraftDebugDraw::DrawSphere(C,
+					S.AutopilotNominalReference.PositionCm, 10.0f,
+					FAircraftDebugColors::Trajectory);
+				FAircraftDebugDraw::DrawDashedLine(C,
+					S.AutopilotNominalReference.PositionCm,
+					S.AutopilotReference.PositionCm,
+					FAircraftDebugColors::Trajectory);
+			}
 			FAircraftDebugDraw::DrawSphere(C, S.AutopilotReference.PositionCm, 16.0f, FAircraftDebugColors::Setpoint);
 			FAircraftDebugDraw::DrawArrow(C, S.AutopilotReference.PositionCm,
 				S.AutopilotReference.VelocityCmPerSec * UE::AircraftLab::Diagnostics::DebugVectorScale,
 				FAircraftDebugColors::ReferenceVelocity);
 			FAircraftDebugDraw::DrawArrow(C, S.AutopilotReference.PositionCm,
 				FRotator(0.0f, S.AutopilotReference.YawDegrees, 0.0f).Vector() * 80.0f, FAircraftDebugColors::Setpoint);
+		};
+		Option.CanvasText = [](const FAircraftDebugFrameSnapshot& S)
+		{
+			const double GuidanceAgeSeconds = FMath::Max(
+				S.AutopilotReference.GeneratedAtSeconds
+					- S.NavigationGuidanceStatus.GeneratedAtSeconds,
+				0.0);
+			return FText::Format(LOCTEXT("ReferenceText",
+				"Guidance: {0} | Revision: {1} | Reason: {2} | Age: {3} s"),
+				UEnum::GetDisplayValueAsText(S.NavigationGuidanceStatus.State),
+				FText::AsNumber(static_cast<int64>(S.NavigationGuidanceStatus.Revision)),
+				UEnum::GetDisplayValueAsText(S.NavigationGuidanceStatus.FailureReason),
+				FText::AsNumber(GuidanceAgeSeconds));
 		};
 		AddOption(OutHandles, MoveTemp(Option), EAircraftDebugPayload::AutopilotCore,
 			EAircraftRuntimeDrawGroup::Autopilot, 20);

@@ -23,6 +23,7 @@
 #include "AircraftAutopilot/AircraftTrajectoryRuntime.h"
 #include "AircraftDiagnostics/AircraftDebugSnapshot.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
+#include "AircraftRuntimeInterface/AircraftNavigationGuidance.h"
 
 #include "AircraftAsset/AircraftSimulationModel.h"
 #include "AircraftAsset/AircraftSimulationTypes.h"
@@ -55,9 +56,13 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationOutputFrame
 	EAircraftArmState ArmState = EAircraftArmState::Disarmed;
 	EAircraftDebugPayload ValidPayloads = EAircraftDebugPayload::None;
 	FAircraftEstimatedState EstimatedState;
+	FAircraftVehicleStateSnapshot VehicleState;
 	FAircraftFlightControlOutput ControlOutput;
 	FAircraftSimulationControlDiagnostics ControlDiagnostics;
 	FAircraftTrajectoryReference TrajectoryReference;
+	FAircraftTrajectoryReference NominalTrajectoryReference;
+	FAircraftDynamicCapabilitySnapshot DynamicCapability;
+	FAircraftNavigationGuidanceStatus NavigationGuidanceStatus;
 	FAircraftAutopilotDiagnostics AutopilotDiagnostics;
 	FAircraftControlAuthorityInfo AuthorityInfo;
 };
@@ -103,6 +108,13 @@ public:
 	void SetMovementIntent_GameThread(const FAircraftMovementIntent& Intent,
 		FAircraftMovementIntentHandle Handle, uint64 Revision);
 	void ClearMovementIntent_GameThread(uint64 Revision);
+	void SetNavigationGuidance_GameThread(
+		TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe> Guidance,
+		uint64 Revision);
+	void SetNavigationGuidanceUnavailable_GameThread(uint64 Revision);
+	void ClearNavigationGuidance_GameThread(uint64 Revision);
+	void GetNavigationGuidanceStatus_GameThread(
+		FAircraftNavigationGuidanceStatus& OutStatus) const;
 	void GetTrajectoryReference_GameThread(FAircraftTrajectoryReference& OutReference) const;
 	void GetAutopilotDiagnostics_GameThread(FAircraftAutopilotDiagnostics& OutDiagnostics) const;
 	bool GetMotionPlan_GameThread(TArray<FAircraftMotionPlanSample>& OutSamples,
@@ -160,12 +172,23 @@ public:
 	//~ End PhysicsThread API
 
 private:
+	enum class ENavigationGuidanceInputState : uint8
+	{
+		Inactive,
+		Available,
+		Unavailable
+	};
+
 	/** 按 Chaos 当前真实质心展开旋翼分配描述，并复位全部 PT 控制状态。 */
 	void RebuildRotorDescriptors_PhysicsThread(const FVector& CenterOfMassBodyCm);
 	void QueueConfiguration_GameThread(bool bResetRuntime);
 	void RefreshControlAuthority_PhysicsThread(
 		const FAircraftFlightControllerRuntimeConfig& Config);
 	void ApplyPendingConfiguration_ExecutionThread();
+	void ApplyNavigationGuidance_ExecutionThread(
+		ENavigationGuidanceInputState State,
+		const TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe>& Guidance,
+		uint64 Revision);
 	void PublishEmptyOutputFrame_ExecutionThread();
 	void StampLatestOutputMetadata_NoLock(uint64 PhysicsStateSequence);
 	/** 由飞行模式推导能力缓存与姿态模式。 */
@@ -198,6 +221,11 @@ private:
 	FAircraftMovementIntentHandle PendingMovementIntentHandle;
 	uint64 PendingMovementIntentRevision = 0;
 	bool bPendingMovementIntentActive = false;
+	TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe>
+		PendingNavigationGuidance;
+	uint64 PendingNavigationGuidanceRevision = 0;
+	ENavigationGuidanceInputState PendingNavigationGuidanceState =
+		ENavigationGuidanceInputState::Inactive;
 	TSharedPtr<const FAircraftSimulationModel> PendingSimulationModel;
 	int32 PendingLodIndex = INDEX_NONE;
 	EAircraftSimulationDriveMode PendingDriveMode = EAircraftSimulationDriveMode::FlightController;
@@ -218,10 +246,14 @@ private:
 	/* PT → GT 输出缓冲 */
 	mutable FCriticalSection OutputCriticalSection;
 	FAircraftEstimatedState LatestEstimated;
+	FAircraftVehicleStateSnapshot LatestVehicleState;
 	FAircraftFlightControlOutput LatestControlOutput;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftSimulationControlDiagnostics LatestControlDiagnostics;
 	FAircraftTrajectoryReference LatestTrajectoryReference;
+	FAircraftTrajectoryReference LatestNominalTrajectoryReference;
+	FAircraftDynamicCapabilitySnapshot LatestDynamicCapability;
+	FAircraftNavigationGuidanceStatus LatestNavigationGuidanceStatus;
 	FAircraftAutopilotDiagnostics LatestAutopilotDiagnostics;
 	uint64 LatestPhysicsStateSequence = 0;
 	uint64 LatestControlSequence = 0;
@@ -258,6 +290,9 @@ private:
 	FAircraftTrajectoryRuntime TrajectoryRuntime;
 	uint64 ActiveMovementIntentRevision = 0;
 	int64 ActiveMovementIntentId = 0;
+	uint64 ActiveNavigationGuidanceRevision = 0;
+	ENavigationGuidanceInputState ActiveNavigationGuidanceState =
+		ENavigationGuidanceInputState::Inactive;
 	std::atomic<uint64> VehicleStateSequence{ 0 };
 	std::atomic<uint64> ControlSequence{ 0 };
 	std::atomic<float> LastPhysicsDeltaSeconds{ 0.0f };

@@ -16,6 +16,8 @@
 #include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
+#include "AircraftRuntimeInterface/AircraftNavigationAgentInterface.h"
+#include "AircraftRuntimeInterface/AircraftNavigationGuidanceProvider.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODConsumer.h"
 
 #include "AircraftComponent.generated.h"
@@ -63,6 +65,7 @@ UCLASS(ClassGroup = (Aircraft), meta = (BlueprintSpawnableComponent))
 class AIRCRAFTASSETENGINE_API UAircraftComponent
 	: public USkeletalMeshComponent
 	, public IAircraftFlightControllerInterface
+	, public IAircraftNavigationAgentInterface
 	, public IAircraftSimulationLODConsumer
 {
 	GENERATED_BODY()
@@ -165,6 +168,10 @@ public:
 	/** 指定唯一 MovementIntent 提供者；为空时自动发现 Owner 上的实现组件。 */
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Autopilot")
 	void SetMovementIntentProvider(UObject* Provider);
+	virtual void SetAircraftNavigationGuidanceProvider(UObject* Provider) override;
+	bool GetAircraftNavigationAgentSnapshot(
+		FAircraftNavigationAgentSnapshot& OutSnapshot) const override;
+	FAircraftNavigationGuidanceStatus GetAircraftNavigationGuidanceStatus() const override;
 
 
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|RotorEffectiveness")
@@ -296,6 +303,7 @@ private:
 
 	bool GetTrajectoryReference(FAircraftTrajectoryReference& OutReference) const;
 	void RefreshMovementIntentProvider();
+	void RefreshNavigationGuidanceProvider();
 	void PushMovementIntentToProxy(float DeltaSeconds);
 
 	/**
@@ -372,6 +380,21 @@ private:
 	FAircraftMovementIntentHandle LastPushedMovementIntentHandle;
 	uint64 LastPushedMovementIntentRevision = 0;
 	FLodTransitionHold LodTransitionHold;
+
+	enum class ENavigationGuidancePublicationState : uint8
+	{
+		Inactive,
+		Available,
+		Unavailable
+	};
+	/** Weak by design: navigation owns its provider and Aircraft must not create an ownership cycle. */
+	TWeakObjectPtr<UObject> NavigationGuidanceProviderObject;
+	TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe>
+		CachedNavigationGuidance;
+	uint64 NavigationGuidancePublicationRevision = 1;
+	uint64 LastNavigationGuidanceProviderRevision = TNumericLimits<uint64>::Max();
+	ENavigationGuidancePublicationState NavigationGuidancePublicationState =
+		ENavigationGuidancePublicationState::Inactive;
 
 	/** 当前模拟驱动后端，由当前 LOD 表项直接决定。 */
 	EAircraftSimulationDriveMode SimulationDriveMode = EAircraftSimulationDriveMode::FlightController;

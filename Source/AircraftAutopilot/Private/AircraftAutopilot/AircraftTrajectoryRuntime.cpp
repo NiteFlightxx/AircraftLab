@@ -74,6 +74,46 @@ namespace
 		return Result + BodyRotation.RotateVector(ForceBodyN)
 			* (100.0f / Capability.MassKg);
 	}
+
+	void ClampGuidanceSample(FAircraftNavigationGuidanceSample& Sample,
+		const FAircraftDynamicCapabilitySnapshot& Capability)
+	{
+		const FVector2D HorizontalVelocity(Sample.VelocityCmPerSec.X, Sample.VelocityCmPerSec.Y);
+		if (Capability.MaxHorizontalSpeedCmPerSec > 0.0f
+			&& HorizontalVelocity.SizeSquared() > FMath::Square(Capability.MaxHorizontalSpeedCmPerSec))
+		{
+			const FVector2D Limited = HorizontalVelocity.GetSafeNormal()
+				* Capability.MaxHorizontalSpeedCmPerSec;
+			Sample.VelocityCmPerSec.X = Limited.X;
+			Sample.VelocityCmPerSec.Y = Limited.Y;
+		}
+		Sample.VelocityCmPerSec.Z = FMath::Clamp(
+			Sample.VelocityCmPerSec.Z,
+			-FMath::Max(Capability.MaxDescentRateCmPerSec, 0.0f),
+			FMath::Max(Capability.MaxClimbRateCmPerSec, 0.0f));
+
+		FVector2D HorizontalAcceleration(
+			Sample.AccelerationCmPerSecSq.X, Sample.AccelerationCmPerSecSq.Y);
+		const bool bBraking = FVector2D::DotProduct(HorizontalAcceleration,
+			FVector2D(Sample.VelocityCmPerSec.X, Sample.VelocityCmPerSec.Y)) < 0.0f;
+		const float HorizontalAccelerationLimit = bBraking
+			? Capability.MaxHorizontalDecelerationCmPerSecSq
+			: Capability.MaxHorizontalAccelerationCmPerSecSq;
+		if (HorizontalAccelerationLimit > 0.0f)
+		{
+			HorizontalAcceleration = HorizontalAcceleration.GetClampedToMaxSize(
+				HorizontalAccelerationLimit);
+			Sample.AccelerationCmPerSecSq.X = HorizontalAcceleration.X;
+			Sample.AccelerationCmPerSecSq.Y = HorizontalAcceleration.Y;
+		}
+		if (Capability.MaxVerticalAccelerationCmPerSecSq > 0.0f)
+		{
+			Sample.AccelerationCmPerSecSq.Z = FMath::Clamp(
+				Sample.AccelerationCmPerSecSq.Z,
+				-Capability.MaxVerticalAccelerationCmPerSecSq,
+				Capability.MaxVerticalAccelerationCmPerSecSq);
+		}
+	}
 }
 
 bool FAircraftTrajectoryRuntime::SetIntent(const FAircraftMovementIntent& InIntent,
@@ -121,6 +161,7 @@ void FAircraftTrajectoryRuntime::Reset()
 	MpccController.Reset();
 	Diagnostics = {};
 	LastReference = {};
+	LastNominalReference = {};
 	VelocityReferenceCmPerSec = FVector::ZeroVector;
 	VelocityAccelerationCmPerSecSq = FVector::ZeroVector;
 	PositionReferenceCm = FVector::ZeroVector;
@@ -136,21 +177,73 @@ void FAircraftTrajectoryRuntime::RebaseTime(const double TimeSeconds)
 	LastUpdateTimeSeconds = TimeSeconds;
 }
 
+bool FAircraftTrajectoryRuntime::SetNavigationGuidance(
+	TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe> Guidance,
+	const uint64 Revision)
+{
+	NavigationGuidanceStatus = {};
+	NavigationGuidanceStatus.Revision = Revision;
+	NavigationGuidanceStatus.GeneratedAtSeconds = Guidance.IsValid()
+		? Guidance->GeneratedAtSeconds : 0.0;
+	NavigationGuidanceStatus.ValidUntilSeconds = Guidance.IsValid()
+		? Guidance->ValidUntilSeconds : 0.0;
+	bNavigationGuidanceActive = true;
+	bNavigationGuidanceAvailable = Guidance.IsValid() && Guidance->IsValid();
+	if (!bNavigationGuidanceAvailable)
+	{
+		NavigationGuidance.Reset();
+		NavigationGuidanceStatus.State = EAircraftNavigationGuidanceState::Braking;
+		NavigationGuidanceStatus.FailureReason =
+			EAircraftNavigationGuidanceFailureReason::InvalidGuidance;
+		return false;
+	}
+	NavigationGuidance = MoveTemp(Guidance);
+	NavigationGuidanceStatus.State = NavigationGuidance->Mode == EAircraftNavigationGuidanceMode::Brake
+		? EAircraftNavigationGuidanceState::Braking
+		: EAircraftNavigationGuidanceState::Applied;
+	return true;
+}
+
+void FAircraftTrajectoryRuntime::SetNavigationGuidanceUnavailable(const uint64 Revision)
+{
+	NavigationGuidance.Reset();
+	NavigationGuidanceStatus = {};
+	NavigationGuidanceStatus.Revision = Revision;
+	NavigationGuidanceStatus.State = EAircraftNavigationGuidanceState::Braking;
+	NavigationGuidanceStatus.FailureReason =
+		EAircraftNavigationGuidanceFailureReason::Unavailable;
+	bNavigationGuidanceActive = true;
+	bNavigationGuidanceAvailable = false;
+}
+
+void FAircraftTrajectoryRuntime::ClearNavigationGuidance(const uint64 Revision)
+{
+	NavigationGuidance.Reset();
+	NavigationGuidanceStatus = {};
+	NavigationGuidanceStatus.Revision = Revision;
+	bNavigationGuidanceActive = false;
+	bNavigationGuidanceAvailable = false;
+}
+
 bool FAircraftTrajectoryRuntime::UpdateFlightController(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability,
 	FAircraftTrajectoryReference& OutReference)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_MPCC_Update);
+	const float GuidanceDeltaTime = FMath::Clamp(
+		static_cast<float>(State.TimeSeconds - LastUpdateTimeSeconds), 0.0f, 0.1f);
 	const bool bUpdated = MpccController.Update(State, Capability, OutReference);
 	Diagnostics = MpccController.GetDiagnostics();
 	if (bUpdated)
 	{
-		LastReference = OutReference;
 		PlanTimeSeconds = GetPlan().TimeAtDistance(
 			OutReference.PathProgress * GetPlan().GetLengthCm());
 		PlanDistanceCm = OutReference.PathProgress * GetPlan().GetLengthCm();
 		LastUpdateTimeSeconds = State.TimeSeconds;
+		LastNominalReference = OutReference;
+		ApplyNavigationGuidance(State, Capability, GuidanceDeltaTime, false, OutReference);
+		LastReference = OutReference;
 	}
 	return bUpdated;
 }
@@ -295,6 +388,8 @@ bool FAircraftTrajectoryRuntime::UpdateDeterministic(
 		OutReference.bPositionTrackingEnabled = true;
 	}
 	FinalizeReference(State, OutReference);
+	LastNominalReference = OutReference;
+	ApplyNavigationGuidance(State, Capability, DeltaTime, !bUseDynamics, OutReference);
 	LastReference = OutReference;
 	return true;
 }
@@ -319,4 +414,123 @@ void FAircraftTrajectoryRuntime::FinalizeReference(
 	Diagnostics = MpccDiagnostics;
 	Diagnostics.ProgressScale = ProgressScale;
 	Diagnostics.bReferenceFresh = true;
+}
+
+void FAircraftTrajectoryRuntime::ApplyNavigationGuidance(
+	const FAircraftVehicleStateSnapshot& State,
+	const FAircraftDynamicCapabilitySnapshot& Capability,
+	const float DeltaTime, const bool bKinematic,
+	FAircraftTrajectoryReference& InOutReference)
+{
+	if (!bNavigationGuidanceActive)
+	{
+		return;
+	}
+	if (!bNavigationGuidanceAvailable)
+	{
+		BuildBrakingReference(State, Capability,
+			NavigationGuidanceStatus.FailureReason, DeltaTime, bKinematic, InOutReference);
+		return;
+	}
+	if (NavigationGuidance->SourceIntentId != InOutReference.IntentId
+		|| NavigationGuidance->SourceIntentRevision
+			!= static_cast<uint64>(InOutReference.IntentRevision))
+	{
+		NavigationGuidanceStatus.State = EAircraftNavigationGuidanceState::Inactive;
+		NavigationGuidanceStatus.FailureReason =
+			EAircraftNavigationGuidanceFailureReason::IntentMismatch;
+		return;
+	}
+	if (!NavigationGuidance->IsFresh(State.TimeSeconds))
+	{
+		BuildBrakingReference(State, Capability,
+			EAircraftNavigationGuidanceFailureReason::Expired,
+			DeltaTime, bKinematic, InOutReference);
+		return;
+	}
+	if (NavigationGuidance->Mode == EAircraftNavigationGuidanceMode::Brake)
+	{
+		BuildBrakingReference(State, Capability,
+			EAircraftNavigationGuidanceFailureReason::None,
+			DeltaTime, bKinematic, InOutReference);
+		return;
+	}
+
+	FAircraftNavigationGuidanceSample Sample;
+	if (!NavigationGuidance->Evaluate(State.TimeSeconds, Sample))
+	{
+		BuildBrakingReference(State, Capability,
+			EAircraftNavigationGuidanceFailureReason::InvalidGuidance,
+			DeltaTime, bKinematic, InOutReference);
+		return;
+	}
+	ClampGuidanceSample(Sample, Capability);
+	InOutReference.PositionCm = Sample.PositionCm;
+	InOutReference.VelocityCmPerSec = Sample.VelocityCmPerSec;
+	InOutReference.AccelerationCmPerSecSq = Sample.AccelerationCmPerSecSq;
+	InOutReference.ControlAccelerationCmPerSecSq = Sample.AccelerationCmPerSecSq;
+	InOutReference.DynamicsFeedForwardAccelerationCmPerSecSq =
+		ComputeDynamicsFeedForward(Sample.VelocityCmPerSec, State.BodyRotation, Capability);
+	InOutReference.bPositionTrackingEnabled = true;
+	InOutReference.ValidUntilSeconds = FMath::Min(
+		InOutReference.ValidUntilSeconds, NavigationGuidance->ValidUntilSeconds);
+	NavigationGuidanceStatus.State = EAircraftNavigationGuidanceState::Applied;
+	NavigationGuidanceStatus.FailureReason = EAircraftNavigationGuidanceFailureReason::None;
+}
+
+void FAircraftTrajectoryRuntime::BuildBrakingReference(
+	const FAircraftVehicleStateSnapshot& State,
+	const FAircraftDynamicCapabilitySnapshot& Capability,
+	const EAircraftNavigationGuidanceFailureReason FailureReason,
+	const float DeltaTime, const bool bKinematic,
+	FAircraftTrajectoryReference& InOutReference)
+{
+	const FVector2D HorizontalVelocity(State.VelocityCmPerSec.X, State.VelocityCmPerSec.Y);
+	const float HorizontalDeceleration = FMath::Max(
+		Capability.MaxHorizontalDecelerationCmPerSecSq, 1.0f);
+	const FVector2D HorizontalOffset = HorizontalVelocity
+		* (HorizontalVelocity.Size() / (2.0f * HorizontalDeceleration));
+	const FVector2D HorizontalAcceleration = HorizontalVelocity.IsNearlyZero()
+		? FVector2D::ZeroVector
+		: -HorizontalVelocity.GetSafeNormal() * HorizontalDeceleration;
+	const float VerticalAcceleration = FMath::Max(
+		Capability.MaxVerticalAccelerationCmPerSecSq, 1.0f);
+	const float VerticalOffset = State.VelocityCmPerSec.Z
+		* FMath::Abs(State.VelocityCmPerSec.Z) / (2.0f * VerticalAcceleration);
+	const float VerticalBrakingAcceleration = FMath::IsNearlyZero(State.VelocityCmPerSec.Z)
+		? 0.0f
+		: -FMath::Sign(State.VelocityCmPerSec.Z) * VerticalAcceleration;
+
+	const FVector BrakingAcceleration(
+		HorizontalAcceleration.X, HorizontalAcceleration.Y, VerticalBrakingAcceleration);
+	if (bKinematic)
+	{
+		const float StepSeconds = FMath::Clamp(DeltaTime, 0.0f, 0.1f);
+		FVector NextVelocity = State.VelocityCmPerSec + BrakingAcceleration * StepSeconds;
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			if (State.VelocityCmPerSec[Axis] * NextVelocity[Axis] <= 0.0f)
+			{
+				NextVelocity[Axis] = 0.0f;
+			}
+		}
+		InOutReference.PositionCm = State.PositionCm
+			+ 0.5f * (State.VelocityCmPerSec + NextVelocity) * StepSeconds;
+		InOutReference.VelocityCmPerSec = NextVelocity;
+	}
+	else
+	{
+		InOutReference.PositionCm = State.PositionCm
+			+ FVector(HorizontalOffset.X, HorizontalOffset.Y, VerticalOffset);
+		InOutReference.VelocityCmPerSec = FVector::ZeroVector;
+	}
+	InOutReference.AccelerationCmPerSecSq = FVector(
+		BrakingAcceleration.X, BrakingAcceleration.Y, BrakingAcceleration.Z);
+	InOutReference.ControlAccelerationCmPerSecSq = InOutReference.AccelerationCmPerSecSq;
+	InOutReference.DynamicsFeedForwardAccelerationCmPerSecSq = FVector::ZeroVector;
+	InOutReference.bPositionTrackingEnabled = true;
+	InOutReference.GeneratedAtSeconds = State.TimeSeconds;
+	InOutReference.ValidUntilSeconds = State.TimeSeconds + 0.15;
+	NavigationGuidanceStatus.State = EAircraftNavigationGuidanceState::Braking;
+	NavigationGuidanceStatus.FailureReason = FailureReason;
 }

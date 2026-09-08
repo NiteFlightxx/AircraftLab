@@ -1020,13 +1020,17 @@ void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest
 	const bool bNeedsControlOutput = Request.Requires(EAircraftDebugPayload::Propulsion)
 		|| Request.Requires(EAircraftDebugPayload::ControlAllocation)
 		|| Request.Requires(EAircraftDebugPayload::Aerodynamics);
-	if (bNeedsControlOutput && AircraftSimulationProxy.IsValid())
+	const bool bNeedsOutputFrame = bNeedsControlOutput
+		|| Request.Requires(EAircraftDebugPayload::AutopilotCore);
+	if (bNeedsOutputFrame && AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->GetSimulationOutputFrame_GameThread(OutputFrame);
 		Output = MoveTemp(OutputFrame.ControlOutput);
 		ControlDiagnostics = MoveTemp(OutputFrame.ControlDiagnostics);
 		OutSnapshot.PhysicsStateSequence = OutputFrame.PhysicsStateSequence;
 		OutSnapshot.TrajectoryReference = OutputFrame.TrajectoryReference;
+		OutSnapshot.AutopilotNominalReference = OutputFrame.NominalTrajectoryReference;
+		OutSnapshot.NavigationGuidanceStatus = OutputFrame.NavigationGuidanceStatus;
 		OutSnapshot.bHasTrajectoryReference =
 			OutputFrame.TrajectoryReference.IsFresh(
 				OutputFrame.EstimatedState.State.TimeSeconds);
@@ -1126,7 +1130,7 @@ void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest
 		GetCurrentSimulationDriveMode());
 	OutSnapshot.FlightModeText = UEnum::GetDisplayValueAsText(GetFlightMode());
 	OutSnapshot.ArmStateText = UEnum::GetDisplayValueAsText(GetArmState());
-	FAircraftEstimatedState EstimatedState = bNeedsControlOutput
+	FAircraftEstimatedState EstimatedState = bNeedsOutputFrame
 		? OutputFrame.EstimatedState
 		: FAircraftEstimatedState();
 	if (!bNeedsControlOutput)
@@ -1139,6 +1143,59 @@ void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest
 void UAircraftComponent::SetAircraftMovementIntentProvider(UObject* Provider)
 {
 	SetMovementIntentProvider(Provider);
+}
+
+bool UAircraftComponent::GetAircraftNavigationAgentSnapshot(
+	FAircraftNavigationAgentSnapshot& OutSnapshot) const
+{
+	check(IsInGameThread());
+	OutSnapshot = {};
+	if (!AircraftSimulationProxy.IsValid())
+	{
+		return false;
+	}
+	FAircraftSimulationOutputFrame OutputFrame;
+	AircraftSimulationProxy->GetSimulationOutputFrame_GameThread(OutputFrame);
+	OutSnapshot.VehicleState = OutputFrame.VehicleState;
+	OutSnapshot.Capability = OutputFrame.DynamicCapability;
+	OutSnapshot.NominalReference = OutputFrame.NominalTrajectoryReference;
+	OutSnapshot.GuidanceStatus = OutputFrame.NavigationGuidanceStatus;
+	OutSnapshot.bValid = OutputFrame.DynamicCapability.bValid
+		&& SimulationBackendStatus.State == EAircraftSimulationBackendState::Ready;
+	return OutSnapshot.bValid;
+}
+
+FAircraftNavigationGuidanceStatus UAircraftComponent::GetAircraftNavigationGuidanceStatus() const
+{
+	check(IsInGameThread());
+	FAircraftNavigationGuidanceStatus Status;
+	if (AircraftSimulationProxy.IsValid())
+	{
+		AircraftSimulationProxy->GetNavigationGuidanceStatus_GameThread(Status);
+		return Status;
+	}
+	Status.Revision = NavigationGuidancePublicationRevision;
+	if (NavigationGuidancePublicationState == ENavigationGuidancePublicationState::Available)
+	{
+		Status.GeneratedAtSeconds = CachedNavigationGuidance.IsValid()
+			? CachedNavigationGuidance->GeneratedAtSeconds : 0.0;
+		Status.ValidUntilSeconds = CachedNavigationGuidance.IsValid()
+			? CachedNavigationGuidance->ValidUntilSeconds : 0.0;
+		Status.State = CachedNavigationGuidance.IsValid()
+			&& CachedNavigationGuidance->IsValid()
+			? EAircraftNavigationGuidanceState::Applied
+			: EAircraftNavigationGuidanceState::Braking;
+		Status.FailureReason = CachedNavigationGuidance.IsValid()
+			&& CachedNavigationGuidance->IsValid()
+			? EAircraftNavigationGuidanceFailureReason::None
+			: EAircraftNavigationGuidanceFailureReason::InvalidGuidance;
+	}
+	else if (NavigationGuidancePublicationState == ENavigationGuidancePublicationState::Unavailable)
+	{
+		Status.State = EAircraftNavigationGuidanceState::Braking;
+		Status.FailureReason = EAircraftNavigationGuidanceFailureReason::Unavailable;
+	}
+	return Status;
 }
 
 uint8 UAircraftComponent::ActivateAircraftAutopilotControl()
@@ -1192,6 +1249,78 @@ void UAircraftComponent::RequestAircraftFlightMode(uint8 NewFlightMode)
 void UAircraftComponent::SetMovementIntentProvider(UObject* Provider)
 {
 	MovementIntentProviderObject = Provider;
+}
+
+void UAircraftComponent::SetAircraftNavigationGuidanceProvider(UObject* Provider)
+{
+	check(IsInGameThread());
+	if (Provider && !Provider->Implements<UAircraftNavigationGuidanceProvider>())
+	{
+		UE_LOG(LogAircraft, Warning,
+			TEXT("[Aircraft.Navigation.ProviderRejected] Owner=%s Provider=%s does not implement IAircraftNavigationGuidanceProvider."),
+			*GetNameSafe(GetOwner()), *GetNameSafe(Provider));
+		Provider = nullptr;
+	}
+	if (Provider && NavigationGuidanceProviderObject.Get() == Provider)
+	{
+		return;
+	}
+	NavigationGuidanceProviderObject = Provider;
+	LastNavigationGuidanceProviderRevision = TNumericLimits<uint64>::Max();
+	RefreshNavigationGuidanceProvider();
+}
+
+void UAircraftComponent::RefreshNavigationGuidanceProvider()
+{
+	check(IsInGameThread());
+	UObject* const ProviderObject = NavigationGuidanceProviderObject.Get();
+	IAircraftNavigationGuidanceProvider* const Provider =
+		Cast<IAircraftNavigationGuidanceProvider>(ProviderObject);
+	ENavigationGuidancePublicationState NewState =
+		ENavigationGuidancePublicationState::Inactive;
+	TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe> NewGuidance;
+	uint64 ProviderRevision = 0;
+	if (!LodTransitionHold.bActive
+		&& Provider && Provider->IsAircraftNavigationGuidanceActive())
+	{
+		NewGuidance = Provider->GetAircraftNavigationGuidance(ProviderRevision);
+		NewState = NewGuidance.IsValid()
+			? ENavigationGuidancePublicationState::Available
+			: ENavigationGuidancePublicationState::Unavailable;
+	}
+
+	const bool bChanged = NewState != NavigationGuidancePublicationState
+		|| (NewState == ENavigationGuidancePublicationState::Available
+			&& ProviderRevision != LastNavigationGuidanceProviderRevision);
+	if (!bChanged)
+	{
+		return;
+	}
+	NavigationGuidancePublicationState = NewState;
+	LastNavigationGuidanceProviderRevision = ProviderRevision;
+	CachedNavigationGuidance = NewState == ENavigationGuidancePublicationState::Available
+		? MoveTemp(NewGuidance) : nullptr;
+	++NavigationGuidancePublicationRevision;
+	if (!AircraftSimulationProxy.IsValid())
+	{
+		return;
+	}
+	switch (NavigationGuidancePublicationState)
+	{
+	case ENavigationGuidancePublicationState::Available:
+		AircraftSimulationProxy->SetNavigationGuidance_GameThread(
+			CachedNavigationGuidance, NavigationGuidancePublicationRevision);
+		break;
+	case ENavigationGuidancePublicationState::Unavailable:
+		AircraftSimulationProxy->SetNavigationGuidanceUnavailable_GameThread(
+			NavigationGuidancePublicationRevision);
+		break;
+	case ENavigationGuidancePublicationState::Inactive:
+	default:
+		AircraftSimulationProxy->ClearNavigationGuidance_GameThread(
+			NavigationGuidancePublicationRevision);
+		break;
+	}
 }
 
 void UAircraftComponent::RefreshMovementIntentProvider()
@@ -1251,6 +1380,9 @@ bool UAircraftComponent::CaptureLodTransitionHold()
 	LodTransitionHold.PilotInputRevision = PilotInputRevision;
 	LodTransitionHold.bActive = true;
 	++ManualMovementIntentRevision;
+	// The old short-horizon overlay belongs to the interrupted intent. Clear it before
+	// the new LOD backend can consume its first current-position Hold frame.
+	RefreshNavigationGuidanceProvider();
 
 	LodTransitionHold.InterruptedProvider = LastPushedMovementIntentProvider;
 	LodTransitionHold.InterruptedHandle = LastPushedMovementIntentHandle;
@@ -1803,6 +1935,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		}
 	}
 
+	RefreshNavigationGuidanceProvider();
 	PushMovementIntentToProxy(DeltaTime);
 	// Kinematic disables AsyncPhysicsTickComponent, so its game-thread execution domain must
 	// consume queued configuration before the shared readiness/control gate is evaluated.
@@ -1953,6 +2086,22 @@ void UAircraftComponent::ReplayRequestedControlState()
 	for (const TPair<FName, float>& Rotor : RequestedRotorEffectiveness)
 	{
 		AircraftSimulationProxy->SetRotorEffectiveness_GameThread(Rotor.Key, Rotor.Value);
+	}
+	switch (NavigationGuidancePublicationState)
+	{
+	case ENavigationGuidancePublicationState::Available:
+		AircraftSimulationProxy->SetNavigationGuidance_GameThread(
+			CachedNavigationGuidance, NavigationGuidancePublicationRevision);
+		break;
+	case ENavigationGuidancePublicationState::Unavailable:
+		AircraftSimulationProxy->SetNavigationGuidanceUnavailable_GameThread(
+			NavigationGuidancePublicationRevision);
+		break;
+	case ENavigationGuidancePublicationState::Inactive:
+	default:
+		AircraftSimulationProxy->ClearNavigationGuidance_GameThread(
+			NavigationGuidancePublicationRevision);
+		break;
 	}
 	if (LodTransitionHold.bActive)
 	{

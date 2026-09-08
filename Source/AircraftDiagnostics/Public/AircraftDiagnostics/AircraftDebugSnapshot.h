@@ -4,6 +4,7 @@
 #include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
+#include "AircraftRuntimeInterface/AircraftNavigationGuidance.h"
 #include "AircraftRuntimeInterface/AircraftSimulationBackend.h"
 
 enum class EAircraftDebugPayload : uint16
@@ -125,6 +126,8 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugFrameSnapshot
 
 	EAircraftMovementIntentType AutopilotIntentType = EAircraftMovementIntentType::Hold;
 	FAircraftTrajectoryReference AutopilotReference;
+	FAircraftTrajectoryReference AutopilotNominalReference;
+	FAircraftNavigationGuidanceStatus NavigationGuidanceStatus;
 	FAircraftAutopilotDiagnostics AutopilotDiagnostics;
 	FAircraftFlightKinematicState AutopilotState;
 	TArray<FAircraftMotionPlanSample> AutopilotPlanSamples;

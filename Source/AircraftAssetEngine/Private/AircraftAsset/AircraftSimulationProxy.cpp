@@ -648,6 +648,74 @@ void FAircraftSimulationProxy::ClearMovementIntent_GameThread(uint64 Revision)
 	bPendingMovementIntentActive = false;
 }
 
+void FAircraftSimulationProxy::ApplyNavigationGuidance_ExecutionThread(
+	const ENavigationGuidanceInputState State,
+	const TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe>& Guidance,
+	const uint64 Revision)
+{
+	if (State == ActiveNavigationGuidanceState
+		&& Revision == ActiveNavigationGuidanceRevision)
+	{
+		return;
+	}
+	switch (State)
+	{
+	case ENavigationGuidanceInputState::Available:
+		if (Guidance.IsValid())
+		{
+			TrajectoryRuntime.SetNavigationGuidance(Guidance, Revision);
+		}
+		else
+		{
+			TrajectoryRuntime.SetNavigationGuidanceUnavailable(Revision);
+		}
+		break;
+	case ENavigationGuidanceInputState::Unavailable:
+		TrajectoryRuntime.SetNavigationGuidanceUnavailable(Revision);
+		break;
+	case ENavigationGuidanceInputState::Inactive:
+	default:
+		TrajectoryRuntime.ClearNavigationGuidance(Revision);
+		break;
+	}
+	ActiveNavigationGuidanceState = State;
+	ActiveNavigationGuidanceRevision = Revision;
+}
+
+void FAircraftSimulationProxy::SetNavigationGuidance_GameThread(
+	TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe> Guidance,
+	const uint64 Revision)
+{
+	FScopeLock Lock(&InputCriticalSection);
+	PendingNavigationGuidance = MoveTemp(Guidance);
+	PendingNavigationGuidanceRevision = Revision;
+	PendingNavigationGuidanceState = ENavigationGuidanceInputState::Available;
+}
+
+void FAircraftSimulationProxy::SetNavigationGuidanceUnavailable_GameThread(
+	const uint64 Revision)
+{
+	FScopeLock Lock(&InputCriticalSection);
+	PendingNavigationGuidance.Reset();
+	PendingNavigationGuidanceRevision = Revision;
+	PendingNavigationGuidanceState = ENavigationGuidanceInputState::Unavailable;
+}
+
+void FAircraftSimulationProxy::ClearNavigationGuidance_GameThread(const uint64 Revision)
+{
+	FScopeLock Lock(&InputCriticalSection);
+	PendingNavigationGuidance.Reset();
+	PendingNavigationGuidanceRevision = Revision;
+	PendingNavigationGuidanceState = ENavigationGuidanceInputState::Inactive;
+}
+
+void FAircraftSimulationProxy::GetNavigationGuidanceStatus_GameThread(
+	FAircraftNavigationGuidanceStatus& OutStatus) const
+{
+	FScopeLock Lock(&OutputCriticalSection);
+	OutStatus = LatestNavigationGuidanceStatus;
+}
+
 void FAircraftSimulationProxy::GetTrajectoryReference_GameThread(
 	FAircraftTrajectoryReference& OutReference) const
 {
@@ -703,15 +771,26 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 	FAircraftMovementIntentHandle Handle;
 	uint64 Revision = 0;
 	bool bHasIntent = false;
+	TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe>
+		NavigationGuidance;
+	uint64 NavigationGuidanceRevision = 0;
+	ENavigationGuidanceInputState NavigationGuidanceState =
+		ENavigationGuidanceInputState::Inactive;
 	{
 		FScopeLock Lock(&InputCriticalSection);
 		Intent = PendingMovementIntent;
 		Handle = PendingMovementIntentHandle;
 		Revision = PendingMovementIntentRevision;
 		bHasIntent = bPendingMovementIntentActive;
+		NavigationGuidance = PendingNavigationGuidance;
+		NavigationGuidanceRevision = PendingNavigationGuidanceRevision;
+		NavigationGuidanceState = PendingNavigationGuidanceState;
 	}
+	ApplyNavigationGuidance_ExecutionThread(
+		NavigationGuidanceState, NavigationGuidance, NavigationGuidanceRevision);
 
 	FAircraftTrajectoryReference Reference;
+	FAircraftDynamicCapabilitySnapshot Capability;
 	if (bHasIntent)
 	{
 		FAircraftVehicleStateSnapshot State;
@@ -732,7 +811,6 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 			State.BodyRotation, Config);
 		State.ControlRotation = FQuat(
 			FVector::UpVector, FMath::DegreesToRadians(ControlHeadingDegrees));
-		FAircraftDynamicCapabilitySnapshot Capability;
 		Capability.TimeSeconds = TimeSeconds;
 		Capability.Revision = State.Sequence;
 		Capability.MassKg = 0.0f;
@@ -782,7 +860,21 @@ void FAircraftSimulationProxy::TickKinematicTrajectory_GameThread(
 	LatestControlOutput.Reset();
 	LatestControlDiagnostics = {};
 	LatestAuthorityInfo = {};
+	LatestVehicleState = {};
+	LatestVehicleState.TimeSeconds = TimeSeconds;
+	LatestVehicleState.Sequence = VehicleStateSequence.load(std::memory_order_relaxed);
+	LatestVehicleState.PositionCm = CenterOfMassWorldCm;
+	LatestVehicleState.VelocityCmPerSec = VelocityCmPerSec;
+	LatestVehicleState.BodyRotation = BodyTransform.GetRotation();
+	LatestVehicleState.ControlRotation = FQuat(FVector::UpVector,
+		FMath::DegreesToRadians(UE::AircraftLab::PilotInputMapping::GetPlanarHeadingDegrees(
+			LatestVehicleState.BodyRotation, Model.FlightController)));
+	LatestVehicleState.AngularVelocityBodyRadPerSec =
+		LatestVehicleState.BodyRotation.UnrotateVector(AngularVelocityWorldRadPerSec);
 	LatestTrajectoryReference = Reference;
+	LatestNominalTrajectoryReference = TrajectoryRuntime.GetNominalReference();
+	LatestDynamicCapability = Capability;
+	LatestNavigationGuidanceStatus = TrajectoryRuntime.GetNavigationGuidanceStatus();
 	LatestAutopilotDiagnostics = AutopilotDiagnostics;
 	const FAircraftMotionPlan& Plan = TrajectoryRuntime.GetPlan();
 	LatestMotionPlanSamples = Plan.GetSamples();
@@ -832,6 +924,7 @@ void FAircraftSimulationProxy::InvalidateTrajectoryReference_GameThread()
 	bTrajectoryRebindRequested.store(true, std::memory_order_release);
 	FScopeLock OutputLock(&OutputCriticalSection);
 	LatestTrajectoryReference = FAircraftTrajectoryReference();
+	LatestNominalTrajectoryReference = FAircraftTrajectoryReference();
 	LatestAutopilotDiagnostics = FAircraftAutopilotDiagnostics();
 	LatestMotionPlanSamples.Reset();
 	LatestMotionPlanDurationSeconds = 0.0f;
@@ -844,7 +937,11 @@ void FAircraftSimulationProxy::PublishEmptyOutputFrame_ExecutionThread()
 	FScopeLock OutputLock(&OutputCriticalSection);
 	LatestControlOutput.Reset();
 	LatestControlDiagnostics = {};
+	LatestVehicleState = {};
 	LatestTrajectoryReference = {};
+	LatestNominalTrajectoryReference = {};
+	LatestDynamicCapability = {};
+	LatestNavigationGuidanceStatus = TrajectoryRuntime.GetNavigationGuidanceStatus();
 	LatestAutopilotDiagnostics = {};
 	LatestAuthorityInfo = {};
 	LatestMotionPlanSamples.Reset();
@@ -972,9 +1069,13 @@ void FAircraftSimulationProxy::GetSimulationOutputFrame_GameThread(
 	OutFrame.DriveMode = LatestDriveMode;
 	OutFrame.ArmState = LatestArmState;
 	OutFrame.EstimatedState = LatestEstimated;
+	OutFrame.VehicleState = LatestVehicleState;
 	OutFrame.ControlOutput = LatestControlOutput;
 	OutFrame.ControlDiagnostics = LatestControlDiagnostics;
 	OutFrame.TrajectoryReference = LatestTrajectoryReference;
+	OutFrame.NominalTrajectoryReference = LatestNominalTrajectoryReference;
+	OutFrame.DynamicCapability = LatestDynamicCapability;
+	OutFrame.NavigationGuidanceStatus = LatestNavigationGuidanceStatus;
 	OutFrame.AutopilotDiagnostics = LatestAutopilotDiagnostics;
 	OutFrame.AuthorityInfo = LatestAuthorityInfo;
 	OutFrame.ValidPayloads = EAircraftDebugPayload::AircraftCore
@@ -1152,6 +1253,11 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 	FAircraftMovementIntentHandle MovementIntentHandle;
 	uint64 MovementIntentRevision = 0;
 	bool bHasMovementIntent = false;
+	TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe>
+		NavigationGuidance;
+	uint64 NavigationGuidanceRevision = 0;
+	ENavigationGuidanceInputState NavigationGuidanceState =
+		ENavigationGuidanceInputState::Inactive;
 	TMap<FName, float> RotorEffectivenessByName;
 	uint64 RotorEffectivenessRevision = 0;
 	bool bArmRequested = false;
@@ -1164,11 +1270,16 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		MovementIntentHandle = PendingMovementIntentHandle;
 		MovementIntentRevision = PendingMovementIntentRevision;
 		bHasMovementIntent = bPendingMovementIntentActive;
+		NavigationGuidance = PendingNavigationGuidance;
+		NavigationGuidanceRevision = PendingNavigationGuidanceRevision;
+		NavigationGuidanceState = PendingNavigationGuidanceState;
 		bArmRequested = bArmRequest;
 		bEmergencyRequested = bEmergencyStop;
 		RotorEffectivenessByName = PendingRotorEffectivenessByName;
 		RotorEffectivenessRevision = PendingRotorEffectivenessRevision;
 	}
+	ApplyNavigationGuidance_ExecutionThread(
+		NavigationGuidanceState, NavigationGuidance, NavigationGuidanceRevision);
 
 	const EAircraftFlightMode Mode = static_cast<EAircraftFlightMode>(PendingFlightMode.load(std::memory_order_relaxed));
 
@@ -1345,9 +1456,13 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		LatestEstimated.State.VelocityCmPerSec = LinearVelCmPerSec;
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
 		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
+		LatestVehicleState = {};
 		LatestControlOutput.Reset();
 		LatestControlDiagnostics = {};
 		LatestTrajectoryReference = {};
+		LatestNominalTrajectoryReference = {};
+		LatestDynamicCapability = {};
+		LatestNavigationGuidanceStatus = TrajectoryRuntime.GetNavigationGuidanceStatus();
 		LatestAutopilotDiagnostics = {};
 		LatestAuthorityInfo = {};
 		StampLatestOutputMetadata_NoLock(
@@ -1608,8 +1723,12 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		LatestEstimated.State.AccelerationWorldCmPerSecSq = Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq;
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
 		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
+		LatestVehicleState = VehicleState;
 		LatestControlOutput.Reset();
 		LatestTrajectoryReference = TrajectoryReference;
+		LatestNominalTrajectoryReference = TrajectoryRuntime.GetNominalReference();
+		LatestDynamicCapability = Capability;
+		LatestNavigationGuidanceStatus = TrajectoryRuntime.GetNavigationGuidanceStatus();
 		LatestAutopilotDiagnostics = AutopilotDiagnostics;
 		const FAircraftMotionPlan& Plan = TrajectoryRuntime.GetPlan();
 		LatestMotionPlanSamples = Plan.GetSamples();
@@ -1768,10 +1887,14 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		LatestEstimated.State.AccelerationWorldCmPerSecSq = Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq;
 		LatestEstimated.State.AttitudeDegrees = AttitudeDeg;
 		LatestEstimated.State.AngularVelocityBodyDegreesPerSec = AngularVelControllerDegPerSec;
+		LatestVehicleState = VehicleState;
 		LatestControlOutput = Runtime.ControlOutput;
 		LatestAuthorityInfo = RotorEffectivenessManager.AuthorityInfo;
 		LatestControlDiagnostics = MoveTemp(StepDiagnostics);
 		LatestTrajectoryReference = TrajectoryReference;
+		LatestNominalTrajectoryReference = TrajectoryRuntime.GetNominalReference();
+		LatestDynamicCapability = Capability;
+		LatestNavigationGuidanceStatus = TrajectoryRuntime.GetNavigationGuidanceStatus();
 		LatestAutopilotDiagnostics = AutopilotDiagnostics;
 		const FAircraftMotionPlan& Plan = TrajectoryRuntime.GetPlan();
 		LatestMotionPlanSamples = Plan.GetSamples();

@@ -3,6 +3,7 @@
 #include "AircraftAutopilot/AircraftMpccController.h"
 #include "AircraftAutopilot/AircraftTrajectoryRuntime.h"
 #include "AircraftAutopilot/AircraftSpatialPath.h"
+#include "AircraftRuntimeInterface/AircraftNavigationGuidance.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -1157,6 +1158,195 @@ bool FAircraftAutopilotLodInterruptionTest::RunTest(const FString& Parameters)
 		Result.FailureReason, EAircraftMovementFailureReason::SimulationLODChanged);
 	TestFalse(TEXT("The interrupted source intent cannot be pushed again"),
 		Autopilot->IsAircraftMovementIntentActive());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNavigationGuidancePreservesIntentTest,
+	"AircraftLab.Autopilot.NavigationGuidance.PreservesPrimaryIntent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNavigationGuidancePreservesIntentTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+
+	FAircraftTrajectoryRuntime Runtime;
+	TestTrue(TEXT("The primary route is accepted"), Runtime.SetIntent(
+		MakeRouteIntent(5000.0f), 71, 3, Config, State, Capability));
+
+	FAircraftNavigationGuidance Guidance;
+	Guidance.SourceIntentId = 71;
+	Guidance.SourceIntentRevision = 3;
+	Guidance.GeneratedAtSeconds = 1.0;
+	Guidance.ValidUntilSeconds = 2.0;
+	Guidance.Samples = {
+		{ 0.0f, FVector(0.0f, 200.0f, 0.0f), FVector(0.0f, 400.0f, 0.0f), FVector::ZeroVector },
+		{ 1.0f, FVector(0.0f, 600.0f, 0.0f), FVector(0.0f, 400.0f, 0.0f), FVector::ZeroVector }
+	};
+	TestTrue(TEXT("The guidance is accepted"), Runtime.SetNavigationGuidance(
+		MakeShared<FAircraftNavigationGuidance, ESPMode::ThreadSafe>(Guidance), 9));
+
+	State.TimeSeconds = 1.25;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("The guided reference is produced"),
+		Runtime.UpdateKinematic(State, Capability, Reference));
+	TestEqual(TEXT("Guidance does not replace the primary intent id"), Reference.IntentId, int64(71));
+	TestEqual(TEXT("Guidance does not replace the primary intent revision"), Reference.IntentRevision, int64(3));
+	TestTrue(TEXT("Guidance replaces the short-term position reference"),
+		Reference.PositionCm.Equals(FVector(0.0f, 300.0f, 0.0f), 0.01f));
+	TestTrue(TEXT("The nominal route reference remains separately available"),
+		Runtime.GetNominalReference().PositionCm.Y == 0.0f);
+	TestEqual(TEXT("The applied guidance revision is published"),
+		Runtime.GetNavigationGuidanceStatus().Revision, uint64(9));
+	TestEqual(TEXT("Guidance reports the applied state"),
+		Runtime.GetNavigationGuidanceStatus().State,
+		EAircraftNavigationGuidanceState::Applied);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNavigationGuidanceExpiryTest,
+	"AircraftLab.Autopilot.NavigationGuidance.ExpiredGuidanceBrakes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNavigationGuidanceExpiryTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+	State.VelocityCmPerSec = FVector(400.0f, 0.0f, 0.0f);
+
+	FAircraftTrajectoryRuntime Runtime;
+	TestTrue(TEXT("The primary route is accepted"), Runtime.SetIntent(
+		MakeRouteIntent(5000.0f), 72, 1, Config, State, Capability));
+
+	FAircraftNavigationGuidance Guidance;
+	Guidance.SourceIntentId = 72;
+	Guidance.SourceIntentRevision = 1;
+	Guidance.GeneratedAtSeconds = 1.0;
+	Guidance.ValidUntilSeconds = 1.2;
+	Guidance.Samples = {
+		{ 0.0f, FVector::ZeroVector, FVector(400.0f, 0.0f, 0.0f), FVector::ZeroVector },
+		{ 0.2f, FVector(80.0f, 0.0f, 0.0f), FVector(400.0f, 0.0f, 0.0f), FVector::ZeroVector }
+	};
+	TestTrue(TEXT("The guidance is accepted"), Runtime.SetNavigationGuidance(
+		MakeShared<FAircraftNavigationGuidance, ESPMode::ThreadSafe>(Guidance), 10));
+
+	State.TimeSeconds = 1.3;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("An expired guidance still produces a fail-safe reference"),
+		Runtime.UpdateKinematic(State, Capability, Reference));
+	TestEqual(TEXT("Expired guidance enters braking"),
+		Runtime.GetNavigationGuidanceStatus().State,
+		EAircraftNavigationGuidanceState::Braking);
+	TestEqual(TEXT("Expiry is reported explicitly"),
+		Runtime.GetNavigationGuidanceStatus().FailureReason,
+		EAircraftNavigationGuidanceFailureReason::Expired);
+	TestTrue(TEXT("Braking targets a point ahead of the current COM"),
+		Reference.PositionCm.X > State.PositionCm.X);
+	TestTrue(TEXT("Kinematic braking reduces speed without teleporting to the stop point"),
+		Reference.VelocityCmPerSec.X >= 0.0f
+		&& Reference.VelocityCmPerSec.X < State.VelocityCmPerSec.X
+		&& Reference.PositionCm.X < 80.0f);
+	TestEqual(TEXT("Braking keeps the primary task identity"), Reference.IntentId, int64(72));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNavigationGuidanceClearTest,
+	"AircraftLab.Autopilot.NavigationGuidance.ClearRestoresNominalPlan",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNavigationGuidanceClearTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+
+	FAircraftTrajectoryRuntime Runtime;
+	TestTrue(TEXT("The primary route is accepted"), Runtime.SetIntent(
+		MakeRouteIntent(5000.0f), 73, 1, Config, State, Capability));
+	FAircraftNavigationGuidance Guidance;
+	Guidance.SourceIntentId = 73;
+	Guidance.SourceIntentRevision = 1;
+	Guidance.GeneratedAtSeconds = 1.0;
+	Guidance.ValidUntilSeconds = 2.0;
+	Guidance.Samples = {
+		{ 0.0f, FVector(0.0f, 200.0f, 0.0f), FVector::ZeroVector, FVector::ZeroVector },
+		{ 1.0f, FVector(0.0f, 200.0f, 0.0f), FVector::ZeroVector, FVector::ZeroVector }
+	};
+	TestTrue(TEXT("The guidance is accepted"), Runtime.SetNavigationGuidance(
+		MakeShared<FAircraftNavigationGuidance, ESPMode::ThreadSafe>(Guidance), 11));
+	Runtime.ClearNavigationGuidance(12);
+
+	State.TimeSeconds = 1.1;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("The nominal route reference is produced after clearing guidance"),
+		Runtime.UpdateKinematic(State, Capability, Reference));
+	TestTrue(TEXT("The route reference is no longer laterally overridden"),
+		FMath::IsNearlyZero(Reference.PositionCm.Y));
+	TestEqual(TEXT("Clearing guidance publishes inactive state"),
+		Runtime.GetNavigationGuidanceStatus().State,
+		EAircraftNavigationGuidanceState::Inactive);
+	TestEqual(TEXT("The clear revision is published"),
+		Runtime.GetNavigationGuidanceStatus().Revision, uint64(12));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNavigationGuidanceIntentMismatchTest,
+	"AircraftLab.Autopilot.NavigationGuidance.IntentMismatchCannotSteerNewTask",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNavigationGuidanceIntentMismatchTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+
+	FAircraftTrajectoryRuntime Runtime;
+	TestTrue(TEXT("The new primary route is accepted"), Runtime.SetIntent(
+		MakeRouteIntent(5000.0f), 74, 2, Config, State, Capability));
+	FAircraftNavigationGuidance Guidance;
+	Guidance.SourceIntentId = 73;
+	Guidance.SourceIntentRevision = 1;
+	Guidance.GeneratedAtSeconds = 1.0;
+	Guidance.ValidUntilSeconds = 2.0;
+	Guidance.Samples = {
+		{ 0.0f, FVector(0.0f, 500.0f, 0.0f), FVector::ZeroVector, FVector::ZeroVector },
+		{ 1.0f, FVector(0.0f, 500.0f, 0.0f), FVector::ZeroVector, FVector::ZeroVector }
+	};
+	TestTrue(TEXT("Structurally valid stale guidance is accepted for evaluation"),
+		Runtime.SetNavigationGuidance(
+			MakeShared<FAircraftNavigationGuidance, ESPMode::ThreadSafe>(Guidance), 13));
+
+	State.TimeSeconds = 1.1;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("The new nominal task still produces a reference"),
+		Runtime.UpdateKinematic(State, Capability, Reference));
+	TestTrue(TEXT("Guidance generated for the old task cannot steer the new task"),
+		FMath::IsNearlyZero(Reference.PositionCm.Y));
+	TestEqual(TEXT("The mismatch is reported"),
+		Runtime.GetNavigationGuidanceStatus().FailureReason,
+		EAircraftNavigationGuidanceFailureReason::IntentMismatch);
 	return true;
 }
 

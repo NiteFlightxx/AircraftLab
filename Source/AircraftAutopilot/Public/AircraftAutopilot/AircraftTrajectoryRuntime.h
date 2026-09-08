@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "AircraftAutopilot/AircraftMpccController.h"
+#include "AircraftRuntimeInterface/AircraftNavigationGuidance.h"
 
 /**
  * Single owner of intent, immutable motion plan, cursor and published reference.
@@ -18,6 +19,11 @@ public:
 	void Reset();
 	/** Rebase absolute clocks after a pause while preserving the active plan and cursor. */
 	void RebaseTime(double TimeSeconds);
+	bool SetNavigationGuidance(
+		TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe> Guidance,
+		uint64 Revision);
+	void SetNavigationGuidanceUnavailable(uint64 Revision);
+	void ClearNavigationGuidance(uint64 Revision);
 
 	bool UpdateFlightController(const FAircraftVehicleStateSnapshot& State,
 		const FAircraftDynamicCapabilitySnapshot& Capability,
@@ -31,11 +37,21 @@ public:
 
 	const FAircraftMotionPlan& GetPlan() const { return MpccController.GetPlan(); }
 	const FAircraftAutopilotDiagnostics& GetDiagnostics() const { return Diagnostics; }
+	const FAircraftTrajectoryReference& GetNominalReference() const { return LastNominalReference; }
+	const FAircraftNavigationGuidanceStatus& GetNavigationGuidanceStatus() const
+	{
+		return NavigationGuidanceStatus;
+	}
 
 private:
 	FAircraftMpccController MpccController;
 	FAircraftAutopilotDiagnostics Diagnostics;
 	FAircraftTrajectoryReference LastReference;
+	FAircraftTrajectoryReference LastNominalReference;
+	TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe> NavigationGuidance;
+	FAircraftNavigationGuidanceStatus NavigationGuidanceStatus;
+	bool bNavigationGuidanceActive = false;
+	bool bNavigationGuidanceAvailable = false;
 	FVector VelocityReferenceCmPerSec = FVector::ZeroVector;
 	FVector VelocityAccelerationCmPerSecSq = FVector::ZeroVector;
 	FVector PositionReferenceCm = FVector::ZeroVector;
@@ -56,4 +72,13 @@ private:
 		FAircraftTrajectoryReference& OutReference);
 	void FinalizeReference(const FAircraftVehicleStateSnapshot& State,
 		FAircraftTrajectoryReference& OutReference);
+	void ApplyNavigationGuidance(const FAircraftVehicleStateSnapshot& State,
+		const FAircraftDynamicCapabilitySnapshot& Capability,
+		float DeltaTime, bool bKinematic,
+		FAircraftTrajectoryReference& InOutReference);
+	void BuildBrakingReference(const FAircraftVehicleStateSnapshot& State,
+		const FAircraftDynamicCapabilitySnapshot& Capability,
+		EAircraftNavigationGuidanceFailureReason FailureReason,
+		float DeltaTime, bool bKinematic,
+		FAircraftTrajectoryReference& InOutReference);
 };
