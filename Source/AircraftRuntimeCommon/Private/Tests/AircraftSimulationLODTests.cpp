@@ -91,7 +91,7 @@ bool FAircraftNetworkReplicationContractTest::RunTest(const FString& Parameters)
 		UAircraftSimulationLODComponent::StaticClass()->FindFunctionByName(TEXT("SetSimulationLOD")));
 	return true;
 }
-
+#if WITH_METADATA
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftSimulationLodPreservationPolicyContractTest,
 	"AircraftLab.SimulationLOD.PreservationPolicyContract",
@@ -120,5 +120,5 @@ bool FAircraftSimulationLodPreservationPolicyContractTest::RunTest(const FString
 		DefaultBudget.bPreserveSimulationState);
 	return true;
 }
-
+#endif
 #endif
