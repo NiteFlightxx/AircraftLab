@@ -126,6 +126,131 @@ namespace
 		}
 		return Result;
 	}
+
+	enum class EAttitudeResponseMode : uint8
+	{
+		ReferenceDynamics,
+		DriveTarget
+	};
+
+	bool UpdateInternal(
+		const FVector& ControlAccelerationWorldCmPerSecSq,
+		const FVector& DynamicsFeedForwardAccelerationWorldCmPerSecSq,
+		const float YawDegrees,
+		const float YawRateDegPerSec,
+		const float GravityMagnitudeCmPerSecSq,
+		const float DeltaSeconds,
+		const FQuat& ActualBodyWorldRotation,
+		const FVector& ActualAngularVelocityBodyRadPerSec,
+		const FAircraftFlightControllerRuntimeConfig& FrameConfig,
+		const FAircraftAttitudeMotionConfig& MotionConfig,
+		const EAttitudeResponseMode ResponseMode,
+		FAircraftAttitudeMotionState& InOutState,
+		FAircraftAttitudeMotionOutput& OutReference)
+	{
+		OutReference = {};
+		FQuat NormalizedActualBody;
+		FAircraftAttitudeReference RawReference;
+		if (!BuildRawReference(
+			ControlAccelerationWorldCmPerSecSq,
+			DynamicsFeedForwardAccelerationWorldCmPerSecSq,
+			YawDegrees, YawRateDegPerSec, GravityMagnitudeCmPerSecSq, DeltaSeconds,
+			ActualBodyWorldRotation, ActualAngularVelocityBodyRadPerSec,
+			FrameConfig, MotionConfig, NormalizedActualBody, RawReference))
+		{
+			InOutState = {};
+			return false;
+		}
+		OutReference.RawControlWorldRotation = RawReference.ControlWorldRotation;
+
+		if (!InOutState.bInitialized || DeltaSeconds > MaximumCatchUpSeconds)
+		{
+			InitializeFromActual(NormalizedActualBody, ActualAngularVelocityBodyRadPerSec,
+				FrameConfig, InOutState);
+		}
+		else
+		{
+			const int32 SubstepCount = FMath::Max(
+				1, FMath::CeilToInt(DeltaSeconds / MaximumIntegrationStepSeconds));
+			const float SubstepSeconds = DeltaSeconds / static_cast<float>(SubstepCount);
+			const FVector MaxRateRad = FMath::DegreesToRadians(
+				MotionConfig.MaxAngularRateDegPerSec);
+			const FVector MaxAccelerationRad = FMath::DegreesToRadians(
+				MotionConfig.MaxAngularAccelerationDegPerSecSq);
+			const FVector MaxJerkRad = FMath::DegreesToRadians(
+				MotionConfig.MaxAngularJerkDegPerSecCubed);
+			const float NaturalAngularFrequency =
+				MotionConfig.NaturalFrequencyHz * UE_TWO_PI;
+
+			for (int32 Substep = 0; Substep < SubstepCount; ++Substep)
+			{
+				const FVector RotationErrorControl = QuaternionLogShortest(
+					InOutState.ControlWorldRotation.Inverse()
+						* RawReference.ControlWorldRotation);
+				const FVector YawFeedForwardControl =
+					InOutState.ControlWorldRotation.UnrotateVector(
+						FVector::UpVector * FMath::DegreesToRadians(YawRateDegPerSec));
+				FVector RequestedAcceleration;
+				if (ResponseMode == EAttitudeResponseMode::ReferenceDynamics)
+				{
+					RequestedAcceleration = RotationErrorControl
+						* FMath::Square(NaturalAngularFrequency)
+						+ (YawFeedForwardControl
+							- InOutState.AngularVelocityControlRadPerSec)
+							* (2.0f * MotionConfig.DampingRatio
+								* NaturalAngularFrequency);
+				}
+				else
+				{
+					bool bDesiredRateLimited = false;
+					FVector DesiredRate = BuildStoppingLimitedRate(
+						RotationErrorControl, MaxRateRad, MaxAccelerationRad)
+						+ YawFeedForwardControl;
+					DesiredRate = ClampAxes(
+						DesiredRate, MaxRateRad, bDesiredRateLimited);
+					OutReference.bRateLimited |= bDesiredRateLimited;
+					RequestedAcceleration =
+						(DesiredRate - InOutState.AngularVelocityControlRadPerSec)
+						/ SubstepSeconds;
+				}
+
+				RequestedAcceleration = ClampAxes(
+					RequestedAcceleration, MaxAccelerationRad,
+					OutReference.bAccelerationLimited);
+				FVector AccelerationDelta = RequestedAcceleration
+					- InOutState.AngularAccelerationControlRadPerSecSq;
+				AccelerationDelta = ClampAxes(
+					AccelerationDelta, MaxJerkRad * SubstepSeconds,
+					OutReference.bJerkLimited);
+				InOutState.AngularAccelerationControlRadPerSecSq += AccelerationDelta;
+				InOutState.AngularVelocityControlRadPerSec +=
+					InOutState.AngularAccelerationControlRadPerSecSq * SubstepSeconds;
+				InOutState.AngularVelocityControlRadPerSec = ClampAxes(
+					InOutState.AngularVelocityControlRadPerSec,
+					MaxRateRad, OutReference.bRateLimited);
+				InOutState.ControlWorldRotation = IntegrateLocalAngularVelocity(
+					InOutState.ControlWorldRotation,
+					InOutState.AngularVelocityControlRadPerSec, SubstepSeconds);
+			}
+		}
+
+		OutReference.ControlWorldRotation = InOutState.ControlWorldRotation;
+		OutReference.BodyWorldRotation = FrameConfig.GetBodyWorldRotation(
+			InOutState.ControlWorldRotation);
+		OutReference.AngularVelocityBodyRadPerSec = FrameConfig.ControlToBodyVector(
+			InOutState.AngularVelocityControlRadPerSec);
+		OutReference.AngularAccelerationBodyRadPerSecSq = FrameConfig.ControlToBodyVector(
+			InOutState.AngularAccelerationControlRadPerSecSq);
+		OutReference.bValid = !OutReference.ControlWorldRotation.ContainsNaN()
+			&& !OutReference.BodyWorldRotation.ContainsNaN()
+			&& IsFiniteVector(OutReference.AngularVelocityBodyRadPerSec)
+			&& IsFiniteVector(OutReference.AngularAccelerationBodyRadPerSecSq);
+		if (!OutReference.bValid)
+		{
+			InOutState = {};
+		}
+		return OutReference.bValid;
+	}
 }
 
 bool FAircraftAttitudeMotionConfig::IsValid() const
@@ -157,87 +282,13 @@ bool FAircraftAttitudeReferenceDynamics::Update(
 	FAircraftAttitudeMotionOutput& OutReference)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_AlternativeAttitudeReference_Update);
-	OutReference = {};
-	FQuat NormalizedActualBody;
-	FAircraftAttitudeReference RawReference;
-	if (!BuildRawReference(
+	return UpdateInternal(
 		ControlAccelerationWorldCmPerSecSq,
 		DynamicsFeedForwardAccelerationWorldCmPerSecSq,
 		YawDegrees, YawRateDegPerSec, GravityMagnitudeCmPerSecSq, DeltaSeconds,
 		ActualBodyWorldRotation, ActualAngularVelocityBodyRadPerSec,
-		FrameConfig, MotionConfig, NormalizedActualBody, RawReference))
-	{
-		Reset(InOutState);
-		return false;
-	}
-	OutReference.RawControlWorldRotation = RawReference.ControlWorldRotation;
-	if (!InOutState.bInitialized || DeltaSeconds > MaximumCatchUpSeconds)
-	{
-		InitializeFromActual(NormalizedActualBody, ActualAngularVelocityBodyRadPerSec,
-			FrameConfig, InOutState);
-	}
-	else
-	{
-		const int32 SubstepCount = FMath::Max(
-			1, FMath::CeilToInt(DeltaSeconds / MaximumIntegrationStepSeconds));
-		const float SubstepSeconds = DeltaSeconds / static_cast<float>(SubstepCount);
-		const float NaturalAngularFrequency = MotionConfig.NaturalFrequencyHz * UE_TWO_PI;
-		const FVector MaxRateRad = FMath::DegreesToRadians(
-			MotionConfig.MaxAngularRateDegPerSec);
-		const FVector MaxAccelerationRad = FMath::DegreesToRadians(
-			MotionConfig.MaxAngularAccelerationDegPerSecSq);
-		const FVector MaxJerkRad = FMath::DegreesToRadians(
-			MotionConfig.MaxAngularJerkDegPerSecCubed);
-
-		for (int32 Substep = 0; Substep < SubstepCount; ++Substep)
-		{
-			const FQuat Error = InOutState.ControlWorldRotation.Inverse()
-				* RawReference.ControlWorldRotation;
-			const FVector RotationErrorControl = QuaternionLogShortest(Error);
-			const FVector YawFeedForwardWorld = FVector::UpVector
-				* FMath::DegreesToRadians(YawRateDegPerSec);
-			const FVector FeedForwardControl = InOutState.ControlWorldRotation.UnrotateVector(
-				YawFeedForwardWorld);
-			FVector RequestedAcceleration = RotationErrorControl
-				* FMath::Square(NaturalAngularFrequency)
-				+ (FeedForwardControl - InOutState.AngularVelocityControlRadPerSec)
-					* (2.0f * MotionConfig.DampingRatio * NaturalAngularFrequency);
-			RequestedAcceleration = ClampAxes(
-				RequestedAcceleration, MaxAccelerationRad, OutReference.bAccelerationLimited);
-
-			const FVector MaximumAccelerationDelta = MaxJerkRad * SubstepSeconds;
-			FVector AccelerationDelta = RequestedAcceleration
-				- InOutState.AngularAccelerationControlRadPerSecSq;
-			AccelerationDelta = ClampAxes(
-				AccelerationDelta, MaximumAccelerationDelta, OutReference.bJerkLimited);
-			InOutState.AngularAccelerationControlRadPerSecSq += AccelerationDelta;
-			InOutState.AngularVelocityControlRadPerSec +=
-				InOutState.AngularAccelerationControlRadPerSecSq * SubstepSeconds;
-			InOutState.AngularVelocityControlRadPerSec = ClampAxes(
-				InOutState.AngularVelocityControlRadPerSec,
-				MaxRateRad, OutReference.bRateLimited);
-			InOutState.ControlWorldRotation = IntegrateLocalAngularVelocity(
-				InOutState.ControlWorldRotation,
-				InOutState.AngularVelocityControlRadPerSec, SubstepSeconds);
-		}
-	}
-
-	OutReference.ControlWorldRotation = InOutState.ControlWorldRotation;
-	OutReference.BodyWorldRotation = FrameConfig.GetBodyWorldRotation(
-		InOutState.ControlWorldRotation);
-	OutReference.AngularVelocityBodyRadPerSec = FrameConfig.ControlToBodyVector(
-		InOutState.AngularVelocityControlRadPerSec);
-	OutReference.AngularAccelerationBodyRadPerSecSq = FrameConfig.ControlToBodyVector(
-		InOutState.AngularAccelerationControlRadPerSecSq);
-	OutReference.bValid = !OutReference.ControlWorldRotation.ContainsNaN()
-		&& !OutReference.BodyWorldRotation.ContainsNaN()
-		&& IsFiniteVector(OutReference.AngularVelocityBodyRadPerSec)
-		&& IsFiniteVector(OutReference.AngularAccelerationBodyRadPerSecSq);
-	if (!OutReference.bValid)
-	{
-		Reset(InOutState);
-	}
-	return OutReference.bValid;
+		FrameConfig, MotionConfig, EAttitudeResponseMode::ReferenceDynamics,
+		InOutState, OutReference);
 }
 
 bool FAircraftAttitudeReferenceDynamics::UpdateDriveTarget(
@@ -255,92 +306,13 @@ bool FAircraftAttitudeReferenceDynamics::UpdateDriveTarget(
 	FAircraftAttitudeMotionOutput& OutReference)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Constraint_AttitudeTarget_Update);
-	OutReference = {};
-	FQuat NormalizedActualBody;
-	FAircraftAttitudeReference RawReference;
-	if (!BuildRawReference(
+	return UpdateInternal(
 		ControlAccelerationWorldCmPerSecSq,
 		DynamicsFeedForwardAccelerationWorldCmPerSecSq,
 		YawDegrees, YawRateDegPerSec, GravityMagnitudeCmPerSecSq, DeltaSeconds,
 		ActualBodyWorldRotation, ActualAngularVelocityBodyRadPerSec,
-		FrameConfig, MotionConfig, NormalizedActualBody, RawReference))
-	{
-		Reset(InOutState);
-		return false;
-	}
-	OutReference.RawControlWorldRotation = RawReference.ControlWorldRotation;
-
-	if (!InOutState.bInitialized || DeltaSeconds > MaximumCatchUpSeconds)
-	{
-		InitializeFromActual(NormalizedActualBody, ActualAngularVelocityBodyRadPerSec,
-			FrameConfig, InOutState);
-	}
-	else
-	{
-		const int32 SubstepCount = FMath::Max(
-			1, FMath::CeilToInt(DeltaSeconds / MaximumIntegrationStepSeconds));
-		const float SubstepSeconds = DeltaSeconds / static_cast<float>(SubstepCount);
-		const FVector MaxRateRad = FMath::DegreesToRadians(
-			MotionConfig.MaxAngularRateDegPerSec);
-		const FVector MaxAccelerationRad = FMath::DegreesToRadians(
-			MotionConfig.MaxAngularAccelerationDegPerSecSq);
-		const FVector MaxJerkRad = FMath::DegreesToRadians(
-			MotionConfig.MaxAngularJerkDegPerSecCubed);
-
-		for (int32 Substep = 0; Substep < SubstepCount; ++Substep)
-		{
-			const FVector RotationErrorControl = QuaternionLogShortest(
-				InOutState.ControlWorldRotation.Inverse()
-					* RawReference.ControlWorldRotation);
-			const FVector YawFeedForwardControl =
-				InOutState.ControlWorldRotation.UnrotateVector(
-					FVector::UpVector * FMath::DegreesToRadians(YawRateDegPerSec));
-			bool bDesiredRateLimited = false;
-			FVector DesiredRate = BuildStoppingLimitedRate(
-				RotationErrorControl, MaxRateRad, MaxAccelerationRad)
-				+ YawFeedForwardControl;
-			DesiredRate = ClampAxes(DesiredRate, MaxRateRad, bDesiredRateLimited);
-			OutReference.bRateLimited |= bDesiredRateLimited;
-
-			FVector RequestedAcceleration =
-				(DesiredRate - InOutState.AngularVelocityControlRadPerSec)
-				/ SubstepSeconds;
-			RequestedAcceleration = ClampAxes(
-				RequestedAcceleration, MaxAccelerationRad,
-				OutReference.bAccelerationLimited);
-			FVector AccelerationDelta = RequestedAcceleration
-				- InOutState.AngularAccelerationControlRadPerSecSq;
-			AccelerationDelta = ClampAxes(
-				AccelerationDelta, MaxJerkRad * SubstepSeconds,
-				OutReference.bJerkLimited);
-			InOutState.AngularAccelerationControlRadPerSecSq += AccelerationDelta;
-			InOutState.AngularVelocityControlRadPerSec +=
-				InOutState.AngularAccelerationControlRadPerSecSq * SubstepSeconds;
-			InOutState.AngularVelocityControlRadPerSec = ClampAxes(
-				InOutState.AngularVelocityControlRadPerSec,
-				MaxRateRad, OutReference.bRateLimited);
-			InOutState.ControlWorldRotation = IntegrateLocalAngularVelocity(
-				InOutState.ControlWorldRotation,
-				InOutState.AngularVelocityControlRadPerSec, SubstepSeconds);
-		}
-	}
-
-	OutReference.ControlWorldRotation = InOutState.ControlWorldRotation;
-	OutReference.BodyWorldRotation = FrameConfig.GetBodyWorldRotation(
-		InOutState.ControlWorldRotation);
-	OutReference.AngularVelocityBodyRadPerSec = FrameConfig.ControlToBodyVector(
-		InOutState.AngularVelocityControlRadPerSec);
-	OutReference.AngularAccelerationBodyRadPerSecSq = FrameConfig.ControlToBodyVector(
-		InOutState.AngularAccelerationControlRadPerSecSq);
-	OutReference.bValid = !OutReference.ControlWorldRotation.ContainsNaN()
-		&& !OutReference.BodyWorldRotation.ContainsNaN()
-		&& IsFiniteVector(OutReference.AngularVelocityBodyRadPerSec)
-		&& IsFiniteVector(OutReference.AngularAccelerationBodyRadPerSecSq);
-	if (!OutReference.bValid)
-	{
-		Reset(InOutState);
-	}
-	return OutReference.bValid;
+		FrameConfig, MotionConfig, EAttitudeResponseMode::DriveTarget,
+		InOutState, OutReference);
 }
 
 void FAircraftAttitudeReferenceDynamics::Reset(FAircraftAttitudeMotionState& State)
