@@ -232,6 +232,15 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 		Constraint.GravityFeedForwardScale, 1.0f);
 	TestEqual(TEXT("Constraint simulation fully compensates rigid-body linear damping by default"),
 		Constraint.DynamicsFeedForwardScale, 1.0f);
+	TestEqual(TEXT("Constraint reference defaults to one hertz"),
+		Constraint.AttitudeReference.NaturalFrequencyHz, 1.0f);
+	TestEqual(TEXT("Constraint servo retains its independent default bandwidth"),
+		Constraint.AttitudeServoNaturalFrequencyHz, 1.59154943f);
+	const FAircraftKinematicSimulationConfig Kinematic;
+	TestEqual(TEXT("Kinematic reference has its own faster default bandwidth"),
+		Kinematic.AttitudeReference.NaturalFrequencyHz, 1.5f);
+	TestEqual(TEXT("Kinematic attitude excludes dynamics feed-forward by default"),
+		Kinematic.AttitudeReference.DynamicsFeedForwardScale, 0.0f);
 
 	const FAircraftAirscrewProfileData Airscrew;
 	TestFalse(TEXT("A single airscrew profile has an identity"), Airscrew.Name.IsNone());

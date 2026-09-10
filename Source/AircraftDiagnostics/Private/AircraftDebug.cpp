@@ -1,6 +1,7 @@
 #include "AircraftDiagnostics/AircraftDebug.h"
 
 #include "Aircraft/ConstraintDriveUtils.h"
+#include "Aircraft/AircraftAlternativeDriveConfig.h"
 #include "Aircraft/FlightControllerRuntimeConfig.h"
 #include "AircraftDiagnostics/AircraftDebugSettings.h"
 #include "Components/PrimitiveComponent.h"
@@ -66,7 +67,8 @@ void FAircraftDebug::LogConstraintCreated(
 	const int32 SimulationLOD,
 	FConstraintInstance& Constraint,
 	const FName RootBone,
-	const FAircraftFlightControllerRuntimeConfig& Config)
+	const FAircraftFlightControllerRuntimeConfig& FlightConfig,
+	const FAircraftConstraintSimulationRuntimeConfig& ConstraintConfig)
 {
 	const FTransform BodyFrame = Constraint.GetRefFrame(EConstraintFrame::Frame1);
 	const FTransform WorldFrame = Constraint.GetRefFrame(EConstraintFrame::Frame2);
@@ -79,16 +81,16 @@ void FAircraftDebug::LogConstraintCreated(
 	float LinearDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
 		LinearStiffness, LinearDamping,
-		Config.ConstraintLinearNaturalFrequencyHz,
-		Config.ConstraintLinearDampingRatio,
-		Config.ConstraintLinearExtraDampingPerSecond);
+		ConstraintConfig.LinearNaturalFrequencyHz,
+		ConstraintConfig.LinearDampingRatio,
+		ConstraintConfig.LinearExtraDampingPerSecond);
 	float AttitudeStiffness = 0.0f;
 	float AttitudeDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
 		AttitudeStiffness, AttitudeDamping,
-		Config.ConstraintAttitudeNaturalFrequencyHz,
-		Config.ConstraintAttitudeDampingRatio,
-		Config.ConstraintAttitudeExtraDampingPerSecond);
+		ConstraintConfig.AttitudeServoNaturalFrequencyHz,
+		ConstraintConfig.AttitudeServoDampingRatio,
+		ConstraintConfig.AttitudeServoExtraDampingPerSecond);
 	UE_LOG(LogAircraft, Log,
 		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Valid=%d Broken=%d Simulating=%d BodyFrameLocal=(%.1f,%.1f,%.1f) WorldFrame=(%.1f,%.1f,%.1f) InitialWorldTarget=(%.1f,%.1f,%.1f) MotionLimits(H/Up/Down/Yaw)=(%.1f,%.1f,%.1f,%.1f) Deadbands(H/V/Y)=(%.3f,%.3f,%.3f) BrakeToHold(H/V)=(%.1f,%.1f) LinearDrive(P/V)=(%d%d%d/%d%d%d) LinearControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) LinearSpring(K/D/LimitN)=(%.3f,%.3f,%.3f) Body(Mass/LinearDamping)=(%.3f,%.3f) FeedForward(Gravity/Dynamics)=(%.3f,%.3f) AttitudeTorque(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) AttitudeTorque(K/D/LimitNm)=(%.3f,%.3f,%.3f) LinearAccelerationMode=%d"),
 		*GetNameSafe(Component.GetOwner()), SimulationLOD, *RootBone.ToString(),
@@ -97,28 +99,28 @@ void FAircraftDebug::LogConstraintCreated(
 		BodyFrame.GetLocation().X, BodyFrame.GetLocation().Y, BodyFrame.GetLocation().Z,
 		WorldFrame.GetLocation().X, WorldFrame.GetLocation().Y, WorldFrame.GetLocation().Z,
 		InitialWorldTarget.X, InitialWorldTarget.Y, InitialWorldTarget.Z,
-		Config.MaxHorizontalSpeedCmPerSec, Config.MaxClimbRateCmPerSec,
-		Config.MaxDescentRateCmPerSec, Config.MaxYawRateDegreesPerSec,
-		Config.HorizontalHoldStickDeadband, Config.VerticalHoldStickDeadband,
-		Config.YawHoldStickDeadband,
-		Config.HorizontalBrakeToHoldSpeedCmPerSec,
-		Config.VerticalBrakeToHoldSpeedCmPerSec,
+		FlightConfig.MaxHorizontalSpeedCmPerSec, FlightConfig.MaxClimbRateCmPerSec,
+		FlightConfig.MaxDescentRateCmPerSec, FlightConfig.MaxYawRateDegreesPerSec,
+		FlightConfig.HorizontalHoldStickDeadband, FlightConfig.VerticalHoldStickDeadband,
+		FlightConfig.YawHoldStickDeadband,
+		FlightConfig.HorizontalBrakeToHoldSpeedCmPerSec,
+		FlightConfig.VerticalBrakeToHoldSpeedCmPerSec,
 		Constraint.IsLinearPositionDriveXEnabled() ? 1 : 0,
 		Constraint.IsLinearPositionDriveYEnabled() ? 1 : 0,
 		Constraint.IsLinearPositionDriveZEnabled() ? 1 : 0,
 		Constraint.IsLinearVelocityDriveXEnabled() ? 1 : 0,
 		Constraint.IsLinearVelocityDriveYEnabled() ? 1 : 0,
 		Constraint.IsLinearVelocityDriveZEnabled() ? 1 : 0,
-		Config.ConstraintLinearNaturalFrequencyHz, Config.ConstraintLinearDampingRatio,
-		Config.ConstraintLinearExtraDampingPerSecond,
-		LinearStiffness, LinearDamping, Config.ConstraintLinearForceLimitN,
+		ConstraintConfig.LinearNaturalFrequencyHz, ConstraintConfig.LinearDampingRatio,
+		ConstraintConfig.LinearExtraDampingPerSecond,
+		LinearStiffness, LinearDamping, ConstraintConfig.LinearForceLimitN,
 		BodyMassKg, BodyLinearDampingPerSecond,
-		Config.ConstraintGravityFeedForwardScale,
-		Config.ConstraintDynamicsFeedForwardScale,
-		Config.ConstraintAttitudeNaturalFrequencyHz, Config.ConstraintAttitudeDampingRatio,
-		Config.ConstraintAttitudeExtraDampingPerSecond,
-		AttitudeStiffness, AttitudeDamping, Config.ConstraintAttitudeTorqueLimitNm,
-		Config.bConstraintLinearAccelerationMode ? 1 : 0);
+		ConstraintConfig.GravityFeedForwardScale,
+		ConstraintConfig.DynamicsFeedForwardScale,
+		ConstraintConfig.AttitudeServoNaturalFrequencyHz, ConstraintConfig.AttitudeServoDampingRatio,
+		ConstraintConfig.AttitudeServoExtraDampingPerSecond,
+		AttitudeStiffness, AttitudeDamping, ConstraintConfig.AttitudeTorqueLimitNm,
+		ConstraintConfig.bLinearAccelerationMode ? 1 : 0);
 }
 
 void FAircraftDebug::LogConstraintCreationFailure(
@@ -144,7 +146,7 @@ void FAircraftDebug::TickConstraint(
 	const FVector& WorldCenterOfMassVelocityTarget,
 	const FVector& WorldPositionFeedForward,
 	const FQuat& WorldOrientationTarget,
-	const FVector& WorldAngularVelocityTargetRevPerSec,
+	const FVector& WorldAngularVelocityTargetRadPerSec,
 	const float DeltaSeconds,
 	float& InOutLogAccumulatorSeconds,
 	float& InOutUnresponsiveSeconds)
@@ -206,7 +208,7 @@ void FAircraftDebug::TickConstraint(
 		{
 			InOutLogAccumulatorSeconds = 0.0f;
 			UE_LOG(LogAircraft, Log,
-				TEXT("[Aircraft.Constraint.Tick] Owner=%s LOD=%d BodyPos=(%.1f,%.1f,%.1f) BodyCOM=(%.1f,%.1f,%.1f) ConstraintArm=(%+.2f,%+.2f,%+.2f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) WorldTargetPos=(%.1f,%.1f,%.1f) WorldTargetVel=(%+.1f,%+.1f,%+.1f) Error=(%+.1f,%+.1f,%+.1f) WorldTargetCOM=(%+.1f,%+.1f,%+.1f) WorldTargetCOMVel=(%+.1f,%+.1f,%+.1f) PositionFF=(%+.2f,%+.2f,%+.2f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) WorldTargetQuat=(%+.3f,%+.3f,%+.3f,%+.3f) WorldTargetAngVel=(%+.3f,%+.3f,%+.3f) Drive(P/V)=(%d%d%d/%d%d%d)"),
+				TEXT("[Aircraft.Constraint.Tick] Owner=%s LOD=%d BodyPos=(%.1f,%.1f,%.1f) BodyCOM=(%.1f,%.1f,%.1f) ConstraintArm=(%+.2f,%+.2f,%+.2f) BodyAwake=%d BodyVel=(%+.1f,%+.1f,%+.1f) WorldTargetPos=(%.1f,%.1f,%.1f) WorldTargetVel=(%+.1f,%+.1f,%+.1f) Error=(%+.1f,%+.1f,%+.1f) WorldTargetCOM=(%+.1f,%+.1f,%+.1f) WorldTargetCOMVel=(%+.1f,%+.1f,%+.1f) PositionFF=(%+.2f,%+.2f,%+.2f) Force=(%+.1f,%+.1f,%+.1f) Torque=(%+.1f,%+.1f,%+.1f) WorldTargetQuat=(%+.3f,%+.3f,%+.3f,%+.3f) WorldTargetAngVelRad=(%+.3f,%+.3f,%+.3f) Drive(P/V)=(%d%d%d/%d%d%d)"),
 				*GetNameSafe(Component.GetOwner()), SimulationLOD,
 				BodyPosition.X, BodyPosition.Y, BodyPosition.Z,
 				BodyCenterOfMass.X, BodyCenterOfMass.Y, BodyCenterOfMass.Z,
@@ -226,9 +228,9 @@ void FAircraftDebug::TickConstraint(
 				ConstraintTorque.X, ConstraintTorque.Y, ConstraintTorque.Z,
 				WorldOrientationTarget.X, WorldOrientationTarget.Y,
 				WorldOrientationTarget.Z, WorldOrientationTarget.W,
-				WorldAngularVelocityTargetRevPerSec.X,
-				WorldAngularVelocityTargetRevPerSec.Y,
-				WorldAngularVelocityTargetRevPerSec.Z,
+				WorldAngularVelocityTargetRadPerSec.X,
+				WorldAngularVelocityTargetRadPerSec.Y,
+				WorldAngularVelocityTargetRadPerSec.Z,
 				Constraint.IsLinearPositionDriveXEnabled() ? 1 : 0,
 				Constraint.IsLinearPositionDriveYEnabled() ? 1 : 0,
 				Constraint.IsLinearPositionDriveZEnabled() ? 1 : 0,

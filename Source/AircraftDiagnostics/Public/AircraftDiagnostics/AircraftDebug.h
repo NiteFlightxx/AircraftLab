@@ -10,6 +10,7 @@
 class UPrimitiveComponent;
 struct FConstraintInstance;
 struct FAircraftFlightControllerRuntimeConfig;
+struct FAircraftConstraintSimulationRuntimeConfig;
 
 AIRCRAFTDIAGNOSTICS_API DECLARE_LOG_CATEGORY_EXTERN(LogAircraft, Log, All);
 DECLARE_STATS_GROUP(TEXT("Aircraft"), STATGROUP_Aircraft, STATCAT_Advanced);
@@ -52,7 +53,8 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebug
 		int32 SimulationLOD,
 		FConstraintInstance& Constraint,
 		FName RootBone,
-		const FAircraftFlightControllerRuntimeConfig& Config);
+		const FAircraftFlightControllerRuntimeConfig& FlightConfig,
+		const FAircraftConstraintSimulationRuntimeConfig& ConstraintConfig);
 
 	static void LogConstraintCreationFailure(
 		const UPrimitiveComponent& Component,
@@ -70,7 +72,7 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebug
 		const FVector& WorldCenterOfMassVelocityTarget,
 		const FVector& WorldPositionFeedForward,
 		const FQuat& WorldOrientationTarget,
-		const FVector& WorldAngularVelocityTargetRevPerSec,
+		const FVector& WorldAngularVelocityTargetRadPerSec,
 		float DeltaSeconds,
 		float& InOutLogAccumulatorSeconds,
 		float& InOutUnresponsiveSeconds);

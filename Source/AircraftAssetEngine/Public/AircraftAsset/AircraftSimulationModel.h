@@ -15,6 +15,7 @@
 // 名称与字段不变，此处 include 复用。
 #include "Aircraft/FlightControllerRuntimeConfig.h"
 #include "Aircraft/AircraftAerodynamics.h"
+#include "Aircraft/AircraftAlternativeDriveConfig.h"
 
 // Autopilot 运行时配置契约（Path/Timing/MPCC Dataflow 节点的编译产物）。
 #include "AircraftRuntimeInterface/AircraftAutopilotConfig.h"
@@ -217,6 +218,10 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	/** 飞控运行时只读快照。 */
 	FAircraftFlightControllerRuntimeConfig FlightController;
 
+	/** PhysicsConstraint 与 Kinematic 各自独立的表现型驱动配置。 */
+	FAircraftConstraintSimulationRuntimeConfig ConstraintSimulation;
+	FAircraftKinematicSimulationRuntimeConfig KinematicSimulation;
+
 	/** Autopilot 运行时只读快照（Path/Timing/MPCC 节点编译产物）。 */
 	FAircraftAutopilotRuntimeConfig Autopilot;
 
@@ -239,6 +244,8 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 		ProjectionSolverIterationCount = 1;
 		Mass = FAircraftMassProperties();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
+		ConstraintSimulation = FAircraftConstraintSimulationRuntimeConfig();
+		KinematicSimulation = FAircraftKinematicSimulationRuntimeConfig();
 		Autopilot = FAircraftAutopilotRuntimeConfig();
 		bHasAerodynamics = false;
 		Aerodynamics = FAircraftAerodynamicsRuntimeConfig();

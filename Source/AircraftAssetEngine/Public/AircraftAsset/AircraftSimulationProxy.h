@@ -59,6 +59,7 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationOutputFrame
 	FAircraftVehicleStateSnapshot VehicleState;
 	FAircraftFlightControlOutput ControlOutput;
 	FAircraftSimulationControlDiagnostics ControlDiagnostics;
+	FAircraftAlternativeAttitudeDiagnostics AlternativeAttitude;
 	FAircraftTrajectoryReference TrajectoryReference;
 	FAircraftTrajectoryReference NominalTrajectoryReference;
 	FAircraftDynamicCapabilitySnapshot DynamicCapability;
@@ -153,7 +154,10 @@ public:
 		return LastPhysicsDeltaSeconds.load(std::memory_order_relaxed);
 	}
 	/** 替代驱动后端（约束/运动学，GT 执行）写回估计状态，覆盖 PT 输出槽。 */
-	void SetEstimatedStateOverride_GameThread(const FAircraftEstimatedState& InState);
+	void SetAlternativeDriveOutput_GameThread(
+		const FAircraftEstimatedState& InState,
+		const FAircraftAlternativeAttitudeDiagnostics& AttitudeDiagnostics,
+		const FQuat& ActualControlWorldRotation);
 	EAircraftArmState GetArmState_GameThread() const;
 	EAircraftFlightMode GetFlightMode_GameThread() const;
 	float GetCollectiveThrustCommand_GameThread() const;
@@ -250,6 +254,7 @@ private:
 	FAircraftFlightControlOutput LatestControlOutput;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftSimulationControlDiagnostics LatestControlDiagnostics;
+	FAircraftAlternativeAttitudeDiagnostics LatestAlternativeAttitude;
 	FAircraftTrajectoryReference LatestTrajectoryReference;
 	FAircraftTrajectoryReference LatestNominalTrajectoryReference;
 	FAircraftDynamicCapabilitySnapshot LatestDynamicCapability;
@@ -288,6 +293,7 @@ private:
 	/** 模式能力缓存。 */
 	FAircraftModeCapabilities ModeCapabilities;
 	FAircraftTrajectoryRuntime TrajectoryRuntime;
+	FAircraftAttitudeMotionState ConstraintAttitudeMotionState;
 	uint64 ActiveMovementIntentRevision = 0;
 	int64 ActiveMovementIntentId = 0;
 	uint64 ActiveNavigationGuidanceRevision = 0;

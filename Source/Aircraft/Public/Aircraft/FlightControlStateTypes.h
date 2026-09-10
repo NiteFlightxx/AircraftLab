@@ -167,7 +167,12 @@ struct FAircraftPhysicsCache
 	float MassKg = 0.0f;
 	FVector LinearDampingPerSecond = FVector::ZeroVector;
 	FVector AngularDampingPerSecond = FVector::ZeroVector;
+	/** 飞控标准轴顺序下的惯量近似，用于保持完整飞控现有的对角模型。 */
 	FVector InertiaDiagonalKgM2 = FVector::ZeroVector;
+	/** Chaos 质量主轴系中的真实主惯量。 */
+	FVector InertiaPrincipalKgM2 = FVector::ZeroVector;
+	/** Chaos 质量主轴系到物理 Body 局部系的旋转（RotationOfMass）。 */
+	FQuat PrincipalToBodyRotation = FQuat::Identity;
 
 	FVector WorldUp = FVector::UpVector;
 

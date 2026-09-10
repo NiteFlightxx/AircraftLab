@@ -5,7 +5,7 @@
 #include "AircraftAsset/AircraftKinematicDrive.h"
 #include "Aircraft/ConstraintDriveUtils.h"
 #include "Aircraft/AircraftPhysicsUnits.h"
-#include "Aircraft/AircraftAttitudeReference.h"
+#include "Aircraft/AircraftAttitudeReferenceDynamics.h"
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
@@ -43,6 +43,27 @@ namespace
 		TNumericLimits<int64>::Max();
 	constexpr int64 AircraftComponentManualIntentHandleId =
 		AircraftComponentInternalIntentHandleId - 1;
+
+	FVector ComputeAngularVelocityWorld(
+		const FQuat& PreviousRotation, const FQuat& CurrentRotation, const float DeltaSeconds)
+	{
+		if (DeltaSeconds <= UE_SMALL_NUMBER)
+		{
+			return FVector::ZeroVector;
+		}
+		FQuat Delta = CurrentRotation * PreviousRotation.Inverse();
+		Delta.Normalize();
+		if (Delta.W < 0.0f)
+		{
+			Delta = FQuat(-Delta.X, -Delta.Y, -Delta.Z, -Delta.W);
+		}
+		FVector Axis = FVector::ZeroVector;
+		float Angle = 0.0f;
+		Delta.ToAxisAndAngle(Axis, Angle);
+		return Axis.IsNormalized() && FMath::IsFinite(Angle)
+			? Axis * (Angle / DeltaSeconds)
+			: FVector::ZeroVector;
+	}
 }
 
 UAircraftComponent::UAircraftComponent(const FObjectInitializer& ObjectInitializer)
@@ -309,16 +330,22 @@ EAircraftFlightMode UAircraftComponent::GetFlightMode() const
 
 void UAircraftComponent::Arm()
 {
+	const bool bWasArmed = bRequestedArm;
 	bRequestedArm = true;
 	bRequestedControlStateInitialized = true;
 	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->SetArmRequest_GameThread(true);
 	}
+	if (!bWasArmed)
+	{
+		ResetKinematicAttitudeState();
+	}
 }
 
 void UAircraftComponent::Disarm()
 {
+	ResetKinematicAttitudeState();
 	bRequestedArm = false;
 	bRequestedControlStateInitialized = true;
 	if (AircraftSimulationProxy.IsValid())
@@ -356,6 +383,10 @@ EAircraftArmState UAircraftComponent::GetArmState() const
 
 void UAircraftComponent::SetControllerEnabled(bool bEnabled)
 {
+	if (bRequestedControllerEnabled != bEnabled)
+	{
+		ResetKinematicAttitudeState();
+	}
 	bRequestedControllerEnabled = bEnabled;
 	bRequestedControlStateInitialized = true;
 	if (AircraftSimulationProxy.IsValid())
@@ -396,6 +427,10 @@ void UAircraftComponent::GetEstimatedState(FAircraftEstimatedState& OutState) co
 
 void UAircraftComponent::SetEnableSimulation(bool bEnable)
 {
+	if (bEnableSimulation != bEnable)
+	{
+		ResetKinematicAttitudeState();
+	}
 	bEnableSimulation = bEnable;
 	ApplyExecutionPolicy();
 	if (bEnableSimulation)
@@ -411,12 +446,14 @@ bool UAircraftComponent::IsSimulationEnabled() const
 
 void UAircraftComponent::SuspendSimulation()
 {
+	ResetKinematicAttitudeState();
 	bSuspendSimulation = true;
 	ApplyExecutionPolicy();
 }
 
 void UAircraftComponent::ResumeSimulation()
 {
+	ResetKinematicAttitudeState();
 	bSuspendSimulation = false;
 	ApplyExecutionPolicy();
 	TryActivateSimulationBackend();
@@ -429,6 +466,7 @@ bool UAircraftComponent::IsSimulationSuspended() const
 
 void UAircraftComponent::SoftResetSimulation()
 {
+	ResetKinematicAttitudeState();
 	// 软重置：只让 SimulationProxy 重新读取当前 SimulationModel + 归零 PID/Rotor 状态，
 	// 但保留组件注册状态、SkeletalMesh 资源和当前 Chaos PhysicsState。
 	if (AircraftSimulationProxy.IsValid())
@@ -445,6 +483,7 @@ void UAircraftComponent::HardResetSimulation()
 	{
 		return;
 	}
+	ResetKinematicAttitudeState();
 	FAircraftPhysicsStateSnapshot PhysicsSnapshot;
 	CapturePhysicsStateSnapshot(PhysicsSnapshot);
 	RebuildSimulationStructure(
@@ -596,9 +635,10 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	SimulationConstraint->SetLinearPositionTarget(InitialCenterOfMass);
 	SimulationConstraint->SetLinearVelocityTarget(FVector::ZeroVector);
 
-	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
-	SimulationConstraint->SetLinearDriveAccelerationMode(Config.bConstraintLinearAccelerationMode);
-	UpdateConstraintDriveAuthority(Config);
+	const FAircraftFlightControllerRuntimeConfig& FlightConfig = Model->FlightController;
+	const FAircraftConstraintSimulationRuntimeConfig& ConstraintConfig = Model->ConstraintSimulation;
+	SimulationConstraint->SetLinearDriveAccelerationMode(ConstraintConfig.bLinearAccelerationMode);
+	UpdateConstraintDriveAuthority(FlightConfig, ConstraintConfig);
 	DisableSimulationConstraintDrive();
 
 	WakeAllRigidBodies();
@@ -610,7 +650,8 @@ bool UAircraftComponent::CreateSimulationConstraint()
 		ConstraintDebugLogAccumulatorSeconds = 0.0f;
 		ConstraintDebugUnresponsiveSeconds = 0.0f;
 		FAircraftDebug::LogConstraintCreated(
-			*this, CurrentSimulationLOD, *SimulationConstraint, Model->RootBone, Config);
+			*this, CurrentSimulationLOD, *SimulationConstraint, Model->RootBone,
+			FlightConfig, ConstraintConfig);
 	}
 	else
 	{
@@ -621,7 +662,8 @@ bool UAircraftComponent::CreateSimulationConstraint()
 }
 
 void UAircraftComponent::UpdateConstraintDriveAuthority(
-	const FAircraftFlightControllerRuntimeConfig& Config)
+	const FAircraftFlightControllerRuntimeConfig& FlightConfig,
+	const FAircraftConstraintSimulationRuntimeConfig& ConstraintConfig)
 {
 	if (!SimulationConstraint.IsValid())
 	{
@@ -631,18 +673,18 @@ void UAircraftComponent::UpdateConstraintDriveAuthority(
 	const FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
 	const float MassKg = ChassisBody ? ChassisBody->GetBodyMass() : 0.0f;
 	const float HorizontalAccelerationCmPerSecSq = FMath::Max(
-		Config.MaxHorizontalAccelerationCmPerSecSq,
-		Config.MaxHorizontalDecelerationCmPerSecSq);
+		FlightConfig.MaxHorizontalAccelerationCmPerSecSq,
+		FlightConfig.MaxHorizontalDecelerationCmPerSecSq);
 	const float GravityMagnitudeCmPerSecSq = GetWorld()
 		? FMath::Abs(GetWorld()->GetGravityZ()) : 980.0f;
 	const float RequiredSpecificForceCmPerSecSq = FMath::Sqrt(
 		FMath::Square(HorizontalAccelerationCmPerSecSq)
 		+ FMath::Square(GravityMagnitudeCmPerSecSq
-			+ Config.MaxVerticalAccelerationCmPerSecSq));
-	const float LinearForceLimitN = Config.ConstraintLinearForceLimitN > 0.0f
-		? Config.ConstraintLinearForceLimitN
+			+ FlightConfig.MaxVerticalAccelerationCmPerSecSq));
+	const float LinearForceLimitN = ConstraintConfig.LinearForceLimitN > 0.0f
+		? ConstraintConfig.LinearForceLimitN
 		: MassKg * RequiredSpecificForceCmPerSecSq * 0.01f;
-	const bool bLinearAuthority = Config.ConstraintLinearNaturalFrequencyHz > UE_SMALL_NUMBER
+	const bool bLinearAuthority = ConstraintConfig.LinearNaturalFrequencyHz > UE_SMALL_NUMBER
 		&& LinearForceLimitN > AircraftAllocation::AuthorityEpsilon;
 	SimulationConstraint->SetLinearPositionDrive(
 		bLinearAuthority, bLinearAuthority, bLinearAuthority);
@@ -653,9 +695,9 @@ void UAircraftComponent::UpdateConstraintDriveAuthority(
 	float LinearDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
 		LinearStiffness, LinearDamping,
-		Config.ConstraintLinearNaturalFrequencyHz,
-		Config.ConstraintLinearDampingRatio,
-		Config.ConstraintLinearExtraDampingPerSecond);
+		ConstraintConfig.LinearNaturalFrequencyHz,
+		ConstraintConfig.LinearDampingRatio,
+		ConstraintConfig.LinearExtraDampingPerSecond);
 	SimulationConstraint->SetLinearDriveParams(
 		LinearStiffness, LinearDamping,
 		AircraftPhysicsUnits::NewtonsToChaosForce(LinearForceLimitN));
@@ -704,7 +746,8 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		return;
 	}
 	const FAircraftFlightControllerRuntimeConfig& Config = Model->FlightController;
-	UpdateConstraintDriveAuthority(Config);
+	const FAircraftConstraintSimulationRuntimeConfig& ConstraintConfig = Model->ConstraintSimulation;
+	UpdateConstraintDriveAuthority(Config, ConstraintConfig);
 	FBodyInstance* const ChassisBody = ResolveChassisBodyInstance();
 	if (!ChassisBody)
 	{
@@ -713,15 +756,6 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 
 	// 轨迹位置、线速度与约束连接点统一使用世界空间 COM 语义。
 	const FVector CurrentCenterOfMass = ChassisBody->GetCOMPosition();
-	const float GravityMagnitudeCmPerSecSq = GetWorld()
-		? FMath::Abs(GetWorld()->GetGravityZ()) : 980.0f;
-	const FQuat TargetBodyRotation = AircraftAttitudeReference::Build(
-		Target.ControlAccelerationCmPerSecSq
-			+ Target.DynamicsFeedForwardAccelerationCmPerSecSq,
-		Target.YawDegrees,
-		GravityMagnitudeCmPerSecSq,
-		Config.MaxTiltAngleDegrees,
-		Config).BodyWorldRotation;
 	const FVector TargetCenterOfMassVelocity = Target.VelocityCmPerSec;
 	const FVector GravityAccelerationCmPerSecSq(
 		0.0, 0.0, GetWorld() ? GetWorld()->GetGravityZ() : -980.0f);
@@ -730,10 +764,10 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 			Target.ControlAccelerationCmPerSecSq,
 			Target.DynamicsFeedForwardAccelerationCmPerSecSq,
 			GravityAccelerationCmPerSecSq,
-			Config.ConstraintGravityFeedForwardScale,
-			Config.ConstraintDynamicsFeedForwardScale,
-			Config.ConstraintLinearNaturalFrequencyHz,
-			Config.bConstraintLinearAccelerationMode,
+			ConstraintConfig.GravityFeedForwardScale,
+			ConstraintConfig.DynamicsFeedForwardScale,
+			ConstraintConfig.LinearNaturalFrequencyHz,
+			ConstraintConfig.bLinearAccelerationMode,
 			ChassisBody->GetBodyMass());
 	FVector TargetCenterOfMass;
 	if (Target.bPositionTrackingEnabled)
@@ -744,7 +778,7 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	{
 		// Velocity 意图使用有限速度误差前置量，不累计世界位置误差，也不会把松杆点当锚点。
 		const FVector CurrentCenterOfMassVelocity = GetPhysicsLinearVelocity(Model->RootBone);
-		const float Strength = Config.ConstraintLinearNaturalFrequencyHz;
+		const float Strength = ConstraintConfig.LinearNaturalFrequencyHz;
 		TargetCenterOfMass = FVector(
 			UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
 				CurrentCenterOfMass.X, CurrentCenterOfMassVelocity.X,
@@ -761,11 +795,20 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 	SimulationConstraint->SetLinearPositionTarget(ConstraintTargetCenterOfMass);
 	SimulationConstraint->SetLinearVelocityTarget(TargetCenterOfMassVelocity);
 	WakeAllRigidBodies();
+	FAircraftSimulationOutputFrame OutputFrame;
+	AircraftSimulationProxy->GetSimulationOutputFrame_GameThread(OutputFrame);
+	const FAircraftAlternativeAttitudeDiagnostics& Attitude =
+		OutputFrame.AlternativeAttitude;
+	const FQuat TargetBodyRotation = Attitude.bValid
+		? Attitude.ShapedBodyWorldRotation
+		: ChassisBody->GetUnrealWorldTransform().GetRotation();
+	const FVector TargetAngularVelocityWorldRadPerSec = TargetBodyRotation.RotateVector(
+		Attitude.TargetAngularVelocityBodyRadPerSec);
 	FAircraftDebug::TickConstraint(
 		*this, CurrentSimulationLOD, *SimulationConstraint, Model->RootBone, Target,
 		ConstraintTargetCenterOfMass, TargetCenterOfMassVelocity,
 		AccelerationFeedForwardPositionOffset,
-		TargetBodyRotation, FVector::ZeroVector,
+		TargetBodyRotation, TargetAngularVelocityWorldRadPerSec,
 		DeltaSeconds,
 		ConstraintDebugLogAccumulatorSeconds, ConstraintDebugUnresponsiveSeconds);
 }
@@ -782,6 +825,7 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	FAircraftTrajectoryReference Target;
 	if (!GetTrajectoryReference(Target))
 	{
+		ResetKinematicAttitudeState();
 		UpdateAlternativeDriveEstimatedState(DeltaSeconds);
 		return;
 	}
@@ -797,12 +841,28 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 		CenterOfMassBodyCm);
 	const float GravityMagnitude = GetWorld()
 		? FMath::Abs(GetWorld()->GetGravityZ()) : 980.0f;
-	const FQuat NewBodyRotation = AircraftAttitudeReference::Build(
+	const FVector ActualAngularVelocityBodyRadPerSec =
+		CurrentBodyTransform.GetRotation().UnrotateVector(
+			PreviousAlternativeAngularVelocityWorldRadPerSec);
+	FAircraftAttitudeMotionOutput AttitudeReference;
+	if (!FAircraftAttitudeReferenceDynamics::Update(
 		Target.ControlAccelerationCmPerSecSq,
+		Target.DynamicsFeedForwardAccelerationCmPerSecSq,
 		Target.YawDegrees,
+		Target.YawRateDegPerSec,
 		GravityMagnitude,
-		Config.MaxTiltAngleDegrees,
-		Config).BodyWorldRotation;
+		DeltaSeconds,
+		CurrentBodyTransform.GetRotation(),
+		ActualAngularVelocityBodyRadPerSec,
+		Config,
+		Model->KinematicSimulation.AttitudeReference,
+		KinematicAttitudeMotionState,
+		AttitudeReference))
+	{
+		ResetKinematicAttitudeState();
+		return;
+	}
+	const FQuat NewBodyRotation = AttitudeReference.BodyWorldRotation;
 	const FVector TargetBodyOrigin = Target.PositionCm
 		- NewBodyRotation.RotateVector(
 			CenterOfMassBodyCm * CurrentBodyTransform.GetScale3D());
@@ -823,7 +883,7 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	FHitResult Hit;
 	GetOwner()->SetActorLocationAndRotation(
 		TargetRootTransform.GetLocation(), TargetRootTransform.GetRotation(),
-		Config.bKinematicSweepMovement, &Hit, ETeleportType::TeleportPhysics);
+		Model->KinematicSimulation.bSweepMovement, &Hit, ETeleportType::TeleportPhysics);
 	const FTransform NewActualBodyTransform = Config.FrameBinding.GetBodyWorldTransform(
 		GetComponentTransform());
 	const FVector NewCenterOfMass = NewActualBodyTransform.TransformPosition(
@@ -831,6 +891,28 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 	PreviousAlternativeVelocityCmPerSec = DeltaSeconds > UE_SMALL_NUMBER
 		? (NewCenterOfMass - CurrentCenterOfMass) / DeltaSeconds
 		: FVector::ZeroVector;
+	PreviousAlternativeAngularVelocityWorldRadPerSec = ComputeAngularVelocityWorld(
+		CurrentBodyTransform.GetRotation(), NewActualBodyTransform.GetRotation(), DeltaSeconds);
+	KinematicAttitudeDiagnostics.RawControlWorldRotation =
+		AttitudeReference.RawControlWorldRotation;
+	KinematicAttitudeDiagnostics.ShapedControlWorldRotation =
+		AttitudeReference.ControlWorldRotation;
+	KinematicAttitudeDiagnostics.ShapedBodyWorldRotation =
+		AttitudeReference.BodyWorldRotation;
+	KinematicAttitudeDiagnostics.ActualBodyWorldRotation =
+		NewActualBodyTransform.GetRotation();
+	KinematicAttitudeDiagnostics.TargetAngularVelocityBodyRadPerSec =
+		AttitudeReference.AngularVelocityBodyRadPerSec;
+	KinematicAttitudeDiagnostics.ActualAngularVelocityBodyRadPerSec =
+		NewActualBodyTransform.GetRotation().UnrotateVector(
+			PreviousAlternativeAngularVelocityWorldRadPerSec);
+	KinematicAttitudeDiagnostics.TargetAngularAccelerationBodyRadPerSecSq =
+		AttitudeReference.AngularAccelerationBodyRadPerSecSq;
+	KinematicAttitudeDiagnostics.bRateLimited = AttitudeReference.bRateLimited;
+	KinematicAttitudeDiagnostics.bAccelerationLimited = AttitudeReference.bAccelerationLimited;
+	KinematicAttitudeDiagnostics.bJerkLimited = AttitudeReference.bJerkLimited;
+	KinematicAttitudeDiagnostics.bReferenceInitialized = KinematicAttitudeMotionState.bInitialized;
+	KinematicAttitudeDiagnostics.bValid = true;
 	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::SimulationDrive))
 	{
 		AlternativeDriveDebugLogAccumulatorSeconds += DeltaSeconds;
@@ -938,8 +1020,19 @@ void UAircraftComponent::UpdateAlternativeDriveEstimatedState(float DeltaSeconds
 		? FMath::RadiansToDegrees(Model->FlightController.BodyAngularToController(
 			BodyTransform.GetRotation().UnrotateVector(
 				GetPhysicsAngularVelocityInRadians(Model->RootBone))))
-		: FVector::ZeroVector;
-	AircraftSimulationProxy->SetEstimatedStateOverride_GameThread(Estimated);
+		: FMath::RadiansToDegrees(Model->FlightController.BodyAngularToController(
+			BodyTransform.GetRotation().UnrotateVector(
+				PreviousAlternativeAngularVelocityWorldRadPerSec)));
+	AircraftSimulationProxy->SetAlternativeDriveOutput_GameThread(
+		Estimated, KinematicAttitudeDiagnostics,
+		Model->FlightController.GetControlWorldRotation(BodyTransform.GetRotation()));
+}
+
+void UAircraftComponent::ResetKinematicAttitudeState()
+{
+	FAircraftAttitudeReferenceDynamics::Reset(KinematicAttitudeMotionState);
+	KinematicAttitudeDiagnostics = {};
+	PreviousAlternativeAngularVelocityWorldRadPerSec = FVector::ZeroVector;
 }
 
 bool UAircraftComponent::GetTrajectoryReference(FAircraftTrajectoryReference& OutTarget) const
@@ -1076,16 +1169,12 @@ void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest
 	FAircraftFlightControlOutput Output;
 	FAircraftSimulationControlDiagnostics ControlDiagnostics;
 	FAircraftSimulationOutputFrame OutputFrame;
-	const bool bNeedsControlOutput = Request.Requires(EAircraftDebugPayload::Propulsion)
-		|| Request.Requires(EAircraftDebugPayload::ControlAllocation)
-		|| Request.Requires(EAircraftDebugPayload::Aerodynamics);
-	const bool bNeedsOutputFrame = bNeedsControlOutput
-		|| Request.Requires(EAircraftDebugPayload::AutopilotCore);
-	if (bNeedsOutputFrame && AircraftSimulationProxy.IsValid())
+	if (AircraftSimulationProxy.IsValid())
 	{
 		AircraftSimulationProxy->GetSimulationOutputFrame_GameThread(OutputFrame);
 		Output = MoveTemp(OutputFrame.ControlOutput);
 		ControlDiagnostics = MoveTemp(OutputFrame.ControlDiagnostics);
+		OutSnapshot.AlternativeAttitude = OutputFrame.AlternativeAttitude;
 		OutSnapshot.PhysicsStateSequence = OutputFrame.PhysicsStateSequence;
 		OutSnapshot.TrajectoryReference = OutputFrame.TrajectoryReference;
 		OutSnapshot.AutopilotNominalReference = OutputFrame.NominalTrajectoryReference;
@@ -1169,8 +1258,13 @@ void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest
 			Constraint.bValid = true;
 			Constraint.PositionTargetCm = SimulationConstraint->GetLinearPositionTarget();
 			Constraint.VelocityTargetCmPerSec = SimulationConstraint->GetLinearVelocityTarget();
-			Constraint.OrientationTarget = SimulationConstraint->GetAngularOrientationTarget().Quaternion();
-			Constraint.AngularVelocityTargetRadPerSec = SimulationConstraint->GetAngularVelocityTarget();
+			Constraint.Attitude = OutputFrame.AlternativeAttitude;
+			Constraint.OrientationTarget = Constraint.Attitude.bValid
+				? Constraint.Attitude.ShapedBodyWorldRotation
+				: OutSnapshot.BodyTransform.GetRotation();
+			Constraint.AngularVelocityTargetBodyRadPerSec = Constraint.Attitude.bValid
+				? Constraint.Attitude.TargetAngularVelocityBodyRadPerSec
+				: FVector::ZeroVector;
 			Constraint.PositionErrorCm = Constraint.PositionTargetCm - OutSnapshot.CenterOfMassCm;
 			Constraint.VelocityErrorCmPerSec = Constraint.VelocityTargetCmPerSec - OutSnapshot.LinearVelocityCmPerSec;
 			SimulationConstraint->GetConstraintForce(Constraint.Force, Constraint.Torque);
@@ -1189,13 +1283,7 @@ void UAircraftComponent::CaptureDebugSnapshot(const FAircraftDebugCaptureRequest
 		GetCurrentSimulationDriveMode());
 	OutSnapshot.FlightModeText = UEnum::GetDisplayValueAsText(GetFlightMode());
 	OutSnapshot.ArmStateText = UEnum::GetDisplayValueAsText(GetArmState());
-	FAircraftEstimatedState EstimatedState = bNeedsOutputFrame
-		? OutputFrame.EstimatedState
-		: FAircraftEstimatedState();
-	if (!bNeedsControlOutput)
-	{
-		GetEstimatedState(EstimatedState);
-	}
+	const FAircraftEstimatedState& EstimatedState = OutputFrame.EstimatedState;
 	OutSnapshot.EstimatedAttitudeDegrees = EstimatedState.State.AttitudeDegrees;
 }
 
@@ -2024,7 +2112,8 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			AircraftSimulationProxy->TickKinematicTrajectory_GameThread(
 				DeltaTime, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0,
 				BodyTransform, BodyTransform.TransformPosition(CenterOfMassBodyCm),
-				PreviousAlternativeVelocityCmPerSec, FVector::ZeroVector, *Model);
+				PreviousAlternativeVelocityCmPerSec,
+				PreviousAlternativeAngularVelocityWorldRadPerSec, *Model);
 		}
 	}
 	const bool bControlExecutionAllowed = AircraftSimulationProxy.IsValid()
@@ -2054,6 +2143,7 @@ void UAircraftComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		if (!bControlExecutionAllowed)
 		{
 			PreviousAlternativeVelocityCmPerSec = FVector::ZeroVector;
+			ResetKinematicAttitudeState();
 			UpdateAlternativeDriveEstimatedState(DeltaTime);
 			break;
 		}

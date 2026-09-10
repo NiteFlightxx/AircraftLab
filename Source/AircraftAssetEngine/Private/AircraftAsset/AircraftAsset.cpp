@@ -110,6 +110,7 @@ namespace
 		MissingModel,
 		MissingSkeletalMesh,
 		MissingLod,
+		InvalidAlternativeDriveConfig,
 		InvalidRootBone,
 		MissingRootBody,
 		InvalidRotorInstallation
@@ -148,6 +149,13 @@ namespace
 		for (int32 LodIndex = 0; LodIndex < Model->LodModels.Num(); ++LodIndex)
 		{
 			const FAircraftSimulationLodModel& LodModel = Model->LodModels[LodIndex];
+			if (!LodModel.ConstraintSimulation.IsValid()
+				|| !LodModel.KinematicSimulation.IsValid())
+			{
+				Result.Error = ECompiledAircraftModelError::InvalidAlternativeDriveConfig;
+				Result.LodIndex = LodIndex;
+				return Result;
+			}
 			if (!LodModel.FlightController.FrameBinding.IsValid())
 			{
 				Result.Error = ECompiledAircraftModelError::InvalidRootBone;
@@ -324,6 +332,11 @@ bool UAircraftAsset::CompileAndCommitAircraftState(
 	{
 	case ECompiledAircraftModelError::None:
 		break;
+	case ECompiledAircraftModelError::InvalidAlternativeDriveConfig:
+		AppendValidationError(Validation.LodIndex,
+			LOCTEXT("InvalidAlternativeDriveConfig",
+				"Constraint or Kinematic drive configuration contains a non-finite value, a negative limit, or an invalid tilt range."));
+		return false;
 	case ECompiledAircraftModelError::InvalidRootBone:
 		AppendValidationError(Validation.LodIndex, FText::Format(
 			LOCTEXT("InvalidRootBoneFrame",
@@ -353,6 +366,20 @@ bool UAircraftAsset::CompileAndCommitAircraftState(
 			LOCTEXT("InvalidCompiledAircraftModel",
 				"Aircraft frame compilation requires a skeletal mesh and at least one LOD."));
 		return false;
+	}
+	for (int32 LodIndex = 0; LodIndex < Candidate.SimulationModel->LodModels.Num(); ++LodIndex)
+	{
+		const FAircraftConstraintSimulationRuntimeConfig& Constraint =
+			Candidate.SimulationModel->LodModels[LodIndex].ConstraintSimulation;
+		if (Constraint.AttitudeReference.NaturalFrequencyHz
+			> Constraint.AttitudeServoNaturalFrequencyHz + UE_SMALL_NUMBER)
+		{
+			UE_LOG(LogAircraft, Warning,
+				TEXT("[Aircraft.Asset.Build] Asset=%s LOD=%d Constraint attitude reference bandwidth %.3f Hz exceeds servo bandwidth %.3f Hz; tracking lag is expected."),
+				*GetName(), LodIndex,
+				Constraint.AttitudeReference.NaturalFrequencyHz,
+				Constraint.AttitudeServoNaturalFrequencyHz);
+		}
 	}
 
 	// 验证通过：一次性交换成员状态。

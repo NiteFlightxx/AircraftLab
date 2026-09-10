@@ -97,6 +97,8 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	const FAircraftSimulationModel ProjectSettingsModel(CollectionsWithoutOverride, TEXT("ProjectSettings"));
 	const FAircraftSimulationLodModel* const ProjectSettingsLOD = ProjectSettingsModel.GetLodModel(0);
 	TestNotNull(TEXT("A collection compiles one LOD model"), ProjectSettingsLOD);
+	const FAircraftConstraintSimulationRuntimeConfig& ConstraintDefaults =
+		ProjectSettingsLOD->ConstraintSimulation;
 	const FAircraftFlightControllerRuntimeConfig RuntimeDefaults;
 	TestTrue(TEXT("Constraint strength is interpreted as frequency in Hz"),
 		FMath::IsNearlyEqual(
@@ -106,17 +108,17 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	float ConstraintDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
 		ConstraintStiffness, ConstraintDamping,
-		RuntimeDefaults.ConstraintLinearNaturalFrequencyHz,
-		RuntimeDefaults.ConstraintLinearDampingRatio,
-		RuntimeDefaults.ConstraintLinearExtraDampingPerSecond);
+		ConstraintDefaults.LinearNaturalFrequencyHz,
+		ConstraintDefaults.LinearDampingRatio,
+		ConstraintDefaults.LinearExtraDampingPerSecond);
 	TestTrue(TEXT("Default constraint strength converts to the previous stiffness"),
 		FMath::IsNearlyEqual(ConstraintStiffness, 100.0f, 1.e-3f));
 	TestTrue(TEXT("Default constraint damping ratio converts to the previous damping"),
 		FMath::IsNearlyEqual(ConstraintDamping, 20.0f, 1.e-3f));
 	TestEqual(TEXT("Constraint gravity feed-forward defaults to full compensation"),
-		RuntimeDefaults.ConstraintGravityFeedForwardScale, 1.0f);
+		ConstraintDefaults.GravityFeedForwardScale, 1.0f);
 	TestEqual(TEXT("Constraint linear-damping feed-forward defaults to full compensation"),
-		RuntimeDefaults.ConstraintDynamicsFeedForwardScale, 1.0f);
+		ConstraintDefaults.DynamicsFeedForwardScale, 1.0f);
 	const double VelocityTrackingTarget =
 		UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
 			100.0, 200.0, 800.0, 2.0);
@@ -351,8 +353,12 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	Set(TEXT("FlightController.Altitude.AltitudeDerivativeCutoffHz"), 2.0f);
 	Set(TEXT("FlightController.Altitude.VerticalVelocityFreezeIntegralWhenSaturated"), false);
 	Set(TEXT("FlightController.Execution.ControllerEnabledByDefault"), false);
-	Set(TEXT("FlightController.Constraint.Linear.GravityFeedForwardScale"), 0.8f);
-	Set(TEXT("FlightController.Constraint.Linear.DynamicsFeedForwardScale"), 0.6f);
+	Set(TEXT("Simulation.Constraint.Linear.GravityFeedForwardScale"), 0.8f);
+	Set(TEXT("Simulation.Constraint.Linear.DynamicsFeedForwardScale"), 0.6f);
+	Set(TEXT("Simulation.Constraint.Attitude.Reference.NaturalFrequencyHz"), 0.85f);
+	Set(TEXT("Simulation.Constraint.Attitude.Servo.NaturalFrequencyHz"), 2.25f);
+	Set(TEXT("Simulation.Kinematic.Attitude.Reference.NaturalFrequencyHz"), 1.75f);
+	Set(TEXT("Simulation.Kinematic.Attitude.Reference.DynamicsFeedForwardScale"), 0.25f);
 
 	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = { Collection };
 	const FAircraftSimulationModel Model(Collections, TEXT("CompletePid"));
@@ -368,9 +374,17 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	TestFalse(TEXT("Vertical-velocity anti-windup configuration compiles"), Config.GetVerticalVelocityPidGains().bFreezeIntegralWhenSaturated);
 	TestFalse(TEXT("Controller execution default compiles"), Config.bControllerEnabledByDefault);
 	TestEqual(TEXT("Constraint gravity feed-forward compiles"),
-		Config.ConstraintGravityFeedForwardScale, 0.8f);
+		Model.GetLodModel(0)->ConstraintSimulation.GravityFeedForwardScale, 0.8f);
 	TestEqual(TEXT("Constraint linear-damping feed-forward compiles"),
-		Config.ConstraintDynamicsFeedForwardScale, 0.6f);
+		Model.GetLodModel(0)->ConstraintSimulation.DynamicsFeedForwardScale, 0.6f);
+	TestEqual(TEXT("Constraint attitude-reference bandwidth compiles independently"),
+		Model.GetLodModel(0)->ConstraintSimulation.AttitudeReference.NaturalFrequencyHz, 0.85f);
+	TestEqual(TEXT("Constraint attitude-servo bandwidth compiles independently"),
+		Model.GetLodModel(0)->ConstraintSimulation.AttitudeServoNaturalFrequencyHz, 2.25f);
+	TestEqual(TEXT("Kinematic attitude-reference bandwidth compiles independently"),
+		Model.GetLodModel(0)->KinematicSimulation.AttitudeReference.NaturalFrequencyHz, 1.75f);
+	TestEqual(TEXT("Kinematic attitude feed-forward compiles independently"),
+		Model.GetLodModel(0)->KinematicSimulation.AttitudeReference.DynamicsFeedForwardScale, 0.25f);
 	return true;
 }
 

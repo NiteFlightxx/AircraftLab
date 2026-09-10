@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Aircraft/AircraftAttitudeReferenceDynamics.h"
 #include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
@@ -77,11 +78,12 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugConstraintSnapshot
 	FVector PositionTargetCm = FVector::ZeroVector;
 	FVector VelocityTargetCmPerSec = FVector::ZeroVector;
 	FQuat OrientationTarget = FQuat::Identity;
-	FVector AngularVelocityTargetRadPerSec = FVector::ZeroVector;
+	FVector AngularVelocityTargetBodyRadPerSec = FVector::ZeroVector;
 	FVector PositionErrorCm = FVector::ZeroVector;
 	FVector VelocityErrorCmPerSec = FVector::ZeroVector;
 	FVector Force = FVector::ZeroVector;
 	FVector Torque = FVector::ZeroVector;
+	FAircraftAlternativeAttitudeDiagnostics Attitude;
 };
 
 /** Immutable value-only game-thread data consumed by every debug output backend. */
@@ -106,6 +108,7 @@ struct AIRCRAFTDIAGNOSTICS_API FAircraftDebugFrameSnapshot
 	FVector CenterOfMassCm = FVector::ZeroVector;
 	FVector LinearVelocityCmPerSec = FVector::ZeroVector;
 	FVector AngularVelocityDegPerSec = FVector::ZeroVector;
+	FAircraftAlternativeAttitudeDiagnostics AlternativeAttitude;
 	bool bHasTrajectoryReference = false;
 	FAircraftTrajectoryReference TrajectoryReference;
 

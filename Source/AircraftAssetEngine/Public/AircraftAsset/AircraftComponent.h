@@ -19,6 +19,7 @@
 #include "AircraftRuntimeInterface/AircraftNavigationAgentInterface.h"
 #include "AircraftRuntimeInterface/AircraftNavigationGuidanceProvider.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODConsumer.h"
+#include "Aircraft/AircraftAttitudeReferenceDynamics.h"
 
 #include "AircraftComponent.generated.h"
 
@@ -33,6 +34,7 @@ struct FConstraintInstance;
 struct FAircraftSimulationModel;
 struct FAircraftSimulationLodModel;
 struct FAircraftFlightControllerRuntimeConfig;
+struct FAircraftConstraintSimulationRuntimeConfig;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnAircraftSimulationLODChanged,
@@ -293,9 +295,11 @@ private:
 		uint64 Revision) const;
 
 
-	/** 创建 6-DOF 物理约束后端（约束参数取自当前 LOD 的 FlightController 配置）。 */
+	/** 创建 6-DOF 物理约束后端（线性与姿态配置取自当前 LOD 的 Constraint 配置）。 */
 	bool CreateSimulationConstraint();
-	void UpdateConstraintDriveAuthority(const FAircraftFlightControllerRuntimeConfig& Config);
+	void UpdateConstraintDriveAuthority(
+		const FAircraftFlightControllerRuntimeConfig& FlightConfig,
+		const FAircraftConstraintSimulationRuntimeConfig& ConstraintConfig);
 	void DisableSimulationConstraintDrive();
 	void DestroySimulationConstraint();
 	void UpdateConstraintSimulation(float DeltaSeconds);
@@ -307,6 +311,7 @@ private:
 		FString& OutFailureDetail) const;
 	/** 替代驱动下由组件合成估计状态并回写代理输出槽。 */
 	void UpdateAlternativeDriveEstimatedState(float DeltaSeconds);
+	void ResetKinematicAttitudeState();
 
 	bool GetTrajectoryReference(FAircraftTrajectoryReference& OutReference) const;
 	void RefreshMovementIntentProvider();
@@ -431,6 +436,9 @@ private:
 
 	/** 替代驱动下的估计速度跟踪。 */
 	FVector PreviousAlternativeVelocityCmPerSec = FVector::ZeroVector;
+	FVector PreviousAlternativeAngularVelocityWorldRadPerSec = FVector::ZeroVector;
+	FAircraftAttitudeMotionState KinematicAttitudeMotionState;
+	FAircraftAlternativeAttitudeDiagnostics KinematicAttitudeDiagnostics;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(VisibleAnywhere, Instanced, AdvancedDisplay, Category = AircraftComponent)

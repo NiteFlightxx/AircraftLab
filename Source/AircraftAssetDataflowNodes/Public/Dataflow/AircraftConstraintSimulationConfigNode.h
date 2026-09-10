@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Dataflow/AircraftConfigNodeBase.h"
+#include "Dataflow/AircraftAlternativeAttitudeConfig.h"
 
 #include "AircraftConstraintSimulationConfigNode.generated.h"
 
@@ -28,17 +29,18 @@ struct FAircraftConstraintSimulationConfig
 	/** 预测器动力学前馈系数；0 禁用，1 完整消费阻尼或显式空气动力学补偿。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Feed Forward", meta = (DisplayName = "Dynamics Feedforward Scale", ClampMin = "0.0"))
 	float DynamicsFeedForwardScale = 1.0f;
-	/** 显式姿态扭矩控制器自然频率（Hz）。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Torque", meta = (DisplayName = "Attitude Natural Frequency (Hz)", ClampMin = "0.0", Units = "Hz"))
-	float AttitudeNaturalFrequencyHz = 1.59154943f;
-	/** 姿态扭矩控制器阻尼比；1 为临界阻尼。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Torque", meta = (DisplayName = "Attitude Damping Ratio", ClampMin = "0.0"))
-	float AttitudeDampingRatio = 1.0f;
-	/** 姿态扭矩控制器附加角速度阻尼（s^-1）。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Torque", meta = (DisplayName = "Attitude Extra Damping (/s)", ClampMin = "0.0"))
-	float AttitudeExtraDampingPerSecond = 0.0f;
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Reference", meta = (ShowOnlyInnerProperties))
+	FAircraftAlternativeAttitudeConfig AttitudeReference;
+
+	/** 物理刚体跟随整形姿态参考的伺服自然频率。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Servo", meta = (ClampMin = "0.0", Units = "Hz"))
+	float AttitudeServoNaturalFrequencyHz = 1.59154943f;
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Servo", meta = (ClampMin = "0.0"))
+	float AttitudeServoDampingRatio = 1.0f;
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Servo", meta = (ClampMin = "0.0"))
+	float AttitudeServoExtraDampingPerSecond = 0.0f;
 	/** 物理线程施加的姿态力矩上限（N·m）；0 表示不限制。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Torque", meta = (DisplayName = "Attitude Torque Limit (N·m)", ClampMin = "0.0", Units = "Nm"))
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Servo", meta = (DisplayName = "Attitude Torque Limit (N·m)", ClampMin = "0.0", Units = "Nm"))
 	float AttitudeTorqueLimitNm = 0.0f;
 	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (DisplayName = "Linear Acceleration Mode"))
 	bool bLinearAccelerationMode = true;
