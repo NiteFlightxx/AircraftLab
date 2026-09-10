@@ -29,19 +29,18 @@ struct FAircraftConstraintSimulationConfig
 	/** 预测器动力学前馈系数；0 禁用，1 完整消费阻尼或显式空气动力学补偿。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Feed Forward", meta = (DisplayName = "Dynamics Feedforward Scale", ClampMin = "0.0"))
 	float DynamicsFeedForwardScale = 1.0f;
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Reference", meta = (ShowOnlyInnerProperties))
-	FAircraftAlternativeAttitudeConfig AttitudeReference;
-
-	/** 物理刚体跟随整形姿态参考的伺服自然频率。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Servo", meta = (ClampMin = "0.0", Units = "Hz"))
-	float AttitudeServoNaturalFrequencyHz = 1.59154943f;
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Servo", meta = (ClampMin = "0.0"))
-	float AttitudeServoDampingRatio = 1.0f;
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Servo", meta = (ClampMin = "0.0"))
-	float AttitudeServoExtraDampingPerSecond = 0.0f;
-	/** 物理线程施加的姿态力矩上限（N·m）；0 表示不限制。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude Servo", meta = (DisplayName = "Attitude Torque Limit (N·m)", ClampMin = "0.0", Units = "Nm"))
+	/** 共享姿态语义；频率和阻尼直接配置 Chaos SLERP Angular Drive。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude", meta = (ShowOnlyInnerProperties))
+	FAircraftAlternativeAttitudeConfig Attitude;
+	/** 不依赖姿态强度的 Angular Drive 附加阻尼。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude", meta = (DisplayName = "Extra Damping (/s)", ClampMin = "0.0"))
+	float AttitudeExtraDampingPerSecond = 0.0f;
+	/** Chaos Angular Drive 的最大力矩（N·m）；0 表示不限制。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude", meta = (DisplayName = "Torque Limit (N·m)", ClampMin = "0.0", Units = "Nm"))
 	float AttitudeTorqueLimitNm = 0.0f;
+	/** 使用惯量无关的 Angular Drive acceleration 模式。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude", meta = (DisplayName = "Acceleration Mode"))
+	bool bAngularAccelerationMode = true;
 	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (DisplayName = "Linear Acceleration Mode"))
 	bool bLinearAccelerationMode = true;
 };

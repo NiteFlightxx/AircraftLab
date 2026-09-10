@@ -1586,7 +1586,7 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 		Capability.PositiveTorqueAuthorityNm = FVector(TorqueLimitNm);
 		Capability.NegativeTorqueAuthorityNm = FVector(TorqueLimitNm);
 		const bool bAttitudeTorqueEnabled = ActiveDriveMode == EAircraftSimulationDriveMode::Kinematic
-			|| ConstraintConfig.AttitudeServoNaturalFrequencyHz > UE_SMALL_NUMBER;
+			|| ConstraintConfig.Attitude.NaturalFrequencyHz > UE_SMALL_NUMBER;
 		Capability.bCanControlRoll = bAttitudeTorqueEnabled
 			&& Config.MaxRollRateDegreesPerSec > 0.0f
 			&& Capability.PositiveTorqueAuthorityNm.X > AircraftAllocation::AuthorityEpsilon
@@ -1688,11 +1688,11 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 	}
 	if (ActiveDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint
 		&& TrajectoryReference.IsFresh(SimTime)
-		&& ConstraintConfig.AttitudeServoNaturalFrequencyHz > UE_SMALL_NUMBER)
+		&& ConstraintConfig.Attitude.NaturalFrequencyHz > UE_SMALL_NUMBER)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Constraint_AttitudeServo);
+		TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Constraint_AttitudeTarget);
 		FAircraftAttitudeMotionOutput ShapedReference;
-		if (FAircraftAttitudeReferenceDynamics::Update(
+		if (FAircraftAttitudeReferenceDynamics::UpdateDriveTarget(
 			TrajectoryReference.ControlAccelerationCmPerSecSq,
 			TrajectoryReference.DynamicsFeedForwardAccelerationCmPerSecSq,
 			TrajectoryReference.YawDegrees,
@@ -1702,30 +1702,10 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 			WorldQuat,
 			AngularVelBodyRadPerSec,
 			Config,
-			ConstraintConfig.AttitudeReference,
+			ConstraintConfig.Attitude,
 			ConstraintAttitudeMotionState,
 			ShapedReference))
 		{
-			FVector TorqueBodyNm = FVector::ZeroVector;
-			bool bTorqueLimited = false;
-			const bool bServoSolved =
-				FAircraftAttitudeReferenceDynamics::ComputeServoTorqueBody(
-				WorldQuat, AngularVelBodyRadPerSec, PhysicsCache.InertiaPrincipalKgM2,
-				PhysicsCache.PrincipalToBodyRotation,
-				ShapedReference,
-				ConstraintConfig.AttitudeServoNaturalFrequencyHz,
-				ConstraintConfig.AttitudeServoDampingRatio,
-				ConstraintConfig.AttitudeServoExtraDampingPerSecond,
-				ConstraintConfig.AttitudeTorqueLimitNm,
-				TorqueBodyNm, bTorqueLimited);
-			if (!bServoSolved)
-			{
-				FAircraftAttitudeReferenceDynamics::Reset(ConstraintAttitudeMotionState);
-			}
-			const FVector TorqueWorldNm = WorldQuat.RotateVector(TorqueBodyNm);
-			Handle->AddTorque(AircraftPhysicsUnits::NewtonMetersToChaosTorque(TorqueWorldNm)
-				* ForceAccumulationScale, true);
-
 			AlternativeAttitudeDiagnostics.RawControlWorldRotation =
 				ShapedReference.RawControlWorldRotation;
 			AlternativeAttitudeDiagnostics.ShapedControlWorldRotation =
@@ -1739,15 +1719,13 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 				AngularVelBodyRadPerSec;
 			AlternativeAttitudeDiagnostics.TargetAngularAccelerationBodyRadPerSecSq =
 				ShapedReference.AngularAccelerationBodyRadPerSecSq;
-			AlternativeAttitudeDiagnostics.AppliedAttitudeTorqueBodyNm = TorqueBodyNm;
 			AlternativeAttitudeDiagnostics.bRateLimited = ShapedReference.bRateLimited;
 			AlternativeAttitudeDiagnostics.bAccelerationLimited =
 				ShapedReference.bAccelerationLimited;
 			AlternativeAttitudeDiagnostics.bJerkLimited = ShapedReference.bJerkLimited;
-			AlternativeAttitudeDiagnostics.bTorqueLimited = bTorqueLimited;
-			AlternativeAttitudeDiagnostics.bReferenceInitialized = bServoSolved
-				&& ConstraintAttitudeMotionState.bInitialized;
-			AlternativeAttitudeDiagnostics.bValid = bServoSolved;
+			AlternativeAttitudeDiagnostics.bReferenceInitialized =
+				ConstraintAttitudeMotionState.bInitialized;
+			AlternativeAttitudeDiagnostics.bValid = true;
 		}
 	}
 	else if (ActiveDriveMode == EAircraftSimulationDriveMode::PhysicsConstraint)

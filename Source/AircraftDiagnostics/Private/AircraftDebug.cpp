@@ -88,11 +88,11 @@ void FAircraftDebug::LogConstraintCreated(
 	float AttitudeDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
 		AttitudeStiffness, AttitudeDamping,
-		ConstraintConfig.AttitudeServoNaturalFrequencyHz,
-		ConstraintConfig.AttitudeServoDampingRatio,
-		ConstraintConfig.AttitudeServoExtraDampingPerSecond);
+		ConstraintConfig.Attitude.NaturalFrequencyHz,
+		ConstraintConfig.Attitude.DampingRatio,
+		ConstraintConfig.AttitudeExtraDampingPerSecond);
 	UE_LOG(LogAircraft, Log,
-		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Valid=%d Broken=%d Simulating=%d BodyFrameLocal=(%.1f,%.1f,%.1f) WorldFrame=(%.1f,%.1f,%.1f) InitialWorldTarget=(%.1f,%.1f,%.1f) MotionLimits(H/Up/Down/Yaw)=(%.1f,%.1f,%.1f,%.1f) Deadbands(H/V/Y)=(%.3f,%.3f,%.3f) BrakeToHold(H/V)=(%.1f,%.1f) LinearDrive(P/V)=(%d%d%d/%d%d%d) LinearControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) LinearSpring(K/D/LimitN)=(%.3f,%.3f,%.3f) Body(Mass/LinearDamping)=(%.3f,%.3f) FeedForward(Gravity/Dynamics)=(%.3f,%.3f) AttitudeTorque(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) AttitudeTorque(K/D/LimitNm)=(%.3f,%.3f,%.3f) LinearAccelerationMode=%d"),
+		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Valid=%d Broken=%d Simulating=%d BodyFrameLocal=(%.1f,%.1f,%.1f) WorldFrame=(%.1f,%.1f,%.1f) InitialWorldTarget=(%.1f,%.1f,%.1f) MotionLimits(H/Up/Down/Yaw)=(%.1f,%.1f,%.1f,%.1f) Deadbands(H/V/Y)=(%.3f,%.3f,%.3f) BrakeToHold(H/V)=(%.1f,%.1f) LinearDrive(P/V)=(%d%d%d/%d%d%d) LinearControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) LinearSpring(K/D/LimitN)=(%.3f,%.3f,%.3f) Body(Mass/LinearDamping)=(%.3f,%.3f) FeedForward(Gravity/Dynamics)=(%.3f,%.3f) AngularDrive(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) AngularDrive(K/D/LimitNm)=(%.3f,%.3f,%.3f) AccelerationMode(Linear/Angular)=(%d/%d)"),
 		*GetNameSafe(Component.GetOwner()), SimulationLOD, *RootBone.ToString(),
 		Constraint.IsValidConstraintInstance() ? 1 : 0, bBroken ? 1 : 0,
 		Component.IsSimulatingPhysics(RootBone) ? 1 : 0,
@@ -117,10 +117,11 @@ void FAircraftDebug::LogConstraintCreated(
 		BodyMassKg, BodyLinearDampingPerSecond,
 		ConstraintConfig.GravityFeedForwardScale,
 		ConstraintConfig.DynamicsFeedForwardScale,
-		ConstraintConfig.AttitudeServoNaturalFrequencyHz, ConstraintConfig.AttitudeServoDampingRatio,
-		ConstraintConfig.AttitudeServoExtraDampingPerSecond,
+		ConstraintConfig.Attitude.NaturalFrequencyHz, ConstraintConfig.Attitude.DampingRatio,
+		ConstraintConfig.AttitudeExtraDampingPerSecond,
 		AttitudeStiffness, AttitudeDamping, ConstraintConfig.AttitudeTorqueLimitNm,
-		ConstraintConfig.bLinearAccelerationMode ? 1 : 0);
+		ConstraintConfig.bLinearAccelerationMode ? 1 : 0,
+		ConstraintConfig.bAngularAccelerationMode ? 1 : 0);
 }
 
 void FAircraftDebug::LogConstraintCreationFailure(

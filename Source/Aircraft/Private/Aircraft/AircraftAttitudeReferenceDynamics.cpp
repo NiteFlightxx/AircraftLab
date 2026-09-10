@@ -56,6 +56,76 @@ namespace
 		Result.Normalize();
 		return Result;
 	}
+
+	bool BuildRawReference(
+		const FVector& ControlAccelerationWorldCmPerSecSq,
+		const FVector& DynamicsFeedForwardAccelerationWorldCmPerSecSq,
+		const float YawDegrees,
+		const float YawRateDegPerSec,
+		const float GravityMagnitudeCmPerSecSq,
+		const float DeltaSeconds,
+		const FQuat& ActualBodyWorldRotation,
+		const FVector& ActualAngularVelocityBodyRadPerSec,
+		const FAircraftFlightControllerRuntimeConfig& FrameConfig,
+		const FAircraftAttitudeMotionConfig& MotionConfig,
+		FQuat& OutNormalizedActualBody,
+		FAircraftAttitudeReference& OutRawReference)
+	{
+		if (!FrameConfig.FrameBinding.IsValid() || !MotionConfig.IsValid()
+			|| DeltaSeconds <= 0.0f || !FMath::IsFinite(DeltaSeconds)
+			|| !FMath::IsFinite(YawDegrees) || !FMath::IsFinite(YawRateDegPerSec)
+			|| !FMath::IsFinite(GravityMagnitudeCmPerSecSq) || GravityMagnitudeCmPerSecSq < 0.0f
+			|| !IsFiniteVector(ControlAccelerationWorldCmPerSecSq)
+			|| !IsFiniteVector(DynamicsFeedForwardAccelerationWorldCmPerSecSq)
+			|| ActualBodyWorldRotation.ContainsNaN()
+			|| ActualBodyWorldRotation.SizeSquared() <= UE_SMALL_NUMBER
+			|| !IsFiniteVector(ActualAngularVelocityBodyRadPerSec))
+		{
+			return false;
+		}
+
+		OutNormalizedActualBody = ActualBodyWorldRotation.GetNormalized();
+		const FVector AttitudeAcceleration = ControlAccelerationWorldCmPerSecSq
+			+ DynamicsFeedForwardAccelerationWorldCmPerSecSq
+				* MotionConfig.DynamicsFeedForwardScale;
+		OutRawReference = AircraftAttitudeReference::Build(
+			AttitudeAcceleration, YawDegrees, GravityMagnitudeCmPerSecSq,
+			MotionConfig.MaxTiltAngleDegrees, FrameConfig);
+		return !OutRawReference.ControlWorldRotation.ContainsNaN()
+			&& !OutRawReference.BodyWorldRotation.ContainsNaN();
+	}
+
+	void InitializeFromActual(
+		const FQuat& ActualBodyWorldRotation,
+		const FVector& ActualAngularVelocityBodyRadPerSec,
+		const FAircraftFlightControllerRuntimeConfig& FrameConfig,
+		FAircraftAttitudeMotionState& State)
+	{
+		State.ControlWorldRotation = FrameConfig.GetControlWorldRotation(
+			ActualBodyWorldRotation);
+		State.ControlWorldRotation.Normalize();
+		State.AngularVelocityControlRadPerSec = FrameConfig.BodyToControlVector(
+			ActualAngularVelocityBodyRadPerSec);
+		State.AngularAccelerationControlRadPerSecSq = FVector::ZeroVector;
+		State.bInitialized = true;
+	}
+
+	FVector BuildStoppingLimitedRate(
+		const FVector& RotationError,
+		const FVector& MaxRate,
+		const FVector& MaxAcceleration)
+	{
+		FVector Result = FVector::ZeroVector;
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			const float Error = RotationError[Axis];
+			const float StoppingRate = FMath::Sqrt(
+				2.0f * FMath::Max(MaxAcceleration[Axis], 0.0) * FMath::Abs(Error));
+			Result[Axis] = FMath::Sign(Error)
+				* FMath::Min(FMath::Max(MaxRate[Axis], 0.0), StoppingRate);
+		}
+		return Result;
+	}
 }
 
 bool FAircraftAttitudeMotionConfig::IsValid() const
@@ -88,39 +158,23 @@ bool FAircraftAttitudeReferenceDynamics::Update(
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_AlternativeAttitudeReference_Update);
 	OutReference = {};
-	if (!FrameConfig.FrameBinding.IsValid() || !MotionConfig.IsValid()
-		|| DeltaSeconds <= 0.0f || !FMath::IsFinite(DeltaSeconds)
-		|| !FMath::IsFinite(YawDegrees) || !FMath::IsFinite(YawRateDegPerSec)
-		|| !FMath::IsFinite(GravityMagnitudeCmPerSecSq) || GravityMagnitudeCmPerSecSq < 0.0f
-		|| !IsFiniteVector(ControlAccelerationWorldCmPerSecSq)
-		|| !IsFiniteVector(DynamicsFeedForwardAccelerationWorldCmPerSecSq)
-		|| ActualBodyWorldRotation.ContainsNaN()
-		|| ActualBodyWorldRotation.SizeSquared() <= UE_SMALL_NUMBER
-		|| !IsFiniteVector(ActualAngularVelocityBodyRadPerSec))
+	FQuat NormalizedActualBody;
+	FAircraftAttitudeReference RawReference;
+	if (!BuildRawReference(
+		ControlAccelerationWorldCmPerSecSq,
+		DynamicsFeedForwardAccelerationWorldCmPerSecSq,
+		YawDegrees, YawRateDegPerSec, GravityMagnitudeCmPerSecSq, DeltaSeconds,
+		ActualBodyWorldRotation, ActualAngularVelocityBodyRadPerSec,
+		FrameConfig, MotionConfig, NormalizedActualBody, RawReference))
 	{
 		Reset(InOutState);
 		return false;
 	}
-
-	const FVector AttitudeAcceleration = ControlAccelerationWorldCmPerSecSq
-		+ DynamicsFeedForwardAccelerationWorldCmPerSecSq
-			* MotionConfig.DynamicsFeedForwardScale;
-	const FAircraftAttitudeReference RawReference = AircraftAttitudeReference::Build(
-		AttitudeAcceleration, YawDegrees, GravityMagnitudeCmPerSecSq,
-		MotionConfig.MaxTiltAngleDegrees, FrameConfig);
 	OutReference.RawControlWorldRotation = RawReference.ControlWorldRotation;
-
-	FQuat NormalizedActualBody = ActualBodyWorldRotation;
-	NormalizedActualBody.Normalize();
 	if (!InOutState.bInitialized || DeltaSeconds > MaximumCatchUpSeconds)
 	{
-		InOutState.ControlWorldRotation = FrameConfig.GetControlWorldRotation(
-			NormalizedActualBody);
-		InOutState.ControlWorldRotation.Normalize();
-		InOutState.AngularVelocityControlRadPerSec = FrameConfig.BodyToControlVector(
-			ActualAngularVelocityBodyRadPerSec);
-		InOutState.AngularAccelerationControlRadPerSecSq = FVector::ZeroVector;
-		InOutState.bInitialized = true;
+		InitializeFromActual(NormalizedActualBody, ActualAngularVelocityBodyRadPerSec,
+			FrameConfig, InOutState);
 	}
 	else
 	{
@@ -186,76 +240,110 @@ bool FAircraftAttitudeReferenceDynamics::Update(
 	return OutReference.bValid;
 }
 
+bool FAircraftAttitudeReferenceDynamics::UpdateDriveTarget(
+	const FVector& ControlAccelerationWorldCmPerSecSq,
+	const FVector& DynamicsFeedForwardAccelerationWorldCmPerSecSq,
+	const float YawDegrees,
+	const float YawRateDegPerSec,
+	const float GravityMagnitudeCmPerSecSq,
+	const float DeltaSeconds,
+	const FQuat& ActualBodyWorldRotation,
+	const FVector& ActualAngularVelocityBodyRadPerSec,
+	const FAircraftFlightControllerRuntimeConfig& FrameConfig,
+	const FAircraftAttitudeMotionConfig& MotionConfig,
+	FAircraftAttitudeMotionState& InOutState,
+	FAircraftAttitudeMotionOutput& OutReference)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Constraint_AttitudeTarget_Update);
+	OutReference = {};
+	FQuat NormalizedActualBody;
+	FAircraftAttitudeReference RawReference;
+	if (!BuildRawReference(
+		ControlAccelerationWorldCmPerSecSq,
+		DynamicsFeedForwardAccelerationWorldCmPerSecSq,
+		YawDegrees, YawRateDegPerSec, GravityMagnitudeCmPerSecSq, DeltaSeconds,
+		ActualBodyWorldRotation, ActualAngularVelocityBodyRadPerSec,
+		FrameConfig, MotionConfig, NormalizedActualBody, RawReference))
+	{
+		Reset(InOutState);
+		return false;
+	}
+	OutReference.RawControlWorldRotation = RawReference.ControlWorldRotation;
+
+	if (!InOutState.bInitialized || DeltaSeconds > MaximumCatchUpSeconds)
+	{
+		InitializeFromActual(NormalizedActualBody, ActualAngularVelocityBodyRadPerSec,
+			FrameConfig, InOutState);
+	}
+	else
+	{
+		const int32 SubstepCount = FMath::Max(
+			1, FMath::CeilToInt(DeltaSeconds / MaximumIntegrationStepSeconds));
+		const float SubstepSeconds = DeltaSeconds / static_cast<float>(SubstepCount);
+		const FVector MaxRateRad = FMath::DegreesToRadians(
+			MotionConfig.MaxAngularRateDegPerSec);
+		const FVector MaxAccelerationRad = FMath::DegreesToRadians(
+			MotionConfig.MaxAngularAccelerationDegPerSecSq);
+		const FVector MaxJerkRad = FMath::DegreesToRadians(
+			MotionConfig.MaxAngularJerkDegPerSecCubed);
+
+		for (int32 Substep = 0; Substep < SubstepCount; ++Substep)
+		{
+			const FVector RotationErrorControl = QuaternionLogShortest(
+				InOutState.ControlWorldRotation.Inverse()
+					* RawReference.ControlWorldRotation);
+			const FVector YawFeedForwardControl =
+				InOutState.ControlWorldRotation.UnrotateVector(
+					FVector::UpVector * FMath::DegreesToRadians(YawRateDegPerSec));
+			bool bDesiredRateLimited = false;
+			FVector DesiredRate = BuildStoppingLimitedRate(
+				RotationErrorControl, MaxRateRad, MaxAccelerationRad)
+				+ YawFeedForwardControl;
+			DesiredRate = ClampAxes(DesiredRate, MaxRateRad, bDesiredRateLimited);
+			OutReference.bRateLimited |= bDesiredRateLimited;
+
+			FVector RequestedAcceleration =
+				(DesiredRate - InOutState.AngularVelocityControlRadPerSec)
+				/ SubstepSeconds;
+			RequestedAcceleration = ClampAxes(
+				RequestedAcceleration, MaxAccelerationRad,
+				OutReference.bAccelerationLimited);
+			FVector AccelerationDelta = RequestedAcceleration
+				- InOutState.AngularAccelerationControlRadPerSecSq;
+			AccelerationDelta = ClampAxes(
+				AccelerationDelta, MaxJerkRad * SubstepSeconds,
+				OutReference.bJerkLimited);
+			InOutState.AngularAccelerationControlRadPerSecSq += AccelerationDelta;
+			InOutState.AngularVelocityControlRadPerSec +=
+				InOutState.AngularAccelerationControlRadPerSecSq * SubstepSeconds;
+			InOutState.AngularVelocityControlRadPerSec = ClampAxes(
+				InOutState.AngularVelocityControlRadPerSec,
+				MaxRateRad, OutReference.bRateLimited);
+			InOutState.ControlWorldRotation = IntegrateLocalAngularVelocity(
+				InOutState.ControlWorldRotation,
+				InOutState.AngularVelocityControlRadPerSec, SubstepSeconds);
+		}
+	}
+
+	OutReference.ControlWorldRotation = InOutState.ControlWorldRotation;
+	OutReference.BodyWorldRotation = FrameConfig.GetBodyWorldRotation(
+		InOutState.ControlWorldRotation);
+	OutReference.AngularVelocityBodyRadPerSec = FrameConfig.ControlToBodyVector(
+		InOutState.AngularVelocityControlRadPerSec);
+	OutReference.AngularAccelerationBodyRadPerSecSq = FrameConfig.ControlToBodyVector(
+		InOutState.AngularAccelerationControlRadPerSecSq);
+	OutReference.bValid = !OutReference.ControlWorldRotation.ContainsNaN()
+		&& !OutReference.BodyWorldRotation.ContainsNaN()
+		&& IsFiniteVector(OutReference.AngularVelocityBodyRadPerSec)
+		&& IsFiniteVector(OutReference.AngularAccelerationBodyRadPerSecSq);
+	if (!OutReference.bValid)
+	{
+		Reset(InOutState);
+	}
+	return OutReference.bValid;
+}
+
 void FAircraftAttitudeReferenceDynamics::Reset(FAircraftAttitudeMotionState& State)
 {
 	State = {};
-}
-
-bool FAircraftAttitudeReferenceDynamics::ComputeServoTorqueBody(
-	const FQuat& ActualBodyWorldRotation,
-	const FVector& ActualAngularVelocityBodyRadPerSec,
-	const FVector& InertiaPrincipalKgM2,
-	const FQuat& PrincipalToBodyRotation,
-	const FAircraftAttitudeMotionOutput& Reference,
-	const float NaturalFrequencyHz,
-	const float DampingRatio,
-	const float ExtraDampingPerSecond,
-	const float TorqueLimitNm,
-	FVector& OutTorqueBodyNm,
-	bool& bOutTorqueLimited)
-{
-	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_AlternativeAttitudeServo_ComputeTorque);
-	OutTorqueBodyNm = FVector::ZeroVector;
-	bOutTorqueLimited = false;
-	if (!Reference.bValid || ActualBodyWorldRotation.ContainsNaN()
-		|| ActualBodyWorldRotation.SizeSquared() <= UE_SMALL_NUMBER
-		|| !IsFiniteVector(ActualAngularVelocityBodyRadPerSec)
-		|| !IsFiniteVector(InertiaPrincipalKgM2)
-		|| InertiaPrincipalKgM2.GetMin() <= 0.0
-		|| PrincipalToBodyRotation.ContainsNaN()
-		|| PrincipalToBodyRotation.SizeSquared() <= UE_SMALL_NUMBER
-		|| !FMath::IsFinite(NaturalFrequencyHz) || NaturalFrequencyHz < 0.0f
-		|| !FMath::IsFinite(DampingRatio) || DampingRatio < 0.0f
-		|| !FMath::IsFinite(ExtraDampingPerSecond) || ExtraDampingPerSecond < 0.0f
-		|| !FMath::IsFinite(TorqueLimitNm) || TorqueLimitNm < 0.0f)
-	{
-		return false;
-	}
-
-	FQuat ActualRotation = ActualBodyWorldRotation;
-	ActualRotation.Normalize();
-	const FVector RotationErrorBody = QuaternionLogShortest(
-		ActualRotation.Inverse() * Reference.BodyWorldRotation);
-	const float NaturalAngularFrequency = NaturalFrequencyHz * UE_TWO_PI;
-	const float Damping = ExtraDampingPerSecond
-		+ 2.0f * DampingRatio * NaturalAngularFrequency;
-	const FVector RequestedAngularAccelerationBody =
-		Reference.AngularAccelerationBodyRadPerSecSq
-		+ RotationErrorBody * FMath::Square(NaturalAngularFrequency)
-		+ (Reference.AngularVelocityBodyRadPerSec
-			- ActualAngularVelocityBodyRadPerSec) * Damping;
-	FQuat NormalizedPrincipalToBody = PrincipalToBodyRotation;
-	NormalizedPrincipalToBody.Normalize();
-	const FVector AngularVelocityPrincipalRadPerSec =
-		NormalizedPrincipalToBody.UnrotateVector(ActualAngularVelocityBodyRadPerSec);
-	const FVector RequestedAngularAccelerationPrincipalRadPerSecSq =
-		NormalizedPrincipalToBody.UnrotateVector(RequestedAngularAccelerationBody);
-	const FVector AngularMomentumPrincipal =
-		InertiaPrincipalKgM2 * AngularVelocityPrincipalRadPerSec;
-	const FVector UnclampedTorquePrincipalNm =
-		InertiaPrincipalKgM2 * RequestedAngularAccelerationPrincipalRadPerSecSq
-		+ FVector::CrossProduct(
-			AngularVelocityPrincipalRadPerSec, AngularMomentumPrincipal);
-	const FVector UnclampedTorqueBodyNm =
-		NormalizedPrincipalToBody.RotateVector(UnclampedTorquePrincipalNm);
-	OutTorqueBodyNm = UnclampedTorqueBodyNm;
-	if (TorqueLimitNm > 0.0f)
-	{
-		OutTorqueBodyNm.X = FMath::Clamp(OutTorqueBodyNm.X, -TorqueLimitNm, TorqueLimitNm);
-		OutTorqueBodyNm.Y = FMath::Clamp(OutTorqueBodyNm.Y, -TorqueLimitNm, TorqueLimitNm);
-		OutTorqueBodyNm.Z = FMath::Clamp(OutTorqueBodyNm.Z, -TorqueLimitNm, TorqueLimitNm);
-		bOutTorqueLimited = !OutTorqueBodyNm.Equals(
-			UnclampedTorqueBodyNm, UE_KINDA_SMALL_NUMBER);
-	}
-	return IsFiniteVector(OutTorqueBodyNm);
 }

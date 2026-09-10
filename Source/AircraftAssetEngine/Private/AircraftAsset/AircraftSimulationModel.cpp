@@ -287,17 +287,16 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			Constraint.GravityFeedForwardScale = Properties.GetValue<float>(TEXT("Simulation.Constraint.Linear.GravityFeedForwardScale"), Constraint.GravityFeedForwardScale);
 			Constraint.DynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("Simulation.Constraint.Linear.DynamicsFeedForwardScale"), Constraint.DynamicsFeedForwardScale);
 			Constraint.bLinearAccelerationMode = Properties.GetValue<bool>(TEXT("Simulation.Constraint.Linear.AccelerationMode"), Constraint.bLinearAccelerationMode);
-			Constraint.AttitudeReference.MaxTiltAngleDegrees = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.Reference.MaxTiltAngleDegrees"), Constraint.AttitudeReference.MaxTiltAngleDegrees);
-			Constraint.AttitudeReference.NaturalFrequencyHz = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.Reference.NaturalFrequencyHz"), Constraint.AttitudeReference.NaturalFrequencyHz);
-			Constraint.AttitudeReference.DampingRatio = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.Reference.DampingRatio"), Constraint.AttitudeReference.DampingRatio);
-			Constraint.AttitudeReference.MaxAngularRateDegPerSec = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Constraint.Attitude.Reference.MaxAngularRateDegPerSec"), FVector3f(Constraint.AttitudeReference.MaxAngularRateDegPerSec)));
-			Constraint.AttitudeReference.MaxAngularAccelerationDegPerSecSq = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Constraint.Attitude.Reference.MaxAngularAccelerationDegPerSecSq"), FVector3f(Constraint.AttitudeReference.MaxAngularAccelerationDegPerSecSq)));
-			Constraint.AttitudeReference.MaxAngularJerkDegPerSecCubed = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Constraint.Attitude.Reference.MaxAngularJerkDegPerSecCubed"), FVector3f(Constraint.AttitudeReference.MaxAngularJerkDegPerSecCubed)));
-			Constraint.AttitudeReference.DynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.Reference.DynamicsFeedForwardScale"), Constraint.AttitudeReference.DynamicsFeedForwardScale);
-			Constraint.AttitudeServoNaturalFrequencyHz = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.Servo.NaturalFrequencyHz"), Constraint.AttitudeServoNaturalFrequencyHz);
-			Constraint.AttitudeServoDampingRatio = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.Servo.DampingRatio"), Constraint.AttitudeServoDampingRatio);
-			Constraint.AttitudeServoExtraDampingPerSecond = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.Servo.ExtraDampingPerSecond"), Constraint.AttitudeServoExtraDampingPerSecond);
-			Constraint.AttitudeTorqueLimitNm = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.Servo.TorqueLimitNm"), Constraint.AttitudeTorqueLimitNm);
+			Constraint.Attitude.MaxTiltAngleDegrees = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.MaxTiltAngleDegrees"), Constraint.Attitude.MaxTiltAngleDegrees);
+			Constraint.Attitude.NaturalFrequencyHz = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.NaturalFrequencyHz"), Constraint.Attitude.NaturalFrequencyHz);
+			Constraint.Attitude.DampingRatio = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.DampingRatio"), Constraint.Attitude.DampingRatio);
+			Constraint.Attitude.MaxAngularRateDegPerSec = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Constraint.Attitude.MaxAngularRateDegPerSec"), FVector3f(Constraint.Attitude.MaxAngularRateDegPerSec)));
+			Constraint.Attitude.MaxAngularAccelerationDegPerSecSq = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Constraint.Attitude.MaxAngularAccelerationDegPerSecSq"), FVector3f(Constraint.Attitude.MaxAngularAccelerationDegPerSecSq)));
+			Constraint.Attitude.MaxAngularJerkDegPerSecCubed = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Constraint.Attitude.MaxAngularJerkDegPerSecCubed"), FVector3f(Constraint.Attitude.MaxAngularJerkDegPerSecCubed)));
+			Constraint.Attitude.DynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.DynamicsFeedForwardScale"), Constraint.Attitude.DynamicsFeedForwardScale);
+			Constraint.AttitudeExtraDampingPerSecond = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.ExtraDampingPerSecond"), Constraint.AttitudeExtraDampingPerSecond);
+			Constraint.AttitudeTorqueLimitNm = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.TorqueLimitNm"), Constraint.AttitudeTorqueLimitNm);
+			Constraint.bAngularAccelerationMode = Properties.GetValue<bool>(TEXT("Simulation.Constraint.Attitude.AccelerationMode"), Constraint.bAngularAccelerationMode);
 
 			FAircraftKinematicSimulationRuntimeConfig& Kinematic = OutModel.KinematicSimulation;
 			Kinematic.AttitudeReference.MaxTiltAngleDegrees = Properties.GetValue<float>(TEXT("Simulation.Kinematic.Attitude.Reference.MaxTiltAngleDegrees"), Kinematic.AttitudeReference.MaxTiltAngleDegrees);

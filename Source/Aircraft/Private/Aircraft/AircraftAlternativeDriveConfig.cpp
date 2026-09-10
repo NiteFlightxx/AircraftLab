@@ -18,10 +18,8 @@ bool FAircraftConstraintSimulationRuntimeConfig::IsValid() const
 		&& IsFiniteNonNegative(LinearForceLimitN)
 		&& IsFiniteNonNegative(GravityFeedForwardScale)
 		&& IsFiniteNonNegative(DynamicsFeedForwardScale)
-		&& AttitudeReference.IsValid()
-		&& IsFiniteNonNegative(AttitudeServoNaturalFrequencyHz)
-		&& IsFiniteNonNegative(AttitudeServoDampingRatio)
-		&& IsFiniteNonNegative(AttitudeServoExtraDampingPerSecond)
+		&& Attitude.IsValid()
+		&& IsFiniteNonNegative(AttitudeExtraDampingPerSecond)
 		&& IsFiniteNonNegative(AttitudeTorqueLimitNm);
 }
 

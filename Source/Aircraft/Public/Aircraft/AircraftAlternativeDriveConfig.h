@@ -16,11 +16,10 @@ struct AIRCRAFT_API FAircraftConstraintSimulationRuntimeConfig
 	float DynamicsFeedForwardScale = 1.0f;
 	bool bLinearAccelerationMode = true;
 
-	FAircraftAttitudeMotionConfig AttitudeReference;
-	float AttitudeServoNaturalFrequencyHz = 1.59154943f;
-	float AttitudeServoDampingRatio = 1.0f;
-	float AttitudeServoExtraDampingPerSecond = 0.0f;
+	FAircraftAttitudeMotionConfig Attitude;
+	float AttitudeExtraDampingPerSecond = 0.0f;
 	float AttitudeTorqueLimitNm = 0.0f;
+	bool bAngularAccelerationMode = true;
 
 	bool IsValid() const;
 };

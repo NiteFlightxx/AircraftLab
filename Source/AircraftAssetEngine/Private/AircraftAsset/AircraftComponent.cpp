@@ -634,6 +634,10 @@ bool UAircraftComponent::CreateSimulationConstraint()
 	const FVector InitialCenterOfMass = ChassisBody->GetCOMPosition();
 	SimulationConstraint->SetLinearPositionTarget(InitialCenterOfMass);
 	SimulationConstraint->SetLinearVelocityTarget(FVector::ZeroVector);
+	SimulationConstraint->SetAngularDriveMode(EAngularDriveMode::SLERP);
+	SimulationConstraint->SetAngularOrientationTarget(
+		ChassisBody->GetUnrealWorldTransform().GetRotation());
+	SimulationConstraint->SetAngularVelocityTarget(FVector::ZeroVector);
 
 	const FAircraftFlightControllerRuntimeConfig& FlightConfig = Model->FlightController;
 	const FAircraftConstraintSimulationRuntimeConfig& ConstraintConfig = Model->ConstraintSimulation;
@@ -701,6 +705,24 @@ void UAircraftComponent::UpdateConstraintDriveAuthority(
 	SimulationConstraint->SetLinearDriveParams(
 		LinearStiffness, LinearDamping,
 		AircraftPhysicsUnits::NewtonsToChaosForce(LinearForceLimitN));
+
+	float AngularStiffness = 0.0f;
+	float AngularDamping = 0.0f;
+	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
+		AngularStiffness, AngularDamping,
+		ConstraintConfig.Attitude.NaturalFrequencyHz,
+		ConstraintConfig.Attitude.DampingRatio,
+		ConstraintConfig.AttitudeExtraDampingPerSecond);
+	SimulationConstraint->SetAngularDriveMode(EAngularDriveMode::SLERP);
+	SimulationConstraint->SetOrientationDriveSLERP(AngularStiffness > UE_SMALL_NUMBER);
+	SimulationConstraint->SetAngularVelocityDriveSLERP(AngularDamping > UE_SMALL_NUMBER);
+	SimulationConstraint->SetAngularDriveAccelerationMode(
+		ConstraintConfig.bAngularAccelerationMode);
+	SimulationConstraint->SetAngularDriveParams(
+		AngularStiffness,
+		AngularDamping,
+		AircraftPhysicsUnits::NewtonMetersToChaosTorque(
+			ConstraintConfig.AttitudeTorqueLimitNm));
 }
 
 void UAircraftComponent::DisableSimulationConstraintDrive()
@@ -711,6 +733,8 @@ void UAircraftComponent::DisableSimulationConstraintDrive()
 	}
 	SimulationConstraint->SetLinearPositionDrive(false, false, false);
 	SimulationConstraint->SetLinearVelocityDrive(false, false, false);
+	SimulationConstraint->SetOrientationDriveSLERP(false);
+	SimulationConstraint->SetAngularVelocityDriveSLERP(false);
 }
 
 void UAircraftComponent::DestroySimulationConstraint()
@@ -727,7 +751,7 @@ void UAircraftComponent::DestroySimulationConstraint()
 
 void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Constraint_ApplyLinearReference);
+	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_Constraint_ApplyReference);
 	if (!SimulationConstraint.IsValid()
 		|| !SimulationConstraint->IsValidConstraintInstance()
 		|| SimulationConstraint->IsBroken())
@@ -804,6 +828,17 @@ void UAircraftComponent::UpdateConstraintSimulation(float DeltaSeconds)
 		: ChassisBody->GetUnrealWorldTransform().GetRotation();
 	const FVector TargetAngularVelocityWorldRadPerSec = TargetBodyRotation.RotateVector(
 		Attitude.TargetAngularVelocityBodyRadPerSec);
+	if (Attitude.bValid)
+	{
+		SimulationConstraint->SetAngularOrientationTarget(TargetBodyRotation);
+		SimulationConstraint->SetAngularVelocityTarget(
+			TargetAngularVelocityWorldRadPerSec / UE_TWO_PI);
+	}
+	else
+	{
+		SimulationConstraint->SetOrientationDriveSLERP(false);
+		SimulationConstraint->SetAngularVelocityDriveSLERP(false);
+	}
 	FAircraftDebug::TickConstraint(
 		*this, CurrentSimulationLOD, *SimulationConstraint, Model->RootBone, Target,
 		ConstraintTargetCenterOfMass, TargetCenterOfMassVelocity,

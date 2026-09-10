@@ -41,7 +41,7 @@ struct AIRCRAFT_API FAircraftAttitudeMotionOutput
 	bool bValid = false;
 };
 
-/** Coherent alternative-drive attitude reference and servo output. */
+/** Coherent alternative-drive attitude reference output. */
 struct AIRCRAFT_API FAircraftAlternativeAttitudeDiagnostics
 {
 	FQuat RawControlWorldRotation = FQuat::Identity;
@@ -51,11 +51,9 @@ struct AIRCRAFT_API FAircraftAlternativeAttitudeDiagnostics
 	FVector TargetAngularVelocityBodyRadPerSec = FVector::ZeroVector;
 	FVector ActualAngularVelocityBodyRadPerSec = FVector::ZeroVector;
 	FVector TargetAngularAccelerationBodyRadPerSecSq = FVector::ZeroVector;
-	FVector AppliedAttitudeTorqueBodyNm = FVector::ZeroVector;
 	bool bRateLimited = false;
 	bool bAccelerationLimited = false;
 	bool bJerkLimited = false;
-	bool bTorqueLimited = false;
 	bool bReferenceInitialized = false;
 	bool bValid = false;
 };
@@ -78,18 +76,23 @@ public:
 		FAircraftAttitudeMotionState& InOutState,
 		FAircraftAttitudeMotionOutput& OutReference);
 
-	static void Reset(FAircraftAttitudeMotionState& State);
-
-	static bool ComputeServoTorqueBody(
+	/**
+	 * Builds a rate/acceleration/jerk-limited target for a native physics drive.
+	 * NaturalFrequencyHz and DampingRatio are deliberately not consumed here: they belong to the drive.
+	 */
+	static bool UpdateDriveTarget(
+		const FVector& ControlAccelerationWorldCmPerSecSq,
+		const FVector& DynamicsFeedForwardAccelerationWorldCmPerSecSq,
+		float YawDegrees,
+		float YawRateDegPerSec,
+		float GravityMagnitudeCmPerSecSq,
+		float DeltaSeconds,
 		const FQuat& ActualBodyWorldRotation,
 		const FVector& ActualAngularVelocityBodyRadPerSec,
-		const FVector& InertiaPrincipalKgM2,
-		const FQuat& PrincipalToBodyRotation,
-		const FAircraftAttitudeMotionOutput& Reference,
-		float NaturalFrequencyHz,
-		float DampingRatio,
-		float ExtraDampingPerSecond,
-		float TorqueLimitNm,
-		FVector& OutTorqueBodyNm,
-		bool& bOutTorqueLimited);
+		const FAircraftFlightControllerRuntimeConfig& FrameConfig,
+		const FAircraftAttitudeMotionConfig& MotionConfig,
+		FAircraftAttitudeMotionState& InOutState,
+		FAircraftAttitudeMotionOutput& OutReference);
+
+	static void Reset(FAircraftAttitudeMotionState& State);
 };

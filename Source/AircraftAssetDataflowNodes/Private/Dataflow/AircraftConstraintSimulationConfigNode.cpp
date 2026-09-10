@@ -16,8 +16,7 @@ bool FAircraftConstraintSimulationConfigNode::ApplyToAircraftCollection(FAircraf
 	const float Values[] = { Config.LinearNaturalFrequencyHz, Config.LinearDampingRatio,
 		Config.LinearExtraDampingPerSecond, Config.LinearForceLimitN,
 		Config.GravityFeedForwardScale, Config.DynamicsFeedForwardScale,
-		Config.AttitudeServoNaturalFrequencyHz, Config.AttitudeServoDampingRatio,
-		Config.AttitudeServoExtraDampingPerSecond, Config.AttitudeTorqueLimitNm };
+		Config.AttitudeExtraDampingPerSecond, Config.AttitudeTorqueLimitNm };
 	for (const float Value : Values)
 	{
 		if (!FMath::IsFinite(Value) || Value < 0.0f)
@@ -25,7 +24,7 @@ bool FAircraftConstraintSimulationConfigNode::ApplyToAircraftCollection(FAircraf
 			return Context.Error(TEXT("Constraint strength, damping, limits, and feed-forward scales must be finite and non-negative."));
 		}
 	}
-	if (!Config.AttitudeReference.IsValid())
+	if (!Config.Attitude.IsValid())
 	{
 		return Context.Error(TEXT("Constraint attitude-reference limits must be finite and non-negative."));
 	}
@@ -37,16 +36,15 @@ bool FAircraftConstraintSimulationConfigNode::ApplyToAircraftCollection(FAircraf
 	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Linear.GravityFeedForwardScale"), Config.GravityFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Linear.DynamicsFeedForwardScale"), Config.DynamicsFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Linear.AccelerationMode"), Config.bLinearAccelerationMode);
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Reference.MaxTiltAngleDegrees"), Config.AttitudeReference.MaxTiltAngleDegrees);
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Reference.NaturalFrequencyHz"), Config.AttitudeReference.NaturalFrequencyHz);
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Reference.DampingRatio"), Config.AttitudeReference.DampingRatio);
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Reference.MaxAngularRateDegPerSec"), FVector3f(Config.AttitudeReference.MaxAngularRateDegPerSec));
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Reference.MaxAngularAccelerationDegPerSecSq"), FVector3f(Config.AttitudeReference.MaxAngularAccelerationDegPerSecSq));
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Reference.MaxAngularJerkDegPerSecCubed"), FVector3f(Config.AttitudeReference.MaxAngularJerkDegPerSecCubed));
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Reference.DynamicsFeedForwardScale"), Config.AttitudeReference.DynamicsFeedForwardScale);
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Servo.NaturalFrequencyHz"), Config.AttitudeServoNaturalFrequencyHz);
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Servo.DampingRatio"), Config.AttitudeServoDampingRatio);
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Servo.ExtraDampingPerSecond"), Config.AttitudeServoExtraDampingPerSecond);
-	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.Servo.TorqueLimitNm"), Config.AttitudeTorqueLimitNm);
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.MaxTiltAngleDegrees"), Config.Attitude.MaxTiltAngleDegrees);
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.NaturalFrequencyHz"), Config.Attitude.NaturalFrequencyHz);
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.DampingRatio"), Config.Attitude.DampingRatio);
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.MaxAngularRateDegPerSec"), FVector3f(Config.Attitude.MaxAngularRateDegPerSec));
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.MaxAngularAccelerationDegPerSecSq"), FVector3f(Config.Attitude.MaxAngularAccelerationDegPerSecSq));
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.MaxAngularJerkDegPerSecCubed"), FVector3f(Config.Attitude.MaxAngularJerkDegPerSecCubed));
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.DynamicsFeedForwardScale"), Config.Attitude.DynamicsFeedForwardScale);
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.ExtraDampingPerSecond"), Config.AttitudeExtraDampingPerSecond);
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.TorqueLimitNm"), Config.AttitudeTorqueLimitNm);
+	SetConfigProperty(Properties, TEXT("Simulation.Constraint.Attitude.AccelerationMode"), Config.bAngularAccelerationMode);
 	return true;
 }

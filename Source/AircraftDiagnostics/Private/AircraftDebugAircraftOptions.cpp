@@ -253,10 +253,6 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 			{
 				FAircraftDebugDraw::DrawAxes(C, S.CenterOfMassCm,
 					D.Attitude.ShapedBodyWorldRotation.Rotator(), 50.0f);
-				FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm,
-					S.BodyTransform.GetRotation().RotateVector(
-						D.Attitude.AppliedAttitudeTorqueBodyNm) * 20.0f,
-					FAircraftDebugColors::ConstraintTorque);
 			}
 		};
 		Option.CanvasText = [](const FAircraftDebugFrameSnapshot& S)

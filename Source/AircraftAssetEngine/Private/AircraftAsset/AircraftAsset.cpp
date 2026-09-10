@@ -367,21 +367,6 @@ bool UAircraftAsset::CompileAndCommitAircraftState(
 				"Aircraft frame compilation requires a skeletal mesh and at least one LOD."));
 		return false;
 	}
-	for (int32 LodIndex = 0; LodIndex < Candidate.SimulationModel->LodModels.Num(); ++LodIndex)
-	{
-		const FAircraftConstraintSimulationRuntimeConfig& Constraint =
-			Candidate.SimulationModel->LodModels[LodIndex].ConstraintSimulation;
-		if (Constraint.AttitudeReference.NaturalFrequencyHz
-			> Constraint.AttitudeServoNaturalFrequencyHz + UE_SMALL_NUMBER)
-		{
-			UE_LOG(LogAircraft, Warning,
-				TEXT("[Aircraft.Asset.Build] Asset=%s LOD=%d Constraint attitude reference bandwidth %.3f Hz exceeds servo bandwidth %.3f Hz; tracking lag is expected."),
-				*GetName(), LodIndex,
-				Constraint.AttitudeReference.NaturalFrequencyHz,
-				Constraint.AttitudeServoNaturalFrequencyHz);
-		}
-	}
-
 	// 验证通过：一次性交换成员状态。
 	GetAircraftCollectionsInternal() = MoveTemp(Candidate.Collections);
 	SourceSkeletalMesh = Candidate.SkeletalMesh;

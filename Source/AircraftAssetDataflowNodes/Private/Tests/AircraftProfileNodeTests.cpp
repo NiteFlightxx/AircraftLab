@@ -232,10 +232,14 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 		Constraint.GravityFeedForwardScale, 1.0f);
 	TestEqual(TEXT("Constraint simulation fully compensates rigid-body linear damping by default"),
 		Constraint.DynamicsFeedForwardScale, 1.0f);
-	TestEqual(TEXT("Constraint reference defaults to one hertz"),
-		Constraint.AttitudeReference.NaturalFrequencyHz, 1.0f);
-	TestEqual(TEXT("Constraint servo retains its independent default bandwidth"),
-		Constraint.AttitudeServoNaturalFrequencyHz, 1.59154943f);
+	TestEqual(TEXT("Constraint angular drive uses the shared attitude bandwidth"),
+		Constraint.Attitude.NaturalFrequencyHz, 1.0f);
+	TestEqual(TEXT("Constraint angular drive defaults to critical damping"),
+		Constraint.Attitude.DampingRatio, 1.0f);
+	TestEqual(TEXT("Constraint angular drive has no extra damping by default"),
+		Constraint.AttitudeExtraDampingPerSecond, 0.0f);
+	TestTrue(TEXT("Constraint angular drive uses acceleration mode by default"),
+		Constraint.bAngularAccelerationMode);
 	const FAircraftKinematicSimulationConfig Kinematic;
 	TestEqual(TEXT("Kinematic reference has its own faster default bandwidth"),
 		Kinematic.AttitudeReference.NaturalFrequencyHz, 1.5f);

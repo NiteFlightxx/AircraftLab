@@ -355,8 +355,11 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	Set(TEXT("FlightController.Execution.ControllerEnabledByDefault"), false);
 	Set(TEXT("Simulation.Constraint.Linear.GravityFeedForwardScale"), 0.8f);
 	Set(TEXT("Simulation.Constraint.Linear.DynamicsFeedForwardScale"), 0.6f);
-	Set(TEXT("Simulation.Constraint.Attitude.Reference.NaturalFrequencyHz"), 0.85f);
-	Set(TEXT("Simulation.Constraint.Attitude.Servo.NaturalFrequencyHz"), 2.25f);
+	Set(TEXT("Simulation.Constraint.Attitude.NaturalFrequencyHz"), 0.85f);
+	Set(TEXT("Simulation.Constraint.Attitude.DampingRatio"), 0.9f);
+	Set(TEXT("Simulation.Constraint.Attitude.ExtraDampingPerSecond"), 0.3f);
+	Set(TEXT("Simulation.Constraint.Attitude.TorqueLimitNm"), 2.25f);
+	Set(TEXT("Simulation.Constraint.Attitude.AccelerationMode"), false);
 	Set(TEXT("Simulation.Kinematic.Attitude.Reference.NaturalFrequencyHz"), 1.75f);
 	Set(TEXT("Simulation.Kinematic.Attitude.Reference.DynamicsFeedForwardScale"), 0.25f);
 
@@ -377,10 +380,16 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 		Model.GetLodModel(0)->ConstraintSimulation.GravityFeedForwardScale, 0.8f);
 	TestEqual(TEXT("Constraint linear-damping feed-forward compiles"),
 		Model.GetLodModel(0)->ConstraintSimulation.DynamicsFeedForwardScale, 0.6f);
-	TestEqual(TEXT("Constraint attitude-reference bandwidth compiles independently"),
-		Model.GetLodModel(0)->ConstraintSimulation.AttitudeReference.NaturalFrequencyHz, 0.85f);
-	TestEqual(TEXT("Constraint attitude-servo bandwidth compiles independently"),
-		Model.GetLodModel(0)->ConstraintSimulation.AttitudeServoNaturalFrequencyHz, 2.25f);
+	TestEqual(TEXT("Constraint attitude bandwidth compiles into its angular drive"),
+		Model.GetLodModel(0)->ConstraintSimulation.Attitude.NaturalFrequencyHz, 0.85f);
+	TestEqual(TEXT("Constraint attitude damping compiles into its angular drive"),
+		Model.GetLodModel(0)->ConstraintSimulation.Attitude.DampingRatio, 0.9f);
+	TestEqual(TEXT("Constraint angular-drive extra damping compiles"),
+		Model.GetLodModel(0)->ConstraintSimulation.AttitudeExtraDampingPerSecond, 0.3f);
+	TestEqual(TEXT("Constraint angular-drive torque limit compiles"),
+		Model.GetLodModel(0)->ConstraintSimulation.AttitudeTorqueLimitNm, 2.25f);
+	TestFalse(TEXT("Constraint angular-drive acceleration mode compiles"),
+		Model.GetLodModel(0)->ConstraintSimulation.bAngularAccelerationMode);
 	TestEqual(TEXT("Kinematic attitude-reference bandwidth compiles independently"),
 		Model.GetLodModel(0)->KinematicSimulation.AttitudeReference.NaturalFrequencyHz, 1.75f);
 	TestEqual(TEXT("Kinematic attitude feed-forward compiles independently"),

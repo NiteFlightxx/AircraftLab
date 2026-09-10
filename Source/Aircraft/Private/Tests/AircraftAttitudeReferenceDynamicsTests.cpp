@@ -23,6 +23,23 @@ namespace
 		check(bUpdated);
 		return Output;
 	}
+
+	FAircraftAttitudeMotionOutput StepConstraintTarget(
+		FAircraftAttitudeMotionState& State,
+		const FAircraftAttitudeMotionConfig& MotionConfig,
+		const FVector& Acceleration,
+		const float YawDegrees,
+		const float DeltaSeconds)
+	{
+		FAircraftFlightControllerRuntimeConfig FrameConfig;
+		FAircraftAttitudeMotionOutput Output;
+		const bool bUpdated = FAircraftAttitudeReferenceDynamics::UpdateDriveTarget(
+			Acceleration, FVector::ZeroVector, YawDegrees, 0.0f, 980.0f,
+			DeltaSeconds, FrameConfig.GetBodyWorldRotation(FQuat::Identity),
+			FVector::ZeroVector, FrameConfig, MotionConfig, State, Output);
+		check(bUpdated);
+		return Output;
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -125,92 +142,35 @@ bool FAircraftAttitudeReferenceFrameRateTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftAttitudeServoRigidBodyTest,
-	"AircraftLab.Control.AlternativeAttitude.ServoUsesBodyInertiaAndGyroscopicTerm",
+	FAircraftConstraintDriveTargetTest,
+	"AircraftLab.Control.AlternativeAttitude.ConstraintTargetDoesNotDuplicateDriveDynamics",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FAircraftAttitudeServoRigidBodyTest::RunTest(const FString& Parameters)
+bool FAircraftConstraintDriveTargetTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
-	FAircraftAttitudeMotionOutput Reference;
-	Reference.BodyWorldRotation = FQuat::Identity;
-	Reference.AngularVelocityBodyRadPerSec = FVector(1.0f, 2.0f, 3.0f);
-	Reference.AngularAccelerationBodyRadPerSecSq = FVector(4.0f, 5.0f, 6.0f);
-	Reference.bValid = true;
-	FVector TorqueBodyNm = FVector::ZeroVector;
-	bool bTorqueLimited = false;
-	const bool bSolved = FAircraftAttitudeReferenceDynamics::ComputeServoTorqueBody(
-		FQuat::Identity, Reference.AngularVelocityBodyRadPerSec,
-		FVector(2.0f, 3.0f, 5.0f), FQuat::Identity, Reference,
-		0.0f, 0.0f, 0.0f, 0.0f, TorqueBodyNm, bTorqueLimited);
-	const FVector AngularMomentum(2.0f, 6.0f, 15.0f);
-	const FVector Expected = FVector(2.0f, 3.0f, 5.0f)
-		* Reference.AngularAccelerationBodyRadPerSecSq
-		+ FVector::CrossProduct(Reference.AngularVelocityBodyRadPerSec, AngularMomentum);
-	TestTrue(TEXT("Servo produces a finite body-axis torque"), bSolved);
-	TestTrue(TEXT("Body inertia and gyroscopic torque are both applied"),
-		TorqueBodyNm.Equals(Expected, 1.e-4f));
-	TestFalse(TEXT("Unlimited torque is not reported as saturated"), bTorqueLimited);
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftAttitudeServoRotatedPrincipalAxesTest,
-	"AircraftLab.Control.AlternativeAttitude.ServoMapsChaosPrincipalInertiaAxes",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FAircraftAttitudeServoRotatedPrincipalAxesTest::RunTest(const FString& Parameters)
-{
-	(void)Parameters;
-	FAircraftAttitudeMotionOutput Reference;
-	Reference.BodyWorldRotation = FQuat::Identity;
-	Reference.AngularVelocityBodyRadPerSec = FVector(1.0f, 2.0f, 3.0f);
-	Reference.AngularAccelerationBodyRadPerSecSq = FVector(4.0f, 5.0f, 6.0f);
-	Reference.bValid = true;
-	const FVector PrincipalInertiaKgM2(2.0f, 3.0f, 5.0f);
-	const FQuat PrincipalToBodyRotation(FVector::UpVector, UE_HALF_PI);
-	FVector TorqueBodyNm = FVector::ZeroVector;
-	bool bTorqueLimited = false;
-	const bool bSolved = FAircraftAttitudeReferenceDynamics::ComputeServoTorqueBody(
-		FQuat::Identity, Reference.AngularVelocityBodyRadPerSec,
-		PrincipalInertiaKgM2, PrincipalToBodyRotation, Reference,
-		0.0f, 0.0f, 0.0f, 0.0f, TorqueBodyNm, bTorqueLimited);
-
-	const FVector OmegaPrincipal = PrincipalToBodyRotation.UnrotateVector(
-		Reference.AngularVelocityBodyRadPerSec);
-	const FVector AlphaPrincipal = PrincipalToBodyRotation.UnrotateVector(
-		Reference.AngularAccelerationBodyRadPerSecSq);
-	const FVector ExpectedPrincipal = PrincipalInertiaKgM2 * AlphaPrincipal
-		+ FVector::CrossProduct(OmegaPrincipal, PrincipalInertiaKgM2 * OmegaPrincipal);
-	const FVector ExpectedBody = PrincipalToBodyRotation.RotateVector(ExpectedPrincipal);
-	TestTrue(TEXT("Servo accepts a rotated Chaos mass frame"), bSolved);
-	TestTrue(TEXT("Principal-axis torque is mapped back into the body frame"),
-		TorqueBodyNm.Equals(ExpectedBody, 1.e-4f));
-	TestFalse(TEXT("Unlimited torque is not reported as saturated"), bTorqueLimited);
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftAttitudeServoTorqueLimitTest,
-	"AircraftLab.Control.AlternativeAttitude.ServoReportsTorqueSaturation",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FAircraftAttitudeServoTorqueLimitTest::RunTest(const FString& Parameters)
-{
-	(void)Parameters;
-	FAircraftAttitudeMotionOutput Reference;
-	Reference.BodyWorldRotation = FRotator(0.0f, 90.0f, 0.0f).Quaternion();
-	Reference.bValid = true;
-	FVector TorqueBodyNm = FVector::ZeroVector;
-	bool bTorqueLimited = false;
-	const bool bSolved = FAircraftAttitudeReferenceDynamics::ComputeServoTorqueBody(
-		FQuat::Identity, FVector::ZeroVector,
-		FVector(2.0f, 3.0f, 5.0f), FQuat::Identity, Reference,
-		2.0f, 1.0f, 0.0f, 4.0f, TorqueBodyNm, bTorqueLimited);
-	TestTrue(TEXT("Servo solves a limited attitude command"), bSolved);
-	TestTrue(TEXT("Every torque component respects the configured hard limit"),
-		TorqueBodyNm.GetAbs().GetMax() <= 4.0f + 1.e-4f);
-	TestTrue(TEXT("A clipped torque is reported as saturated"), bTorqueLimited);
+	FAircraftAttitudeMotionConfig SlowDrive;
+	SlowDrive.NaturalFrequencyHz = 0.5f;
+	SlowDrive.DampingRatio = 0.25f;
+	FAircraftAttitudeMotionConfig FastDrive = SlowDrive;
+	FastDrive.NaturalFrequencyHz = 8.0f;
+	FastDrive.DampingRatio = 2.0f;
+	FAircraftAttitudeMotionState SlowState;
+	FAircraftAttitudeMotionState FastState;
+	FAircraftAttitudeMotionOutput SlowOutput;
+	FAircraftAttitudeMotionOutput FastOutput;
+	for (int32 Step = 0; Step < 120; ++Step)
+	{
+		SlowOutput = StepConstraintTarget(
+			SlowState, SlowDrive, FVector(700.0f, -300.0f, 0.0f), 90.0f, 1.0f / 120.0f);
+		FastOutput = StepConstraintTarget(
+			FastState, FastDrive, FVector(700.0f, -300.0f, 0.0f), 90.0f, 1.0f / 120.0f);
+	}
+	TestTrue(TEXT("Constraint target shaping is independent of angular-drive spring tuning"),
+		SlowOutput.BodyWorldRotation.Equals(FastOutput.BodyWorldRotation, 1.e-5f));
+	TestTrue(TEXT("Constraint target velocity is independent of angular-drive damping tuning"),
+		SlowOutput.AngularVelocityBodyRadPerSec.Equals(
+			FastOutput.AngularVelocityBodyRadPerSec, 1.e-5f));
 	return true;
 }
 
