@@ -252,7 +252,7 @@ FAircraftMovementIntentHandle UAutopilotComponent::SubmitIntent(
 		Finish(EAircraftMovementIntentStatus::Interrupted,
 			EAircraftMovementFailureReason::Replaced);
 	}
-	PassThroughContinuationHandle = {};
+	ClearAutomaticContinuation();
 	AcquireFlightControl();
 	SourceIntent = Intent;
 	ResolvedIntent = Intent;
@@ -290,13 +290,19 @@ bool UAutopilotComponent::UpdateIntent(
 
 bool UAutopilotComponent::CancelMovementIntent(FAircraftMovementIntentHandle Handle)
 {
-	if (Handle != ActiveHandle)
+	if (Handle == ActiveHandle)
 	{
-		return false;
+		Finish(EAircraftMovementIntentStatus::Cancelled,
+			EAircraftMovementFailureReason::CancelledByCaller);
+		return true;
 	}
-	Finish(EAircraftMovementIntentStatus::Cancelled,
-		EAircraftMovementFailureReason::CancelledByCaller);
-	return true;
+	if (Handle == AutomaticContinuationHandle)
+	{
+		ClearAutomaticContinuation();
+		++IntentRevision;
+		return true;
+	}
+	return false;
 }
 
 void UAutopilotComponent::SetAutopilotActive(bool bInActive)
@@ -321,7 +327,7 @@ void UAutopilotComponent::SetAutopilotActive(bool bInActive)
 			Finish(EAircraftMovementIntentStatus::Failed,
 				EAircraftMovementFailureReason::AutopilotInactive);
 		}
-		PassThroughContinuationHandle = {};
+		ClearAutomaticContinuation();
 		++IntentRevision;
 		ReleaseFlightControl();
 	}
@@ -371,20 +377,48 @@ void UAutopilotComponent::Finish(
 	OnMovementIntentChanged.Broadcast(FinishedResult);
 }
 
-void UAutopilotComponent::BeginPassThroughContinuation(const FVector& ExitVelocityCmPerSec)
+void UAutopilotComponent::ClearAutomaticContinuation()
 {
-	PassThroughContinuationIntent = {};
-	PassThroughContinuationIntent.Type = EAircraftMovementIntentType::Velocity;
-	PassThroughContinuationIntent.Velocity.VelocityCmPerSec = ExitVelocityCmPerSec;
-	PassThroughContinuationIntent.Velocity.Frame = EAircraftVelocityFrame::World;
-	PassThroughContinuationIntent.Limits = ResolvedIntent.Limits;
-	PassThroughContinuationIntent.Heading = ResolvedIntent.Heading;
-	if (PassThroughContinuationIntent.Heading.Mode == EAircraftHeadingMode::FaceTarget)
+	AutomaticContinuationIntent = {};
+	AutomaticContinuationHandle = {};
+}
+
+void UAutopilotComponent::BeginPassThroughContinuation(
+	const FVector& ExitVelocityCmPerSec,
+	const FAircraftMovementIntentHandle SourceHandle)
+{
+	AutomaticContinuationIntent = {};
+	AutomaticContinuationIntent.Type = EAircraftMovementIntentType::Velocity;
+	AutomaticContinuationIntent.Velocity.VelocityCmPerSec = ExitVelocityCmPerSec;
+	AutomaticContinuationIntent.Velocity.Frame = EAircraftVelocityFrame::World;
+	AutomaticContinuationIntent.Limits = ResolvedIntent.Limits;
+	AutomaticContinuationIntent.bHasRequestedMotionLimits =
+		ResolvedIntent.bHasRequestedMotionLimits;
+	AutomaticContinuationIntent.Heading = ResolvedIntent.Heading;
+	if (AutomaticContinuationIntent.Heading.Mode == EAircraftHeadingMode::FaceTarget)
 	{
-		PassThroughContinuationIntent.Heading.Mode = EAircraftHeadingMode::FaceVelocity;
-		PassThroughContinuationIntent.Heading.TargetActor = nullptr;
+		AutomaticContinuationIntent.Heading.Mode = EAircraftHeadingMode::FaceVelocity;
+		AutomaticContinuationIntent.Heading.TargetActor = nullptr;
 	}
-	PassThroughContinuationHandle.Id = TNumericLimits<int64>::Max() - 1;
+	AutomaticContinuationHandle = SourceHandle;
+	++IntentRevision;
+}
+
+void UAutopilotComponent::BeginTerminalHoldContinuation(
+	const FVector& PositionCm,
+	const float FixedYawDegrees,
+	const FAircraftMovementIntentHandle SourceHandle)
+{
+	AutomaticContinuationIntent = {};
+	AutomaticContinuationIntent.Type = EAircraftMovementIntentType::Hold;
+	AutomaticContinuationIntent.Hold.PositionCm = PositionCm;
+	AutomaticContinuationIntent.Hold.bCaptureCurrentPosition = false;
+	AutomaticContinuationIntent.Limits = ResolvedIntent.Limits;
+	AutomaticContinuationIntent.bHasRequestedMotionLimits =
+		ResolvedIntent.bHasRequestedMotionLimits;
+	AutomaticContinuationIntent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+	AutomaticContinuationIntent.Heading.FixedYawDegrees = FixedYawDegrees;
+	AutomaticContinuationHandle = SourceHandle;
 	++IntentRevision;
 }
 
@@ -447,6 +481,7 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 	{
 		if (bWithinPosition && bPathComplete)
 		{
+			const FAircraftMovementIntentHandle CompletedHandle = ActiveHandle;
 			const FVector ExitVelocityCmPerSec = bHasReference
 				? Reference.VelocityCmPerSec
 				: State.VelocityCmPerSec;
@@ -455,7 +490,7 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 				EAircraftMovementFailureReason::None);
 			if (bActive && !ActiveHandle.IsValid())
 			{
-				BeginPassThroughContinuation(ExitVelocityCmPerSec);
+				BeginPassThroughContinuation(ExitVelocityCmPerSec, CompletedHandle);
 			}
 		}
 		return;
@@ -482,9 +517,14 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 		? StableTimeSeconds + DeltaTime : 0.0f;
 	if (StableTimeSeconds >= ResolvedIntent.Completion.StableTimeSeconds)
 	{
+		const FAircraftMovementIntentHandle CompletedHandle = ActiveHandle;
 		CurrentResult.Progress = 1.0f;
 		Finish(EAircraftMovementIntentStatus::Succeeded,
 			EAircraftMovementFailureReason::None);
+		if (bActive && !ActiveHandle.IsValid())
+		{
+			BeginTerminalHoldContinuation(Target, DesiredYaw, CompletedHandle);
+		}
 	}
 }
 
@@ -578,8 +618,8 @@ bool UAutopilotComponent::GetAircraftMovementIntent(
 		return false;
 	}
 	const bool bHasExternalIntent = ActiveHandle.IsValid();
-	OutIntent = bHasExternalIntent ? ResolvedIntent : PassThroughContinuationIntent;
-	OutHandle = bHasExternalIntent ? ActiveHandle : PassThroughContinuationHandle;
+	OutIntent = bHasExternalIntent ? ResolvedIntent : AutomaticContinuationIntent;
+	OutHandle = bHasExternalIntent ? ActiveHandle : AutomaticContinuationHandle;
 	OutRevision = IntentRevision;
 	return true;
 }
@@ -599,7 +639,7 @@ void UAutopilotComponent::AppendDebugSnapshot(const FAircraftDebugCaptureRequest
 	}
 	Snapshot.AvailablePayloads |= EAircraftDebugPayload::AutopilotCore;
 	const FAircraftMovementIntent& Intent = ActiveHandle.IsValid()
-		? ResolvedIntent : PassThroughContinuationIntent;
+		? ResolvedIntent : AutomaticContinuationIntent;
 	Snapshot.AutopilotIntentType = Intent.Type;
 	Controller->GetAircraftTrajectoryReference(Snapshot.AutopilotReference);
 	Controller->GetAircraftAutopilotDiagnostics(Snapshot.AutopilotDiagnostics);
@@ -638,7 +678,7 @@ void UAutopilotComponent::AppendDebugSnapshot(const FAircraftDebugCaptureRequest
 
 bool UAutopilotComponent::IsAircraftMovementIntentActive() const
 {
-	return bActive && (ActiveHandle.IsValid() || PassThroughContinuationHandle.IsValid());
+	return bActive && (ActiveHandle.IsValid() || AutomaticContinuationHandle.IsValid());
 }
 
 void UAutopilotComponent::OnAircraftMovementIntentInterrupted(
@@ -647,20 +687,18 @@ void UAutopilotComponent::OnAircraftMovementIntentInterrupted(
 {
 	if (Handle == ActiveHandle)
 	{
-		PassThroughContinuationHandle = {};
+		ClearAutomaticContinuation();
 		Finish(EAircraftMovementIntentStatus::Interrupted, Reason);
 		SourceIntent = {};
 		ResolvedIntent = {};
-		PassThroughContinuationIntent = {};
 		StableTimeSeconds = 0.0f;
 		InitialDistanceToTargetCm = -1.0f;
 	}
-	else if (Handle == PassThroughContinuationHandle)
+	else if (Handle == AutomaticContinuationHandle)
 	{
-		PassThroughContinuationHandle = {};
+		ClearAutomaticContinuation();
 		SourceIntent = {};
 		ResolvedIntent = {};
-		PassThroughContinuationIntent = {};
 		StableTimeSeconds = 0.0f;
 		InitialDistanceToTargetCm = -1.0f;
 		CurrentResult.Handle = Handle;

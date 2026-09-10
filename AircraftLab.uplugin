@@ -16,6 +16,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "AircraftNavigation",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "AircraftDiagnostics",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"

@@ -1270,6 +1270,18 @@ void UAircraftComponent::SetAircraftNavigationGuidanceProvider(UObject* Provider
 	RefreshNavigationGuidanceProvider();
 }
 
+void UAircraftComponent::ClearAircraftNavigationGuidanceProvider(UObject* Provider)
+{
+	check(IsInGameThread());
+	if (!Provider || NavigationGuidanceProviderObject.Get() != Provider)
+	{
+		return;
+	}
+	NavigationGuidanceProviderObject.Reset();
+	LastNavigationGuidanceProviderRevision = TNumericLimits<uint64>::Max();
+	RefreshNavigationGuidanceProvider();
+}
+
 void UAircraftComponent::RefreshNavigationGuidanceProvider()
 {
 	check(IsInGameThread());

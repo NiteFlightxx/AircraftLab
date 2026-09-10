@@ -169,6 +169,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AircraftComponent|Autopilot")
 	void SetMovementIntentProvider(UObject* Provider);
 	virtual void SetAircraftNavigationGuidanceProvider(UObject* Provider) override;
+	virtual void ClearAircraftNavigationGuidanceProvider(UObject* Provider) override;
 	bool GetAircraftNavigationAgentSnapshot(
 		FAircraftNavigationAgentSnapshot& OutSnapshot) const override;
 	FAircraftNavigationGuidanceStatus GetAircraftNavigationGuidanceStatus() const override;

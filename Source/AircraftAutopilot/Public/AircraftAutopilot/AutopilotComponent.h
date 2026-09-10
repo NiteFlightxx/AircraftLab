@@ -117,9 +117,9 @@ private:
 
 	FAircraftMovementIntent SourceIntent;
 	FAircraftMovementIntent ResolvedIntent;
-	FAircraftMovementIntent PassThroughContinuationIntent;
+	FAircraftMovementIntent AutomaticContinuationIntent;
 	FAircraftMovementIntentHandle ActiveHandle;
-	FAircraftMovementIntentHandle PassThroughContinuationHandle;
+	FAircraftMovementIntentHandle AutomaticContinuationHandle;
 	FAircraftMovementIntentResult CurrentResult;
 	uint64 IntentRevision = 0;
 	int64 NextIntentId = 1;
@@ -144,6 +144,10 @@ private:
 	void ResolveActorTargets();
 	void Finish(EAircraftMovementIntentStatus Status,
 		EAircraftMovementFailureReason FailureReason);
-	void BeginPassThroughContinuation(const FVector& ExitVelocityCmPerSec);
+	void ClearAutomaticContinuation();
+	void BeginPassThroughContinuation(const FVector& ExitVelocityCmPerSec,
+		FAircraftMovementIntentHandle SourceHandle);
+	void BeginTerminalHoldContinuation(const FVector& PositionCm, float FixedYawDegrees,
+		FAircraftMovementIntentHandle SourceHandle);
 	void UpdateCompletion(float DeltaTime);
 };

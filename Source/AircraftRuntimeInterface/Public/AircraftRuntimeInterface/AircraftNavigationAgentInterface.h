@@ -21,5 +21,6 @@ public:
 	virtual bool GetAircraftNavigationAgentSnapshot(
 		FAircraftNavigationAgentSnapshot& OutSnapshot) const = 0;
 	virtual void SetAircraftNavigationGuidanceProvider(UObject* Provider) = 0;
+	virtual void ClearAircraftNavigationGuidanceProvider(UObject* Provider) = 0;
 	virtual FAircraftNavigationGuidanceStatus GetAircraftNavigationGuidanceStatus() const = 0;
 };

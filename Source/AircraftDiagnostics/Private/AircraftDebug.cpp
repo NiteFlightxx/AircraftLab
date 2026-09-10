@@ -93,7 +93,7 @@ void FAircraftDebug::LogConstraintCreated(
 		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Valid=%d Broken=%d Simulating=%d BodyFrameLocal=(%.1f,%.1f,%.1f) WorldFrame=(%.1f,%.1f,%.1f) InitialWorldTarget=(%.1f,%.1f,%.1f) MotionLimits(H/Up/Down/Yaw)=(%.1f,%.1f,%.1f,%.1f) Deadbands(H/V/Y)=(%.3f,%.3f,%.3f) BrakeToHold(H/V)=(%.1f,%.1f) LinearDrive(P/V)=(%d%d%d/%d%d%d) LinearControl(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) LinearSpring(K/D/LimitN)=(%.3f,%.3f,%.3f) Body(Mass/LinearDamping)=(%.3f,%.3f) FeedForward(Gravity/Dynamics)=(%.3f,%.3f) AttitudeTorque(Hz/Ratio/Extra)=(%.4f,%.3f,%.3f) AttitudeTorque(K/D/LimitNm)=(%.3f,%.3f,%.3f) LinearAccelerationMode=%d"),
 		*GetNameSafe(Component.GetOwner()), SimulationLOD, *RootBone.ToString(),
 		Constraint.IsValidConstraintInstance() ? 1 : 0, bBroken ? 1 : 0,
-		Component.IsSimulatingPhysics() ? 1 : 0,
+		Component.IsSimulatingPhysics(RootBone) ? 1 : 0,
 		BodyFrame.GetLocation().X, BodyFrame.GetLocation().Y, BodyFrame.GetLocation().Z,
 		WorldFrame.GetLocation().X, WorldFrame.GetLocation().Y, WorldFrame.GetLocation().Z,
 		InitialWorldTarget.X, InitialWorldTarget.Y, InitialWorldTarget.Z,
@@ -130,7 +130,8 @@ void FAircraftDebug::LogConstraintCreationFailure(
 	UE_LOG(LogAircraft, Error,
 		TEXT("[Aircraft.Constraint.Create] Owner=%s LOD=%d RootBone=%s Failed=%s Simulating=%d PhysicsState=%d"),
 		*GetNameSafe(Component.GetOwner()), SimulationLOD, *RootBone.ToString(), Reason,
-		Component.IsSimulatingPhysics() ? 1 : 0, Component.HasValidPhysicsState() ? 1 : 0);
+		Component.IsSimulatingPhysics(RootBone) ? 1 : 0,
+		Component.HasValidPhysicsState() ? 1 : 0);
 }
 
 void FAircraftDebug::TickConstraint(
@@ -150,11 +151,13 @@ void FAircraftDebug::TickConstraint(
 {
 	const FAircraftDiagnosticLogSelection LogSelection =
 		UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection();
-	const FVector BodyPosition = Component.GetComponentLocation();
-	const FVector BodyVelocity = Component.GetPhysicsLinearVelocity();
-	const FVector PositionError = Target.PositionCm - BodyPosition;
 	const FVector BodyCenterOfMass = Component.GetCenterOfMass(RootBone);
+	const FVector BodyVelocity = Component.GetPhysicsLinearVelocity(RootBone);
+	const FVector PositionError = WorldCenterOfMassTarget - BodyCenterOfMass;
 	const FBodyInstance* const BodyInstance = Component.GetBodyInstance(RootBone);
+	const FVector BodyPosition = BodyInstance
+		? BodyInstance->GetUnrealWorldTransform().GetLocation()
+		: BodyCenterOfMass;
 	const FVector BodyConstraintLocation = BodyInstance
 		? BodyInstance->GetUnrealWorldTransform().TransformPosition(
 			Constraint.GetRefFrame(EConstraintFrame::Frame1).GetLocation())
@@ -186,7 +189,7 @@ void FAircraftDebug::TickConstraint(
 				ConstraintTorque.X, ConstraintTorque.Y, ConstraintTorque.Z,
 				Constraint.IsValidConstraintInstance() ? 1 : 0,
 				bConstraintBroken ? 1 : 0,
-				Component.IsSimulatingPhysics() ? 1 : 0);
+				Component.IsSimulatingPhysics(RootBone) ? 1 : 0);
 			InOutUnresponsiveSeconds = 0.0f;
 		}
 	}
