@@ -5,7 +5,7 @@ namespace UE::AircraftLab::Navigation::Private
 	constexpr double PlaneToleranceCmPerSec = 0.1;
 	constexpr double ParallelTolerance = 1.e-8;
 
-	static bool IsFiniteVector(const FVector& Value)
+	static bool IsFiniteOrcaVector(const FVector& Value)
 	{
 		return FMath::IsFinite(Value.X) && FMath::IsFinite(Value.Y) && FMath::IsFinite(Value.Z);
 	}
@@ -128,7 +128,7 @@ namespace UE::AircraftLab::Navigation::Private
 		TConstArrayView<FAircraftVelocityConstraintPlane> Planes,
 		const double Tolerance = PlaneToleranceCmPerSec)
 	{
-		if (!IsFiniteVector(Candidate))
+		if (!IsFiniteOrcaVector(Candidate))
 		{
 			return false;
 		}
@@ -264,7 +264,7 @@ namespace UE::AircraftLab::Navigation::Private
 
 bool FAircraftVelocityConstraintPlane::IsValid() const
 {
-	return UE::AircraftLab::Navigation::Private::IsFiniteVector(Normal)
+	return UE::AircraftLab::Navigation::Private::IsFiniteOrcaVector(Normal)
 		&& Normal.IsNormalized()
 		&& FMath::IsFinite(MinimumProjectionCmPerSec);
 }
@@ -278,9 +278,9 @@ bool FAircraftAvoidanceAgentState::IsValid() const
 {
 	using namespace UE::AircraftLab::Navigation::Private;
 	return StableId != 0
-		&& IsFiniteVector(PositionCm)
-		&& IsFiniteVector(VelocityCmPerSec)
-		&& IsFiniteVector(CommandedVelocityCmPerSec)
+		&& IsFiniteOrcaVector(PositionCm)
+		&& IsFiniteOrcaVector(VelocityCmPerSec)
+		&& IsFiniteOrcaVector(CommandedVelocityCmPerSec)
 		&& FMath::IsFinite(BodyRadiusCm) && BodyRadiusCm > 0.0f
 		&& FMath::IsFinite(TrackingReserveCm) && TrackingReserveCm >= 0.0f;
 }
@@ -312,8 +312,8 @@ FAircraftAvoidanceResult FAircraftOrcaSolver::Solve(
 {
 	using namespace UE::AircraftLab::Navigation::Private;
 	FAircraftAvoidanceResult Result;
-	if (!Self.IsValid() || !Limits.IsValid() || !IsFiniteVector(PreferredVelocityCmPerSec)
-		|| !IsFiniteVector(PreviousCommandAccelerationCmPerSecSq))
+	if (!Self.IsValid() || !Limits.IsValid() || !IsFiniteOrcaVector(PreferredVelocityCmPerSec)
+		|| !IsFiniteOrcaVector(PreviousCommandAccelerationCmPerSecSq))
 	{
 		return Result;
 	}

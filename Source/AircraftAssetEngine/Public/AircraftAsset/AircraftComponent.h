@@ -26,6 +26,7 @@ class UAircraftAssetBase;
 class UThumbnailInfo;
 class UPhysicsAsset;
 class USkeletalMesh;
+class USceneComponent;
 class FAircraftSimulationProxy;
 class AAircraftDataflowPreviewActor;
 struct FConstraintInstance;
@@ -299,6 +300,11 @@ private:
 	void DestroySimulationConstraint();
 	void UpdateConstraintSimulation(float DeltaSeconds);
 	void UpdateKinematicSimulation(float DeltaSeconds);
+	USceneComponent* ResolveKinematicMovementRoot(FString& OutFailureDetail) const;
+	bool ResolveKinematicRootTargetTransform(
+		const FTransform& TargetAircraftWorld,
+		FTransform& OutTargetRootWorld,
+		FString& OutFailureDetail) const;
 	/** 替代驱动下由组件合成估计状态并回写代理输出槽。 */
 	void UpdateAlternativeDriveEstimatedState(float DeltaSeconds);
 

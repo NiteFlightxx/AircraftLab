@@ -2,6 +2,7 @@
 // 多旋翼组件实现：组件生命周期 + 资产绑定 + GT API 转发到 Proxy + 物理子步入口。
 
 #include "AircraftAsset/AircraftComponent.h"
+#include "AircraftAsset/AircraftKinematicDrive.h"
 #include "Aircraft/ConstraintDriveUtils.h"
 #include "Aircraft/AircraftPhysicsUnits.h"
 #include "Aircraft/AircraftAttitudeReference.h"
@@ -809,10 +810,19 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 		NewBodyRotation, TargetBodyOrigin, CurrentBodyTransform.GetScale3D());
 	const FTransform TargetModelTransform = Config.FrameBinding.GetModelWorldTransform(
 		TargetBodyTransform);
+	FTransform TargetRootTransform;
+	FString KinematicFailureDetail;
+	if (!ResolveKinematicRootTargetTransform(
+		TargetModelTransform, TargetRootTransform, KinematicFailureDetail))
+	{
+		InvalidateSimulationBackend(
+			EAircraftSimulationBackendState::Failed, *KinematicFailureDetail);
+		return;
+	}
 
 	FHitResult Hit;
-	SetWorldLocationAndRotation(
-		TargetModelTransform.GetLocation(), TargetModelTransform.GetRotation(),
+	GetOwner()->SetActorLocationAndRotation(
+		TargetRootTransform.GetLocation(), TargetRootTransform.GetRotation(),
 		Config.bKinematicSweepMovement, &Hit, ETeleportType::TeleportPhysics);
 	const FTransform NewActualBodyTransform = Config.FrameBinding.GetBodyWorldTransform(
 		GetComponentTransform());
@@ -838,6 +848,55 @@ void UAircraftComponent::UpdateKinematicSimulation(float DeltaSeconds)
 		}
 	}
 	UpdateAlternativeDriveEstimatedState(DeltaSeconds);
+}
+
+USceneComponent* UAircraftComponent::ResolveKinematicMovementRoot(
+	FString& OutFailureDetail) const
+{
+	OutFailureDetail.Reset();
+	const AActor* const Owner = GetOwner();
+	USceneComponent* const Root = Owner ? Owner->GetRootComponent() : nullptr;
+	if (!Root)
+	{
+		OutFailureDetail = TEXT("KinematicRootMissing");
+		return nullptr;
+	}
+	if (Root->Mobility != EComponentMobility::Movable)
+	{
+		OutFailureDetail = TEXT("KinematicRootNotMovable");
+		return nullptr;
+	}
+	if (Root != this && !IsAttachedTo(Root))
+	{
+		OutFailureDetail = TEXT("KinematicComponentNotAttachedToRoot");
+		return nullptr;
+	}
+	if (IsUsingAbsoluteLocation() || IsUsingAbsoluteRotation())
+	{
+		OutFailureDetail = TEXT("KinematicAbsoluteTransformUnsupported");
+		return nullptr;
+	}
+	return Root;
+}
+
+bool UAircraftComponent::ResolveKinematicRootTargetTransform(
+	const FTransform& TargetAircraftWorld,
+	FTransform& OutTargetRootWorld,
+	FString& OutFailureDetail) const
+{
+	USceneComponent* const Root = ResolveKinematicMovementRoot(OutFailureDetail);
+	if (!Root)
+	{
+		return false;
+	}
+	if (!UE::AircraftLab::KinematicDrive::ComputeRootTargetTransform(
+		Root->GetComponentTransform(), GetComponentTransform(), TargetAircraftWorld,
+		OutTargetRootWorld))
+	{
+		OutFailureDetail = TEXT("KinematicTargetTransformInvalid");
+		return false;
+	}
+	return true;
 }
 
 void UAircraftComponent::UpdateAlternativeDriveEstimatedState(float DeltaSeconds)
@@ -2386,6 +2445,16 @@ bool UAircraftComponent::TryActivateSimulationBackend()
 			EAircraftSimulationBackendState::Failed,
 			TEXT("SimulationProxyUnavailable"));
 		return false;
+	}
+	if (SimulationDriveMode == EAircraftSimulationDriveMode::Kinematic)
+	{
+		FString KinematicFailureDetail;
+		if (!ResolveKinematicMovementRoot(KinematicFailureDetail))
+		{
+			InvalidateSimulationBackend(
+				EAircraftSimulationBackendState::Failed, *KinematicFailureDetail);
+			return false;
+		}
 	}
 
 	if (SimulationDriveMode != EAircraftSimulationDriveMode::Kinematic && !GetPhysicsAsset())

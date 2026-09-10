@@ -2,7 +2,7 @@
 
 namespace UE::AircraftLab::Navigation::Private
 {
-	static bool IsFiniteVector(const FVector& Value)
+	static bool IsFiniteGuidanceVector(const FVector& Value)
 	{
 		return FMath::IsFinite(Value.X) && FMath::IsFinite(Value.Y) && FMath::IsFinite(Value.Z);
 	}
@@ -16,7 +16,7 @@ bool FAircraftGuidanceTrajectorySettings::IsValid() const
 		&& FMath::IsFinite(SampleIntervalSeconds) && SampleIntervalSeconds > 0.0f
 		&& SampleIntervalSeconds <= HorizonSeconds
 		&& FMath::IsFinite(ValiditySeconds) && ValiditySeconds > 0.0f
-		&& UE::AircraftLab::Navigation::Private::IsFiniteVector(
+		&& UE::AircraftLab::Navigation::Private::IsFiniteGuidanceVector(
 			PreviousCommandAccelerationCmPerSecSq);
 }
 
@@ -31,9 +31,9 @@ bool FAircraftGuidanceTrajectoryBuilder::BuildVelocityGuidance(
 	OutGuidance = {};
 	OutCommandAccelerationCmPerSecSq = FVector::ZeroVector;
 	if (!AircraftState.bValid || !AircraftState.Capability.bValid || !Settings.IsValid()
-		|| !IsFiniteVector(AircraftState.VehicleState.PositionCm)
-		|| !IsFiniteVector(AircraftState.VehicleState.VelocityCmPerSec)
-		|| !IsFiniteVector(TargetVelocityCmPerSec))
+		|| !IsFiniteGuidanceVector(AircraftState.VehicleState.PositionCm)
+		|| !IsFiniteGuidanceVector(AircraftState.VehicleState.VelocityCmPerSec)
+		|| !IsFiniteGuidanceVector(TargetVelocityCmPerSec))
 	{
 		return false;
 	}

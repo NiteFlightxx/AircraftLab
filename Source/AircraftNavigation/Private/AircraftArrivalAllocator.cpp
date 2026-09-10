@@ -4,7 +4,7 @@ namespace UE::AircraftLab::Navigation::Private
 {
 	constexpr int32 MaximumCandidateCount = 512;
 
-	static bool IsFiniteVector(const FVector& Value)
+	static bool IsFiniteArrivalVector(const FVector& Value)
 	{
 		return FMath::IsFinite(Value.X) && FMath::IsFinite(Value.Y) && FMath::IsFinite(Value.Z);
 	}
@@ -95,14 +95,14 @@ namespace UE::AircraftLab::Navigation::Private
 bool FAircraftArrivalClaim::IsValid() const
 {
 	return StableId != 0
-		&& UE::AircraftLab::Navigation::Private::IsFiniteVector(RequestedPositionCm)
+		&& UE::AircraftLab::Navigation::Private::IsFiniteArrivalVector(RequestedPositionCm)
 		&& FMath::IsFinite(BodyRadiusCm)
 		&& BodyRadiusCm > 0.0f;
 }
 
 bool FAircraftArrivalRegion::IsValid() const
 {
-	if (!UE::AircraftLab::Navigation::Private::IsFiniteVector(CenterCm)
+	if (!UE::AircraftLab::Navigation::Private::IsFiniteArrivalVector(CenterCm)
 		|| !FMath::IsFinite(SeparationPaddingCm) || SeparationPaddingCm < 0.0f)
 	{
 		return false;
