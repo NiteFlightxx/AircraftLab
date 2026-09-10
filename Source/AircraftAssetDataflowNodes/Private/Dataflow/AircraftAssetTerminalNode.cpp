@@ -5,7 +5,6 @@
 #include "AircraftAsset/CollectionAircraftConstFacade.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 
-#include "Math/NumericLimits.h"
 #include "Misc/Crc.h"
 #include <type_traits>
 
@@ -17,10 +16,6 @@
 FAircraftAssetTerminalNode::FAircraftAssetTerminalNode(const UE::Dataflow::FNodeParameters& InParam, FGuid InGuid)
 	: FDataflowTerminalNode(InParam, InGuid)
 {
-	for (int32 LodIndex = 0; LodIndex < NumInitialCollectionLods; ++LodIndex)
-	{
-		AddPins();
-	}
 }
 
 uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArrayCollection& InCollection)
@@ -183,13 +178,17 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionsChecksum(
 	return Checksum;
 }
 
-TArray<TSharedRef<const FManagedArrayCollection>> FAircraftAssetTerminalNode::GetCollectionLodValues(
+TArray<TSharedRef<const FManagedArrayCollection>> FAircraftAssetTerminalNode::GetConnectedCollectionLodValues(
 	UE::Dataflow::FContext& Context) const
 {
 	TArray<TSharedRef<const FManagedArrayCollection>> Values;
 	Values.Reserve(CollectionLods.Num());
 	for (int32 LodIndex = 0; LodIndex < CollectionLods.Num(); ++LodIndex)
 	{
+		if (!IsConnected(GetConnectionReference(LodIndex)))
+		{
+			continue;
+		}
 		Values.Emplace(MakeShared<FManagedArrayCollection>(
 			GetValue<FManagedArrayCollection>(Context, GetConnectionReference(LodIndex))));
 	}
@@ -204,44 +203,13 @@ void FAircraftAssetTerminalNode::SetAssetValue(TObjectPtr<UObject> Asset, UE::Da
 		return;
 	}
 
-	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = GetCollectionLodValues(Context);
+	const TArray<TSharedRef<const FManagedArrayCollection>> Collections =
+		GetConnectedCollectionLodValues(Context);
 	if (Collections.IsEmpty())
 	{
-		Context.Error(NSLOCTEXT("AircraftAssetTerminal", "MissingLOD0", "Aircraft Terminal requires at least Collection LOD 0."), this);
+		Context.Error(NSLOCTEXT("AircraftAssetTerminal", "MissingConnectedCollection",
+			"Aircraft Terminal requires at least one connected Collection input."), this);
 		return;
-	}
-
-	const FName NameKey(TEXT("SimulationLOD.Name"));
-	const FName DriveModeKey(TEXT("SimulationLOD.DriveMode"));
-	const FName CollisionModeKey(TEXT("SimulationLOD.CollisionMode"));
-	TSet<FName> LodNames;
-	for (int32 LodIndex = 0; LodIndex < Collections.Num(); ++LodIndex)
-	{
-		const UE::AircraftLab::AircraftAsset::FCollectionAircraftPropertyConstFacade Properties(
-			Collections[LodIndex]);
-		if (!Properties.IsValid()
-			|| Properties.GetKeyNameIndex(NameKey) == INDEX_NONE
-			|| Properties.GetKeyNameIndex(DriveModeKey) == INDEX_NONE
-			|| Properties.GetKeyNameIndex(CollisionModeKey) == INDEX_NONE)
-		{
-			Context.Error(FText::FromString(FString::Printf(
-				TEXT("Collection LOD %d is missing its Simulation LOD profile."), LodIndex)), this);
-			return;
-		}
-
-		const FName LodName(*Properties.GetStringValue(NameKey));
-		const int32 DriveMode = Properties.GetValue<int32>(DriveModeKey, INDEX_NONE);
-		const int32 CollisionMode = Properties.GetValue<int32>(CollisionModeKey, INDEX_NONE);
-		if (LodName.IsNone() || LodNames.Contains(LodName)
-			|| DriveMode < 0 || DriveMode > 2
-			|| CollisionMode < 0 || CollisionMode > 2)
-		{
-			Context.Error(FText::FromString(FString::Printf(
-				TEXT("Collection LOD %d must have a unique name and valid drive/collision modes."),
-				LodIndex)), this);
-			return;
-		}
-		LodNames.Add(LodName);
 	}
 
 	const uint32 NewChecksum = ComputeCollectionsChecksum(Collections);
@@ -279,6 +247,10 @@ TArray<UE::Dataflow::FPin> FAircraftAssetTerminalNode::AddPins()
 
 TArray<UE::Dataflow::FPin> FAircraftAssetTerminalNode::GetPinsToRemove() const
 {
+	if (CollectionLods.IsEmpty())
+	{
+		return Super::GetPinsToRemove();
+	}
 	const int32 Index = CollectionLods.Num() - 1;
 	if (const FDataflowInput* const Input = FindInput(GetConnectionReference(Index)))
 	{
@@ -306,28 +278,20 @@ void FAircraftAssetTerminalNode::PostSerialize(const FArchive& Ar)
 {
 	if (Ar.IsLoading())
 	{
-		if (CollectionLods.IsEmpty())
+		const int32 SerializedLodCount = CollectionLods.Num();
+		const int32 RegisteredLodCount = GetNumInputs();
+		if (RegisteredLodCount > SerializedLodCount)
 		{
-			CollectionLods.SetNum(1);
+			CollectionLods.SetNum(RegisteredLodCount);
+			for (int32 LodIndex = SerializedLodCount; LodIndex < RegisteredLodCount; ++LodIndex)
+			{
+				UnregisterInputConnection(GetConnectionReference(LodIndex));
+			}
+			CollectionLods.SetNum(SerializedLodCount);
 		}
 		for (int32 LodIndex = 0; LodIndex < CollectionLods.Num(); ++LodIndex)
 		{
 			FindOrRegisterInputArrayConnection(GetConnectionReference(LodIndex));
-		}
-
-		if (Ar.IsTransacting())
-		{
-			const int32 RegisteredLodCount = GetNumInputs() - NumRequiredInputs;
-			if (RegisteredLodCount > CollectionLods.Num())
-			{
-				const int32 SerializedLodCount = CollectionLods.Num();
-				CollectionLods.SetNum(RegisteredLodCount);
-				for (int32 LodIndex = SerializedLodCount; LodIndex < RegisteredLodCount; ++LodIndex)
-				{
-					UnregisterInputConnection(GetConnectionReference(LodIndex));
-				}
-				CollectionLods.SetNum(SerializedLodCount);
-			}
 		}
 
 		CollectionChecksum = 0;

@@ -1,6 +1,7 @@
 #include "AircraftAsset/AircraftDataflowAssetEditorUtils.h"
 
 #include "AircraftAsset/AircraftAsset.h"
+#include "Dataflow/AircraftAssetTerminalNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 #include "Dataflow/DataflowGraph.h"
 #include "Dataflow/DataflowObject.h"
@@ -70,6 +71,16 @@ bool FAircraftCompleteDefaultDataflowTemplateTest::RunTest(const FString& Parame
 
 	TestEqual(TEXT("The shared chain and four LOD branches are fully connected"),
 		Graph->GetConnections().Num(), 27);
+
+	const TSharedPtr<FDataflowNode> TerminalNode =
+		Graph->FindBaseNode(TEXT("AircraftAssetTerminal"));
+	const FAircraftAssetTerminalNode* const TypedTerminal =
+		TerminalNode.IsValid() ? TerminalNode->AsType<FAircraftAssetTerminalNode>() : nullptr;
+	if (TestNotNull(TEXT("The default topology owns an Aircraft Terminal"), TypedTerminal))
+	{
+		TestEqual(TEXT("The default topology explicitly authors four LOD pins"),
+			TypedTerminal->GetNumInputs(), 4);
+	}
 
 	const TSharedPtr<FDataflowNode> AerodynamicsNode =
 		Graph->FindBaseNode(TEXT("OptionalAircraftAerodynamicsConfig"));

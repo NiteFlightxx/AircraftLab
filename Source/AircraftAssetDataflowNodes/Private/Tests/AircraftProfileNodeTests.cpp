@@ -1,4 +1,5 @@
 #include "AircraftAsset/AircraftCollection.h"
+#include "AircraftAsset/AircraftAsset.h"
 #include "Dataflow/AircraftAirscrewProfileNode.h"
 #include "Dataflow/AircraftAerodynamicsConfigNode.h"
 #include "Dataflow/AircraftAutopilotMpccConfigNode.h"
@@ -16,6 +17,7 @@
 #include "Dataflow/AircraftSkeletalMeshSourceNode.h"
 #include "Dataflow/AircraftSimulationLODProfileNode.h"
 #include "Dataflow/AircraftSolverConfigNode.h"
+#include "Dataflow/AircraftAssetTerminalNode.h"
 #include "Dataflow/DataflowNodeParameters.h"
 #include "Misc/AutomationTest.h"
 
@@ -30,6 +32,56 @@ namespace
 		check(Output);
 		return Output->GetValue<FManagedArrayCollection>(Context, FManagedArrayCollection());
 	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftTerminalAuthorOwnedPinsTest,
+	"AircraftLab.Dataflow.Terminal.AuthorOwnedPins",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftTerminalAuthorOwnedPinsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	const TSharedRef<FAircraftAssetTerminalNode> Terminal =
+		MakeShared<FAircraftAssetTerminalNode>(UE::Dataflow::FNodeParameters{});
+	TestEqual(TEXT("A standalone Terminal does not impose a LOD pin count"),
+		Terminal->CollectionLods.Num(), 0);
+	TestFalse(TEXT("A Terminal without pins cannot remove another pin"),
+		Terminal->CanRemovePin());
+
+	Terminal->AddPins();
+	Terminal->AddPins();
+	TestEqual(TEXT("The author can add exactly the required LOD pins"),
+		Terminal->CollectionLods.Num(), 2);
+
+	for (int32 RemainingPins = 1; RemainingPins >= 0; --RemainingPins)
+	{
+		const TArray<UE::Dataflow::FPin> PinsToRemove = Terminal->GetPinsToRemove();
+		if (!TestEqual(TEXT("One trailing pin is removable"), PinsToRemove.Num(), 1))
+		{
+			return false;
+		}
+		Terminal->OnPinRemoved(PinsToRemove[0]);
+		TestEqual(TEXT("Removing a pin preserves the authored pin count"),
+			Terminal->CollectionLods.Num(), RemainingPins);
+	}
+
+	TestFalse(TEXT("All optional LOD pins may be removed"), Terminal->CanRemovePin());
+
+	UE::Dataflow::FContextSingle Context;
+	bool bReportedMissingConnection = false;
+	const FDelegateHandle LogHandle = Context.GetOnContextLogMulticast().AddLambda(
+		[&bReportedMissingConnection](const UE::Dataflow::FContext::FLogMessage& Message)
+		{
+			bReportedMissingConnection |= Message.Severity == EMessageSeverity::Error
+				&& Message.Text.ToString().Contains(TEXT("connected Collection"));
+		});
+	Terminal->SetAssetValue(NewObject<UAircraftAsset>(GetTransientPackage()), Context);
+	Context.GetOnContextLogMulticast().Remove(LogHandle);
+	TestTrue(TEXT("A Terminal without connected Collection pins reports an error"),
+		bReportedMissingConnection);
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

@@ -348,6 +348,10 @@ namespace UE::AircraftDataflowAssetEditor::Private
 
 			const FCreatedTemplateNode TerminalNode = AddTemplateNode<FAircraftAssetTerminalNode>(
 				DataflowAsset, TEXT("AircraftAssetTerminal"), FVector2D(6768.0, 0.0));
+			for (int32 LodIndex = 0; TerminalNode.EdNode && LodIndex < UE_ARRAY_COUNT(DefaultLods); ++LodIndex)
+			{
+				TerminalNode.EdNode->AddOptionPin();
+			}
 
 			/* ---------- 连线 ----------
 			 * 飞控主干 Source → Solver → Frame → 旋翼 → Limits → 位置 → 姿态 → 高度 → 分配 → 输入
@@ -378,8 +382,12 @@ namespace UE::AircraftDataflowAssetEditor::Private
 			MainChain.Add(TimingNode.EdNode);
 			MainChain.Add(MpccNode.EdNode);
 
+			const FAircraftAssetTerminalNode* const TerminalDataflowNode =
+				TerminalNode.Node.IsValid() ? TerminalNode.Node->AsType<FAircraftAssetTerminalNode>() : nullptr;
 			bool bTemplateComplete = OptionalAerodynamicsNode.IsValid()
-				&& ReRouteNode1.IsValid() && ReRouteNode1Reroute.IsValid();
+				&& ReRouteNode1.IsValid() && ReRouteNode1Reroute.IsValid()
+				&& TerminalDataflowNode
+				&& TerminalDataflowNode->CollectionLods.Num() == UE_ARRAY_COUNT(DefaultLods);
 			for (int32 ChainIndex = 0; ChainIndex + 1 < MainChain.Num(); ++ChainIndex)
 			{
 				bTemplateComplete &= ConnectTemplateNodes(
@@ -423,8 +431,7 @@ namespace UE::AircraftDataflowAssetEditor::Private
 					SimulationLODNodes[3].EdNode, TEXT("Collection"));
 
 				// LOD0..3 → Terminal.CollectionLods[0..3]
-				if (const FAircraftAssetTerminalNode* const TerminalDataflowNode =
-					TerminalNode.Node.IsValid() ? TerminalNode.Node->AsType<FAircraftAssetTerminalNode>() : nullptr)
+				if (TerminalDataflowNode)
 				{
 					for (int32 LodIndex = 0; LodIndex < SimulationLODNodes.Num(); ++LodIndex)
 					{
