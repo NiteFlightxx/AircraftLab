@@ -314,9 +314,24 @@ void FAircraftMpccController::ApplyYawConstraints(
 	if (YawError * FMath::FindDeltaAngleDegrees(
 		InOutReference.YawDegrees, DesiredYawDegrees) <= 0.0f)
 	{
+		// 参考越过目标角：角度停在目标，但速率按加速度限衰减到 0 而非瞬间清零——
+		// 机体仍携带角动量，参考的梯形收尾让前馈与姿态环同步减速，消除
+		// "角度钉死+速率归零"与实测角持续前进之间的高频通断抖动。
+		const float DecelerationDegPerSecSq = FMath::Min(
+			Limits.MaxYawAccelerationDegPerSecSq,
+			FMath::Abs(PreviousYawRate) / FMath::Max(DeltaTime, UE_SMALL_NUMBER));
+		const float YawDeceleration = -FMath::Sign(PreviousYawRate)
+			* DecelerationDegPerSecSq;
+		const float DeceleratedRate = FMath::Clamp(
+			PreviousYawRate + YawDeceleration * DeltaTime,
+			-FMath::Abs(PreviousYawRate), FMath::Abs(PreviousYawRate));
 		InOutReference.YawDegrees = FRotator::NormalizeAxis(DesiredYawDegrees);
-		InOutReference.YawRateDegPerSec = 0.0f;
-		InOutReference.YawAccelerationDegPerSecSq = 0.0f;
+		InOutReference.YawRateDegPerSec = FMath::Sign(PreviousYawRate) != 0.0f
+			? DeceleratedRate
+			: 0.0f;
+		InOutReference.YawAccelerationDegPerSecSq = FMath::Sign(PreviousYawRate) != 0.0f
+			? YawDeceleration
+			: 0.0f;
 	}
 }
 

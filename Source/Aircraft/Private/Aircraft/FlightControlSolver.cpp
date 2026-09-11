@@ -410,6 +410,7 @@ FVector FAircraftFlightControlSolver::ComputeDesiredBodyRates(FAircraftFlightCon
 	// 角速度前馈由姿态参考模型导数产生。
 	float RollRateFF = 0.0f;
 	float PitchRateFF = 0.0f;
+	float YawRateFF = 0.0f;
 
 	// 非角速度直通模式统一使用四元数姿态误差。
 	if (Context.Runtime.AttitudeMode != EAircraftAttitudeMode::Acro && Context.Runtime.AttitudeMode != EAircraftAttitudeMode::Manual)
@@ -435,10 +436,17 @@ FVector FAircraftFlightControlSolver::ComputeDesiredBodyRates(FAircraftFlightCon
 			};
 			StepRefModel(RollReferenceModel, DesiredAttitude.Roll);
 			StepRefModel(PitchReferenceModel, DesiredAttitude.Pitch);
+			// 偏航目标角同样过参考模型。偏航是环形量：先按当前模型状态的最短弧把
+			// 目标展开成连续值（消除 ±180° 环绕跳变），再喂给线性模型。
+			const float UnwrappedTargetYaw = YawReferenceModel.x
+				+ FMath::FindDeltaAngleDegrees(YawReferenceModel.x,
+					YawSetpoint.TargetYawDegrees);
+			StepRefModel(YawReferenceModel, UnwrappedTargetYaw);
 			SmoothedRoll = RollReferenceModel.x;
 			SmoothedPitch = PitchReferenceModel.x;
 			RollRateFF = FMath::Clamp(RollReferenceModel.v, -FFLimit, FFLimit);
 			PitchRateFF = FMath::Clamp(PitchReferenceModel.v, -FFLimit, FFLimit);
+			YawRateFF = FMath::Clamp(YawReferenceModel.v, -FFLimit, FFLimit);
 		}
 
 		// Roll/Pitch 命令是在当前机头航向坐标系中生成的，目标倾斜姿态必须继续使用当前航向；
@@ -462,11 +470,16 @@ FVector FAircraftFlightControlSolver::ComputeDesiredBodyRates(FAircraftFlightCon
 		DesiredPitchRate = FMath::RadiansToDegrees(
 			-2.0f * QErr.Y * Config.AttitudeGains.Y) + PitchRateFF;
 
-		// 航向误差来自刚体四元数的水平机头方向；比例增益产生偏航角速度，前馈叠加。
+		// 航向误差相对参考模型的平滑目标角（而非原始目标角）：模型速度作前馈，
+		// 模型与原始目标角的残差由模型自身动态渐近消除——与 Roll/Pitch 同构，
+		// 为偏航通道补上此前缺失的阻尼项。
+		const float SmoothedTargetYawDegrees = Config.bEnableAttitudeReferenceModel
+			? FRotator::NormalizeAxis(YawReferenceModel.x)
+			: YawSetpoint.TargetYawDegrees;
 		const float HeadingErrorRadians = ComputePlanarHeadingErrorRadians(
-			QBody, YawSetpoint.TargetYawDegrees, Config);
+			QBody, SmoothedTargetYawDegrees, Config);
 		DesiredYawRate += FMath::RadiansToDegrees(
-			HeadingErrorRadians * Config.AttitudeGains.Z);
+			HeadingErrorRadians * Config.AttitudeGains.Z) + YawRateFF;
 	}
 
 	// 限幅到最大角速率

@@ -257,7 +257,7 @@ bool FAircraftSpatialPathContinuityTest::RunTest(const FString& Parameters)
 		CorridorRoute.PointsCm[0], CorridorRoute.PointsCm[1])
 		+ FVector::Distance(CorridorRoute.PointsCm[1], CorridorRoute.PointsCm[2]);
 	FAircraftSpatialPath CorridorPath;
-	TestTrue(TEXT("Path satisfying a convex safe corridor builds"),
+	TestTrue(TEXT("Path satisfying a capsule safe corridor builds"),
 		CorridorPath.Build(CorridorRoute, Config));
 	for (float Distance = 0.0f; Distance <= CorridorPath.GetLengthCm(); Distance += 10.0f)
 	{
@@ -1304,6 +1304,181 @@ bool FAircraftNavigationGuidanceClearTest::RunTest(const FString& Parameters)
 		EAircraftNavigationGuidanceState::Inactive);
 	TestEqual(TEXT("The clear revision is published"),
 		Runtime.GetNavigationGuidanceStatus().Revision, uint64(12));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNavigationGuidanceRampInTest,
+	"AircraftLab.Autopilot.NavigationGuidance.BlendRampsInFromNominal",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNavigationGuidanceRampInTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+
+	FAircraftTrajectoryRuntime Runtime;
+	TestTrue(TEXT("The primary route is accepted"), Runtime.SetIntent(
+		MakeRouteIntent(5000.0f), 81, 1, Config, State, Capability));
+
+	// 引导在 t=1.0 发布，与 nominal 明显分离（Y 方向 400cm 偏移、恒定 0 速度样本）。
+	FAircraftNavigationGuidance Guidance;
+	Guidance.SourceIntentId = 81;
+	Guidance.SourceIntentRevision = 1;
+	Guidance.GeneratedAtSeconds = 1.0;
+	Guidance.ValidUntilSeconds = 2.0;
+	Guidance.Samples = {
+		{ 0.0f, FVector(0.0f, 400.0f, 0.0f), FVector::ZeroVector, FVector::ZeroVector },
+		{ 1.0f, FVector(0.0f, 400.0f, 0.0f), FVector::ZeroVector, FVector::ZeroVector }
+	};
+	TestTrue(TEXT("The guidance is accepted"), Runtime.SetNavigationGuidance(
+		MakeShared<FAircraftNavigationGuidance, ESPMode::ThreadSafe>(Guidance), 20));
+
+	// t=1.1：渐入一半（0.1/0.2）——参考应处于 nominal 与样本的中间。
+	State.TimeSeconds = 1.1;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("The blended reference is produced"),
+		Runtime.UpdateKinematic(State, Capability, Reference));
+	TestTrue(TEXT("Ramp-in blends toward the guidance sample"),
+		Reference.PositionCm.Y > 0.0f && Reference.PositionCm.Y < 400.0f);
+	TestEqual(TEXT("Ramp-in still reports the applied state"),
+		Runtime.GetNavigationGuidanceStatus().State,
+		EAircraftNavigationGuidanceState::Applied);
+
+	// 记录中间参考用于验证"介于两端"。
+	const float MidBlendY = Reference.PositionCm.Y;
+
+	// t=1.21：渐变完成（0.21/0.2 ≥ 1）——Steady 全量覆写。
+	State.TimeSeconds = 1.21;
+	State.Sequence = 2;
+	FAircraftTrajectoryReference SteadyReference;
+	TestTrue(TEXT("The steady reference is produced"),
+		Runtime.UpdateKinematic(State, Capability, SteadyReference));
+	TestTrue(TEXT("Steady state applies the full guidance sample"),
+		SteadyReference.PositionCm.Y > MidBlendY);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNavigationGuidanceHoldingTest,
+	"AircraftLab.Autopilot.NavigationGuidance.LossAfterBlendHoldsBeforeBraking",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNavigationGuidanceHoldingTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+
+	FAircraftTrajectoryRuntime Runtime;
+	TestTrue(TEXT("The primary route is accepted"), Runtime.SetIntent(
+		MakeRouteIntent(5000.0f), 82, 1, Config, State, Capability));
+
+	// 引导带 400cm/s 的 X 向速度，在 t=1.3 完成渐入进入 Steady。
+	FAircraftNavigationGuidance Guidance;
+	Guidance.SourceIntentId = 82;
+	Guidance.SourceIntentRevision = 1;
+	Guidance.GeneratedAtSeconds = 1.0;
+	Guidance.ValidUntilSeconds = 1.5;
+	Guidance.Samples = {
+		{ 0.0f, FVector(0.0f, 0.0f, 0.0f), FVector(400.0f, 0.0f, 0.0f), FVector::ZeroVector },
+		{ 1.0f, FVector(400.0f, 0.0f, 0.0f), FVector(400.0f, 0.0f, 0.0f), FVector::ZeroVector }
+	};
+	TestTrue(TEXT("The guidance is accepted"), Runtime.SetNavigationGuidance(
+		MakeShared<FAircraftNavigationGuidance, ESPMode::ThreadSafe>(Guidance), 21));
+
+	State.TimeSeconds = 1.3;
+	State.Sequence = 1;
+	State.VelocityCmPerSec = FVector(400.0f, 0.0f, 0.0f);
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("The steady guided reference is produced"),
+		Runtime.UpdateKinematic(State, Capability, Reference));
+	TestTrue(TEXT("Steady guidance applies the sample velocity"),
+		Reference.VelocityCmPerSec.Equals(FVector(400.0f, 0.0f, 0.0f), 0.01f));
+
+	// t=1.35 引导失效（Unavailable）——曾混合成功，应进入 Holding 软退场
+	// 而非立即全刹。
+	Runtime.SetNavigationGuidanceUnavailable(22);
+	State.TimeSeconds = 1.35;
+	State.Sequence = 2;
+	FAircraftTrajectoryReference HoldReference;
+	TestTrue(TEXT("A holding reference is produced after guidance loss"),
+		Runtime.UpdateKinematic(State, Capability, HoldReference));
+	TestEqual(TEXT("Holding still reports braking state"),
+		Runtime.GetNavigationGuidanceStatus().State,
+		EAircraftNavigationGuidanceState::Braking);
+	TestEqual(TEXT("Holding reports the unavailable reason"),
+		Runtime.GetNavigationGuidanceStatus().FailureReason,
+		EAircraftNavigationGuidanceFailureReason::Unavailable);
+	// Holding：温和减速——速度仍在高位（远大于 0），未瞬跳到停点。
+	TestTrue(TEXT("Holding decays velocity gradually instead of snapping to a stop"),
+		HoldReference.VelocityCmPerSec.X > 300.0f
+		&& HoldReference.VelocityCmPerSec.X < 400.0f);
+
+	// Holding 窗口（0.25s）耗尽后：t=1.7，收敛到常规刹车（速度显著降低）。
+	State.TimeSeconds = 1.7;
+	State.Sequence = 3;
+	FAircraftTrajectoryReference PostHoldReference;
+	TestTrue(TEXT("A reference is produced after the hold window expires"),
+		Runtime.UpdateKinematic(State, Capability, PostHoldReference));
+	TestTrue(TEXT("The hold window expiry converges to full braking"),
+		PostHoldReference.VelocityCmPerSec.X < HoldReference.VelocityCmPerSec.X);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNavigationGuidanceRebaseTest,
+	"AircraftLab.Autopilot.NavigationGuidance.RebaseKeepsGuidanceFreshAcrossPause",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNavigationGuidanceRebaseTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.ControlRotation = FQuat::Identity;
+
+	FAircraftTrajectoryRuntime Runtime;
+	TestTrue(TEXT("The primary route is accepted"), Runtime.SetIntent(
+		MakeRouteIntent(5000.0f), 83, 1, Config, State, Capability));
+
+	// 引导在 t=1.0 发布，有效期到 1.25。
+	FAircraftNavigationGuidance Guidance;
+	Guidance.SourceIntentId = 83;
+	Guidance.SourceIntentRevision = 1;
+	Guidance.GeneratedAtSeconds = 1.0;
+	Guidance.ValidUntilSeconds = 1.25;
+	Guidance.Samples = {
+		{ 0.0f, FVector(0.0f, 300.0f, 0.0f), FVector::ZeroVector, FVector::ZeroVector },
+		{ 1.0f, FVector(0.0f, 300.0f, 0.0f), FVector::ZeroVector, FVector::ZeroVector }
+	};
+	TestTrue(TEXT("The guidance is accepted"), Runtime.SetNavigationGuidance(
+		MakeShared<FAircraftNavigationGuidance, ESPMode::ThreadSafe>(Guidance), 30));
+
+	// 暂停 2 秒后恢复：仿真时间跳到 3.0。无重基时引导必然 Expired；
+	// RebaseTime 补偿后应仍按 Applied 消费。
+	Runtime.RebaseTime(3.0);
+	State.TimeSeconds = 3.0;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("The guided reference is produced after rebase"),
+		Runtime.UpdateKinematic(State, Capability, Reference));
+	TestEqual(TEXT("Rebased guidance stays applied across the pause"),
+		Runtime.GetNavigationGuidanceStatus().State,
+		EAircraftNavigationGuidanceState::Applied);
+	TestEqual(TEXT("No failure reason is reported after rebase"),
+		Runtime.GetNavigationGuidanceStatus().FailureReason,
+		EAircraftNavigationGuidanceFailureReason::None);
 	return true;
 }
 

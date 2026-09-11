@@ -86,6 +86,10 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 
 	FAircraftReferenceModelState RollReferenceModel;
 	FAircraftReferenceModelState PitchReferenceModel;
+	/** 偏航参考模型：与 Roll/Pitch 相同的二阶临界阻尼模型——偏航目标角先经模型
+	 *  平滑再进姿态环，模型速度作角速率前馈。此前偏航为裸 P（无阻尼项），
+	 *  外环带宽压在速率环带宽附近导致过冲回摆。 */
+	FAircraftReferenceModelState YawReferenceModel;
 	FVector LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 	FVector LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 	FVector LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
@@ -130,6 +134,7 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 		PidStates.ResetAll();
 		RollReferenceModel.Reset();
 		PitchReferenceModel.Reset();
+		YawReferenceModel.Reset();
 		LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 		LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 		LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;

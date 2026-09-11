@@ -39,41 +39,46 @@ bool FAircraftGuidanceTrajectoryBuilder::BuildVelocityGuidance(
 	}
 
 	const FAircraftDynamicCapabilitySnapshot& Capability = AircraftState.Capability;
-	FVector DesiredAcceleration = (TargetVelocityCmPerSec
+	const FVector DesiredAcceleration = (TargetVelocityCmPerSec
 		- AircraftState.VehicleState.VelocityCmPerSec) / Settings.SolveDeltaTimeSeconds;
 	const FVector CurrentHorizontalVelocity(
 		AircraftState.VehicleState.VelocityCmPerSec.X,
 		AircraftState.VehicleState.VelocityCmPerSec.Y,
 		0.0);
-	FVector HorizontalAcceleration(DesiredAcceleration.X, DesiredAcceleration.Y, 0.0);
+	const FVector HorizontalAcceleration(DesiredAcceleration.X, DesiredAcceleration.Y, 0.0);
 	const bool bDecelerating = FVector::DotProduct(
 		HorizontalAcceleration, CurrentHorizontalVelocity) < 0.0;
 	const double HorizontalAccelerationLimit = bDecelerating
 		? Capability.MaxHorizontalDecelerationCmPerSecSq
 		: Capability.MaxHorizontalAccelerationCmPerSecSq;
-	HorizontalAcceleration = HorizontalAcceleration.GetClampedToMaxSize(
-		FMath::Max(HorizontalAccelerationLimit, 0.0));
-	DesiredAcceleration.X = HorizontalAcceleration.X;
-	DesiredAcceleration.Y = HorizontalAcceleration.Y;
-	DesiredAcceleration.Z = FMath::Clamp(
-		DesiredAcceleration.Z,
-		-static_cast<double>(FMath::Max(Capability.MaxVerticalAccelerationCmPerSecSq, 0.0f)),
-		static_cast<double>(FMath::Max(Capability.MaxVerticalAccelerationCmPerSecSq, 0.0f)));
+	const FVector TargetHorizontalVelocity(TargetVelocityCmPerSec.X, TargetVelocityCmPerSec.Y, 0.0);
+	if (TargetHorizontalVelocity.Size()
+			> Capability.MaxHorizontalSpeedCmPerSec + UE_KINDA_SMALL_NUMBER
+		|| TargetVelocityCmPerSec.Z
+			> Capability.MaxClimbRateCmPerSec + UE_KINDA_SMALL_NUMBER
+		|| TargetVelocityCmPerSec.Z
+			< -Capability.MaxDescentRateCmPerSec - UE_KINDA_SMALL_NUMBER
+		|| HorizontalAcceleration.Size()
+			> HorizontalAccelerationLimit + UE_KINDA_SMALL_NUMBER
+		|| FMath::Abs(DesiredAcceleration.Z)
+			> Capability.MaxVerticalAccelerationCmPerSecSq + UE_KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
 
-	FVector AccelerationDelta = DesiredAcceleration
+	const FVector AccelerationDelta = DesiredAcceleration
 		- Settings.PreviousCommandAccelerationCmPerSecSq;
-	FVector HorizontalAccelerationDelta(AccelerationDelta.X, AccelerationDelta.Y, 0.0);
-	HorizontalAccelerationDelta = HorizontalAccelerationDelta.GetClampedToMaxSize(
-		FMath::Max(Capability.MaxHorizontalJerkCmPerSecCubed, 0.0f)
-		* Settings.SolveDeltaTimeSeconds);
-	AccelerationDelta.X = HorizontalAccelerationDelta.X;
-	AccelerationDelta.Y = HorizontalAccelerationDelta.Y;
+	const FVector HorizontalAccelerationDelta(AccelerationDelta.X, AccelerationDelta.Y, 0.0);
+	const double HorizontalJerkStep = FMath::Max(
+		Capability.MaxHorizontalJerkCmPerSecCubed, 0.0f) * Settings.SolveDeltaTimeSeconds;
 	const double VerticalJerkStep = FMath::Max(
 		Capability.MaxVerticalJerkCmPerSecCubed, 0.0f) * Settings.SolveDeltaTimeSeconds;
-	AccelerationDelta.Z = FMath::Clamp(
-		AccelerationDelta.Z, -VerticalJerkStep, VerticalJerkStep);
-	OutCommandAccelerationCmPerSecSq = Settings.PreviousCommandAccelerationCmPerSecSq
-		+ AccelerationDelta;
+	if (HorizontalAccelerationDelta.Size() > HorizontalJerkStep + UE_KINDA_SMALL_NUMBER
+		|| FMath::Abs(AccelerationDelta.Z) > VerticalJerkStep + UE_KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+	OutCommandAccelerationCmPerSecSq = DesiredAcceleration;
 
 	OutGuidance.Mode = EAircraftNavigationGuidanceMode::TimedTrajectory;
 	OutGuidance.SourceIntentId = Settings.SourceIntentId;
@@ -90,23 +95,21 @@ bool FAircraftGuidanceTrajectoryBuilder::BuildVelocityGuidance(
 		const double TimeSeconds = FMath::Min(
 			static_cast<double>(SampleIndex) * Settings.SampleIntervalSeconds,
 			static_cast<double>(Settings.HorizonSeconds));
+		const double AccelerationTimeSeconds = FMath::Min(
+			TimeSeconds, static_cast<double>(Settings.SolveDeltaTimeSeconds));
+		const double CruiseTimeSeconds = TimeSeconds - AccelerationTimeSeconds;
 		FAircraftNavigationGuidanceSample& Sample = OutGuidance.Samples.AddDefaulted_GetRef();
 		Sample.TimeSeconds = static_cast<float>(TimeSeconds);
-		Sample.AccelerationCmPerSecSq = OutCommandAccelerationCmPerSecSq;
+		Sample.AccelerationCmPerSecSq = TimeSeconds < Settings.SolveDeltaTimeSeconds
+			? OutCommandAccelerationCmPerSecSq
+			: FVector::ZeroVector;
 		Sample.VelocityCmPerSec = AircraftState.VehicleState.VelocityCmPerSec
-			+ OutCommandAccelerationCmPerSecSq * TimeSeconds;
-		FVector HorizontalVelocity(Sample.VelocityCmPerSec.X, Sample.VelocityCmPerSec.Y, 0.0);
-		HorizontalVelocity = HorizontalVelocity.GetClampedToMaxSize(
-			FMath::Max(Capability.MaxHorizontalSpeedCmPerSec, 0.0f));
-		Sample.VelocityCmPerSec.X = HorizontalVelocity.X;
-		Sample.VelocityCmPerSec.Y = HorizontalVelocity.Y;
-		Sample.VelocityCmPerSec.Z = FMath::Clamp(
-			Sample.VelocityCmPerSec.Z,
-			-static_cast<double>(FMath::Max(Capability.MaxDescentRateCmPerSec, 0.0f)),
-			static_cast<double>(FMath::Max(Capability.MaxClimbRateCmPerSec, 0.0f)));
+			+ OutCommandAccelerationCmPerSecSq * AccelerationTimeSeconds;
 		Sample.PositionCm = AircraftState.VehicleState.PositionCm
-			+ AircraftState.VehicleState.VelocityCmPerSec * TimeSeconds
-			+ 0.5 * OutCommandAccelerationCmPerSecSq * TimeSeconds * TimeSeconds;
+			+ AircraftState.VehicleState.VelocityCmPerSec * AccelerationTimeSeconds
+			+ 0.5 * OutCommandAccelerationCmPerSecSq
+				* AccelerationTimeSeconds * AccelerationTimeSeconds
+			+ TargetVelocityCmPerSec * CruiseTimeSeconds;
 	}
 	return OutGuidance.IsValid();
 }

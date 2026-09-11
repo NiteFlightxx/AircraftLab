@@ -20,6 +20,7 @@ struct AIRCRAFTNAVIGATION_API FAircraftGuidanceTrajectorySettings
 class AIRCRAFTNAVIGATION_API FAircraftGuidanceTrajectoryBuilder
 {
 public:
+	/** Builds a trajectory from a one-step velocity already proven reachable by the avoidance solver. */
 	static bool BuildVelocityGuidance(
 		const FAircraftNavigationAgentSnapshot& AircraftState,
 		const FVector& TargetVelocityCmPerSec,

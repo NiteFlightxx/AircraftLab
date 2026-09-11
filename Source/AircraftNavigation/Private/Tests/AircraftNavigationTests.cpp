@@ -62,6 +62,74 @@ bool FAircraftOrcaHeadOnTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftOrcaSafeCurrentDangerousPreferredVelocityTest,
+	"AircraftLab.Navigation.ORCA.SafeCurrentDangerousPreferredVelocity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftOrcaSafeCurrentDangerousPreferredVelocityTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::AircraftLab::Navigation::Tests;
+	FAircraftAvoidanceAgentState Self;
+	Self.StableId = 100;
+	Self.PositionCm = FVector::ZeroVector;
+	Self.VelocityCmPerSec = FVector::ZeroVector;
+	Self.CommandedVelocityCmPerSec = FVector::ZeroVector;
+	Self.BodyRadiusCm = 30.0f;
+
+	FAircraftAvoidanceAgentState Other;
+	Other.StableId = 101;
+	Other.PositionCm = FVector(200.0f, 0.0f, 0.0f);
+	Other.VelocityCmPerSec = FVector::ZeroVector;
+	Other.CommandedVelocityCmPerSec = FVector::ZeroVector;
+	Other.BodyRadiusCm = 30.0f;
+
+	const FVector DangerousPreferredVelocity(100.0f, 0.0f, 0.0f);
+	const FAircraftAvoidanceResult Result = FAircraftOrcaSolver::Solve(
+		Self, MakeArrayView(&Other, 1), DangerousPreferredVelocity,
+		FVector::ZeroVector, MakeAvoidanceLimits(), {});
+
+	TestTrue(TEXT("A dangerous preferred velocity activates avoidance even when current velocity is safe"),
+		Result.bAvoidanceRequired);
+	TestTrue(TEXT("The preferred velocity is kept outside the neighbor velocity obstacle"),
+		!Result.TargetVelocityCmPerSec.Equals(DangerousPreferredVelocity, 0.01f));
+	TestTrue(TEXT("The corrected velocity satisfies all generated constraints"),
+		Result.MaximumConstraintViolation <= 0.1f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftOrcaCapsuleCorridorTest,
+	"AircraftLab.Navigation.ORCA.CapsuleCorridor",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftOrcaCapsuleCorridorTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::AircraftLab::Navigation::Tests;
+	FAircraftAvoidanceAgentState Self;
+	Self.StableId = 200;
+	Self.VelocityCmPerSec = FVector(100.0f, 0.0f, 0.0f);
+	Self.CommandedVelocityCmPerSec = Self.VelocityCmPerSec;
+	Self.BodyRadiusCm = 30.0f;
+
+	FAircraftVelocityConstraintCapsule Corridor;
+	Corridor.AxisStartCm = FVector(-1000.0f, 0.0f, 0.0f);
+	Corridor.AxisEndCm = FVector(1000.0f, 0.0f, 0.0f);
+	Corridor.RadiusCm = 50.0f;
+	Corridor.PredictionTimeSeconds = 0.5f;
+
+	const FVector UnsafePreferredVelocity(100.0f, 200.0f, 0.0f);
+	const FAircraftAvoidanceResult Result = FAircraftOrcaSolver::Solve(
+		Self, {}, UnsafePreferredVelocity, FVector(0.0f, 1000.0f, 0.0f),
+		MakeAvoidanceLimits(), MakeArrayView(&Corridor, 1));
+
+	TestTrue(TEXT("Leaving the capsule activates local safety guidance"), Result.bAvoidanceRequired);
+	TestTrue(TEXT("A capability-reachable velocity inside the capsule is found"), Result.bFeasible);
+	TestTrue(TEXT("The predicted position remains inside the exact capsule"),
+		Corridor.ComputeViolationCmPerSec(Self.PositionCm, Result.TargetVelocityCmPerSec) <= 0.1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftOrcaVerticalClearanceTest,
 	"AircraftLab.Navigation.ORCA.VerticalClearance",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -281,7 +349,7 @@ bool FAircraftGuidanceTrajectoryJerkTest::RunTest(const FString& Parameters)
 	FAircraftNavigationGuidance Guidance;
 	FVector CommandAcceleration;
 	const bool bBuilt = FAircraftGuidanceTrajectoryBuilder::BuildVelocityGuidance(
-		Snapshot, FVector(500.0f, 0.0f, 150.0f), Settings, Guidance, CommandAcceleration);
+		Snapshot, FVector(1.0f, 0.0f, 0.5f), Settings, Guidance, CommandAcceleration);
 
 	TestTrue(TEXT("A valid agent snapshot produces guidance"), bBuilt);
 	TestEqual(TEXT("The trajectory contains the bounded horizon samples"), Guidance.Samples.Num(), 6);
@@ -292,6 +360,60 @@ bool FAircraftGuidanceTrajectoryJerkTest::RunTest(const FString& Parameters)
 		FMath::Abs(CommandAcceleration.Z)
 		<= Snapshot.Capability.MaxVerticalJerkCmPerSecCubed * Settings.SolveDeltaTimeSeconds + 0.01f);
 	TestEqual(TEXT("The generated guidance preserves the source intent"), Guidance.SourceIntentId, int64(7));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftGuidanceTrajectoryStopsAcceleratingAtSolvedVelocityTest,
+	"AircraftLab.Navigation.Guidance.StopsAcceleratingAtSolvedVelocity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftGuidanceTrajectoryStopsAcceleratingAtSolvedVelocityTest::RunTest(const FString& Parameters)
+{
+	FAircraftNavigationAgentSnapshot Snapshot;
+	Snapshot.bValid = true;
+	Snapshot.VehicleState.TimeSeconds = 3.0;
+	Snapshot.VehicleState.PositionCm = FVector::ZeroVector;
+	Snapshot.VehicleState.VelocityCmPerSec = FVector(100.0f, 0.0f, 0.0f);
+	Snapshot.Capability.bValid = true;
+	Snapshot.Capability.MaxHorizontalSpeedCmPerSec = 500.0f;
+	Snapshot.Capability.MaxHorizontalAccelerationCmPerSecSq = 1000.0f;
+	Snapshot.Capability.MaxHorizontalDecelerationCmPerSecSq = 1000.0f;
+	Snapshot.Capability.MaxHorizontalJerkCmPerSecCubed = 10000.0f;
+	Snapshot.Capability.MaxVerticalAccelerationCmPerSecSq = 1000.0f;
+	Snapshot.Capability.MaxVerticalJerkCmPerSecCubed = 10000.0f;
+	Snapshot.Capability.MaxClimbRateCmPerSec = 500.0f;
+	Snapshot.Capability.MaxDescentRateCmPerSec = 500.0f;
+
+	FAircraftGuidanceTrajectorySettings Settings;
+	Settings.SourceIntentId = 12;
+	Settings.SourceIntentRevision = 4;
+	Settings.SolveDeltaTimeSeconds = 0.1f;
+	Settings.HorizonSeconds = 0.5f;
+	Settings.SampleIntervalSeconds = 0.1f;
+	Settings.ValiditySeconds = 0.25f;
+
+	const FVector SolvedVelocity(120.0f, 0.0f, 0.0f);
+	FAircraftNavigationGuidance Guidance;
+	FVector CommandAcceleration;
+	const bool bBuilt = FAircraftGuidanceTrajectoryBuilder::BuildVelocityGuidance(
+		Snapshot, SolvedVelocity, Settings, Guidance, CommandAcceleration);
+
+	TestTrue(TEXT("The solved velocity produces valid guidance"), bBuilt);
+	for (int32 SampleIndex = 1; SampleIndex < Guidance.Samples.Num(); ++SampleIndex)
+	{
+		TestTrue(TEXT("The trajectory never accelerates beyond the velocity proven safe by the solver"),
+			Guidance.Samples[SampleIndex].VelocityCmPerSec.X <= SolvedVelocity.X + 0.01f);
+		const float DeltaSeconds = Guidance.Samples[SampleIndex].TimeSeconds
+			- Guidance.Samples[SampleIndex - 1].TimeSeconds;
+		const FVector IntegratedDisplacement = 0.5f
+			* (Guidance.Samples[SampleIndex - 1].VelocityCmPerSec
+				+ Guidance.Samples[SampleIndex].VelocityCmPerSec) * DeltaSeconds;
+		TestTrue(TEXT("Published position and velocity samples describe the same trajectory"),
+			(Guidance.Samples[SampleIndex].PositionCm
+				- Guidance.Samples[SampleIndex - 1].PositionCm)
+			.Equals(IntegratedDisplacement, 0.01f));
+	}
 	return true;
 }
 

@@ -4,6 +4,19 @@ namespace UE::AircraftLab::Navigation::Private
 {
 	constexpr double PlaneToleranceCmPerSec = 0.1;
 	constexpr double ParallelTolerance = 1.e-8;
+	constexpr int32 ConstraintProjectionIterations = 32;
+
+	struct FVelocityConstraintPlane
+	{
+		FVector Normal = FVector::ZeroVector;
+		double MinimumProjectionCmPerSec = 0.0;
+
+		double ComputeViolation(const FVector& VelocityCmPerSec) const
+		{
+			return FMath::Max(MinimumProjectionCmPerSec
+				- FVector::DotProduct(Normal, VelocityCmPerSec), 0.0);
+		}
+	};
 
 	static bool IsFiniteOrcaVector(const FVector& Value)
 	{
@@ -48,21 +61,21 @@ namespace UE::AircraftLab::Navigation::Private
 	}
 
 	void AddUpperBoundPlane(
-		TArray<FAircraftVelocityConstraintPlane, TInlineAllocator<48>>& Planes,
+		TArray<FVelocityConstraintPlane, TInlineAllocator<72>>& Planes,
 		const FVector& Direction,
 		const double MaximumProjection)
 	{
-		FAircraftVelocityConstraintPlane& Plane = Planes.AddDefaulted_GetRef();
+		FVelocityConstraintPlane& Plane = Planes.AddDefaulted_GetRef();
 		Plane.Normal = -Direction;
 		Plane.MinimumProjectionCmPerSec = -MaximumProjection;
 	}
 
 	void AddLowerBoundPlane(
-		TArray<FAircraftVelocityConstraintPlane, TInlineAllocator<48>>& Planes,
+		TArray<FVelocityConstraintPlane, TInlineAllocator<72>>& Planes,
 		const FVector& Direction,
 		const double MinimumProjection)
 	{
-		FAircraftVelocityConstraintPlane& Plane = Planes.AddDefaulted_GetRef();
+		FVelocityConstraintPlane& Plane = Planes.AddDefaulted_GetRef();
 		Plane.Normal = Direction;
 		Plane.MinimumProjectionCmPerSec = MinimumProjection;
 	}
@@ -71,7 +84,7 @@ namespace UE::AircraftLab::Navigation::Private
 		const FAircraftAvoidanceAgentState& Self,
 		const FVector& PreviousCommandAccelerationCmPerSecSq,
 		const FAircraftAvoidanceLimits& Limits,
-		TArray<FAircraftVelocityConstraintPlane, TInlineAllocator<48>>& Planes)
+		TArray<FVelocityConstraintPlane, TInlineAllocator<72>>& Planes)
 	{
 		const int32 PlaneCount = FMath::Max(Limits.HorizontalPlaneCount, 8);
 		const double PolygonScale = FMath::Cos(UE_DOUBLE_PI / static_cast<double>(PlaneCount));
@@ -125,14 +138,14 @@ namespace UE::AircraftLab::Navigation::Private
 
 	bool IsFeasible(
 		const FVector& Candidate,
-		TConstArrayView<FAircraftVelocityConstraintPlane> Planes,
+		TConstArrayView<FVelocityConstraintPlane> Planes,
 		const double Tolerance = PlaneToleranceCmPerSec)
 	{
 		if (!IsFiniteOrcaVector(Candidate))
 		{
 			return false;
 		}
-		for (const FAircraftVelocityConstraintPlane& Plane : Planes)
+		for (const FVelocityConstraintPlane& Plane : Planes)
 		{
 			if (Plane.ComputeViolation(Candidate) > Tolerance)
 			{
@@ -144,10 +157,10 @@ namespace UE::AircraftLab::Navigation::Private
 
 	double ComputeMaximumViolation(
 		const FVector& Candidate,
-		TConstArrayView<FAircraftVelocityConstraintPlane> Planes)
+		TConstArrayView<FVelocityConstraintPlane> Planes)
 	{
 		double MaximumViolation = 0.0;
-		for (const FAircraftVelocityConstraintPlane& Plane : Planes)
+		for (const FVelocityConstraintPlane& Plane : Planes)
 		{
 			MaximumViolation = FMath::Max(MaximumViolation, Plane.ComputeViolation(Candidate));
 		}
@@ -157,16 +170,16 @@ namespace UE::AircraftLab::Navigation::Private
 	bool SolveOnPlane(
 		const int32 PlaneIndex,
 		const FVector& Objective,
-		TConstArrayView<FAircraftVelocityConstraintPlane> Planes,
+		TConstArrayView<FVelocityConstraintPlane> Planes,
 		FVector& OutVelocity)
 	{
-		const FAircraftVelocityConstraintPlane& ActivePlane = Planes[PlaneIndex];
+		const FVelocityConstraintPlane& ActivePlane = Planes[PlaneIndex];
 		OutVelocity = Objective + ActivePlane.Normal * (
 			ActivePlane.MinimumProjectionCmPerSec
 			- FVector::DotProduct(ActivePlane.Normal, Objective));
 		for (int32 ConstraintIndex = 0; ConstraintIndex < PlaneIndex; ++ConstraintIndex)
 		{
-			const FAircraftVelocityConstraintPlane& Constraint = Planes[ConstraintIndex];
+			const FVelocityConstraintPlane& Constraint = Planes[ConstraintIndex];
 			if (Constraint.ComputeViolation(OutVelocity) <= PlaneToleranceCmPerSec)
 			{
 				continue;
@@ -188,7 +201,7 @@ namespace UE::AircraftLab::Navigation::Private
 			double MaximumT = TNumericLimits<double>::Max();
 			for (int32 PreviousIndex = 0; PreviousIndex < ConstraintIndex; ++PreviousIndex)
 			{
-				const FAircraftVelocityConstraintPlane& Previous = Planes[PreviousIndex];
+				const FVelocityConstraintPlane& Previous = Planes[PreviousIndex];
 				const double Coefficient = FVector::DotProduct(Previous.Normal, Direction);
 				const double Required = Previous.MinimumProjectionCmPerSec
 					- FVector::DotProduct(Previous.Normal, Point);
@@ -224,7 +237,7 @@ namespace UE::AircraftLab::Navigation::Private
 
 	bool SolveClosestPoint(
 		const FVector& Objective,
-		TConstArrayView<FAircraftVelocityConstraintPlane> Planes,
+		TConstArrayView<FVelocityConstraintPlane> Planes,
 		FVector& OutVelocity)
 	{
 		OutVelocity = Objective;
@@ -244,12 +257,12 @@ namespace UE::AircraftLab::Navigation::Private
 
 	FVector SolveLeastViolation(
 		const FVector& InitialVelocity,
-		TConstArrayView<FAircraftVelocityConstraintPlane> Planes)
+		TConstArrayView<FVelocityConstraintPlane> Planes)
 	{
 		FVector Velocity = InitialVelocity;
 		for (int32 Iteration = 0; Iteration < 16; ++Iteration)
 		{
-			for (const FAircraftVelocityConstraintPlane& Plane : Planes)
+			for (const FVelocityConstraintPlane& Plane : Planes)
 			{
 				const double Violation = Plane.ComputeViolation(Velocity);
 				if (Violation > 0.0)
@@ -260,18 +273,107 @@ namespace UE::AircraftLab::Navigation::Private
 		}
 		return Velocity;
 	}
+
+	FVector ProjectVelocityIntoCapsule(
+		const FVector& PositionCm,
+		const FVector& VelocityCmPerSec,
+		const FAircraftVelocityConstraintCapsule& Capsule)
+	{
+		const FVector PredictedPositionCm = PositionCm
+			+ VelocityCmPerSec * Capsule.PredictionTimeSeconds;
+		const FVector Axis = Capsule.AxisEndCm - Capsule.AxisStartCm;
+		const double AxisLengthSquared = Axis.SizeSquared();
+		const double AxisAlpha = AxisLengthSquared > UE_DOUBLE_SMALL_NUMBER
+			? FMath::Clamp(FVector::DotProduct(
+				PredictedPositionCm - Capsule.AxisStartCm, Axis) / AxisLengthSquared, 0.0, 1.0)
+			: 0.0;
+		const FVector AxisPointCm = Capsule.AxisStartCm + Axis * AxisAlpha;
+		const FVector OffsetCm = PredictedPositionCm - AxisPointCm;
+		const double DistanceCm = OffsetCm.Size();
+		if (DistanceCm <= Capsule.RadiusCm)
+		{
+			return VelocityCmPerSec;
+		}
+		const FVector BoundaryPositionCm = AxisPointCm
+			+ OffsetCm.GetSafeNormal(UE_SMALL_NUMBER, FVector::UpVector) * Capsule.RadiusCm;
+		return (BoundaryPositionCm - PositionCm) / Capsule.PredictionTimeSeconds;
+	}
+
+	bool SolveClosestPointWithCapsules(
+		const FVector& Objective,
+		const FVector& PositionCm,
+		TConstArrayView<FVelocityConstraintPlane> Planes,
+		TConstArrayView<FAircraftVelocityConstraintCapsule> Capsules,
+		FVector& OutVelocity)
+	{
+		if (!SolveClosestPoint(Objective, Planes, OutVelocity))
+		{
+			return false;
+		}
+		for (int32 Iteration = 0; Iteration < ConstraintProjectionIterations; ++Iteration)
+		{
+			const FVector PreviousVelocity = OutVelocity;
+			for (const FAircraftVelocityConstraintCapsule& Capsule : Capsules)
+			{
+				OutVelocity = ProjectVelocityIntoCapsule(PositionCm, OutVelocity, Capsule);
+			}
+			if (!IsFeasible(OutVelocity, Planes))
+			{
+				const FVector PlaneObjective = OutVelocity;
+				if (!SolveClosestPoint(PlaneObjective, Planes, OutVelocity))
+				{
+					return false;
+				}
+			}
+			if (OutVelocity.Equals(PreviousVelocity, PlaneToleranceCmPerSec))
+			{
+				break;
+			}
+		}
+		if (!IsFeasible(OutVelocity, Planes))
+		{
+			return false;
+		}
+		for (const FAircraftVelocityConstraintCapsule& Capsule : Capsules)
+		{
+			if (Capsule.ComputeViolationCmPerSec(PositionCm, OutVelocity)
+				> PlaneToleranceCmPerSec)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
 }
 
-bool FAircraftVelocityConstraintPlane::IsValid() const
+bool FAircraftVelocityConstraintCapsule::IsValid() const
 {
-	return UE::AircraftLab::Navigation::Private::IsFiniteOrcaVector(Normal)
-		&& Normal.IsNormalized()
-		&& FMath::IsFinite(MinimumProjectionCmPerSec);
+	return UE::AircraftLab::Navigation::Private::IsFiniteOrcaVector(AxisStartCm)
+		&& UE::AircraftLab::Navigation::Private::IsFiniteOrcaVector(AxisEndCm)
+		&& FMath::IsFinite(RadiusCm) && RadiusCm > 0.0f
+		&& FMath::IsFinite(PredictionTimeSeconds) && PredictionTimeSeconds > 0.0f;
 }
 
-double FAircraftVelocityConstraintPlane::ComputeViolation(const FVector& VelocityCmPerSec) const
+double FAircraftVelocityConstraintCapsule::ComputeViolationCmPerSec(
+	const FVector& PositionCm,
+	const FVector& VelocityCmPerSec) const
 {
-	return FMath::Max(MinimumProjectionCmPerSec - FVector::DotProduct(Normal, VelocityCmPerSec), 0.0);
+	if (!IsValid()
+		|| !UE::AircraftLab::Navigation::Private::IsFiniteOrcaVector(PositionCm)
+		|| !UE::AircraftLab::Navigation::Private::IsFiniteOrcaVector(VelocityCmPerSec))
+	{
+		return TNumericLimits<double>::Max();
+	}
+	const FVector PredictedPositionCm = PositionCm + VelocityCmPerSec * PredictionTimeSeconds;
+	const FVector Axis = AxisEndCm - AxisStartCm;
+	const double AxisLengthSquared = Axis.SizeSquared();
+	const double AxisAlpha = AxisLengthSquared > UE_DOUBLE_SMALL_NUMBER
+		? FMath::Clamp(FVector::DotProduct(PredictedPositionCm - AxisStartCm, Axis)
+			/ AxisLengthSquared, 0.0, 1.0)
+		: 0.0;
+	const double DistanceCm = FVector::Distance(
+		PredictedPositionCm, AxisStartCm + Axis * AxisAlpha);
+	return FMath::Max(DistanceCm - RadiusCm, 0.0) / PredictionTimeSeconds;
 }
 
 bool FAircraftAvoidanceAgentState::IsValid() const
@@ -281,6 +383,8 @@ bool FAircraftAvoidanceAgentState::IsValid() const
 		&& IsFiniteOrcaVector(PositionCm)
 		&& IsFiniteOrcaVector(VelocityCmPerSec)
 		&& IsFiniteOrcaVector(CommandedVelocityCmPerSec)
+		&& FMath::IsFinite(SampleTimeSeconds)
+		&& FMath::IsFinite(MaxHorizontalSpeedCmPerSec) && MaxHorizontalSpeedCmPerSec >= 0.0f
 		&& FMath::IsFinite(BodyRadiusCm) && BodyRadiusCm > 0.0f
 		&& FMath::IsFinite(TrackingReserveCm) && TrackingReserveCm >= 0.0f;
 }
@@ -308,33 +412,81 @@ FAircraftAvoidanceResult FAircraftOrcaSolver::Solve(
 	const FVector& PreferredVelocityCmPerSec,
 	const FVector& PreviousCommandAccelerationCmPerSecSq,
 	const FAircraftAvoidanceLimits& Limits,
-	const TConstArrayView<FAircraftVelocityConstraintPlane> EnvironmentPlanes)
+	const TConstArrayView<FAircraftVelocityConstraintCapsule> EnvironmentCapsules)
 {
 	using namespace UE::AircraftLab::Navigation::Private;
 	FAircraftAvoidanceResult Result;
 	if (!Self.IsValid() || !Limits.IsValid() || !IsFiniteOrcaVector(PreferredVelocityCmPerSec)
 		|| !IsFiniteOrcaVector(PreviousCommandAccelerationCmPerSecSq))
 	{
+		Result.Degradation = EAircraftAvoidanceDegradation::Infeasible;
 		return Result;
 	}
 
-	TArray<FAircraftVelocityConstraintPlane, TInlineAllocator<48>> Planes;
-	Planes.Reserve(Neighbors.Num() + EnvironmentPlanes.Num() + Limits.HorizontalPlaneCount * 3 + 8);
-	for (const FAircraftVelocityConstraintPlane& Plane : EnvironmentPlanes)
+	for (const FAircraftVelocityConstraintCapsule& Capsule : EnvironmentCapsules)
 	{
-		if (Plane.IsValid())
+		if (!Capsule.IsValid())
 		{
-			Planes.Add(Plane);
+			Result.Degradation = EAircraftAvoidanceDegradation::Infeasible;
+			return Result;
+		}
+		if (Capsule.ComputeViolationCmPerSec(Self.PositionCm, PreferredVelocityCmPerSec)
+			> PlaneToleranceCmPerSec)
+		{
+			Result.bAvoidanceRequired = true;
 		}
 	}
 
+	// 邻居按危险度（最早冲突时间，平局按 StableId）排序后构造平面：
+	// 贪心投影求解器按插入顺序满足约束，最紧迫的邻居必须最先获得满足。
+	TArray<const FAircraftAvoidanceAgentState*, TInlineAllocator<32>> SortedNeighbors;
+	SortedNeighbors.Reserve(Neighbors.Num());
 	for (const FAircraftAvoidanceAgentState& Other : Neighbors)
 	{
-		if (!Other.IsValid() || Other.StableId == Self.StableId)
+		if (Other.IsValid() && Other.StableId != Self.StableId)
 		{
-			continue;
+			SortedNeighbors.Add(&Other);
 		}
-		const FVector RelativePositionCm = Other.PositionCm - Self.PositionCm;
+	}
+	SortedNeighbors.Sort([Self](const FAircraftAvoidanceAgentState& A,
+		const FAircraftAvoidanceAgentState& B)
+	{
+		const auto TimeToConflict = [Self](const FAircraftAvoidanceAgentState& Other)
+		{
+			const FVector Relative = Other.PositionCm - Self.PositionCm;
+			const FVector Closing = Other.VelocityCmPerSec - Self.VelocityCmPerSec;
+			const double SpeedSquared = Closing.SizeSquared();
+			return SpeedSquared > UE_DOUBLE_SMALL_NUMBER
+				? FMath::Clamp(-FVector::DotProduct(Relative, Closing) / SpeedSquared,
+					0.0, 1.0e6)
+				: 1.0e6;
+		};
+		const double TimeA = TimeToConflict(A);
+		const double TimeB = TimeToConflict(B);
+		return TimeA == TimeB ? A.StableId < B.StableId : TimeA < TimeB;
+	});
+
+	TArray<FVelocityConstraintPlane, TInlineAllocator<72>> Planes;
+	Planes.Reserve(SortedNeighbors.Num() + Limits.HorizontalPlaneCount * 3 + 16);
+
+	for (const FAircraftAvoidanceAgentState* OtherPtr : SortedNeighbors)
+	{
+		const FAircraftAvoidanceAgentState& Other = *OtherPtr;
+		// 加速度感知预测：邻居的 CommandedVelocity 与当前速度之差作为加速度估计，
+		// 取视界前半段做匀加速外推（远期噪声大于价值），替代全期匀速假设。
+		const double PredictionHorizonSeconds = FMath::Min(
+			static_cast<double>(Limits.TimeHorizonSeconds) * 0.5, 1.0);
+		FVector PredictedOtherPositionCm = Other.PositionCm;
+		if (PredictionHorizonSeconds > 0.0)
+		{
+			const FVector EstimatedAcceleration = (Other.CommandedVelocityCmPerSec
+				- Other.VelocityCmPerSec)
+				.GetClampedToMaxSize(FMath::Max(Other.MaxHorizontalSpeedCmPerSec, 0.0f));
+			PredictedOtherPositionCm = Other.PositionCm
+				+ Other.VelocityCmPerSec * PredictionHorizonSeconds
+				+ 0.5 * EstimatedAcceleration * FMath::Square(PredictionHorizonSeconds);
+		}
+		const FVector RelativePositionCm = PredictedOtherPositionCm - Self.PositionCm;
 		const FVector RelativeVelocityCmPerSec = Self.VelocityCmPerSec - Other.VelocityCmPerSec;
 		const double DistanceSquaredCm = RelativePositionCm.SizeSquared();
 		const double CombinedRadiusCm = Self.BodyRadiusCm + Other.BodyRadiusCm
@@ -354,14 +506,6 @@ FAircraftAvoidanceResult FAircraftOrcaSolver::Solve(
 			Result.MinimumPredictedSeparationCm = static_cast<float>(PredictedSeparationCm);
 			Result.MostDangerousAgentId = Other.StableId;
 		}
-		if (PredictedSeparationCm >= CombinedRadiusCm && DistanceSquaredCm > CombinedRadiusSquaredCm)
-		{
-			continue;
-		}
-
-		Result.bAvoidanceRequired = true;
-		Result.EarliestConflictTimeSeconds = FMath::Min(
-			Result.EarliestConflictTimeSeconds, static_cast<float>(ClosestTimeSeconds));
 		const bool bOverlapping = DistanceSquaredCm <= CombinedRadiusSquaredCm;
 		const double InverseTime = bOverlapping
 			? 1.0 / static_cast<double>(Limits.DeltaTimeSeconds)
@@ -398,12 +542,27 @@ FAircraftAvoidanceResult FAircraftOrcaSolver::Solve(
 			Correction = (CombinedRadiusCm * T - ConeWLength) * UnitW;
 		}
 
-		FAircraftVelocityConstraintPlane& Plane = Planes.AddDefaulted_GetRef();
+		FVelocityConstraintPlane& Plane = Planes.AddDefaulted_GetRef();
 		Plane.Normal = UnitW.GetSafeNormal(UE_SMALL_NUMBER,
 			BuildDeterministicNormal(Self, Other, RelativePositionCm));
 		const double Responsibility = ComputeResponsibility(Self, Other, bOverlapping);
 		const FVector PlanePoint = Self.VelocityCmPerSec + Correction * Responsibility;
 		Plane.MinimumProjectionCmPerSec = FVector::DotProduct(Plane.Normal, PlanePoint);
+		if (Plane.ComputeViolation(PreferredVelocityCmPerSec) > PlaneToleranceCmPerSec)
+		{
+			Result.bAvoidanceRequired = true;
+			const FVector PreferredClosingVelocityCmPerSec = Other.VelocityCmPerSec
+				- PreferredVelocityCmPerSec;
+			const double PreferredClosingSpeedSquared = PreferredClosingVelocityCmPerSec.SizeSquared();
+			const double PreferredClosestTimeSeconds = PreferredClosingSpeedSquared > UE_DOUBLE_SMALL_NUMBER
+				? FMath::Clamp(-FVector::DotProduct(RelativePositionCm,
+					PreferredClosingVelocityCmPerSec) / PreferredClosingSpeedSquared,
+					0.0, static_cast<double>(Limits.TimeHorizonSeconds))
+				: 0.0;
+			Result.EarliestConflictTimeSeconds = FMath::Min(
+				Result.EarliestConflictTimeSeconds,
+				static_cast<float>(PreferredClosestTimeSeconds));
+		}
 	}
 
 	AddCapabilityPlanes(Self, PreviousCommandAccelerationCmPerSecSq, Limits, Planes);
@@ -411,12 +570,39 @@ FAircraftAvoidanceResult FAircraftOrcaSolver::Solve(
 	const FVector Objective = FMath::Lerp(PreferredVelocityCmPerSec,
 		Self.CommandedVelocityCmPerSec, SmoothingAlpha);
 	Result.ConstraintPlaneCount = Planes.Num();
-	Result.bFeasible = SolveClosestPoint(Objective, Planes, Result.TargetVelocityCmPerSec);
+	Result.bFeasible = SolveClosestPointWithCapsules(
+		Objective, Self.PositionCm, Planes, EnvironmentCapsules, Result.TargetVelocityCmPerSec);
 	if (!Result.bFeasible)
 	{
 		Result.TargetVelocityCmPerSec = SolveLeastViolation(FVector::ZeroVector, Planes);
+		for (const FAircraftVelocityConstraintCapsule& Capsule : EnvironmentCapsules)
+		{
+			Result.TargetVelocityCmPerSec = ProjectVelocityIntoCapsule(
+				Self.PositionCm, Result.TargetVelocityCmPerSec, Capsule);
+		}
 	}
 	Result.MaximumConstraintViolation = static_cast<float>(
 		ComputeMaximumViolation(Result.TargetVelocityCmPerSec, Planes));
+	for (const FAircraftVelocityConstraintCapsule& Capsule : EnvironmentCapsules)
+	{
+		Result.MaximumConstraintViolation = FMath::Max(
+			Result.MaximumConstraintViolation,
+			static_cast<float>(Capsule.ComputeViolationCmPerSec(
+				Self.PositionCm, Result.TargetVelocityCmPerSec)));
+	}
+	// 违约分级：精确可行 / LeastViolation 在容差内（降级可用）/ 超容差（不可行）。
+	if (Result.bFeasible)
+	{
+		Result.Degradation = EAircraftAvoidanceDegradation::None;
+	}
+	else if (Result.MaximumConstraintViolation
+		<= FMath::Max(Limits.DegradedVelocityToleranceCmPerSec, 0.0f))
+	{
+		Result.Degradation = EAircraftAvoidanceDegradation::Degraded;
+	}
+	else
+	{
+		Result.Degradation = EAircraftAvoidanceDegradation::Infeasible;
+	}
 	return Result;
 }

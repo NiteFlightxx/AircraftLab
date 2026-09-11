@@ -472,8 +472,13 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 		CurrentResult.Progress = FMath::Clamp(
 			1.0f - DistanceToTargetCm / InitialDistanceToTargetCm, 0.0f, 1.0f);
 	}
+	// 完成判据加空间约束：Progress 由时间/投影驱动，避障绕行期间可能走到 1.0
+	// 而机体仍在目标远处——必须同时处于位置容差内才算路径完成。
 	const bool bPathComplete = ResolvedIntent.Type != EAircraftMovementIntentType::Route
-		|| CurrentResult.Progress >= 0.999f;
+		|| (CurrentResult.Progress >= 0.999f
+			&& DistanceToTargetCm <= FMath::Max(
+				ResolvedIntent.Completion.HorizontalToleranceCm,
+				ResolvedIntent.Completion.VerticalToleranceCm) * 2.0f);
 	const bool bWithinPosition = FVector2D(Error.X, Error.Y).Size()
 		<= ResolvedIntent.Completion.HorizontalToleranceCm
 		&& FMath::Abs(Error.Z) <= ResolvedIntent.Completion.VerticalToleranceCm;
