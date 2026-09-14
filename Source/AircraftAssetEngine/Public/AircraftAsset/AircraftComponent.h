@@ -12,6 +12,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "AircraftRuntimeInterface/AircraftSimulationBackend.h"
 #include "AircraftAsset/AircraftSimulationTypes.h"
+#include "Aircraft/AircraftAttitudeReferenceDynamics.h"
 #include "AircraftDiagnostics/AircraftDebugSnapshot.h"
 #include "AircraftRuntimeInterface/AircraftAutopilotTypes.h"
 #include "AircraftRuntimeInterface/AircraftFlightControllerInterface.h"
@@ -19,7 +20,6 @@
 #include "AircraftRuntimeInterface/AircraftNavigationAgentInterface.h"
 #include "AircraftRuntimeInterface/AircraftNavigationGuidanceProvider.h"
 #include "AircraftRuntimeInterface/AircraftSimulationLODConsumer.h"
-#include "Aircraft/AircraftAttitudeReferenceDynamics.h"
 
 #include "AircraftComponent.generated.h"
 
@@ -34,7 +34,6 @@ struct FConstraintInstance;
 struct FAircraftSimulationModel;
 struct FAircraftSimulationLodModel;
 struct FAircraftFlightControllerRuntimeConfig;
-struct FAircraftConstraintSimulationRuntimeConfig;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnAircraftSimulationLODChanged,
@@ -233,6 +232,9 @@ protected:
 
 private:
 	friend class AAircraftDataflowPreviewActor;
+	friend class FAircraftConstraintAngularDriveConfigurationTest;
+	friend class FAircraftKinematicSoftResetLifecycleTest;
+	friend class FAircraftKinematicControlDisableLifecycleTest;
 
 	struct FSimulationStructureSignature
 	{
@@ -290,20 +292,38 @@ private:
 		bool bRestoreVelocities);
 	bool CaptureLodTransitionHold();
 	void ClearLodTransitionHold();
+	/** 手动 intent 状态机复位（provider 接管/清理/保持注入三处共用）。 */
+	void ResetManualIntentState()
+	{
+		bManualMovementIntentInitialized = false;
+		bManualMovementBraking = false;
+	}
 	bool HasNewMovementRequestAfterLodTransition(
 		UObject* Provider, const FAircraftMovementIntentHandle& Handle,
 		uint64 Revision) const;
 
 
-	/** 创建 6-DOF 物理约束后端（线性与姿态配置取自当前 LOD 的 Constraint 配置）。 */
+	/** 创建 6-DOF 物理约束后端（约束参数取自当前 LOD 的 FlightController 配置）。 */
 	bool CreateSimulationConstraint();
-	void UpdateConstraintDriveAuthority(
-		const FAircraftFlightControllerRuntimeConfig& FlightConfig,
-		const FAircraftConstraintSimulationRuntimeConfig& ConstraintConfig);
+	void UpdateConstraintDriveAuthority(const FAircraftFlightControllerRuntimeConfig& Config);
 	void DisableSimulationConstraintDrive();
 	void DestroySimulationConstraint();
 	void UpdateConstraintSimulation(float DeltaSeconds);
 	void UpdateKinematicSimulation(float DeltaSeconds);
+	/** Publish a stationary actual-motion sample for a Kinematic frame whose control execution is gated. */
+	void UpdateKinematicExecutionStoppedState(float DeltaSeconds);
+	/** 清空 Kinematic 姿态参考积分与诊断；保留最近测得的实际角速度。 */
+	void ResetKinematicAttitudeState();
+	/** 仅在冻结、Hard Reset 或明确停用时丢弃 Kinematic 实际角速度历史。 */
+	void ClearKinematicAngularVelocityHistory();
+	/** 捕获当前驱动的真实世界角速度，供切入 Kinematic 时初始化参考。 */
+	FVector CaptureActualAngularVelocityWorldRadPerSec() const;
+	/** 清空 Kinematic sweep 阻塞状态；不保存 UObject/FHitResult。 */
+	void ResetKinematicObstructionState();
+	void UpdateKinematicObstructionState(const FHitResult& Hit,
+		const FVector& ActualCenterOfMassCm,
+		const FAircraftTrajectoryReference& Reference,
+		float DeltaSeconds);
 	USceneComponent* ResolveKinematicMovementRoot(FString& OutFailureDetail) const;
 	bool ResolveKinematicRootTargetTransform(
 		const FTransform& TargetAircraftWorld,
@@ -311,12 +331,11 @@ private:
 		FString& OutFailureDetail) const;
 	/** 替代驱动下由组件合成估计状态并回写代理输出槽。 */
 	void UpdateAlternativeDriveEstimatedState(float DeltaSeconds);
-	void ResetKinematicAttitudeState();
 
 	bool GetTrajectoryReference(FAircraftTrajectoryReference& OutReference) const;
 	void RefreshMovementIntentProvider();
 	void RefreshNavigationGuidanceProvider();
-	void PushMovementIntentToProxy(float DeltaSeconds);
+	void PushMovementIntentToProxy();
 
 	/**
 	 * 把 SimulationModel.Mass（FrameConfig 中的质量/质心/惯性缩放参数）
@@ -335,7 +354,7 @@ private:
 	 */
 	void ApplyMassPropertiesToBodyInstance();
 
-	/** 把可选的 AircraftSolverConfig 同步到 Chaos BodyInstance；配置缺失时清除组件级覆盖标记。 */
+	/** 把可选的 AircraftSolverConfig 刚体迭代次数同步到 Chaos BodyInstance。 */
 	void ApplySolverSettingsToBodyInstance();
 	/** 同步组件物理模式，并统一启停 PhysicsAsset 中的全部刚体。 */
 	void SetAircraftPhysicsSimulationEnabled(bool bEnabled);
@@ -426,9 +445,13 @@ private:
 	float DriveHeartbeatDebugLogAccumulatorSeconds = 0.0f;
 	double InputDebugLastLogTimeSeconds = -DBL_MAX;
 
+	/** Kinematic 后端的 SO(3) 姿态塑形状态与角速度差分（V2 稳定版机制恢复）。 */
+	FVector PreviousAlternativeAngularVelocityWorldRadPerSec = FVector::ZeroVector;
+	FAircraftAttitudeMotionState KinematicAttitudeMotionState;
+	FAircraftAlternativeAttitudeDiagnostics KinematicAttitudeDiagnostics;
+	FAircraftKinematicObstructionSnapshot KinematicObstruction;
+
 	uint64 ManualMovementIntentRevision = 1;
-	float ManualIntentYawDegrees = 0.0f;
-	bool bManualIntentYawInitialized = false;
 	bool bManualMovementIntentInitialized = false;
 	bool bManualMovementBraking = false;
 	bool bMovementIntentWasPushed = false;
@@ -436,9 +459,6 @@ private:
 
 	/** 替代驱动下的估计速度跟踪。 */
 	FVector PreviousAlternativeVelocityCmPerSec = FVector::ZeroVector;
-	FVector PreviousAlternativeAngularVelocityWorldRadPerSec = FVector::ZeroVector;
-	FAircraftAttitudeMotionState KinematicAttitudeMotionState;
-	FAircraftAlternativeAttitudeDiagnostics KinematicAttitudeDiagnostics;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(VisibleAnywhere, Instanced, AdvancedDisplay, Category = AircraftComponent)

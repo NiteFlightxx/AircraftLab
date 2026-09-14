@@ -1,12 +1,175 @@
 #include "AircraftAutopilot/AircraftMpccController.h"
 
+#include "AircraftAutopilotDynamics.h"
 #include "HAL/PlatformTime.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 
 namespace
 {
+	/** jerk 种子滤波截止频率：抑制物理差分加速度噪声，保留真实机动动态。 */
+	constexpr float JerkSeedFilterCutoffHz = 5.0f;
+	constexpr double OptimizationRelativeCostTolerance = 1.0e-4;
+	constexpr double OptimizationCorrectionToleranceCmPerSecSq = 0.01;
+	constexpr uint64 FnvOffsetBasis = 1469598103934665603ull;
+	constexpr uint64 FnvPrime = 1099511628211ull;
+
+	void HashBytes(uint64& Hash, const void* Data, const SIZE_T Size)
+	{
+		const uint8* Bytes = static_cast<const uint8*>(Data);
+		for (SIZE_T Index = 0; Index < Size; ++Index)
+		{
+			Hash = (Hash ^ Bytes[Index]) * FnvPrime;
+		}
+	}
+
+	template <typename T>
+	void HashScalar(uint64& Hash, const T& Value)
+	{
+		HashBytes(Hash, &Value, sizeof(T));
+	}
+
+	void HashVector(uint64& Hash, const FVector& Value)
+	{
+		HashScalar(Hash, Value.X);
+		HashScalar(Hash, Value.Y);
+		HashScalar(Hash, Value.Z);
+	}
+
+	void HashMotionLimits(uint64& Hash, const FAircraftRequestedMotionLimits& Limits)
+	{
+		HashScalar(Hash, Limits.CruiseSpeedCmPerSec);
+		HashScalar(Hash, Limits.MaxAccelerationCmPerSecSq);
+		HashScalar(Hash, Limits.MaxDecelerationCmPerSecSq);
+		HashScalar(Hash, Limits.MaxJerkCmPerSecCubed);
+		HashScalar(Hash, Limits.MaxClimbRateCmPerSec);
+		HashScalar(Hash, Limits.MaxDescentRateCmPerSec);
+		HashScalar(Hash, Limits.MaxVerticalAccelerationCmPerSecSq);
+		HashScalar(Hash, Limits.MaxVerticalJerkCmPerSecCubed);
+		HashScalar(Hash, Limits.MaxYawRateDegPerSec);
+		HashScalar(Hash, Limits.MaxYawAccelerationDegPerSecSq);
+		HashScalar(Hash, Limits.MaxYawJerkDegPerSecCubed);
+	}
+
+	void HashPlanTimingSemantics(uint64& Hash, const FAircraftMovementIntent& Intent)
+	{
+		if (Intent.Type != EAircraftMovementIntentType::TimedTrajectory)
+		{
+			HashScalar(Hash, Intent.Heading.Mode);
+			HashScalar(Hash, Intent.Heading.FixedYawDegrees);
+			HashScalar(Hash, Intent.Heading.YawRateDegPerSec);
+			HashVector(Hash, Intent.Heading.TargetPositionCm);
+		}
+		HashScalar(Hash, Intent.Completion.ArrivalMode);
+		if (Intent.Completion.ArrivalMode == EAircraftArrivalMode::PassThrough)
+		{
+			HashScalar(Hash, Intent.Completion.TerminalHorizontalSpeedCmPerSec);
+			HashScalar(Hash, Intent.Completion.TerminalVerticalSpeedCmPerSec);
+		}
+	}
+
+	uint64 ComputePlanGeometryHash(const FAircraftMovementIntent& Intent)
+	{
+		uint64 Hash = FnvOffsetBasis;
+		HashScalar(Hash, Intent.Type);
+		HashScalar(Hash, Intent.bHasRequestedMotionLimits);
+		if (Intent.bHasRequestedMotionLimits)
+		{
+			HashMotionLimits(Hash, Intent.Limits);
+		}
+		HashPlanTimingSemantics(Hash, Intent);
+		switch (Intent.Type)
+		{
+		case EAircraftMovementIntentType::Hold:
+			HashVector(Hash, Intent.Hold.PositionCm);
+			HashScalar(Hash, Intent.Hold.bCaptureCurrentPosition);
+			break;
+		case EAircraftMovementIntentType::Velocity:
+			HashVector(Hash, Intent.Velocity.VelocityCmPerSec);
+			HashScalar(Hash, Intent.Velocity.Frame);
+			break;
+		case EAircraftMovementIntentType::Route:
+			HashScalar(Hash, Intent.Route.bClosed);
+			HashScalar(Hash, Intent.Route.PointsCm.Num());
+			for (const FVector& Point : Intent.Route.PointsCm)
+			{
+				HashVector(Hash, Point);
+			}
+			HashScalar(Hash, Intent.Route.Corridor.Num());
+			for (const FAircraftSafeCorridorSegment& Segment : Intent.Route.Corridor)
+			{
+				HashVector(Hash, Segment.AxisStartCm);
+				HashVector(Hash, Segment.AxisEndCm);
+				HashScalar(Hash, Segment.RadiusCm);
+				HashScalar(Hash, Segment.StartDistanceCm);
+				HashScalar(Hash, Segment.EndDistanceCm);
+			}
+			break;
+		case EAircraftMovementIntentType::Orbit:
+			HashVector(Hash, Intent.Orbit.CenterCm);
+			HashScalar(Hash, Intent.Orbit.RadiusCm);
+			HashScalar(Hash, Intent.Orbit.AngularRateDegPerSec);
+			break;
+		case EAircraftMovementIntentType::TimedTrajectory:
+			HashScalar(Hash, Intent.TimedTrajectory.Samples.Num());
+			for (const FAircraftTimedTrajectorySample& Sample : Intent.TimedTrajectory.Samples)
+			{
+				HashScalar(Hash, Sample.TimeSeconds);
+				HashVector(Hash, Sample.PositionCm);
+				HashVector(Hash, Sample.VelocityCmPerSec);
+				HashVector(Hash, Sample.AccelerationCmPerSecSq);
+				HashScalar(Hash, Sample.YawDegrees);
+				HashScalar(Hash, Sample.YawRateDegPerSec);
+			}
+			break;
+		default:
+			break;
+		}
+		return Hash;
+	}
+
+	uint64 ComputeIntentMetadataHash(const FAircraftMovementIntent& Intent)
+	{
+		uint64 Hash = FnvOffsetBasis;
+		HashScalar(Hash, Intent.Completion.HorizontalToleranceCm);
+		HashScalar(Hash, Intent.Completion.VerticalToleranceCm);
+		HashScalar(Hash, Intent.Completion.HorizontalSpeedToleranceCmPerSec);
+		HashScalar(Hash, Intent.Completion.VerticalSpeedToleranceCmPerSec);
+		HashScalar(Hash, Intent.Completion.YawToleranceDegrees);
+		HashScalar(Hash, Intent.Completion.StableTimeSeconds);
+		HashScalar(Hash, Intent.TimeoutSeconds);
+		return Hash;
+	}
+
+	uint64 ComputePlanConfigHash(const FAircraftAutopilotRuntimeConfig& Config)
+	{
+		uint64 Hash = FnvOffsetBasis;
+#define UE_AIRCRAFT_HASH_CONFIG(Value) HashScalar(Hash, Value)
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.ResampleSpacingCm);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.MinimumSegmentLengthCm);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.CorridorSafetyMarginCm);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.ProjectionBacktrackToleranceCm);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.ProjectionSearchDistanceCm);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.CenterlineWeight);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.CurvatureWeight);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.SnapWeight);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.MaxIterations);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Path.ConvergenceToleranceCm);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Timing.SampleSpacingCm);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Timing.ThrustReserveFraction);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Timing.CurvatureAccelerationReserveFraction);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Timing.BrakingReserveFraction);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Timing.MaxIterations);
+		UE_AIRCRAFT_HASH_CONFIG(Config.Timing.SpeedConvergenceToleranceCmPerSec);
+#undef UE_AIRCRAFT_HASH_CONFIG
+		return Hash;
+	}
+
+	// 与 TrajectoryRuntime::HardLimit 同语义：0 = 未请求（用 Available）而非零预算。
+	// 当前上游 ApplyCapabilityLimits 已保证 Requested > 0，此处为跨实现的防御性一致。
 	float ResolveHardLimit(float Requested, float Available)
 	{
+		if (Requested <= 0.0f) return Available;
+		if (Available <= 0.0f) return Requested;
 		return FMath::Min(Requested, Available);
 	}
 
@@ -14,20 +177,23 @@ namespace
 		const FAircraftDynamicCapabilitySnapshot& A,
 		const FAircraftDynamicCapabilitySnapshot& B)
 	{
+		// 容差按各字段物理量级的 ~0.1% 典型值选取：能力快照每子步重算，
+		// 用 FMath::IsNearlyEqual 默认容差（1e-8）相当于逐位比较，
+		// 任意 ULP 抖动都会触发整计划重建 + 进度调速器复位。
 		return A.bValid == B.bValid
-			&& FMath::IsNearlyEqual(A.MassKg, B.MassKg)
+			&& FMath::IsNearlyEqual(A.MassKg, B.MassKg, 1.0e-3f)
 			&& A.InertiaKgM2.Equals(B.InertiaKgM2, 1.0e-3)
 			&& A.CenterOfMassBodyCm.Equals(B.CenterOfMassBodyCm, 0.01)
-			&& FMath::IsNearlyEqual(A.GravityCmPerSecSq, B.GravityCmPerSecSq)
-			&& FMath::IsNearlyEqual(A.MaxHorizontalSpeedCmPerSec, B.MaxHorizontalSpeedCmPerSec)
-			&& FMath::IsNearlyEqual(A.MaxHorizontalAccelerationCmPerSecSq, B.MaxHorizontalAccelerationCmPerSecSq)
-			&& FMath::IsNearlyEqual(A.MaxHorizontalDecelerationCmPerSecSq, B.MaxHorizontalDecelerationCmPerSecSq)
-			&& FMath::IsNearlyEqual(A.MaxHorizontalJerkCmPerSecCubed, B.MaxHorizontalJerkCmPerSecCubed)
-			&& FMath::IsNearlyEqual(A.MaxVerticalAccelerationCmPerSecSq, B.MaxVerticalAccelerationCmPerSecSq)
-			&& FMath::IsNearlyEqual(A.MaxVerticalJerkCmPerSecCubed, B.MaxVerticalJerkCmPerSecCubed)
-			&& FMath::IsNearlyEqual(A.MaxClimbRateCmPerSec, B.MaxClimbRateCmPerSec)
-			&& FMath::IsNearlyEqual(A.MaxDescentRateCmPerSec, B.MaxDescentRateCmPerSec)
-			&& FMath::IsNearlyEqual(A.MaxTiltRadians, B.MaxTiltRadians)
+			&& FMath::IsNearlyEqual(A.GravityCmPerSecSq, B.GravityCmPerSecSq, 1.0f)
+			&& FMath::IsNearlyEqual(A.MaxHorizontalSpeedCmPerSec, B.MaxHorizontalSpeedCmPerSec, 1.0f)
+			&& FMath::IsNearlyEqual(A.MaxHorizontalAccelerationCmPerSecSq, B.MaxHorizontalAccelerationCmPerSecSq, 5.0f)
+			&& FMath::IsNearlyEqual(A.MaxHorizontalDecelerationCmPerSecSq, B.MaxHorizontalDecelerationCmPerSecSq, 5.0f)
+			&& FMath::IsNearlyEqual(A.MaxHorizontalJerkCmPerSecCubed, B.MaxHorizontalJerkCmPerSecCubed, 20.0f)
+			&& FMath::IsNearlyEqual(A.MaxVerticalAccelerationCmPerSecSq, B.MaxVerticalAccelerationCmPerSecSq, 5.0f)
+			&& FMath::IsNearlyEqual(A.MaxVerticalJerkCmPerSecCubed, B.MaxVerticalJerkCmPerSecCubed, 20.0f)
+			&& FMath::IsNearlyEqual(A.MaxClimbRateCmPerSec, B.MaxClimbRateCmPerSec, 1.0f)
+			&& FMath::IsNearlyEqual(A.MaxDescentRateCmPerSec, B.MaxDescentRateCmPerSec, 1.0f)
+			&& FMath::IsNearlyEqual(A.MaxTiltRadians, B.MaxTiltRadians, 1.0e-3f)
 			&& A.bHasTiltLimit == B.bHasTiltLimit
 			&& A.MaxBodyRateRadPerSec.Equals(B.MaxBodyRateRadPerSec, 1.0e-4)
 			&& A.MaxBodyAngularAccelerationRadPerSecSq.Equals(B.MaxBodyAngularAccelerationRadPerSecSq, 1.0e-4)
@@ -35,20 +201,20 @@ namespace
 			&& A.bCanControlRoll == B.bCanControlRoll
 			&& A.bCanControlPitch == B.bCanControlPitch
 			&& A.bCanControlYaw == B.bCanControlYaw
-			&& FMath::IsNearlyEqual(A.CollectiveAuthorityN, B.CollectiveAuthorityN)
+			&& FMath::IsNearlyEqual(A.CollectiveAuthorityN, B.CollectiveAuthorityN, 0.05f)
 			&& A.PositiveTorqueAuthorityNm.Equals(B.PositiveTorqueAuthorityNm, 1.0e-3)
 			&& A.NegativeTorqueAuthorityNm.Equals(B.NegativeTorqueAuthorityNm, 1.0e-3)
 			&& A.LinearDampingPerSecond.Equals(B.LinearDampingPerSecond, 1.0e-4)
 			&& A.AngularDampingPerSecond.Equals(B.AngularDampingPerSecond, 1.0e-4)
 			&& A.bHasExplicitAerodynamics == B.bHasExplicitAerodynamics
-			&& FMath::IsNearlyEqual(A.AirDensityKgPerM3, B.AirDensityKgPerM3)
+			&& FMath::IsNearlyEqual(A.AirDensityKgPerM3, B.AirDensityKgPerM3, 1.0e-3f)
 			&& A.AircraftToBodyRotation.Equals(B.AircraftToBodyRotation, 1.0e-4)
 			&& A.LinearDragAircraftNsPerM.Equals(B.LinearDragAircraftNsPerM, 1.0e-4)
 			&& A.DragAreaCoefficientAircraftM2.Equals(B.DragAreaCoefficientAircraftM2, 1.0e-4)
 			&& FMath::IsNearlyEqual(
-				A.MaxRelativeAirspeedCmPerSec, B.MaxRelativeAirspeedCmPerSec)
-			&& FMath::IsNearlyEqual(A.ThrustRiseResponseTimeSeconds, B.ThrustRiseResponseTimeSeconds)
-			&& FMath::IsNearlyEqual(A.ThrustFallResponseTimeSeconds, B.ThrustFallResponseTimeSeconds);
+				A.MaxRelativeAirspeedCmPerSec, B.MaxRelativeAirspeedCmPerSec, 1.0f)
+			&& FMath::IsNearlyEqual(A.ThrustRiseResponseTimeSeconds, B.ThrustRiseResponseTimeSeconds, 1.0e-3f)
+			&& FMath::IsNearlyEqual(A.ThrustFallResponseTimeSeconds, B.ThrustFallResponseTimeSeconds, 1.0e-3f);
 	}
 }
 
@@ -63,15 +229,32 @@ void FAircraftMpccController::Reset()
 	LastVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 	CandidateVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 	ControlCorrectionHorizon.Reset();
+	ReferenceScratch.Reset();
+	CommandAccelerationScratch.Reset();
+	PositionScratch.Reset();
+	VelocityScratch.Reset();
+	RealizedAccelerationScratch.Reset();
+	ResponseAlphaScratch.Reset();
+	GradientScratch.Reset();
+	PreviousCorrectionScratch.Reset();
+	FilteredAccelerationCmPerSecSq = FVector::ZeroVector;
+	LastFilterUpdateTimeSeconds = 0.0;
+	bFilterInitialized = false;
 	IntentRevision = 0;
 	ActiveIntentId = 0;
 	PlanRevision = 0;
+	PlanGeometryHash = 0;
+	IntentMetadataHash = 0;
+	PlanConfigHash = 0;
 	EstimatedPlanTimeSeconds = 0.0f;
 	EstimatedDistanceCm = 0.0f;
 	PathReferenceScale = 1.0f;
 	PlanStartTimeSeconds = 0.0;
 	LastPlanSolveTimeSeconds = 0.0;
 	NextSolveTimeSeconds = -DBL_MAX;
+	LastProjectionStatePositionCm = FVector::ZeroVector;
+	LastProjectionStateTimeSeconds = 0.0;
+	bProjectionStateInitialized = false;
 }
 
 bool FAircraftMpccController::SetIntent(
@@ -80,6 +263,40 @@ bool FAircraftMpccController::SetIntent(
 	const FAircraftVehicleStateSnapshot& State,
 	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
+	// The metadata fast path must enforce the same input contract as a full build.
+	// Otherwise an invalid heading/completion/config update could bypass Plan::Build
+	// and poison the live controller while leaving the old plan marked valid.
+	if (!Intent.IsValid() || !Config.IsValid() || !Capability.bValid)
+	{
+		Diagnostics.bPlanValid = false;
+		return false;
+	}
+	const uint64 NewGeometryHash = ComputePlanGeometryHash(Intent);
+	const uint64 NewMetadataHash = ComputeIntentMetadataHash(Intent);
+	const uint64 NewPlanConfigHash = ComputePlanConfigHash(Config);
+	const bool bSamePlanDefinition = Plan.IsValid()
+		&& ActiveIntentId == InIntentId
+		&& PlanGeometryHash == NewGeometryHash
+		&& PlanConfigHash == NewPlanConfigHash;
+	if (bSamePlanDefinition)
+	{
+		const bool bMetadataChanged = IntentMetadataHash != NewMetadataHash;
+		RuntimeConfig = Config;
+		RequestedIntent = Intent;
+		IntentRevision = InIntentRevision;
+		ActiveIntentId = InIntentId;
+		IntentMetadataHash = NewMetadataHash;
+		if (bMetadataChanged)
+		{
+			Plan.UpdateMetadata(Intent);
+		}
+		Diagnostics.ActiveIntentId = InIntentId;
+		Diagnostics.IntentRevision = InIntentRevision;
+		Diagnostics.PlanRevision = PlanRevision;
+		Diagnostics.bPlanValid = true;
+		NextSolveTimeSeconds = -DBL_MAX;
+		return RefreshPlanForCapability(State, Capability);
+	}
 	const bool bPreserveReferenceState = Plan.IsValid()
 		&& ActiveIntentId == InIntentId
 		&& Plan.GetIntent().Type == Intent.Type;
@@ -95,6 +312,9 @@ bool FAircraftMpccController::SetIntent(
 	PlanningCapability = Capability;
 	IntentRevision = InIntentRevision;
 	ActiveIntentId = InIntentId;
+	PlanGeometryHash = NewGeometryHash;
+	IntentMetadataHash = NewMetadataHash;
+	PlanConfigHash = NewPlanConfigHash;
 	Diagnostics = {};
 	Diagnostics.ActiveIntentId = InIntentId;
 	Diagnostics.IntentRevision = InIntentRevision;
@@ -131,7 +351,11 @@ bool FAircraftMpccController::SetIntent(
 				EstimatedPlanTimeSeconds = Plan.TimeAtDistance(EstimatedDistanceCm);
 			}
 		}
+		LastProjectionStatePositionCm = State.PositionCm;
+		LastProjectionStateTimeSeconds = State.TimeSeconds;
+		bProjectionStateInitialized = true;
 	}
+	Diagnostics.PlanRevision = PlanRevision;
 	Diagnostics.bPlanValid = bBuilt;
 	return bBuilt;
 }
@@ -167,6 +391,9 @@ bool FAircraftMpccController::RefreshPlanForCapability(
 			EstimatedPlanTimeSeconds = Plan.TimeAtDistance(EstimatedDistanceCm);
 		}
 	}
+	LastProjectionStatePositionCm = State.PositionCm;
+	LastProjectionStateTimeSeconds = State.TimeSeconds;
+	bProjectionStateInitialized = true;
 	Diagnostics.PlanRevision = PlanRevision;
 	Diagnostics.bPlanValid = true;
 	return true;
@@ -257,81 +484,46 @@ FVector FAircraftMpccController::ApplyJerkLimit(
 	return PreviousAcceleration + FVector(HorizontalDelta.X, HorizontalDelta.Y, Delta.Z);
 }
 
-void FAircraftMpccController::ApplyYawConstraints(
+void FAircraftMpccController::RolloutHorizon(
 	const FAircraftVehicleStateSnapshot& State,
-	const FAircraftRequestedMotionLimits& Limits, float DeltaTime,
-	float DesiredYawDegrees,
-	FAircraftTrajectoryReference& InOutReference) const
+	const FAircraftDynamicCapabilitySnapshot& Capability,
+	const FAircraftRequestedMotionLimits& Limits,
+	const TArray<FAircraftMotionPlanSample>& References,
+	const float Dt, const int32 Steps,
+	TArray<FVector>& CommandAccelerationHorizon,
+	TArray<FVector>& Positions, TArray<FVector>& Velocities,
+	TArray<FVector>& RealizedAccelerations, TArray<float>& ResponseAlphas)
 {
-	const float MeasuredYaw = State.ControlRotation.Rotator().Yaw;
-	if (Limits.MaxYawRateDegPerSec <= UE_SMALL_NUMBER)
+	Positions[0] = State.PositionCm;
+	Velocities[0] = State.VelocityCmPerSec;
+	RealizedAccelerations[0] = State.AccelerationCmPerSecSq;
+	for (int32 Index = 0; Index < Steps; ++Index)
 	{
-		InOutReference.YawDegrees = MeasuredYaw;
-		InOutReference.YawRateDegPerSec = 0.0f;
-		InOutReference.YawAccelerationDegPerSecSq = 0.0f;
-		return;
-	}
-	const FVector AngularVelocityWorld = State.BodyRotation.RotateVector(
-		State.AngularVelocityBodyRadPerSec);
-	const float MeasuredYawRate = FMath::RadiansToDegrees(AngularVelocityWorld.Z);
-	const float PreviousYaw = LastReference.bValid
-		? LastReference.YawDegrees : MeasuredYaw;
-	const float PreviousYawRate = LastReference.bValid
-		? LastReference.YawRateDegPerSec : MeasuredYawRate;
-	const float PreviousYawAcceleration = LastReference.bValid
-		? LastReference.YawAccelerationDegPerSecSq : 0.0f;
-	const float YawError = FMath::FindDeltaAngleDegrees(PreviousYaw, DesiredYawDegrees);
-	const float TrackingAlpha = 1.0f - FMath::Exp(
-		-DeltaTime / FMath::Max(RuntimeConfig.Mpcc.YawResponseTimeSeconds, UE_SMALL_NUMBER));
-	const float RequestedRate = FMath::Clamp(
-		YawError * TrackingAlpha / FMath::Max(DeltaTime, UE_SMALL_NUMBER),
-		-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
-	float YawAcceleration = (RequestedRate - PreviousYawRate)
-		/ FMath::Max(DeltaTime, UE_SMALL_NUMBER);
-	YawAcceleration = FMath::Clamp(YawAcceleration,
-		-Limits.MaxYawAccelerationDegPerSecSq, Limits.MaxYawAccelerationDegPerSecSq);
-	const float MaximumAccelerationStep = Limits.MaxYawJerkDegPerSecCubed * DeltaTime;
-	YawAcceleration = FMath::Clamp(YawAcceleration,
-		PreviousYawAcceleration - MaximumAccelerationStep,
-		PreviousYawAcceleration + MaximumAccelerationStep);
-	InOutReference.YawAccelerationDegPerSecSq = YawAcceleration;
-	InOutReference.YawRateDegPerSec = FMath::Clamp(
-		PreviousYawRate + YawAcceleration * DeltaTime,
-		-Limits.MaxYawRateDegPerSec, Limits.MaxYawRateDegPerSec);
-	InOutReference.YawDegrees = FRotator::NormalizeAxis(PreviousYaw
-		+ 0.5f * (PreviousYawRate + InOutReference.YawRateDegPerSec) * DeltaTime);
-
-	// 偏航参考必须能领先于刚体，才能为姿态环和约束驱动建立控制误差；
-	// 同时按响应时间限制领先量，避免执行机构失效时参考无限远离实测航向。
-	const float MaximumTrackingLeadDegrees = FMath::Max(
-		Limits.MaxYawRateDegPerSec * RuntimeConfig.Mpcc.YawResponseTimeSeconds,
-		Limits.MaxYawAccelerationDegPerSecSq * FMath::Square(DeltaTime));
-	const float TrackingLeadDegrees = FMath::FindDeltaAngleDegrees(
-		MeasuredYaw, InOutReference.YawDegrees);
-	InOutReference.YawDegrees = FRotator::NormalizeAxis(MeasuredYaw
-		+ FMath::Clamp(TrackingLeadDegrees,
-			-MaximumTrackingLeadDegrees, MaximumTrackingLeadDegrees));
-	if (YawError * FMath::FindDeltaAngleDegrees(
-		InOutReference.YawDegrees, DesiredYawDegrees) <= 0.0f)
-	{
-		// 参考越过目标角：角度停在目标，但速率按加速度限衰减到 0 而非瞬间清零——
-		// 机体仍携带角动量，参考的梯形收尾让前馈与姿态环同步减速，消除
-		// "角度钉死+速率归零"与实测角持续前进之间的高频通断抖动。
-		const float DecelerationDegPerSecSq = FMath::Min(
-			Limits.MaxYawAccelerationDegPerSecSq,
-			FMath::Abs(PreviousYawRate) / FMath::Max(DeltaTime, UE_SMALL_NUMBER));
-		const float YawDeceleration = -FMath::Sign(PreviousYawRate)
-			* DecelerationDegPerSecSq;
-		const float DeceleratedRate = FMath::Clamp(
-			PreviousYawRate + YawDeceleration * DeltaTime,
-			-FMath::Abs(PreviousYawRate), FMath::Abs(PreviousYawRate));
-		InOutReference.YawDegrees = FRotator::NormalizeAxis(DesiredYawDegrees);
-		InOutReference.YawRateDegPerSec = FMath::Sign(PreviousYawRate) != 0.0f
-			? DeceleratedRate
-			: 0.0f;
-		InOutReference.YawAccelerationDegPerSecSq = FMath::Sign(PreviousYawRate) != 0.0f
-			? YawDeceleration
-			: 0.0f;
+		CommandAccelerationHorizon[Index] = ProjectAcceleration(
+			References[Index].AccelerationCmPerSecSq + ControlCorrectionHorizon[Index],
+			Limits, Capability, Velocities[Index]);
+		CommandAccelerationHorizon[Index] = ApplyJerkLimit(
+			Index > 0 ? CommandAccelerationHorizon[Index - 1] : FilteredAccelerationCmPerSecSq,
+			CommandAccelerationHorizon[Index], Dt, Limits);
+		const FVector PredictedDrag = ComputeDragCompensation(
+			Velocities[Index], State.BodyRotation, Capability);
+		CommandAccelerationHorizon[Index] = ProjectControlAcceleration(
+			CommandAccelerationHorizon[Index] + PredictedDrag, Capability) - PredictedDrag;
+		const FVector GravityAcceleration(0.0f, 0.0f, Capability.GravityCmPerSecSq);
+		const bool bIncreasingThrust =
+			(CommandAccelerationHorizon[Index] + GravityAcceleration).SizeSquared()
+				> (RealizedAccelerations[Index] + GravityAcceleration).SizeSquared();
+		const float ResponseTimeSeconds = bIncreasingThrust
+			? Capability.ThrustRiseResponseTimeSeconds
+			: Capability.ThrustFallResponseTimeSeconds;
+		ResponseAlphas[Index] = ResponseTimeSeconds > UE_SMALL_NUMBER
+			? 1.0f - FMath::Exp(-Dt / ResponseTimeSeconds) : 1.0f;
+		RealizedAccelerations[Index + 1] = FMath::Lerp(
+			RealizedAccelerations[Index], CommandAccelerationHorizon[Index], ResponseAlphas[Index]);
+		Positions[Index + 1] = Positions[Index] + Velocities[Index] * Dt
+			+ 0.5f * RealizedAccelerations[Index + 1] * Dt * Dt;
+		Velocities[Index + 1] = Velocities[Index]
+			+ RealizedAccelerations[Index + 1] * Dt;
 	}
 }
 
@@ -339,26 +531,8 @@ FVector FAircraftMpccController::ComputeDragCompensation(
 	const FVector& DesiredVelocityWorldCmPerSec, const FQuat& BodyRotation,
 	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
-	FVector Compensation = Capability.LinearDampingPerSecond * DesiredVelocityWorldCmPerSec;
-	if (!Capability.bHasExplicitAerodynamics || Capability.MassKg <= UE_SMALL_NUMBER)
-	{
-		return Compensation;
-	}
-	const FVector VelocityBodyMps = BodyRotation.UnrotateVector(
-		DesiredVelocityWorldCmPerSec) * 0.01f;
-	FVector VelocityAircraftMps = Capability.AircraftToBodyRotation.UnrotateVector(
-		VelocityBodyMps);
-	VelocityAircraftMps = VelocityAircraftMps.GetClampedToMaxSize(
-		Capability.MaxRelativeAirspeedCmPerSec * 0.01f);
-	const FVector QuadraticCoefficient = Capability.DragAreaCoefficientAircraftM2
-		* (0.5f * Capability.AirDensityKgPerM3);
-	const FVector RequiredForceAircraftN =
-		Capability.LinearDragAircraftNsPerM * VelocityAircraftMps
-		+ QuadraticCoefficient * VelocityAircraftMps.GetAbs() * VelocityAircraftMps;
-	const FVector RequiredForceBodyN = Capability.AircraftToBodyRotation.RotateVector(
-		RequiredForceAircraftN);
-	return Compensation + BodyRotation.RotateVector(RequiredForceBodyN)
-		* (100.0f / Capability.MassKg);
+	return AircraftAutopilotDynamics::ComputeDynamicsFeedForward(
+		DesiredVelocityWorldCmPerSec, BodyRotation, Capability);
 }
 
 bool FAircraftMpccController::SolveVelocityIntent(
@@ -368,11 +542,8 @@ bool FAircraftMpccController::SolveVelocityIntent(
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_MPCC_VelocityProfile);
 	const FAircraftMovementIntent& Intent = Plan.GetIntent();
-	FVector TargetVelocity = Intent.Velocity.VelocityCmPerSec;
-	if (Intent.Velocity.Frame == EAircraftVelocityFrame::ControlHeading)
-	{
-		TargetVelocity = State.ControlRotation.RotateVector(TargetVelocity);
-	}
+	FVector TargetVelocity = AircraftAutopilotDynamics::ResolveVelocityWorld(
+		Intent.Velocity.VelocityCmPerSec, Intent.Velocity.Frame, State.ControlRotation);
 	const float HorizontalSpeed = FVector2D(TargetVelocity.X, TargetVelocity.Y).Size();
 	const float SpeedLimit = ResolveHardLimit(Intent.Limits.CruiseSpeedCmPerSec,
 		Capability.MaxHorizontalSpeedCmPerSec);
@@ -485,7 +656,9 @@ bool FAircraftMpccController::SolveVelocityIntent(
 	OutReference.bPositionTrackingEnabled = false;
 	const float DesiredYaw = FAircraftMotionPlan::ResolveYaw(Intent.Heading,
 		State.PositionCm, TargetVelocity, State.ControlRotation.Rotator().Yaw);
-	ApplyYawConstraints(State, Intent.Limits, Dt, DesiredYaw, OutReference);
+	OutReference.YawDegrees = DesiredYaw;
+	OutReference.YawRateDegPerSec = 0.0f;
+	OutReference.YawAccelerationDegPerSecSq = 0.0f;
 	OutReference.PathProgress = 0.0f;
 	OutReference.RouteProgress = 0.0f;
 	return true;
@@ -518,10 +691,34 @@ bool FAircraftMpccController::SolvePlan(
 	}
 	else
 	{
-		if (!Plan.Project(State.PositionCm, EstimatedDistanceCm, false, Projection))
+		const double ProjectionDeltaSeconds = bProjectionStateInitialized
+			? FMath::Max(State.TimeSeconds - LastProjectionStateTimeSeconds, 0.0)
+			: 0.0;
+		const float MaximumVerticalSpeedCmPerSec = FMath::Max(
+			Capability.MaxClimbRateCmPerSec, Capability.MaxDescentRateCmPerSec);
+		const float CapabilitySpeedBoundCmPerSec = FVector2D(
+			Capability.MaxHorizontalSpeedCmPerSec, MaximumVerticalSpeedCmPerSec).Size();
+		const float CapabilityAccelerationBoundCmPerSecSq = FVector2D(
+			Capability.MaxHorizontalAccelerationCmPerSecSq,
+			Capability.MaxVerticalAccelerationCmPerSecSq).Size();
+		const double ReachableDisplacementCm = CapabilitySpeedBoundCmPerSec
+			* ProjectionDeltaSeconds
+			+ 0.5 * CapabilityAccelerationBoundCmPerSecSq
+				* FMath::Square(ProjectionDeltaSeconds);
+		const float ProjectionDisplacementToleranceCm = FMath::Max(
+			2.0f * RuntimeConfig.Path.ResampleSpacingCm, 100.0f);
+		const bool bImpossibleStateDisplacement = bProjectionStateInitialized
+			&& FVector::Distance(State.PositionCm, LastProjectionStatePositionCm)
+				> ReachableDisplacementCm
+					+ ProjectionDisplacementToleranceCm;
+		if (!Plan.Project(State.PositionCm, EstimatedDistanceCm,
+			bImpossibleStateDisplacement, Projection))
 		{
 			return false;
 		}
+		LastProjectionStatePositionCm = State.PositionCm;
+		LastProjectionStateTimeSeconds = State.TimeSeconds;
+		bProjectionStateInitialized = true;
 		float ProjectedDistanceCm = Projection.DistanceCm;
 		if (Plan.IsContinuous() && PlanLengthCm > UE_SMALL_NUMBER)
 		{
@@ -539,6 +736,28 @@ bool FAircraftMpccController::SolvePlan(
 			ProjectedDistanceCm = EstimatedDistanceCm + DistanceDelta;
 		}
 
+		const float ProjectionDistanceDeltaCm = FMath::Abs(
+			ProjectedDistanceCm - EstimatedDistanceCm);
+		const bool bRecoveredAfterPathJump = bImpossibleStateDisplacement
+			|| ProjectionDistanceDeltaCm >= FMath::Max(
+				0.9f * RuntimeConfig.Path.ProjectionSearchDistanceCm, 1.0f);
+		if (bRecoveredAfterPathJump)
+		{
+			// A local horizon is no longer meaningful after a teleport/recovery. Rebase
+			// directly onto the globally recovered path point instead of rate-limiting
+			// progress from a stale branch and carrying stale optimizer corrections.
+			EstimatedDistanceCm = ProjectedDistanceCm;
+			if (!Plan.IsContinuous())
+			{
+				EstimatedDistanceCm = FMath::Clamp(
+					EstimatedDistanceCm, 0.0f, PlanLengthCm);
+			}
+			EstimatedPlanTimeSeconds = Plan.TimeAtDistance(EstimatedDistanceCm);
+			ControlCorrectionHorizon.Reset();
+			LastReference = {};
+			PathReferenceScale = 1.0f;
+		}
+
 		const FVector ProjectionTangent = Projection.VelocityCmPerSec.GetSafeNormal();
 		const float AlongTrackSpeedCmPerSec = ProjectionTangent.IsNearlyZero()
 			? static_cast<float>(State.VelocityCmPerSec.Size())
@@ -551,13 +770,16 @@ bool FAircraftMpccController::SolvePlan(
 			+ 0.5f * AccelerationAuthority * FMath::Square(SolveDeltaTime) + 1.0f;
 		const float RequestedProgressAdvanceCm = FMath::Max(
 			ProjectedDistanceCm - EstimatedDistanceCm, 0.0f);
-		EstimatedDistanceCm += FMath::Min(
-			RequestedProgressAdvanceCm, MaximumProgressAdvanceCm);
-		if (!Plan.IsContinuous())
+		if (!bRecoveredAfterPathJump)
 		{
-			EstimatedDistanceCm = FMath::Min(EstimatedDistanceCm, PlanLengthCm);
+			EstimatedDistanceCm += FMath::Min(
+				RequestedProgressAdvanceCm, MaximumProgressAdvanceCm);
+			if (!Plan.IsContinuous())
+			{
+				EstimatedDistanceCm = FMath::Min(EstimatedDistanceCm, PlanLengthCm);
+			}
+			EstimatedPlanTimeSeconds = Plan.TimeAtDistance(EstimatedDistanceCm);
 		}
-		EstimatedPlanTimeSeconds = Plan.TimeAtDistance(EstimatedDistanceCm);
 	}
 	const FVector RawProjectionError = State.PositionCm - Projection.PositionCm;
 	const FVector RawProjectionTangent = Projection.VelocityCmPerSec.GetSafeNormal();
@@ -569,8 +791,7 @@ bool FAircraftMpccController::SolvePlan(
 
 	const int32 Steps = FMath::Clamp(RuntimeConfig.Mpcc.HorizonSteps, 2, 64);
 	const float Dt = RuntimeConfig.Mpcc.HorizonSeconds / static_cast<float>(Steps);
-	TArray<FAircraftMotionPlanSample> References;
-	References.SetNum(Steps + 1);
+	ReferenceScratch.SetNum(Steps + 1, EAllowShrinking::No);
 	float ProgressScale = 1.0f;
 	const bool bSpatialPlan = PlanLengthCm > UE_SMALL_NUMBER
 		&& Plan.GetIntent().Type != EAircraftMovementIntentType::TimedTrajectory;
@@ -615,21 +836,21 @@ bool FAircraftMpccController::SolvePlan(
 	for (int32 Index = 0; Index <= Steps; ++Index)
 	{
 		if (!Plan.Evaluate(EstimatedPlanTimeSeconds
-			+ ProgressScale * Dt * Index, References[Index]))
+			+ ProgressScale * Dt * Index, ReferenceScratch[Index]))
 		{
 			return false;
 		}
 		if (bSpatialPlan)
 		{
-			References[Index].VelocityCmPerSec *= ProgressScale;
-			References[Index].AccelerationCmPerSecSq *= FMath::Square(ProgressScale);
-			References[Index].YawRateDegPerSec *= ProgressScale;
+			ReferenceScratch[Index].VelocityCmPerSec *= ProgressScale;
+			ReferenceScratch[Index].AccelerationCmPerSecSq *= FMath::Square(ProgressScale);
+			ReferenceScratch[Index].YawRateDegPerSec *= ProgressScale;
 		}
 	}
 	Diagnostics.ProgressScale = ProgressScale;
 
 	const bool bInitializeHorizon = ControlCorrectionHorizon.Num() != Steps;
-	ControlCorrectionHorizon.SetNum(Steps);
+	ControlCorrectionHorizon.SetNum(Steps, EAllowShrinking::No);
 	for (int32 Index = 0; Index < Steps; ++Index)
 	{
 		if (bInitializeHorizon || ControlCorrectionHorizon[Index].ContainsNaN())
@@ -637,81 +858,92 @@ bool FAircraftMpccController::SolvePlan(
 			ControlCorrectionHorizon[Index] = FVector::ZeroVector;
 		}
 	}
-	TArray<FVector> CommandAccelerationHorizon;
-	CommandAccelerationHorizon.SetNum(Steps);
-	TArray<FVector> Positions;
-	TArray<FVector> Velocities;
-	Positions.SetNum(Steps + 1);
-	Velocities.SetNum(Steps + 1);
-	TArray<FVector> RealizedAccelerations;
-	RealizedAccelerations.SetNum(Steps + 1);
-	TArray<float> ResponseAlphas;
-	ResponseAlphas.SetNum(Steps);
-	TArray<FVector> Gradient;
-	Gradient.SetNum(Steps);
+	CommandAccelerationScratch.SetNum(Steps, EAllowShrinking::No);
+	PositionScratch.SetNum(Steps + 1, EAllowShrinking::No);
+	VelocityScratch.SetNum(Steps + 1, EAllowShrinking::No);
+	RealizedAccelerationScratch.SetNum(Steps + 1, EAllowShrinking::No);
+	ResponseAlphaScratch.SetNum(Steps, EAllowShrinking::No);
+	GradientScratch.SetNum(Steps, EAllowShrinking::No);
+	PreviousCorrectionScratch.SetNum(Steps, EAllowShrinking::No);
 
 	const FAircraftMpccRuntimeConfig& Mpcc = RuntimeConfig.Mpcc;
 	const FAircraftRequestedMotionLimits& Limits = Plan.GetIntent().Limits;
 	Diagnostics.SolverIterations = 0;
+	double PreviousCost = TNumericLimits<double>::Max();
 	for (int32 Iteration = 0; Iteration < Mpcc.MaxOptimizationIterations; ++Iteration)
 	{
 		if (FPlatformTime::Seconds() >= SolveDeadlineSeconds)
 		{
 			break;
 		}
-		Positions[0] = State.PositionCm;
-		Velocities[0] = State.VelocityCmPerSec;
-		RealizedAccelerations[0] = State.AccelerationCmPerSecSq;
-		for (int32 Index = 0; Index < Steps; ++Index)
-		{
-			CommandAccelerationHorizon[Index] = ProjectAcceleration(
-				References[Index].AccelerationCmPerSecSq + ControlCorrectionHorizon[Index],
-				Limits, Capability, Velocities[Index]);
-			CommandAccelerationHorizon[Index] = ApplyJerkLimit(
-				Index > 0 ? CommandAccelerationHorizon[Index - 1] : State.AccelerationCmPerSecSq,
-				CommandAccelerationHorizon[Index], Dt, Limits);
-			const FVector DragCompensation = ComputeDragCompensation(
-				Velocities[Index], State.BodyRotation, Capability);
-			CommandAccelerationHorizon[Index] = ProjectControlAcceleration(
-				CommandAccelerationHorizon[Index] + DragCompensation, Capability)
-				- DragCompensation;
-			const FVector GravityAcceleration(0.0f, 0.0f, Capability.GravityCmPerSecSq);
-			const bool bIncreasingThrust =
-				(CommandAccelerationHorizon[Index] + GravityAcceleration).SizeSquared()
-					> (RealizedAccelerations[Index] + GravityAcceleration).SizeSquared();
-			const float ResponseTimeSeconds = bIncreasingThrust
-				? Capability.ThrustRiseResponseTimeSeconds
-				: Capability.ThrustFallResponseTimeSeconds;
-			ResponseAlphas[Index] = ResponseTimeSeconds > UE_SMALL_NUMBER
-				? 1.0f - FMath::Exp(-Dt / ResponseTimeSeconds) : 1.0f;
-			RealizedAccelerations[Index + 1] = FMath::Lerp(
-				RealizedAccelerations[Index], CommandAccelerationHorizon[Index], ResponseAlphas[Index]);
-			Positions[Index + 1] = Positions[Index] + Velocities[Index] * Dt
-				+ 0.5f * RealizedAccelerations[Index + 1] * Dt * Dt;
-			Velocities[Index + 1] = Velocities[Index]
-				+ RealizedAccelerations[Index + 1] * Dt;
-		}
+		RolloutHorizon(State, Capability, Limits, ReferenceScratch, Dt, Steps,
+			CommandAccelerationScratch, PositionScratch, VelocityScratch,
+			RealizedAccelerationScratch, ResponseAlphaScratch);
 		float MaximumPredictedCorridorViolationCm = 0.0f;
+		double CurrentCost = 0.0;
 		for (int32 Index = 1; Index <= Steps; ++Index)
 		{
+			const FVector Tangent = ReferenceScratch[Index].VelocityCmPerSec.GetSafeNormal();
+			const FVector PositionError = PositionScratch[Index]
+				- ReferenceScratch[Index].PositionCm;
+			const FVector LagError = Tangent * FVector::DotProduct(PositionError, Tangent);
+			const FVector ContourError = PositionError - LagError;
+			const FVector VelocityError = VelocityScratch[Index]
+				- ReferenceScratch[Index].VelocityCmPerSec;
+			const float TerminalPositionWeight = Index == Steps
+				? Mpcc.TerminalPositionWeight : 0.0f;
+			const float TerminalVelocityWeight = Index == Steps
+				? Mpcc.TerminalVelocityWeight : 0.0f;
+			CurrentCost += (Mpcc.ContourErrorWeight + TerminalPositionWeight)
+					* ContourError.SizeSquared()
+				+ (Mpcc.LagErrorWeight + TerminalPositionWeight) * LagError.SizeSquared()
+				+ (Mpcc.SpeedTrackingWeight + TerminalVelocityWeight)
+					* VelocityError.SizeSquared();
+			const float PredictedCorridorViolationCm = Plan.ComputeCorridorViolationCm(
+				PositionScratch[Index], ReferenceScratch[Index].DistanceCm);
 			MaximumPredictedCorridorViolationCm = FMath::Max(
-				MaximumPredictedCorridorViolationCm,
-				Plan.ComputeCorridorViolationCm(
-					Positions[Index], References[Index].DistanceCm));
+				MaximumPredictedCorridorViolationCm, PredictedCorridorViolationCm);
+			CurrentCost += Mpcc.CorridorViolationWeight
+				* FMath::Square(PredictedCorridorViolationCm);
 		}
+		for (int32 Index = 0; Index < Steps; ++Index)
+		{
+			CurrentCost += Mpcc.AccelerationWeight
+				* ControlCorrectionHorizon[Index].SizeSquared()
+				+ Mpcc.Regularization * CommandAccelerationScratch[Index].SizeSquared();
+			const FVector PreviousAcceleration = Index > 0
+				? CommandAccelerationScratch[Index - 1] : FilteredAccelerationCmPerSecSq;
+			CurrentCost += Mpcc.JerkWeight
+				* (CommandAccelerationScratch[Index] - PreviousAcceleration).SizeSquared();
+		}
+		if (Iteration > 0)
+		{
+			const double CostImprovement = PreviousCost - CurrentCost;
+			if (CostImprovement < 0.0)
+			{
+				ControlCorrectionHorizon = PreviousCorrectionScratch;
+				break;
+			}
+			if (CostImprovement <= OptimizationRelativeCostTolerance
+				* FMath::Max(PreviousCost, 1.0))
+			{
+				break;
+			}
+		}
+		PreviousCost = CurrentCost;
 
 		FVector LambdaPosition = FVector::ZeroVector;
 		FVector LambdaVelocity = FVector::ZeroVector;
 		FVector LambdaAcceleration = FVector::ZeroVector;
 		for (int32 Index = Steps - 1; Index >= 0; --Index)
 		{
-			const FVector Tangent = References[Index + 1].VelocityCmPerSec.GetSafeNormal();
-			const FVector PositionError = Positions[Index + 1] - References[Index + 1].PositionCm;
+			const FVector Tangent = ReferenceScratch[Index + 1].VelocityCmPerSec.GetSafeNormal();
+			const FVector PositionError = PositionScratch[Index + 1] - ReferenceScratch[Index + 1].PositionCm;
 			const FVector LagError = Tangent * FVector::DotProduct(PositionError, Tangent);
 			const FVector ContourError = PositionError - LagError;
-			const FVector VelocityError = Velocities[Index + 1] - References[Index + 1].VelocityCmPerSec;
+			const FVector VelocityError = VelocityScratch[Index + 1] - ReferenceScratch[Index + 1].VelocityCmPerSec;
 			const FVector CorridorCorrectionCm = Plan.ComputeCorridorCorrectionCm(
-				Positions[Index + 1], References[Index + 1].DistanceCm);
+				PositionScratch[Index + 1], ReferenceScratch[Index + 1].DistanceCm);
 			const float TerminalPositionWeight = Index == Steps - 1 ? Mpcc.TerminalPositionWeight : 0.0f;
 			const float TerminalVelocityWeight = Index == Steps - 1 ? Mpcc.TerminalVelocityWeight : 0.0f;
 			LambdaPosition += 2.0f * ((Mpcc.ContourErrorWeight + TerminalPositionWeight) * ContourError
@@ -721,22 +953,22 @@ bool FAircraftMpccController::SolvePlan(
 				* (Mpcc.SpeedTrackingWeight + TerminalVelocityWeight) * VelocityError;
 			const FVector AccelerationAdjoint = LambdaAcceleration
 				+ 0.5f * Dt * Dt * LambdaPosition + Dt * LambdaVelocity;
-			Gradient[Index] = ResponseAlphas[Index] * AccelerationAdjoint
+			GradientScratch[Index] = ResponseAlphaScratch[Index] * AccelerationAdjoint
 				+ 2.0f * Mpcc.AccelerationWeight * ControlCorrectionHorizon[Index]
-				+ 2.0f * Mpcc.Regularization * CommandAccelerationHorizon[Index];
+				+ 2.0f * Mpcc.Regularization * CommandAccelerationScratch[Index];
 			if (Mpcc.JerkWeight > 0.0f)
 			{
 				const FVector Previous = Index > 0
-					? CommandAccelerationHorizon[Index - 1] : State.AccelerationCmPerSecSq;
-				Gradient[Index] += 2.0f * Mpcc.JerkWeight
-					* (CommandAccelerationHorizon[Index] - Previous);
+					? CommandAccelerationScratch[Index - 1] : FilteredAccelerationCmPerSecSq;
+				GradientScratch[Index] += 2.0f * Mpcc.JerkWeight
+					* (CommandAccelerationScratch[Index] - Previous);
 				if (Index + 1 < Steps)
 				{
-					Gradient[Index] += 2.0f * Mpcc.JerkWeight
-						* (CommandAccelerationHorizon[Index] - CommandAccelerationHorizon[Index + 1]);
+					GradientScratch[Index] += 2.0f * Mpcc.JerkWeight
+						* (CommandAccelerationScratch[Index] - CommandAccelerationScratch[Index + 1]);
 				}
 			}
-			LambdaAcceleration = (1.0f - ResponseAlphas[Index]) * AccelerationAdjoint;
+			LambdaAcceleration = (1.0f - ResponseAlphaScratch[Index]) * AccelerationAdjoint;
 			LambdaVelocity += Dt * LambdaPosition;
 		}
 
@@ -745,66 +977,48 @@ bool FAircraftMpccController::SolvePlan(
 		const float StepSize = 1.0f / FMath::Max(1.0f,
 			2.0f * (Mpcc.ContourErrorWeight + Mpcc.LagErrorWeight
 				+ Mpcc.SpeedTrackingWeight + ActiveCorridorWeight) * Steps);
+		double MaximumCorrectionStep = 0.0;
+		PreviousCorrectionScratch = ControlCorrectionHorizon;
 		for (int32 Index = 0; Index < Steps; ++Index)
 		{
-			ControlCorrectionHorizon[Index] -= Gradient[Index] * StepSize;
+			const FVector CorrectionStep = GradientScratch[Index] * StepSize;
+			ControlCorrectionHorizon[Index] -= CorrectionStep;
+			MaximumCorrectionStep = FMath::Max(MaximumCorrectionStep,
+				CorrectionStep.Size());
 		}
 		++Diagnostics.SolverIterations;
+		if (MaximumCorrectionStep <= OptimizationCorrectionToleranceCmPerSecSq)
+		{
+			break;
+		}
 	}
 
 	// 最后一次梯度更新发生在约束投影之后；发布前必须重新滚动一次，
 	// 保证真正输出的第一步仍满足 jerk、倾角、总推力和阻力补偿约束。
-	Positions[0] = State.PositionCm;
-	Velocities[0] = State.VelocityCmPerSec;
-	RealizedAccelerations[0] = State.AccelerationCmPerSecSq;
-	for (int32 Index = 0; Index < Steps; ++Index)
-	{
-		CommandAccelerationHorizon[Index] = ProjectAcceleration(
-			References[Index].AccelerationCmPerSecSq + ControlCorrectionHorizon[Index],
-			Limits, Capability, Velocities[Index]);
-		CommandAccelerationHorizon[Index] = ApplyJerkLimit(
-			Index > 0 ? CommandAccelerationHorizon[Index - 1] : State.AccelerationCmPerSecSq,
-			CommandAccelerationHorizon[Index], Dt, Limits);
-		const FVector PredictedDrag = ComputeDragCompensation(
-			Velocities[Index], State.BodyRotation, Capability);
-		CommandAccelerationHorizon[Index] = ProjectControlAcceleration(
-			CommandAccelerationHorizon[Index] + PredictedDrag, Capability) - PredictedDrag;
-		const FVector GravityAcceleration(0.0f, 0.0f, Capability.GravityCmPerSecSq);
-		const bool bIncreasingThrust =
-			(CommandAccelerationHorizon[Index] + GravityAcceleration).SizeSquared()
-				> (RealizedAccelerations[Index] + GravityAcceleration).SizeSquared();
-		const float ResponseTimeSeconds = bIncreasingThrust
-			? Capability.ThrustRiseResponseTimeSeconds
-			: Capability.ThrustFallResponseTimeSeconds;
-		ResponseAlphas[Index] = ResponseTimeSeconds > UE_SMALL_NUMBER
-			? 1.0f - FMath::Exp(-Dt / ResponseTimeSeconds) : 1.0f;
-		RealizedAccelerations[Index + 1] = FMath::Lerp(
-			RealizedAccelerations[Index], CommandAccelerationHorizon[Index], ResponseAlphas[Index]);
-		Positions[Index + 1] = Positions[Index] + Velocities[Index] * Dt
-			+ 0.5f * RealizedAccelerations[Index + 1] * Dt * Dt;
-		Velocities[Index + 1] = Velocities[Index]
-			+ RealizedAccelerations[Index + 1] * Dt;
-	}
+	RolloutHorizon(State, Capability, Limits, ReferenceScratch, Dt, Steps,
+		CommandAccelerationScratch, PositionScratch, VelocityScratch,
+		RealizedAccelerationScratch, ResponseAlphaScratch);
 	Diagnostics.PredictedCorridorViolationCm = 0.0f;
 	for (int32 Index = 1; Index <= Steps; ++Index)
 	{
 		Diagnostics.PredictedCorridorViolationCm = FMath::Max(
 			Diagnostics.PredictedCorridorViolationCm,
 			Plan.ComputeCorridorViolationCm(
-				Positions[Index], References[Index].DistanceCm));
+				PositionScratch[Index], ReferenceScratch[Index].DistanceCm));
 	}
 
-	OutReference.PositionCm = References[0].PositionCm;
-	OutReference.VelocityCmPerSec = References[0].VelocityCmPerSec;
+	OutReference.PositionCm = ReferenceScratch[0].PositionCm;
+	OutReference.VelocityCmPerSec = ReferenceScratch[0].VelocityCmPerSec;
 	const FVector DragCompensation = ComputeDragCompensation(
-		References[0].VelocityCmPerSec, State.BodyRotation, Capability);
-	OutReference.AccelerationCmPerSecSq = References[0].AccelerationCmPerSecSq;
+		ReferenceScratch[0].VelocityCmPerSec, State.BodyRotation, Capability);
+	OutReference.AccelerationCmPerSecSq = ReferenceScratch[0].AccelerationCmPerSecSq;
 	OutReference.ControlAccelerationCmPerSecSq = ProjectControlAcceleration(
-		CommandAccelerationHorizon[0] + DragCompensation, Capability) - DragCompensation;
+		CommandAccelerationScratch[0] + DragCompensation, Capability) - DragCompensation;
 	OutReference.DynamicsFeedForwardAccelerationCmPerSecSq = DragCompensation;
 	OutReference.bPositionTrackingEnabled = true;
-	ApplyYawConstraints(State, Limits, 1.0f / Mpcc.UpdateRateHz,
-		References[0].YawDegrees, OutReference);
+	OutReference.YawDegrees = ReferenceScratch[0].YawDegrees;
+	OutReference.YawRateDegPerSec = 0.0f;
+	OutReference.YawAccelerationDegPerSecSq = 0.0f;
 	if (Plan.GetIntent().Type == EAircraftMovementIntentType::TimedTrajectory)
 	{
 		OutReference.PathProgress = FMath::Clamp(EstimatedPlanTimeSeconds
@@ -848,6 +1062,10 @@ void FAircraftMpccController::RebaseTime(const double TimeSeconds)
 	const double PausedDuration = FMath::Max(TimeSeconds - LastPlanSolveTimeSeconds, 0.0);
 	PlanStartTimeSeconds += PausedDuration;
 	LastPlanSolveTimeSeconds = TimeSeconds;
+	if (bProjectionStateInitialized)
+	{
+		LastProjectionStateTimeSeconds = TimeSeconds;
+	}
 	if (LastReference.bValid)
 	{
 		LastReference.GeneratedAtSeconds += PausedDuration;
@@ -872,6 +1090,30 @@ bool FAircraftMpccController::Update(
 	if (!RefreshPlanForCapability(State, Capability))
 	{
 		return false;
+	}
+	// 实测加速度（物理差分）噪声大，作 jerk 种子会直接把噪声灌进 50Hz 控制指令。
+	// 一阶低通后再作视界第一步的 jerk 限制基准。
+	{
+		const double DeltaSeconds = FMath::Max(
+			State.TimeSeconds - LastFilterUpdateTimeSeconds, 0.0);
+		const float Alpha = FMath::Clamp(
+			static_cast<float>(DeltaSeconds / (1.0 / (2.0 * PI * JerkSeedFilterCutoffHz)
+				+ DeltaSeconds)),
+			0.0f, 1.0f);
+		if (DeltaSeconds > 0.0)
+		{
+			if (!bFilterInitialized && !State.AccelerationCmPerSecSq.ContainsNaN())
+			{
+				FilteredAccelerationCmPerSecSq = State.AccelerationCmPerSecSq;
+				bFilterInitialized = true;
+			}
+			else
+			{
+				FilteredAccelerationCmPerSecSq += (State.AccelerationCmPerSecSq
+					- FilteredAccelerationCmPerSecSq) * Alpha;
+			}
+			LastFilterUpdateTimeSeconds = State.TimeSeconds;
+		}
 	}
 	const double SolveInterval = 1.0 / RuntimeConfig.Mpcc.UpdateRateHz;
 	if (LastReference.IsFresh(State.TimeSeconds)

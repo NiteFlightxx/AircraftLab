@@ -211,17 +211,22 @@ bool FAircraftMovementIntent::IsValid() const
 		return false;
 	}
 	if (!FMath::IsFinite(Heading.FixedYawDegrees)
+		|| !FMath::IsFinite(Heading.YawRateDegPerSec)
 		|| !IsFiniteVector(Heading.TargetPositionCm)
-		|| !FMath::IsFinite(Completion.TerminalSpeedCmPerSec)
+		|| !FMath::IsFinite(Completion.TerminalHorizontalSpeedCmPerSec)
+		|| !FMath::IsFinite(Completion.TerminalVerticalSpeedCmPerSec)
 		|| !FMath::IsFinite(Completion.HorizontalToleranceCm)
 		|| !FMath::IsFinite(Completion.VerticalToleranceCm)
-		|| !FMath::IsFinite(Completion.SpeedToleranceCmPerSec)
+		|| !FMath::IsFinite(Completion.HorizontalSpeedToleranceCmPerSec)
+		|| !FMath::IsFinite(Completion.VerticalSpeedToleranceCmPerSec)
 		|| !FMath::IsFinite(Completion.YawToleranceDegrees)
 		|| !FMath::IsFinite(Completion.StableTimeSeconds)
-		|| Completion.TerminalSpeedCmPerSec < 0.0f
+		|| Completion.TerminalHorizontalSpeedCmPerSec < 0.0f
+		|| Completion.TerminalVerticalSpeedCmPerSec < 0.0f
 		|| Completion.HorizontalToleranceCm < 0.0f
 		|| Completion.VerticalToleranceCm < 0.0f
-		|| Completion.SpeedToleranceCmPerSec < 0.0f
+		|| Completion.HorizontalSpeedToleranceCmPerSec < 0.0f
+		|| Completion.VerticalSpeedToleranceCmPerSec < 0.0f
 		|| Completion.YawToleranceDegrees < 0.0f
 		|| Completion.YawToleranceDegrees > 180.0f
 		|| Completion.StableTimeSeconds < 0.0f)

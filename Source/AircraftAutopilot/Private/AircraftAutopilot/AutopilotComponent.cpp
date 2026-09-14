@@ -1,5 +1,7 @@
 #include "AircraftAutopilot/AutopilotComponent.h"
 
+#include "Engine/World.h"
+
 #include "AircraftAutopilot/AircraftMotionPlan.h"
 #include "AircraftDiagnostics/AircraftDebug.h"
 #include "AircraftDiagnostics/AircraftDebugSettings.h"
@@ -258,6 +260,7 @@ FAircraftMovementIntentHandle UAutopilotComponent::SubmitIntent(
 	ResolvedIntent = Intent;
 	ActiveHandle.Id = NextIntentId++;
 	++IntentRevision;
+	ResetActorTargetBumpBaseline();
 	ElapsedSeconds = 0.0f;
 	DiagnosticLogAccumulatorSeconds = 0.0f;
 	StableTimeSeconds = 0.0f;
@@ -280,6 +283,7 @@ bool UAutopilotComponent::UpdateIntent(
 	SourceIntent = Intent;
 	ResolvedIntent = Intent;
 	++IntentRevision;
+	ResetActorTargetBumpBaseline();
 	StableTimeSeconds = 0.0f;
 	InitialDistanceToTargetCm = -1.0f;
 	CurrentResult.Status = EAircraftMovementIntentStatus::Accepted;
@@ -333,33 +337,91 @@ void UAutopilotComponent::SetAutopilotActive(bool bInActive)
 	}
 }
 
+bool UAutopilotComponent::ShouldBumpRevisionForActorTargetMove(
+	const bool bHasBaseline, const double MaxAnchorShiftCm,
+	const double SecondsSinceLastBump,
+	const double ReplanDistanceCm, const double ReplanIntervalSeconds)
+{
+	if (!bHasBaseline)
+	{
+		return false;
+	}
+	const double Distance = FMath::Max(ReplanDistanceCm, 1.0);
+	if (MaxAnchorShiftCm <= Distance)
+	{
+		return false;
+	}
+	// 超过 4× 滞回距离视为快速目标/瞬移，立即更新不受限频。
+	if (MaxAnchorShiftCm > 4.0 * Distance)
+	{
+		return true;
+	}
+	return SecondsSinceLastBump >= FMath::Max(ReplanIntervalSeconds, 0.0);
+}
+
 void UAutopilotComponent::ResolveActorTargets()
 {
 	const FAircraftMovementIntent Previous = ResolvedIntent;
 	ResolvedIntent = SourceIntent;
-	if (IsValid(SourceIntent.Hold.TargetActor))
+	const bool bHasHoldActor = IsValid(SourceIntent.Hold.TargetActor);
+	const bool bHasOrbitActor = IsValid(SourceIntent.Orbit.CenterActor);
+	const bool bHasHeadingActor = IsValid(SourceIntent.Heading.TargetActor);
+	const bool bHasActorTarget = bHasHoldActor || bHasOrbitActor || bHasHeadingActor;
+	if (bHasHoldActor)
 	{
 		ResolvedIntent.Hold.PositionCm = SourceIntent.Hold.TargetActor->GetActorLocation();
 		ResolvedIntent.Hold.bCaptureCurrentPosition = false;
 		ResolvedIntent.Hold.TargetActor = nullptr;
 	}
-	if (IsValid(SourceIntent.Orbit.CenterActor))
+	if (bHasOrbitActor)
 	{
 		ResolvedIntent.Orbit.CenterCm = SourceIntent.Orbit.CenterActor->GetActorLocation();
 		ResolvedIntent.Orbit.CenterActor = nullptr;
 	}
-	if (IsValid(SourceIntent.Heading.TargetActor))
+	if (bHasHeadingActor)
 	{
 		ResolvedIntent.Heading.TargetPositionCm = SourceIntent.Heading.TargetActor->GetActorLocation();
 		ResolvedIntent.Heading.TargetActor = nullptr;
 	}
-	const bool bResolvedTargetMoved =
-		!Previous.Hold.PositionCm.Equals(ResolvedIntent.Hold.PositionCm, 0.01f)
-		|| !Previous.Orbit.CenterCm.Equals(ResolvedIntent.Orbit.CenterCm, 0.01f)
-		|| !Previous.Heading.TargetPositionCm.Equals(
-			ResolvedIntent.Heading.TargetPositionCm, 0.01f);
-	if (ActiveHandle.IsValid() && bResolvedTargetMoved)
+	const UWorld* const World = GetWorld();
+	const double CurrentTimeSeconds = World ? World->GetTimeSeconds() : 0.0;
+	if (ActiveHandle.IsValid() && bHasActorTarget && !bHasActorTargetBumpBaseline)
 	{
+		// 第一次解析只把真实 Actor 锚点设为累计位移的基线。Submit/Update
+		// 已经为调用方的意图修改递增过 revision，此处不能制造第二次重规划。
+		HoldPositionAtLastBumpCm = ResolvedIntent.Hold.PositionCm;
+		OrbitCenterAtLastBumpCm = ResolvedIntent.Orbit.CenterCm;
+		HeadingTargetAtLastBumpCm = ResolvedIntent.Heading.TargetPositionCm;
+		LastActorTargetBumpTimeSeconds = CurrentTimeSeconds;
+		bHasActorTargetBumpBaseline = true;
+		return;
+	}
+	// 滞回基准：与上次 bump 时的锚点比较，而不是与上一帧比较——
+	// 上一帧差分（旧实现 0.01cm 阈值）使任何移动目标每帧都触发全量计划重建。
+	const FVector& ReferenceHold =
+		bHasActorTargetBumpBaseline ? HoldPositionAtLastBumpCm : Previous.Hold.PositionCm;
+	const FVector& ReferenceOrbit =
+		bHasActorTargetBumpBaseline ? OrbitCenterAtLastBumpCm : Previous.Orbit.CenterCm;
+	const FVector& ReferenceHeading =
+		bHasActorTargetBumpBaseline ? HeadingTargetAtLastBumpCm : Previous.Heading.TargetPositionCm;
+	const double MaxAnchorShiftCm = FMath::Max(FMath::Max(
+		FVector::Dist(ReferenceHold, ResolvedIntent.Hold.PositionCm),
+		FVector::Dist(ReferenceOrbit, ResolvedIntent.Orbit.CenterCm)),
+		FVector::Dist(ReferenceHeading, ResolvedIntent.Heading.TargetPositionCm));
+	const double SecondsSinceLastBump = bHasActorTargetBumpBaseline
+		? FMath::Max(CurrentTimeSeconds - LastActorTargetBumpTimeSeconds, 0.0)
+		: TNumericLimits<double>::Max();
+	if (ActiveHandle.IsValid()
+		&& bHasActorTarget
+		&& ShouldBumpRevisionForActorTargetMove(bHasActorTargetBumpBaseline,
+			MaxAnchorShiftCm, SecondsSinceLastBump,
+			ActorTargetReplanDistanceCm, ActorTargetReplanIntervalSeconds))
+	{
+		HoldPositionAtLastBumpCm = ResolvedIntent.Hold.PositionCm;
+		OrbitCenterAtLastBumpCm = ResolvedIntent.Orbit.CenterCm;
+		HeadingTargetAtLastBumpCm = ResolvedIntent.Heading.TargetPositionCm;
+		LastActorTargetBumpTimeSeconds = CurrentTimeSeconds;
+		bHasActorTargetBumpBaseline = true;
 		++IntentRevision;
 	}
 }
@@ -476,9 +538,10 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 	// 而机体仍在目标远处——必须同时处于位置容差内才算路径完成。
 	const bool bPathComplete = ResolvedIntent.Type != EAircraftMovementIntentType::Route
 		|| (CurrentResult.Progress >= 0.999f
-			&& DistanceToTargetCm <= FMath::Max(
-				ResolvedIntent.Completion.HorizontalToleranceCm,
-				ResolvedIntent.Completion.VerticalToleranceCm) * 2.0f);
+			&& FVector2D(Error.X, Error.Y).Size()
+				<= ResolvedIntent.Completion.HorizontalToleranceCm
+			&& FMath::Abs(Error.Z)
+				<= ResolvedIntent.Completion.VerticalToleranceCm);
 	const bool bWithinPosition = FVector2D(Error.X, Error.Y).Size()
 		<= ResolvedIntent.Completion.HorizontalToleranceCm
 		&& FMath::Abs(Error.Z) <= ResolvedIntent.Completion.VerticalToleranceCm;
@@ -500,9 +563,13 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 		}
 		return;
 	}
-	const bool bWithinSpeed = State.VelocityCmPerSec.Size()
-		<= FMath::Max(ResolvedIntent.Completion.TerminalSpeedCmPerSec,
-			ResolvedIntent.Completion.SpeedToleranceCmPerSec);
+	const bool bWithinHorizontalSpeed = FVector2D(
+		State.VelocityCmPerSec.X, State.VelocityCmPerSec.Y).Size()
+		<= FMath::Max(ResolvedIntent.Completion.TerminalHorizontalSpeedCmPerSec,
+			ResolvedIntent.Completion.HorizontalSpeedToleranceCmPerSec);
+	const bool bWithinVerticalSpeed = FMath::Abs(State.VelocityCmPerSec.Z)
+		<= FMath::Max(ResolvedIntent.Completion.TerminalVerticalSpeedCmPerSec,
+			ResolvedIntent.Completion.VerticalSpeedToleranceCmPerSec);
 	FVector HeadingVelocity = State.VelocityCmPerSec;
 	if (ResolvedIntent.Type == EAircraftMovementIntentType::Route
 		&& ResolvedIntent.Route.PointsCm.Num() >= 2)
@@ -518,7 +585,8 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 		ResolvedIntent.Heading, State.PositionCm, HeadingVelocity, State.AttitudeDegrees.Yaw);
 	const bool bWithinYaw = FMath::Abs(FMath::FindDeltaAngleDegrees(
 		State.AttitudeDegrees.Yaw, DesiredYaw)) <= ResolvedIntent.Completion.YawToleranceDegrees;
-	StableTimeSeconds = bPathComplete && bWithinPosition && bWithinSpeed && bWithinYaw
+	StableTimeSeconds = bPathComplete && bWithinPosition
+		&& bWithinHorizontalSpeed && bWithinVerticalSpeed && bWithinYaw
 		? StableTimeSeconds + DeltaTime : 0.0f;
 	if (StableTimeSeconds >= ResolvedIntent.Completion.StableTimeSeconds)
 	{

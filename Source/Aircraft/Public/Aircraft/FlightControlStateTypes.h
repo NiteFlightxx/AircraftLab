@@ -108,12 +108,11 @@ struct AIRCRAFT_API FAircraftEstimatedState
 	FAircraftKinematicState State;
 };
 
-/** 统一管理所有 Hold 目标（位置、高度、偏航）。 */
+/** 统一管理位置与高度 Hold 目标。偏航由连续参考动态独立持有。 */
 struct FAircraftHoldTargets
 {
 	FVector HeldPositionCm = FVector::ZeroVector;
 	float HeldAltitudeCm = 0.0f;
-	float HeldYawDegrees = 0.0f;
 
 	bool bPositionHoldInitialized = false;
 	/** 水平摇杆刚释放：先以零速度制动，速度足够低后再锁定位置。 */
@@ -121,7 +120,6 @@ struct FAircraftHoldTargets
 	bool bAltitudeHoldInitialized = false;
 	/** 垂直摇杆刚释放：先以零速度制动，速度足够低后再锁定高度。 */
 	bool bVerticalBrakeBeforeHold = false;
-	bool bYawHoldInitialized = false;
 
 	void ResetHoldFlags()
 	{
@@ -129,7 +127,6 @@ struct FAircraftHoldTargets
 		bHorizontalBrakeBeforeHold = false;
 		bAltitudeHoldInitialized = false;
 		bVerticalBrakeBeforeHold = false;
-		bYawHoldInitialized = false;
 	}
 };
 
@@ -161,18 +158,16 @@ struct FAircraftPhysicsCache
 {
 	FTransform BodyTransform = FTransform::Identity;
 	FVector CenterOfMassOffsetBodyCm = FVector::ZeroVector;
-	FVector AngularVelocityBodyDegPerSec = FVector::ZeroVector;
+	/** Physical Chaos angular velocity in world space. */
+	FVector AngularVelocityWorldRadPerSec = FVector::ZeroVector;
+	/** Angular velocity expressed in the flight-controller Roll/Pitch/Yaw convention. */
+	FVector AngularVelocityControllerDegPerSec = FVector::ZeroVector;
 	FVector LinearVelocityCmPerSec = FVector::ZeroVector;
 	float GravityMagnitudeCmPerSecSq = 980.0f;
 	float MassKg = 0.0f;
 	FVector LinearDampingPerSecond = FVector::ZeroVector;
 	FVector AngularDampingPerSecond = FVector::ZeroVector;
-	/** 飞控标准轴顺序下的惯量近似，用于保持完整飞控现有的对角模型。 */
 	FVector InertiaDiagonalKgM2 = FVector::ZeroVector;
-	/** Chaos 质量主轴系中的真实主惯量。 */
-	FVector InertiaPrincipalKgM2 = FVector::ZeroVector;
-	/** Chaos 质量主轴系到物理 Body 局部系的旋转（RotationOfMass）。 */
-	FQuat PrincipalToBodyRotation = FQuat::Identity;
 
 	FVector WorldUp = FVector::UpVector;
 
@@ -252,6 +247,6 @@ struct FAircraftFlightControlRuntimeState
 
 	FVector PreviousLinearVelocityCmPerSec = FVector::ZeroVector;
 	bool bHasPreviousLinearVelocity = false;
-	FVector PreviousAngularVelocityBodyDegPerSec = FVector::ZeroVector;
+	FVector PreviousAngularVelocityControllerDegPerSec = FVector::ZeroVector;
 	bool bHasPreviousAngularVelocity = false;
 };

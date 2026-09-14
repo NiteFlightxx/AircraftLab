@@ -15,7 +15,6 @@
 // 名称与字段不变，此处 include 复用。
 #include "Aircraft/FlightControllerRuntimeConfig.h"
 #include "Aircraft/AircraftAerodynamics.h"
-#include "Aircraft/AircraftAlternativeDriveConfig.h"
 
 // Autopilot 运行时配置契约（Path/Timing/MPCC Dataflow 节点的编译产物）。
 #include "AircraftRuntimeInterface/AircraftAutopilotConfig.h"
@@ -202,10 +201,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	/** 物理底盘根骨骼。NAME_None 时使用组件主 BodyInstance。 */
 	FName RootBone = NAME_None;
 
-	/** AircraftSolverConfig 存在时覆盖 Chaos 异步固定时间步；不存在时完全采用项目物理设置。 */
-	bool bOverrideSolverAsyncDeltaTime = false;
-	float SolverAsyncDeltaTime = 0.0f;
-
 	/** 可选的当前刚体求解迭代覆盖；关闭时使用项目级迭代设置。 */
 	bool bOverrideSolverIterationCounts = false;
 	uint8 PositionSolverIterationCount = 8;
@@ -217,10 +212,6 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 
 	/** 飞控运行时只读快照。 */
 	FAircraftFlightControllerRuntimeConfig FlightController;
-
-	/** PhysicsConstraint 与 Kinematic 各自独立的表现型驱动配置。 */
-	FAircraftConstraintSimulationRuntimeConfig ConstraintSimulation;
-	FAircraftKinematicSimulationRuntimeConfig KinematicSimulation;
 
 	/** Autopilot 运行时只读快照（Path/Timing/MPCC 节点编译产物）。 */
 	FAircraftAutopilotRuntimeConfig Autopilot;
@@ -236,16 +227,12 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationLodModel
 	void Reset()
 	{
 		RootBone = NAME_None;
-		bOverrideSolverAsyncDeltaTime = false;
-		SolverAsyncDeltaTime = 0.0f;
 		bOverrideSolverIterationCounts = false;
 		PositionSolverIterationCount = 8;
 		VelocitySolverIterationCount = 2;
 		ProjectionSolverIterationCount = 1;
 		Mass = FAircraftMassProperties();
 		FlightController = FAircraftFlightControllerRuntimeConfig();
-		ConstraintSimulation = FAircraftConstraintSimulationRuntimeConfig();
-		KinematicSimulation = FAircraftKinematicSimulationRuntimeConfig();
 		Autopilot = FAircraftAutopilotRuntimeConfig();
 		bHasAerodynamics = false;
 		Aerodynamics = FAircraftAerodynamicsRuntimeConfig();

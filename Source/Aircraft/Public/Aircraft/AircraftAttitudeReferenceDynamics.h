@@ -4,7 +4,7 @@
 
 struct FAircraftFlightControllerRuntimeConfig;
 
-/** Per-backend motion limits for a shaped alternative-drive attitude reference. */
+/** Motion limits for a frame-rate independent shaped attitude reference. */
 struct AIRCRAFT_API FAircraftAttitudeMotionConfig
 {
 	float MaxTiltAngleDegrees = 25.0f;
@@ -27,7 +27,7 @@ struct AIRCRAFT_API FAircraftAttitudeMotionState
 	bool bInitialized = false;
 };
 
-/** Complete raw and shaped reference produced for an alternative drive. */
+/** Complete raw and shaped attitude reference. */
 struct AIRCRAFT_API FAircraftAttitudeMotionOutput
 {
 	FQuat RawControlWorldRotation = FQuat::Identity;
@@ -58,10 +58,22 @@ struct AIRCRAFT_API FAircraftAlternativeAttitudeDiagnostics
 	bool bValid = false;
 };
 
-/** Frame-rate independent SO(3) reference dynamics used only by alternative drive backends. */
+/** Frame-rate independent SO(3) reference dynamics shared by all attitude-controlled backends. */
 class AIRCRAFT_API FAircraftAttitudeReferenceDynamics
 {
 public:
+	/** Shapes an already-built control-frame orientation target. */
+	static bool UpdateRotationTarget(
+		const FQuat& RawControlWorldRotation,
+		float YawRateDegPerSec,
+		float DeltaSeconds,
+		const FQuat& ActualBodyWorldRotation,
+		const FVector& ActualAngularVelocityBodyRadPerSec,
+		const FAircraftFlightControllerRuntimeConfig& FrameConfig,
+		const FAircraftAttitudeMotionConfig& MotionConfig,
+		FAircraftAttitudeMotionState& InOutState,
+		FAircraftAttitudeMotionOutput& OutReference);
+
 	static bool Update(
 		const FVector& ControlAccelerationWorldCmPerSecSq,
 		const FVector& DynamicsFeedForwardAccelerationWorldCmPerSecSq,
@@ -77,21 +89,18 @@ public:
 		FAircraftAttitudeMotionOutput& OutReference);
 
 	/**
-	 * Builds a rate/acceleration/jerk-limited target for a native physics drive.
-	 * NaturalFrequencyHz and DampingRatio are deliberately not consumed here: they belong to the drive.
+	 * Builds the world orientation and angular-velocity targets consumed by a native
+	 * physics drive. The drive is the sole owner of attitude response dynamics.
 	 */
-	static bool UpdateDriveTarget(
+	static bool BuildDriveTarget(
 		const FVector& ControlAccelerationWorldCmPerSecSq,
 		const FVector& DynamicsFeedForwardAccelerationWorldCmPerSecSq,
 		float YawDegrees,
 		float YawRateDegPerSec,
 		float GravityMagnitudeCmPerSecSq,
-		float DeltaSeconds,
-		const FQuat& ActualBodyWorldRotation,
-		const FVector& ActualAngularVelocityBodyRadPerSec,
 		const FAircraftFlightControllerRuntimeConfig& FrameConfig,
-		const FAircraftAttitudeMotionConfig& MotionConfig,
-		FAircraftAttitudeMotionState& InOutState,
+		float MaxTiltAngleDegrees,
+		float DynamicsFeedForwardScale,
 		FAircraftAttitudeMotionOutput& OutReference);
 
 	static void Reset(FAircraftAttitudeMotionState& State);

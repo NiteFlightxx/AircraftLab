@@ -161,13 +161,6 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm,
 				S.LinearVelocityCmPerSec * UE::AircraftLab::Diagnostics::DebugVectorScale,
 				FAircraftDebugColors::VelocityLinear);
-			if (S.AlternativeAttitude.bValid)
-			{
-				FAircraftDebugDraw::DrawAxes(C, S.CenterOfMassCm + FVector(0.0, 0.0, 20.0),
-					S.AlternativeAttitude.RawControlWorldRotation.Rotator(), 25.0f);
-				FAircraftDebugDraw::DrawAxes(C, S.CenterOfMassCm,
-					S.AlternativeAttitude.ShapedControlWorldRotation.Rotator(), 45.0f);
-			}
 			if (!S.bHasTrajectoryReference) return;
 			FAircraftDebugDraw::DrawPoint(C, S.TrajectoryReference.PositionCm, FAircraftDebugColors::MotionTargetPoint, 10.0f);
 			FAircraftDebugDraw::DrawLine(C, S.CenterOfMassCm, S.TrajectoryReference.PositionCm, FAircraftDebugColors::MotionTargetLine);
@@ -249,19 +242,13 @@ void UE::AircraftLab::Diagnostics::Private::RegisterAircraftOptions(
 				FAircraftDebugColors::ConstraintForce);
 			FAircraftDebugDraw::DrawArrow(C, S.CenterOfMassCm, D.Torque * UE::AircraftLab::Diagnostics::DebugVectorScale,
 				FAircraftDebugColors::ConstraintTorque);
-			if (D.Attitude.bValid)
-			{
-				FAircraftDebugDraw::DrawAxes(C, S.CenterOfMassCm,
-					D.Attitude.ShapedBodyWorldRotation.Rotator(), 50.0f);
-			}
 		};
 		Option.CanvasText = [](const FAircraftDebugFrameSnapshot& S)
 		{
 			if (!S.ConstraintDrive.bValid) return FText::GetEmpty();
-			return FText::Format(LOCTEXT("ConstraintText", "Constraint position/velocity error: {0}/{1} cm,cm/s | Force/Torque: {2}/{3} | Attitude valid: {4}"),
+			return FText::Format(LOCTEXT("ConstraintText", "Constraint position/velocity error: {0}/{1} cm,cm/s | Force/Torque: {2}/{3}"),
 				FText::AsNumber(S.ConstraintDrive.PositionErrorCm.Size()), FText::AsNumber(S.ConstraintDrive.VelocityErrorCmPerSec.Size()),
-				FText::AsNumber(S.ConstraintDrive.Force.Size()), FText::AsNumber(S.ConstraintDrive.Torque.Size()),
-				S.ConstraintDrive.Attitude.bValid ? LOCTEXT("AttitudeValid", "Yes") : LOCTEXT("AttitudeInvalid", "No"));
+				FText::AsNumber(S.ConstraintDrive.Force.Size()), FText::AsNumber(S.ConstraintDrive.Torque.Size()));
 		};
 		AddOption(OutHandles, MoveTemp(Option), FlightControlCategory, FlightControlCategoryText,
 			EAircraftDebugPayload::AircraftCore | EAircraftDebugPayload::ConstraintDrive,

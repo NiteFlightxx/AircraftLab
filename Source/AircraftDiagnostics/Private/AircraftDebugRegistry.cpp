@@ -1,6 +1,7 @@
 #include "AircraftDiagnostics/AircraftDebugRegistry.h"
 
 #include "CanvasItem.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 

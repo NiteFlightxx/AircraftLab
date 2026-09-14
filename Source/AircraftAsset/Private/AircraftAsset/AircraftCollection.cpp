@@ -27,7 +27,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName PhysicsAssetSoftObjectPathName(TEXT("PhysicsAssetSoftObjectPathName"));
 
 		/* Solver attributes */
-		const FName AsyncFixedTimeStepSize(TEXT("AsyncFixedTimeStepSize"));
 		const FName OverrideIterationCounts(TEXT("OverrideIterationCounts"));
 		const FName PositionSolverIterationCount(TEXT("PositionSolverIterationCount"));
 		const FName VelocitySolverIterationCount(TEXT("VelocitySolverIterationCount"));
@@ -115,7 +114,6 @@ namespace UE::AircraftLab::AircraftAsset
 		PhysicsAssetSoftObjectPathName = Collection.FindAttributeTyped<FSoftObjectPath>(Private::PhysicsAssetSoftObjectPathName, Private::ImportGroup);
 
 		/* Solver */
-		AsyncFixedTimeStepSize = Collection.FindAttributeTyped<float>(Private::AsyncFixedTimeStepSize, Private::SolverGroup);
 		OverrideIterationCounts = Collection.FindAttributeTyped<uint8>(Private::OverrideIterationCounts, Private::SolverGroup);
 		PositionSolverIterationCount = Collection.FindAttributeTyped<int32>(Private::PositionSolverIterationCount, Private::SolverGroup);
 		VelocitySolverIterationCount = Collection.FindAttributeTyped<int32>(Private::VelocitySolverIterationCount, Private::SolverGroup);
@@ -220,7 +218,6 @@ namespace UE::AircraftLab::AircraftAsset
 
 		/* Solver */
 		AddOrFindGroup(Private::SolverGroup);
-		AddAttribute(Private::SolverGroup, Private::AsyncFixedTimeStepSize, float(0));
 		AddAttribute(Private::SolverGroup, Private::OverrideIterationCounts, uint8(0));
 		AddAttribute(Private::SolverGroup, Private::PositionSolverIterationCount, int32(0));
 		AddAttribute(Private::SolverGroup, Private::VelocitySolverIterationCount, int32(0));

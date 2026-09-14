@@ -1,6 +1,8 @@
 #include "AircraftAutopilot/AircraftSpatialPath.h"
 
 #include "AircraftDiagnostics/AircraftDebug.h"
+#include "AircraftRuntimeInterface/AircraftSafeCorridorSelection.h"
+#include "Algo/BinarySearch.h"
 
 namespace
 {
@@ -272,6 +274,8 @@ float FAircraftSpatialPath::FSegment::ParameterAtArcLength(float ArcLengthCm) co
 void FAircraftSpatialPath::Reset()
 {
 	Segments.Reset();
+	SegmentEndDistancesCm.Reset();
+	CachedSegmentIndex = INDEX_NONE;
 	TotalLengthCm = 0.0f;
 	RouteLengthCm = 0.0f;
 	bClosed = false;
@@ -543,6 +547,7 @@ bool FAircraftSpatialPath::Build(
 		}
 		Segment.LengthCm = Segment.ArcLengthsCm.Last();
 		TotalLengthCm += Segment.LengthCm;
+		SegmentEndDistancesCm.Add(TotalLengthCm);
 	}
 	Corridor = Route.Corridor;
 	CorridorSafetyMarginCm = Config.CorridorSafetyMarginCm;
@@ -647,14 +652,21 @@ bool FAircraftSpatialPath::ResolveSegmentParameter(
 	const float Distance = bClosed
 		? WrapDistance(DistanceCm, TotalLengthCm)
 		: FMath::Clamp(DistanceCm, 0.0f, TotalLengthCm);
-	OutSegmentIndex = Segments.Num() - 1;
-	for (int32 Index = 0; Index < Segments.Num(); ++Index)
+	if (Segments.IsValidIndex(CachedSegmentIndex))
 	{
-		if (Distance <= Segments[Index].StartDistanceCm + Segments[Index].LengthCm)
+		const FSegment& CachedSegment = Segments[CachedSegmentIndex];
+		if (Distance >= CachedSegment.StartDistanceCm - UE_KINDA_SMALL_NUMBER
+			&& Distance <= CachedSegment.StartDistanceCm + CachedSegment.LengthCm
+				+ UE_KINDA_SMALL_NUMBER)
 		{
-			OutSegmentIndex = Index;
-			break;
+			OutSegmentIndex = CachedSegmentIndex;
 		}
+	}
+	if (OutSegmentIndex == INDEX_NONE)
+	{
+		OutSegmentIndex = FMath::Clamp(Algo::LowerBound(SegmentEndDistancesCm, Distance),
+			0, Segments.Num() - 1);
+		CachedSegmentIndex = OutSegmentIndex;
 	}
 	const FSegment& Segment = Segments[OutSegmentIndex];
 	OutParameter = Segment.ParameterAtArcLength(Distance - Segment.StartDistanceCm);
@@ -683,7 +695,6 @@ bool FAircraftSpatialPath::Evaluate(float DistanceCm, FAircraftSpatialPathState&
 		? (D2 - D1 * (FVector::DotProduct(D1, D2) / D1Squared)) / D1Squared
 		: FVector::ZeroVector;
 	OutState.DistanceCm = Distance;
-	OutState.SegmentIndex = SegmentIndex;
 	OutState.bValid = true;
 	return true;
 }
@@ -717,41 +728,95 @@ bool FAircraftSpatialPath::Project(
 	}
 	const float SearchCenter = bClosed ? InitialDistanceCm
 		: FMath::Clamp(InitialDistanceCm, 0.0f, TotalLengthCm);
-	const float SearchStart = bGlobalSearch ? 0.0f : FMath::Max(
-		SearchCenter - ProjectionBacktrackToleranceCm, bClosed ? -TotalLengthCm : 0.0f);
-	const float SearchEnd = bGlobalSearch ? TotalLengthCm : FMath::Min(
-		SearchCenter + ProjectionSearchDistanceCm, bClosed ? SearchCenter + TotalLengthCm : TotalLengthCm);
+	const auto SearchRange = [&](const float SearchStart, const float SearchEnd,
+		float& OutBestDistance, double& OutBestErrorSquared)
+	{
+		OutBestDistance = SearchCenter;
+		OutBestErrorSquared = TNumericLimits<double>::Max();
+		const int32 Samples = FMath::Clamp(
+			FMath::CeilToInt((SearchEnd - SearchStart) / ProjectionSampleSpacingCm),
+			16, 512);
+		for (int32 Index = 0; Index <= Samples; ++Index)
+		{
+			const float CandidateDistance = FMath::Lerp(SearchStart, SearchEnd,
+				static_cast<float>(Index) / static_cast<float>(Samples));
+			FAircraftSpatialPathState Candidate;
+			if (!Evaluate(CandidateDistance, Candidate))
+			{
+				continue;
+			}
+			const double ErrorSquared = FVector::DistSquared(
+				PositionCm, Candidate.PositionCm);
+			if (ErrorSquared < OutBestErrorSquared)
+			{
+				OutBestErrorSquared = ErrorSquared;
+				OutBestDistance = CandidateDistance;
+			}
+		}
+		if (!FMath::IsFinite(OutBestErrorSquared))
+		{
+			return false;
+		}
+		for (int32 Iteration = 0; Iteration < 6; ++Iteration)
+		{
+			FAircraftSpatialPathState Candidate;
+			if (!Evaluate(OutBestDistance, Candidate))
+			{
+				return false;
+			}
+			const float Step = static_cast<float>(FVector::DotProduct(
+				PositionCm - Candidate.PositionCm, Candidate.Tangent));
+			OutBestDistance = FMath::Clamp(
+				OutBestDistance + Step, SearchStart, SearchEnd);
+			if (FMath::Abs(Step) < 0.01f)
+			{
+				break;
+			}
+		}
+		FAircraftSpatialPathState Refined;
+		if (!Evaluate(OutBestDistance, Refined))
+		{
+			return false;
+		}
+		OutBestErrorSquared = FVector::DistSquared(PositionCm, Refined.PositionCm);
+		return true;
+	};
+
+	float SearchStart = bGlobalSearch ? 0.0f : FMath::Max(
+		SearchCenter - ProjectionBacktrackToleranceCm,
+		bClosed ? SearchCenter - TotalLengthCm : 0.0f);
+	float SearchEnd = bGlobalSearch ? TotalLengthCm : FMath::Min(
+		SearchCenter + ProjectionSearchDistanceCm,
+		bClosed ? SearchCenter + TotalLengthCm : TotalLengthCm);
 	float BestDistance = SearchCenter;
 	double BestErrorSquared = TNumericLimits<double>::Max();
-	const int32 Samples = FMath::Clamp(
-		FMath::CeilToInt((SearchEnd - SearchStart) / ProjectionSampleSpacingCm), 16, 512);
-	for (int32 Index = 0; Index <= Samples; ++Index)
-	{
-		const float CandidateDistance = FMath::Lerp(SearchStart, SearchEnd,
-			static_cast<float>(Index) / static_cast<float>(Samples));
-		FAircraftSpatialPathState Candidate;
-		Evaluate(CandidateDistance, Candidate);
-		const double ErrorSquared = FVector::DistSquared(PositionCm, Candidate.PositionCm);
-		if (ErrorSquared < BestErrorSquared)
-		{
-			BestErrorSquared = ErrorSquared;
-			BestDistance = CandidateDistance;
-		}
-	}
+	bool bSearchSucceeded = SearchRange(
+		SearchStart, SearchEnd, BestDistance, BestErrorSquared);
 
-	for (int32 Iteration = 0; Iteration < 6; ++Iteration)
+	if (!bGlobalSearch)
 	{
-		FAircraftSpatialPathState Candidate;
-		Evaluate(BestDistance, Candidate);
-		const float Step = static_cast<float>(FVector::DotProduct(
-			PositionCm - Candidate.PositionCm, Candidate.Tangent));
-		BestDistance = FMath::Clamp(BestDistance + Step, SearchStart, SearchEnd);
-		if (FMath::Abs(Step) < 0.01f)
+		const float EdgeToleranceCm = FMath::Max(
+			0.5f * ProjectionSampleSpacingCm, 1.0f);
+		const bool bAtArtificialStart = bSearchSucceeded
+			&& FMath::Abs(BestDistance - SearchStart) <= EdgeToleranceCm
+			&& (bClosed || SearchStart > UE_KINDA_SMALL_NUMBER);
+		const bool bAtArtificialEnd = bSearchSucceeded
+			&& FMath::Abs(BestDistance - SearchEnd) <= EdgeToleranceCm
+			&& (bClosed || SearchEnd < TotalLengthCm - UE_KINDA_SMALL_NUMBER);
+		const float RecoveryDistanceCm = FMath::Max(
+			4.0f * ProjectionSearchDistanceCm, ProjectionSampleSpacingCm);
+		const bool bImplausiblyFarFromLocalWindow = bSearchSucceeded
+			&& BestErrorSquared > FMath::Square(static_cast<double>(RecoveryDistanceCm));
+		if (!bSearchSucceeded || bAtArtificialStart || bAtArtificialEnd
+			|| bImplausiblyFarFromLocalWindow)
 		{
-			break;
+			SearchStart = 0.0f;
+			SearchEnd = TotalLengthCm;
+			bSearchSucceeded = SearchRange(
+				SearchStart, SearchEnd, BestDistance, BestErrorSquared);
 		}
 	}
-	return Evaluate(BestDistance, OutState);
+	return bSearchSucceeded && Evaluate(BestDistance, OutState);
 }
 
 float FAircraftSpatialPath::ComputeCorridorViolationCm(
@@ -774,4 +839,30 @@ FVector FAircraftSpatialPath::ComputeCorridorCorrectionCm(
 		return FVector::ZeroVector;
 	}
 	return Corridor[CorridorIndex].ComputeCorrectionCm(PositionCm, CorridorSafetyMarginCm);
+}
+
+bool FAircraftSpatialPath::BuildContinuousCorridorCandidates(
+	const FVector& ActualPositionCm, const FVector& PredictedPositionCm,
+	int32& InOutActiveSegmentIndex, TArray<int32>& OutCandidateIndices) const
+{
+	return FAircraftSafeCorridorSelection::BuildContinuousCandidates(
+		Corridor, ActualPositionCm, PredictedPositionCm, 25.0f,
+		InOutActiveSegmentIndex, OutCandidateIndices);
+}
+
+float FAircraftSpatialPath::ComputeCorridorUnionViolationCm(
+	const FVector& PositionCm, const TConstArrayView<int32> CandidateIndices) const
+{
+	return FAircraftSafeCorridorSelection::ComputePointViolationCm(
+		Corridor, CandidateIndices, PositionCm, CorridorSafetyMarginCm);
+}
+
+bool FAircraftSpatialPath::IsCorridorLineContinuouslyCovered(
+	const FVector& StartCm, const FVector& EndCm,
+	const TConstArrayView<int32> CandidateIndices,
+	const float AdditionalSafetyMarginCm) const
+{
+	return FAircraftSafeCorridorSelection::IsLineContinuouslyCovered(
+		Corridor, CandidateIndices, StartCm, EndCm,
+		CorridorSafetyMarginCm + FMath::Max(AdditionalSafetyMarginCm, 0.0f));
 }

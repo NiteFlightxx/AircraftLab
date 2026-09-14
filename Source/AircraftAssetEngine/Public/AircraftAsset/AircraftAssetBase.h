@@ -42,16 +42,13 @@ public:
 	virtual bool HasValidAircraftSimulationModels() const
 	PURE_VIRTUAL(UAircraftAssetBase::HasValidAircraftSimulationModels, return false;);
 
-	virtual int32 GetNumAircraftSimulationModels() const
-	PURE_VIRTUAL(UAircraftAssetBase::GetNumAircraftSimulationModels, return 0;);
-
-	virtual TSharedPtr<const FAircraftSimulationModel> GetAircraftSimulationModel(int32 ModelIndex) const
+	virtual TSharedPtr<const FAircraftSimulationModel> GetAircraftSimulationModel() const
 	PURE_VIRTUAL(UAircraftAssetBase::GetAircraftSimulationModel, return nullptr;);
 
 	virtual void SetCollections(TArray<TSharedRef<const FManagedArrayCollection>>&& InCollections)
 	PURE_VIRTUAL(UAircraftAssetBase::SetCollections, );
 
-	virtual const TArray<TSharedRef<const FManagedArrayCollection>>& GetCollections(int32 ModelIndex) const
+	virtual const TArray<TSharedRef<const FManagedArrayCollection>>& GetCollections() const
 	PURE_VIRTUAL(UAircraftAssetBase::GetCollections, static const TArray<TSharedRef<const FManagedArrayCollection>> EmptyArray; return EmptyArray;);
 
 	/** Strongly owned skeletal mesh used to compile and execute the simulation. */

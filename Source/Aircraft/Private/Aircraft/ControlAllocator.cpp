@@ -17,6 +17,20 @@ void FAircraftControlAllocator::SetRotorDescriptors(const TArray<FAircraftRotorA
 	Cache.Invalidate();
 }
 
+void FAircraftControlAllocator::ResetControlState()
+{
+	const int32 NumRotors = RotorInfoBuffer.Num();
+	Diagnostics.Reset();
+	CommandBuffer.Init(0.0f, NumRotors);
+	AllocatedThrustFractions.Init(0.0, NumRotors);
+	SolvedRotors.Init(false, NumRotors);
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		bSaturatedPositive[Axis] = false;
+		bSaturatedNegative[Axis] = false;
+	}
+}
+
 FVector4 FAircraftControlAllocator::BuildJacobianColumn(
 	const FAircraftRotorAllocationInfo& RotorInfo,
 	const FAircraftFlightControllerRuntimeConfig& Config)

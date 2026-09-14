@@ -1,6 +1,8 @@
 #include "AircraftNavigation/AircraftArrivalAllocator.h"
+#include "AircraftNavigation/AircraftAvoidanceNeighborSource.h"
 #include "AircraftNavigation/AircraftGuidanceTrajectoryBuilder.h"
 #include "AircraftNavigation/AircraftOrcaSolver.h"
+#include "AircraftRuntimeInterface/AircraftSafeCorridorSelection.h"
 
 #include "Misc/AutomationTest.h"
 
@@ -130,6 +132,121 @@ bool FAircraftOrcaCapsuleCorridorTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftOrcaCapsuleCorridorUnionTest,
+	"AircraftLab.Navigation.ORCA.CapsuleCorridorUnion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftOrcaCapsuleCorridorUnionTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::AircraftLab::Navigation::Tests;
+	FAircraftAvoidanceAgentState Self;
+	Self.StableId = 201;
+	Self.PositionCm = FVector::ZeroVector;
+	Self.VelocityCmPerSec = FVector::ZeroVector;
+	// Keep the union assertion away from the conservative inscribed capability
+	// polygon boundary (200*cos(pi/16)); this test isolates corridor selection.
+	Self.CommandedVelocityCmPerSec = FVector(0.0f, 150.0f, 0.0f);
+	Self.BodyRadiusCm = 30.0f;
+
+	FAircraftAvoidanceLimits Limits = MakeAvoidanceLimits();
+	Limits.MaxHorizontalJerkCmPerSecCubed = 0.0f;
+	Limits.SmoothingWeight = 0.0f;
+
+	TArray<FAircraftVelocityConstraintCapsule> CorridorAlternatives;
+	FAircraftVelocityConstraintCapsule& Incoming = CorridorAlternatives.AddDefaulted_GetRef();
+	Incoming.AxisStartCm = FVector(-1000.0f, 0.0f, 0.0f);
+	Incoming.AxisEndCm = FVector::ZeroVector;
+	Incoming.RadiusCm = 50.0f;
+	Incoming.PredictionTimeSeconds = 0.5f;
+	FAircraftVelocityConstraintCapsule& Outgoing = CorridorAlternatives.AddDefaulted_GetRef();
+	Outgoing.AxisStartCm = FVector::ZeroVector;
+	Outgoing.AxisEndCm = FVector(0.0f, 1000.0f, 0.0f);
+	Outgoing.RadiusCm = 50.0f;
+	Outgoing.PredictionTimeSeconds = 0.5f;
+
+	const FVector PreferredVelocityCmPerSec(0.0f, 150.0f, 0.0f);
+	const FAircraftAvoidanceResult Result = FAircraftOrcaSolver::Solve(
+		Self, {}, PreferredVelocityCmPerSec, FVector::ZeroVector,
+		Limits, CorridorAlternatives);
+
+	TestTrue(TEXT("A route corner remains feasible when either adjacent capsule contains the prediction"),
+		Result.bFeasible);
+	TestTrue(TEXT("The outgoing velocity is not projected back into the incoming capsule"),
+		Result.TargetVelocityCmPerSec.Equals(PreferredVelocityCmPerSec, 0.1f));
+	TestTrue(TEXT("The selected result belongs to at least one corridor alternative"),
+		Incoming.ComputeViolationCmPerSec(Self.PositionCm, Result.TargetVelocityCmPerSec) <= 0.1
+		|| Outgoing.ComputeViolationCmPerSec(Self.PositionCm, Result.TargetVelocityCmPerSec) <= 0.1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftCorridorSelectionHighSpeedSweepTest,
+	"AircraftLab.Navigation.CorridorSelection.HighSpeedSweepCrossesShortSegments",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftCorridorSelectionHighSpeedSweepTest::RunTest(const FString& Parameters)
+{
+	TArray<FAircraftSafeCorridorSegment> Corridor;
+	for (int32 SegmentIndex = 0; SegmentIndex < 5; ++SegmentIndex)
+	{
+		FAircraftSafeCorridorSegment& Segment = Corridor.AddDefaulted_GetRef();
+		Segment.AxisStartCm = FVector(SegmentIndex * 100.0f, 0.0f, 0.0f);
+		Segment.AxisEndCm = FVector((SegmentIndex + 1) * 100.0f, 0.0f, 0.0f);
+		Segment.RadiusCm = 40.0f;
+		Segment.StartDistanceCm = SegmentIndex * 100.0f;
+		Segment.EndDistanceCm = (SegmentIndex + 1) * 100.0f;
+	}
+
+	int32 ActiveSegmentIndex = 0;
+	TArray<int32> CandidateIndices;
+	TestTrue(TEXT("A high-speed sweep resolves continuous corridor candidates"),
+		FAircraftSafeCorridorSelection::BuildContinuousCandidates(
+			Corridor, FVector(50.0f, 0.0f, 0.0f), FVector(450.0f, 0.0f, 0.0f),
+			25.0f, ActiveSegmentIndex, CandidateIndices));
+	TestEqual(TEXT("Every topologically traversed short segment is retained"),
+		CandidateIndices.Num(), 5);
+	for (int32 SegmentIndex = 0; SegmentIndex < CandidateIndices.Num(); ++SegmentIndex)
+	{
+		TestEqual(TEXT("Candidates remain in route-topology order"),
+			CandidateIndices[SegmentIndex], SegmentIndex);
+	}
+	TestTrue(TEXT("The entire high-speed sweep is continuously covered by the capsule union"),
+		FAircraftSafeCorridorSelection::IsLineContinuouslyCovered(Corridor,
+			CandidateIndices, FVector(50.0f, 0.0f, 0.0f),
+			FVector(450.0f, 0.0f, 0.0f), 0.0f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftCorridorSelectionNarrowCornerCoverageTest,
+	"AircraftLab.Navigation.CorridorSelection.NarrowNinetyDegreeRejectsChordGap",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftCorridorSelectionNarrowCornerCoverageTest::RunTest(const FString& Parameters)
+{
+	TArray<FAircraftSafeCorridorSegment> Corridor;
+	FAircraftSafeCorridorSegment& Incoming = Corridor.AddDefaulted_GetRef();
+	Incoming.AxisStartCm = FVector(-100.0f, 0.0f, 0.0f);
+	Incoming.AxisEndCm = FVector::ZeroVector;
+	Incoming.RadiusCm = 10.0f;
+	FAircraftSafeCorridorSegment& Outgoing = Corridor.AddDefaulted_GetRef();
+	Outgoing.AxisStartCm = FVector::ZeroVector;
+	Outgoing.AxisEndCm = FVector(0.0f, 100.0f, 0.0f);
+	Outgoing.RadiusCm = 10.0f;
+	int32 ActiveSegmentIndex = 0;
+	TArray<int32> CandidateIndices;
+	TestTrue(TEXT("Both corner capsules are candidates"),
+		FAircraftSafeCorridorSelection::BuildContinuousCandidates(Corridor,
+			FVector(-50.0f, 0.0f, 0.0f), FVector(0.0f, 50.0f, 0.0f),
+			0.0f, ActiveSegmentIndex, CandidateIndices));
+	TestFalse(TEXT("Endpoints in different capsules do not hide an uncovered middle interval"),
+		FAircraftSafeCorridorSelection::IsLineContinuouslyCovered(Corridor,
+			CandidateIndices, FVector(-50.0f, 0.0f, 0.0f),
+			FVector(0.0f, 50.0f, 0.0f), 0.0f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftOrcaVerticalClearanceTest,
 	"AircraftLab.Navigation.ORCA.VerticalClearance",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -192,6 +309,53 @@ bool FAircraftOrcaAnchoredHolderTest::RunTest(const FString& Parameters)
 		HolderResult.TargetVelocityCmPerSec.IsNearlyZero(0.01f));
 	TestTrue(TEXT("The approaching aircraft accepts the avoidance correction"),
 		!ApproachingResult.TargetVelocityCmPerSec.Equals(Approaching.VelocityCmPerSec, 0.01f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftOrcaAnchoredHolderExtrapolationTest,
+	"AircraftLab.Navigation.ORCA.AnchoredHolderExtrapolationNotOverlap",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftOrcaAnchoredHolderExtrapolationTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::AircraftLab::Navigation::Tests;
+	// 回归锁定：邻居位置外推（视界前半段）不得把"将来才接近"的邻居外推成
+	// "现在已重叠"——那会绕过锚定责任归零逻辑，把静止占位机踢离锚点。
+	// 布局：间距 150cm、合并半径 80cm、逼近速度 -200cm/s × 外推 1s = 200cm
+	// 位移 > 70cm 净距——无钳制时必然产生假重叠。
+	FAircraftAvoidanceAgentState Holder;
+	Holder.StableId = 30;
+	Holder.BodyRadiusCm = 30.0f;
+	Holder.bAnchored = true;
+
+	FAircraftAvoidanceAgentState FastApproacher;
+	FastApproacher.StableId = 31;
+	FastApproacher.PositionCm = FVector(150.0f, 0.0f, 0.0f);
+	FastApproacher.VelocityCmPerSec = FVector(-200.0f, 0.0f, 0.0f);
+	FastApproacher.CommandedVelocityCmPerSec = FastApproacher.VelocityCmPerSec;
+	FastApproacher.BodyRadiusCm = 30.0f;
+
+	const FAircraftAvoidanceResult HolderResult = FAircraftOrcaSolver::Solve(
+		Holder, MakeArrayView(&FastApproacher, 1), FVector::ZeroVector,
+		FVector::ZeroVector, MakeAvoidanceLimits(), {});
+	TestTrue(TEXT("Extrapolation clamps to the combined radius so no false overlap is created"),
+		HolderResult.TargetVelocityCmPerSec.IsNearlyZero(0.01f));
+	TestTrue(TEXT("The holder solve remains feasible"),
+		HolderResult.bFeasible);
+
+	// 对照：真实重叠（当前距离 50 < 合并半径 80）时锚定者仍按优先级分担分离责任。
+	FAircraftAvoidanceAgentState Overlapper;
+	Overlapper.StableId = 32;
+	Overlapper.PositionCm = FVector(50.0f, 0.0f, 0.0f);
+	Overlapper.VelocityCmPerSec = FVector::ZeroVector;
+	Overlapper.CommandedVelocityCmPerSec = FVector::ZeroVector;
+	Overlapper.BodyRadiusCm = 30.0f;
+	const FAircraftAvoidanceResult OverlapResult = FAircraftOrcaSolver::Solve(
+		Holder, MakeArrayView(&Overlapper, 1), FVector::ZeroVector,
+		FVector::ZeroVector, MakeAvoidanceLimits(), {});
+	TestTrue(TEXT("A genuinely overlapping neighbor still separates the holder"),
+		!OverlapResult.TargetVelocityCmPerSec.IsNearlyZero(0.01f));
 	return true;
 }
 
@@ -316,6 +480,52 @@ bool FAircraftArrivalFixedSlotConflictTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftArrivalSkipsInvalidClaimsTest,
+	"AircraftLab.Navigation.Arrival.SkipsInvalidClaims",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftArrivalSkipsInvalidClaimsTest::RunTest(const FString& Parameters)
+{
+	FAircraftArrivalRegion Region;
+	Region.Mode = EAircraftArrivalAllocationMode::SharedCylinder;
+	Region.CenterCm = FVector::ZeroVector;
+	Region.SeparationPaddingCm = 20.0f;
+	Region.HorizontalRadiusCm = 600.0f;
+	Region.VerticalHalfHeightCm = 200.0f;
+
+	TArray<FAircraftArrivalClaim> Claims;
+	FAircraftArrivalClaim& Good = Claims.AddDefaulted_GetRef();
+	Good.StableId = 1;
+	Good.BodyRadiusCm = 30.0f;
+	Good.RequestOrder = 1;
+	FAircraftArrivalClaim& InvalidRadius = Claims.AddDefaulted_GetRef();
+	InvalidRadius.StableId = 2;
+	InvalidRadius.BodyRadiusCm = 0.0f; // 无效：半径必须 > 0
+	InvalidRadius.RequestOrder = 2;
+	FAircraftArrivalClaim& Duplicate = Claims.AddDefaulted_GetRef();
+	Duplicate.StableId = 1; // 无效：重复 StableId
+	Duplicate.BodyRadiusCm = 30.0f;
+	Duplicate.RequestOrder = 3;
+	FAircraftArrivalClaim& GoodSecond = Claims.AddDefaulted_GetRef();
+	GoodSecond.StableId = 3;
+	GoodSecond.BodyRadiusCm = 30.0f;
+	GoodSecond.RequestOrder = 4;
+
+	const FAircraftArrivalAllocationResult Result = FAircraftArrivalAllocator::Allocate(Claims, Region);
+	TestTrue(TEXT("A single bad claim no longer invalidates the whole allocation"), Result.bValid);
+	TestEqual(TEXT("Only the valid unique claims take part"), Result.Assignments.Num(), 2);
+	const FAircraftArrivalAssignment* First = Result.FindAssignment(1);
+	const FAircraftArrivalAssignment* Third = Result.FindAssignment(3);
+	TestTrue(TEXT("The first valid claim receives a slot"),
+		First && First->Status == EAircraftArrivalAssignmentStatus::Assigned);
+	TestTrue(TEXT("The second valid claim receives a non-overlapping slot"),
+		Third && Third->Status == EAircraftArrivalAssignmentStatus::Assigned
+		&& FVector::DistSquared(First->PositionCm, Third->PositionCm)
+			>= FMath::Square(30.0f + 30.0f + Region.SeparationPaddingCm - UE_KINDA_SMALL_NUMBER));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftGuidanceTrajectoryJerkTest,
 	"AircraftLab.Navigation.Guidance.JerkLimitedTrajectory",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -414,6 +624,266 @@ bool FAircraftGuidanceTrajectoryStopsAcceleratingAtSolvedVelocityTest::RunTest(c
 				- Guidance.Samples[SampleIndex - 1].PositionCm)
 			.Equals(IntegratedDisplacement, 0.01f));
 	}
+	return true;
+}
+
+namespace
+{
+	void FillStrictCapabilitySnapshot(FAircraftNavigationAgentSnapshot& Snapshot)
+	{
+		Snapshot.bValid = true;
+		Snapshot.VehicleState.TimeSeconds = 5.0;
+		Snapshot.VehicleState.PositionCm = FVector::ZeroVector;
+		Snapshot.VehicleState.VelocityCmPerSec = FVector::ZeroVector;
+		Snapshot.Capability.bValid = true;
+		Snapshot.Capability.MaxHorizontalSpeedCmPerSec = 500.0f;
+		// 期望加速度 5050 略超上限 5000：加速度域容差 t/dt 必须生效才能通过。
+		Snapshot.Capability.MaxHorizontalAccelerationCmPerSecSq = 5000.0f;
+		Snapshot.Capability.MaxHorizontalDecelerationCmPerSecSq = 5000.0f;
+		Snapshot.Capability.MaxHorizontalJerkCmPerSecCubed = 100000.0f;
+		Snapshot.Capability.MaxVerticalAccelerationCmPerSecSq = 1000.0f;
+		Snapshot.Capability.MaxVerticalJerkCmPerSecCubed = 100000.0f;
+		Snapshot.Capability.MaxClimbRateCmPerSec = 500.0f;
+		Snapshot.Capability.MaxDescentRateCmPerSec = 500.0f;
+	}
+
+	FAircraftGuidanceTrajectorySettings MakeTrajectorySettings()
+	{
+		FAircraftGuidanceTrajectorySettings Settings;
+		Settings.SourceIntentId = 21;
+		Settings.SourceIntentRevision = 2;
+		Settings.SolveDeltaTimeSeconds = 0.1f;
+		Settings.HorizonSeconds = 0.5f;
+		Settings.SampleIntervalSeconds = 0.1f;
+		Settings.ValiditySeconds = 0.25f;
+		return Settings;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftGuidanceTrajectoryHardCapabilityTest,
+	"AircraftLab.Navigation.Guidance.HardCapabilityRejectsViolation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftGuidanceTrajectoryHardCapabilityTest::RunTest(const FString& Parameters)
+{
+	FAircraftNavigationAgentSnapshot Snapshot;
+	FillStrictCapabilitySnapshot(Snapshot);
+
+	FAircraftNavigationGuidance Guidance;
+	FVector CommandAcceleration;
+	TestFalse(TEXT("A velocity beyond a hard capability is never published as guidance"),
+		FAircraftGuidanceTrajectoryBuilder::BuildVelocityGuidance(
+			Snapshot, FVector(505.0f, 0.0f, 0.0f), MakeTrajectorySettings(),
+			Guidance, CommandAcceleration));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftGuidanceTrajectoryZeroJerkDisablesCheckTest,
+	"AircraftLab.Navigation.Guidance.ZeroJerkDisablesJerkCheck",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftGuidanceTrajectoryZeroJerkDisablesCheckTest::RunTest(const FString& Parameters)
+{
+	FAircraftNavigationAgentSnapshot Snapshot;
+	Snapshot.bValid = true;
+	Snapshot.VehicleState.TimeSeconds = 7.0;
+	Snapshot.VehicleState.PositionCm = FVector::ZeroVector;
+	Snapshot.VehicleState.VelocityCmPerSec = FVector::ZeroVector;
+	Snapshot.Capability.bValid = true;
+	Snapshot.Capability.MaxHorizontalSpeedCmPerSec = 500.0f;
+	Snapshot.Capability.MaxHorizontalAccelerationCmPerSecSq = 5000.0f;
+	Snapshot.Capability.MaxHorizontalDecelerationCmPerSecSq = 5000.0f;
+	// jerk = 0 与 ORCA 能力平面同语义：未启用，而非零预算。
+	Snapshot.Capability.MaxHorizontalJerkCmPerSecCubed = 0.0f;
+	Snapshot.Capability.MaxVerticalAccelerationCmPerSecSq = 1000.0f;
+	Snapshot.Capability.MaxVerticalJerkCmPerSecCubed = 0.0f;
+	Snapshot.Capability.MaxClimbRateCmPerSec = 500.0f;
+	Snapshot.Capability.MaxDescentRateCmPerSec = 500.0f;
+
+	// 从零指令加速度起步的非零加速度变化：零 jerk 预算（旧语义）会永久拒绝。
+	FAircraftGuidanceTrajectorySettings Settings = MakeTrajectorySettings();
+	Settings.PreviousCommandAccelerationCmPerSecSq = FVector::ZeroVector;
+
+	FAircraftNavigationGuidance Guidance;
+	FVector CommandAcceleration;
+	TestTrue(TEXT("Zero jerk limits disable the jerk check instead of budgeting zero"),
+		FAircraftGuidanceTrajectoryBuilder::BuildVelocityGuidance(
+			Snapshot, FVector(100.0f, 0.0f, 10.0f), Settings,
+			Guidance, CommandAcceleration));
+	return true;
+}
+
+namespace
+{
+	FAircraftAvoidanceAgentState MakeNeighborAgent(
+		const uint64 StableId, const FVector& PositionCm,
+		const FVector& VelocityCmPerSec)
+	{
+		FAircraftAvoidanceAgentState State;
+		State.StableId = StableId;
+		State.PositionCm = PositionCm;
+		State.VelocityCmPerSec = VelocityCmPerSec;
+		State.CommandedVelocityCmPerSec = VelocityCmPerSec;
+		State.BodyRadiusCm = 30.0f;
+		State.MaxHorizontalSpeedCmPerSec = 300.0f;
+		return State;
+	}
+
+	FAircraftAvoidanceNeighborQuery MakeNeighborQuery(
+		const FAircraftAvoidanceAgentState& Self, const int32 MaxNeighbors)
+	{
+		FAircraftAvoidanceNeighborQuery Query;
+		Query.Self = Self;
+		Query.MaxNeighbors = MaxNeighbors;
+		Query.TimeHorizonSeconds = 2.0f;
+		Query.SeparationPaddingCm = 20.0f;
+		return Query;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNeighborSelectionQueryRadiusTest,
+	"AircraftLab.Navigation.NeighborSelection.QueryRadiusCulling",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNeighborSelectionQueryRadiusTest::RunTest(const FString& Parameters)
+{
+	// Self 静止于原点，速度 0；候选速度 0 —— 查询半径 = (0+300)×2 + 30+30+0+0+20 = 680cm。
+	FAircraftAvoidanceAgentState Self = MakeNeighborAgent(1,
+		FVector::ZeroVector, FVector::ZeroVector);
+	Self.MaxHorizontalSpeedCmPerSec = 0.0f;
+
+	FAircraftAvoidanceAgentState Near = MakeNeighborAgent(2,
+		FVector(500.0f, 0.0f, 0.0f), FVector::ZeroVector);
+	FAircraftAvoidanceAgentState Far = MakeNeighborAgent(3,
+		FVector(700.0f, 0.0f, 0.0f), FVector::ZeroVector); // 超半径，被剔除
+
+	TArray<FAircraftAvoidanceAgentState> Neighbors;
+	AircraftAvoidanceNeighborSelection::SelectNeighbors(
+		MakeNeighborQuery(Self, 12), MakeArrayView({ Near, Far }), Neighbors);
+
+	TestEqual(TEXT("Only the candidate inside the query radius is kept"),
+		Neighbors.Num(), 1);
+	TestEqual(TEXT("The inside candidate keeps its identity"),
+		Neighbors[0].StableId, uint64(2));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNeighborSelectionTcpaOrderTest,
+	"AircraftLab.Navigation.NeighborSelection.TcpaOrderAndStaleSampleCompensation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNeighborSelectionTcpaOrderTest::RunTest(const FString& Parameters)
+{
+	// Self 向 +X 飞：逼近者（-X 方向 400cm，向 +X 飞）TCPA 小于同距远离者。
+	FAircraftAvoidanceAgentState Self = MakeNeighborAgent(1,
+		FVector::ZeroVector, FVector(100.0f, 0.0f, 0.0f));
+	Self.SampleTimeSeconds = 10.0;
+
+	FAircraftAvoidanceAgentState Approacher = MakeNeighborAgent(2,
+		FVector(400.0f, 0.0f, 0.0f), FVector(-100.0f, 0.0f, 0.0f));
+	Approacher.SampleTimeSeconds = 10.0;
+	FAircraftAvoidanceAgentState Receder = MakeNeighborAgent(3,
+		FVector(-400.0f, 0.0f, 0.0f), FVector(-100.0f, 0.0f, 0.0f));
+	Receder.SampleTimeSeconds = 10.0;
+	// 旧采样候选：位置落后 0.5s（2.0s 视界内全额补偿），补偿后应位于 (650,0,0)。
+	FAircraftAvoidanceAgentState Stale = MakeNeighborAgent(4,
+		FVector(500.0f, 0.0f, 0.0f), FVector(300.0f, 0.0f, 0.0f));
+	Stale.SampleTimeSeconds = 9.5;
+
+	TArray<FAircraftAvoidanceAgentState> Neighbors;
+	AircraftAvoidanceNeighborSelection::SelectNeighbors(
+		MakeNeighborQuery(Self, 12),
+		MakeArrayView({ Receder, Stale, Approacher }), Neighbors);
+
+	TestEqual(TEXT("All three candidates are selected"), Neighbors.Num(), 3);
+	TestEqual(TEXT("The closing aircraft sorts first by TCPA"),
+		Neighbors[0].StableId, uint64(2));
+	TestTrue(TEXT("The stale sample position is compensated by velocity times age"),
+		Neighbors[2].PositionCm.Equals(FVector(650.0f, 0.0f, 0.0f), 0.1f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNeighborSelectionClosestApproachTest,
+	"AircraftLab.Navigation.NeighborSelection.ClosestApproachRejectsRecedingAircraft",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNeighborSelectionClosestApproachTest::RunTest(const FString& Parameters)
+{
+	FAircraftAvoidanceAgentState Self = MakeNeighborAgent(1,
+		FVector::ZeroVector, FVector(100.0f, 0.0f, 0.0f));
+	FAircraftAvoidanceAgentState Receding = MakeNeighborAgent(2,
+		FVector(-100.0f, 0.0f, 0.0f), FVector(-100.0f, 0.0f, 0.0f));
+	FAircraftAvoidanceAgentState FutureCollision = MakeNeighborAgent(3,
+		FVector(400.0f, 0.0f, 0.0f), FVector(-100.0f, 0.0f, 0.0f));
+
+	TArray<FAircraftAvoidanceAgentState> Neighbors;
+	AircraftAvoidanceNeighborSelection::SelectNeighbors(
+		MakeNeighborQuery(Self, 1), MakeArrayView({ Receding, FutureCollision }), Neighbors);
+
+	TestEqual(TEXT("The query keeps one most-dangerous neighbor"), Neighbors.Num(), 1);
+	TestEqual(TEXT("A future collision outranks a nearby aircraft that is already receding"),
+		Neighbors[0].StableId, uint64(3));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNeighborSelectionVerticalBroadPhaseTest,
+	"AircraftLab.Navigation.NeighborSelection.VerticalBroadPhase",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNeighborSelectionVerticalBroadPhaseTest::RunTest(const FString& Parameters)
+{
+	FAircraftAvoidanceAgentState Self = MakeNeighborAgent(1,
+		FVector::ZeroVector, FVector(0.0f, 0.0f, 200.0f));
+	Self.MaxHorizontalSpeedCmPerSec = 0.0f;
+	Self.MaxClimbRateCmPerSec = 300.0f;
+	Self.MaxDescentRateCmPerSec = 300.0f;
+	FAircraftAvoidanceAgentState Other = MakeNeighborAgent(2,
+		FVector(0.0f, 0.0f, 500.0f), FVector(0.0f, 0.0f, -200.0f));
+	Other.MaxHorizontalSpeedCmPerSec = 0.0f;
+	Other.MaxClimbRateCmPerSec = 300.0f;
+	Other.MaxDescentRateCmPerSec = 300.0f;
+
+	TArray<FAircraftAvoidanceAgentState> Neighbors;
+	AircraftAvoidanceNeighborSelection::SelectNeighbors(
+		MakeNeighborQuery(Self, 1), MakeArrayView(&Other, 1), Neighbors);
+
+	TestEqual(TEXT("A pure vertical closing aircraft survives broad-phase culling"),
+		Neighbors.Num(), 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftNeighborSelectionTruncationTest,
+	"AircraftLab.Navigation.NeighborSelection.KeepsMostDangerous",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftNeighborSelectionTruncationTest::RunTest(const FString& Parameters)
+{
+	// 三架逼近者（距离 200/400/600，同速相向），MaxNeighbors=2 截掉最远（TCPA 最大）的。
+	FAircraftAvoidanceAgentState Self = MakeNeighborAgent(1,
+		FVector::ZeroVector, FVector(100.0f, 0.0f, 0.0f));
+
+	TArray<FAircraftAvoidanceAgentState> Candidates;
+	Candidates.Add(MakeNeighborAgent(10, FVector(600.0f, 0.0f, 0.0f), FVector(-100.0f, 0.0f, 0.0f)));
+	Candidates.Add(MakeNeighborAgent(11, FVector(200.0f, 0.0f, 0.0f), FVector(-100.0f, 0.0f, 0.0f)));
+	Candidates.Add(MakeNeighborAgent(12, FVector(400.0f, 0.0f, 0.0f), FVector(-100.0f, 0.0f, 0.0f)));
+
+	TArray<FAircraftAvoidanceAgentState> Neighbors;
+	AircraftAvoidanceNeighborSelection::SelectNeighbors(
+		MakeNeighborQuery(Self, 2), Candidates, Neighbors);
+
+	TestEqual(TEXT("Truncation keeps exactly MaxNeighbors aircraft"),
+		Neighbors.Num(), 2);
+	TestEqual(TEXT("The most dangerous (nearest closing) is first"),
+		Neighbors[0].StableId, uint64(11));
+	TestEqual(TEXT("The second most dangerous is kept"),
+		Neighbors[1].StableId, uint64(12));
 	return true;
 }
 

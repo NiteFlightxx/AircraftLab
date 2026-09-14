@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "Dataflow/AircraftConfigNodeBase.h"
-#include "Dataflow/AircraftAlternativeAttitudeConfig.h"
 
 #include "AircraftConstraintSimulationConfigNode.generated.h"
 
@@ -29,18 +28,18 @@ struct FAircraftConstraintSimulationConfig
 	/** 预测器动力学前馈系数；0 禁用，1 完整消费阻尼或显式空气动力学补偿。 */
 	UPROPERTY(EditAnywhere, Category = "Constraint|Feed Forward", meta = (DisplayName = "Dynamics Feedforward Scale", ClampMin = "0.0"))
 	float DynamicsFeedForwardScale = 1.0f;
-	/** 共享姿态语义；频率和阻尼直接配置 Chaos SLERP Angular Drive。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude", meta = (ShowOnlyInnerProperties))
-	FAircraftAlternativeAttitudeConfig Attitude;
-	/** 不依赖姿态强度的 Angular Drive 附加阻尼。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude", meta = (DisplayName = "Extra Damping (/s)", ClampMin = "0.0"))
+	/** 原生 SLERP Angular Drive 的自然频率（Hz）。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Angular Drive", meta = (DisplayName = "Attitude Natural Frequency (Hz)", ClampMin = "0.0", Units = "Hz"))
+	float AttitudeNaturalFrequencyHz = 1.59154943f;
+	/** 原生 SLERP Angular Drive 的阻尼比；1 为临界阻尼。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Angular Drive", meta = (DisplayName = "Attitude Damping Ratio", ClampMin = "0.0"))
+	float AttitudeDampingRatio = 1.0f;
+	/** 原生 SLERP Angular Drive 的附加角速度阻尼（s^-1）。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Angular Drive", meta = (DisplayName = "Attitude Extra Damping (/s)", ClampMin = "0.0"))
 	float AttitudeExtraDampingPerSecond = 0.0f;
-	/** Chaos Angular Drive 的最大力矩（N·m）；0 表示不限制。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude", meta = (DisplayName = "Torque Limit (N·m)", ClampMin = "0.0", Units = "Nm"))
+	/** 原生 SLERP Angular Drive 的力矩上限（N·m）；0 表示不限制。 */
+	UPROPERTY(EditAnywhere, Category = "Constraint|Angular Drive", meta = (DisplayName = "Attitude Torque Limit (N·m)", ClampMin = "0.0", Units = "Nm"))
 	float AttitudeTorqueLimitNm = 0.0f;
-	/** 使用惯量无关的 Angular Drive acceleration 模式。 */
-	UPROPERTY(EditAnywhere, Category = "Constraint|Attitude", meta = (DisplayName = "Acceleration Mode"))
-	bool bAngularAccelerationMode = true;
 	UPROPERTY(EditAnywhere, Category = "Constraint|Linear", meta = (DisplayName = "Linear Acceleration Mode"))
 	bool bLinearAccelerationMode = true;
 };

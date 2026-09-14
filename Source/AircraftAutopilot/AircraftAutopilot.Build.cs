@@ -14,5 +14,7 @@ public class AircraftAutopilot : ModuleRules
             "AircraftDiagnostics",
             "AircraftRuntimeInterface"
         });
+
+		PrivateDependencyModuleNames.Add("Aircraft");
     }
 }

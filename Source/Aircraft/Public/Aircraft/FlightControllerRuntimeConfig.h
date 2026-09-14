@@ -101,9 +101,32 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	float YawHoldStickDeadband = 0.05f;
 	float HorizontalBrakeToHoldSpeedCmPerSec = 20.0f;
 	float VerticalBrakeToHoldSpeedCmPerSec = 20.0f;
+	float ConstraintLinearNaturalFrequencyHz = 1.59154943f;
+	float ConstraintLinearDampingRatio = 1.0f;
+	float ConstraintLinearExtraDampingPerSecond = 0.0f;
+	/** 线性约束驱动合力上限（N）；0 表示不限制。 */
+	float ConstraintLinearForceLimitN = 0.0f;
+	float ConstraintGravityFeedForwardScale = 1.0f;
+	float ConstraintDynamicsFeedForwardScale = 1.0f;
+	float ConstraintAttitudeNaturalFrequencyHz = 1.59154943f;
+	float ConstraintAttitudeDampingRatio = 1.0f;
+	float ConstraintAttitudeExtraDampingPerSecond = 0.0f;
+	/** 原生 Constraint SLERP Angular Drive 的力矩上限（N·m）；0 表示不限制。 */
+	float ConstraintAttitudeTorqueLimitNm = 0.0f;
+	bool bConstraintLinearAccelerationMode = true;
+	bool bKinematicSweepMovement = true;
 	bool bStartArmed = true;
 	EAircraftFlightMode InitialFlightMode = EAircraftFlightMode::PositionHold;
 	bool bControllerEnabledByDefault = true;
+
+	// ------------------------------------------------------------------
+	// 替代驱动后端（PhysicsConstraint/Kinematic）的 SO(3) 姿态塑形配置。
+	// 角速率/角加速度/角jerk 三级限幅是姿态稳定的核心机制（对齐 V2 稳定版语义）；
+	// Kinematic 后端限幅比 Constraint 更宽松（V2 调定的差异），资产未配置时用这些默认值。
+	// ------------------------------------------------------------------
+	FVector KinematicAttitudeMaxRateDegPerSec = FVector(120.0f, 120.0f, 90.0f);
+	FVector KinematicAttitudeMaxAccelerationDegPerSecSq = FVector(480.0f, 480.0f, 240.0f);
+	FVector KinematicAttitudeMaxJerkDegPerSecCubed = FVector(1920.0f, 1920.0f, 960.0f);
 
 	/** 悬停推力在线估计，替代静态 HoverCollectiveCommand 作为垂直通道基准
 	 *  （属性键 FlightController.HoverThrustEstimator.*）。 */

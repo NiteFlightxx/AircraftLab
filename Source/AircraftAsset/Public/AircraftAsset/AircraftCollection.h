@@ -54,7 +54,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FSoftObjectPath>* GetPhysicsAssetSoftObjectPathName() const { return PhysicsAssetSoftObjectPathName; }
 
 		/* ------------------------- Solver group (0 or 1 element) ------------------------- */
-		const TManagedArray<float>* GetAsyncFixedTimeStepSize() const { return AsyncFixedTimeStepSize; }
 		const TManagedArray<uint8>* GetOverrideIterationCounts() const { return OverrideIterationCounts; }
 		const TManagedArray<int32>* GetPositionSolverIterationCount() const { return PositionSolverIterationCount; }
 		const TManagedArray<int32>* GetVelocitySolverIterationCount() const { return VelocitySolverIterationCount; }
@@ -128,7 +127,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const TManagedArray<FSoftObjectPath>* PhysicsAssetSoftObjectPathName = nullptr;
 
 		/* Solver */
-		const TManagedArray<float>* AsyncFixedTimeStepSize = nullptr;
 		const TManagedArray<uint8>* OverrideIterationCounts = nullptr;
 		const TManagedArray<int32>* PositionSolverIterationCount = nullptr;
 		const TManagedArray<int32>* VelocitySolverIterationCount = nullptr;
@@ -226,10 +224,6 @@ namespace UE::AircraftLab::AircraftAsset
 			return const_cast<TManagedArray<FSoftObjectPath>*>(FConstAircraftCollection::GetPhysicsAssetSoftObjectPathName());
 		}
 
-		TManagedArray<float>* GetAsyncFixedTimeStepSize()
-		{
-			return const_cast<TManagedArray<float>*>(FConstAircraftCollection::GetAsyncFixedTimeStepSize());
-		}
 		TManagedArray<uint8>* GetOverrideIterationCounts()
 		{
 			return const_cast<TManagedArray<uint8>*>(FConstAircraftCollection::GetOverrideIterationCounts());

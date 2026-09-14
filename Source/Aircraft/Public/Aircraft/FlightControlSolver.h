@@ -7,6 +7,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Aircraft/AircraftAttitudeReferenceDynamics.h"
+#include "Aircraft/AircraftYawReferenceDynamics.h"
 #include "Aircraft/FlightControlPid.h"
 #include "Aircraft/FlightControlStateTypes.h"
 #include "Aircraft/FlightControllerRuntimeConfig.h"
@@ -25,21 +27,6 @@ struct FAircraftFlightControlSolverContext
 	const FAircraftTrajectoryReference& TrajectoryReference;
 	const FAircraftControlAllocator& AllocationFeedback;
 	bool bUseTrajectoryReference = false;
-};
-
-/** 单轴二阶姿态参考模型的运行状态。 */
-struct FAircraftReferenceModelState
-{
-	float x = 0.0f;
-	float v = 0.0f;
-	bool bInitialized = false;
-
-	void Reset()
-	{
-		x = 0.0f;
-		v = 0.0f;
-		bInitialized = false;
-	}
 };
 
 /** 四元数姿态控制器使用的航向目标、角速度前馈和最终速率上限。 */
@@ -84,12 +71,8 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 {
 	FAircraftControllerPidStates PidStates;
 
-	FAircraftReferenceModelState RollReferenceModel;
-	FAircraftReferenceModelState PitchReferenceModel;
-	/** 偏航参考模型：与 Roll/Pitch 相同的二阶临界阻尼模型——偏航目标角先经模型
-	 *  平滑再进姿态环，模型速度作角速率前馈。此前偏航为裸 P（无阻尼项），
-	 *  外环带宽压在速率环带宽附近导致过冲回摆。 */
-	FAircraftReferenceModelState YawReferenceModel;
+	FAircraftAttitudeMotionState AttitudeReferenceModel;
+	FAircraftYawReferenceState YawReferenceModel;
 	FVector LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 	FVector LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 	FVector LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
@@ -116,7 +99,8 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 	float ComputeVerticalControl(FAircraftFlightControlSolverContext& Context,
 		float DeltaSeconds, float& OutDesiredVerticalVelocity);
 	FRotator ComputeDesiredAttitude(FAircraftFlightControlSolverContext& Context, float DeltaSeconds);
-	FAircraftYawSetpoint ComputeYawSetpoint(FAircraftFlightControlSolverContext& Context);
+	FAircraftYawSetpoint ComputeYawSetpoint(
+		FAircraftFlightControlSolverContext& Context, float DeltaSeconds);
 	FVector ComputeDesiredBodyRates(FAircraftFlightControlSolverContext& Context,
 		const FRotator& DesiredAttitude, const FAircraftYawSetpoint& YawSetpoint, float DeltaSeconds);
 	FVector ComputeBodyTorqueCommand(FAircraftFlightControlSolverContext& Context,
@@ -132,8 +116,7 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 	void Reset()
 	{
 		PidStates.ResetAll();
-		RollReferenceModel.Reset();
-		PitchReferenceModel.Reset();
+		FAircraftAttitudeReferenceDynamics::Reset(AttitudeReferenceModel);
 		YawReferenceModel.Reset();
 		LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 		LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;

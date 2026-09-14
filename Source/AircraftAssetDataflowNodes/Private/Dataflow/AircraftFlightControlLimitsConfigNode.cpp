@@ -1,6 +1,7 @@
 #include "Dataflow/AircraftFlightControlLimitsConfigNode.h"
 
 #include "FlightControllerConfigNodeUtils.h"
+#include "Aircraft/HoverThrustEstimator.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AircraftFlightControlLimitsConfigNode)
 
@@ -32,13 +33,23 @@ bool FAircraftFlightControlLimitsConfigNode::ApplyToAircraftCollection(FAircraft
 		|| Config.MaxCollectiveCommand > 1.0f;
 	const float EstimatorValues[] = {
 		Config.HoverThrustInitialStateVariance, Config.HoverThrustProcessNoiseVariance,
-		Config.HoverThrustAccelNoiseVariance, Config.HoverThrustGateSize,
+		Config.HoverThrustAccelNoiseVariance, Config.HoverThrustAccelerationFilterCutoffHz,
+		Config.HoverThrustGateSize,
 		Config.HoverThrustMin, Config.HoverThrustMax };
 	for (const float Value : EstimatorValues)
 	{
 		bInvalid |= !FMath::IsFinite(Value) || Value < 0.0f;
 	}
 	bInvalid |= Config.HoverThrustMin >= Config.HoverThrustMax;
+	FAircraftHoverThrustEstimatorConfig EstimatorConfig;
+	EstimatorConfig.InitialStateVariance = Config.HoverThrustInitialStateVariance;
+	EstimatorConfig.ProcessNoiseVariance = Config.HoverThrustProcessNoiseVariance;
+	EstimatorConfig.AccelNoiseVariance = Config.HoverThrustAccelNoiseVariance;
+	EstimatorConfig.AccelerationFilterCutoffHz = Config.HoverThrustAccelerationFilterCutoffHz;
+	EstimatorConfig.GateSize = Config.HoverThrustGateSize;
+	EstimatorConfig.MinHoverThrust = Config.HoverThrustMin;
+	EstimatorConfig.MaxHoverThrust = Config.HoverThrustMax;
+	bInvalid |= !EstimatorConfig.IsValid();
 	if (bInvalid)
 	{
 		return Context.Error(TEXT("Flight-control limits must be finite, non-negative, and satisfy 0 <= Min <= Hover <= Max <= 1."));
@@ -71,6 +82,7 @@ bool FAircraftFlightControlLimitsConfigNode::ApplyToAircraftCollection(FAircraft
 	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.InitialStateVariance"), Config.HoverThrustInitialStateVariance);
 	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.ProcessNoiseVariance"), Config.HoverThrustProcessNoiseVariance);
 	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.AccelNoiseVariance"), Config.HoverThrustAccelNoiseVariance);
+	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.AccelerationFilterCutoffHz"), Config.HoverThrustAccelerationFilterCutoffHz);
 	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.GateSize"), Config.HoverThrustGateSize);
 	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.MinHoverThrust"), Config.HoverThrustMin);
 	SetConfigProperty(Properties, TEXT("FlightController.HoverThrustEstimator.MaxHoverThrust"), Config.HoverThrustMax);

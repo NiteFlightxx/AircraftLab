@@ -54,6 +54,8 @@ struct FAircraftFlightControlLimitsConfig
 	float HoverThrustProcessNoiseVariance = 12.5e-6f;
 	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (DisplayName = "Hover Thrust Accel Noise Variance", ClampMin = "0.001"))
 	float HoverThrustAccelNoiseVariance = 5.0f;
+	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (DisplayName = "Hover Thrust Acceleration Filter Cutoff (Hz)", ClampMin = "0.0", Units = "Hz"))
+	float HoverThrustAccelerationFilterCutoffHz = 5.0f;
 	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (DisplayName = "Hover Thrust Gate Size (σ)", ClampMin = "1.0"))
 	float HoverThrustGateSize = 3.0f;
 	UPROPERTY(EditAnywhere, Category = "HoverThrustEstimator", meta = (DisplayName = "Hover Thrust Min", ClampMin = "0.0", ClampMax = "1.0"))

@@ -2,6 +2,7 @@
 // FAutopilotMovementIntent → FAircraftManualCommand；类型前缀 FFlightControl* → FAircraftFlightControl*。
 
 #include "Aircraft/FlightControlSolver.h"
+#include "Aircraft/AircraftYawReferenceDynamics.h"
 #include "Aircraft/ControlAllocator.h"
 #include "Aircraft/ConstraintDriveUtils.h"
 #include "Misc/AutomationTest.h"
@@ -391,6 +392,7 @@ bool FAircraftQuaternionAttitudeUsesRigidBodyRotationTest::RunTest(const FString
 	PhysicsCache.BodyTransform.SetRotation(FQuat::Identity);
 	FAircraftModeCapabilities Capabilities;
 	FAircraftFlightControllerRuntimeConfig Config;
+	Config.bEnableAttitudeReferenceModel = false;
 	FAircraftManualCommand ManualCommand;
 	FAircraftTrajectoryReference Reference;
 	FAircraftControlAllocator Allocator;
@@ -414,11 +416,11 @@ bool FAircraftQuaternionAttitudeUsesRigidBodyRotationTest::RunTest(const FString
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftQuaternionHeadingDoesNotLeakIntoTiltTest,
-	"AircraftLab.Control.Attitude.QuaternionHeadingDoesNotLeakIntoTilt",
+	FAircraftQuaternionHeadingUsesCoordinatedTiltRatesTest,
+	"AircraftLab.Control.Attitude.QuaternionHeadingUsesCoordinatedTiltRates",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FAircraftQuaternionHeadingDoesNotLeakIntoTiltTest::RunTest(const FString& Parameters)
+bool FAircraftQuaternionHeadingUsesCoordinatedTiltRatesTest::RunTest(const FString& Parameters)
 {
 	FAircraftFlightControlRuntimeState Runtime;
 	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
@@ -445,21 +447,101 @@ bool FAircraftQuaternionHeadingDoesNotLeakIntoTiltTest::RunTest(const FString& P
 	const FVector OppositeHeadingRates = Solver.ComputeDesiredBodyRates(
 		Context, DesiredTilt, YawSetpoint, 0.004f);
 
-	TestTrue(TEXT("Changing only target heading does not alter Roll rate"),
-		FMath::IsNearlyEqual(OppositeHeadingRates.X, SameHeadingRates.X, 1.e-4));
-	TestTrue(TEXT("Changing only target heading does not alter Pitch rate"),
-		FMath::IsNearlyEqual(OppositeHeadingRates.Y, SameHeadingRates.Y, 1.e-4));
+	TestTrue(TEXT("A tilted aircraft maps opposite planar heading corrections into different lateral rates"),
+		!FVector2D(OppositeHeadingRates.X, OppositeHeadingRates.Y).Equals(
+			FVector2D(SameHeadingRates.X, SameHeadingRates.Y), 1.e-4f));
 	TestTrue(TEXT("Changing target heading still changes Yaw rate"),
 		!FMath::IsNearlyEqual(OppositeHeadingRates.Z, SameHeadingRates.Z, 1.e-4));
 	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FAircraftYawHoldInitializesFromRigidBodyQuaternionTest,
-	"AircraftLab.Control.Attitude.YawHoldInitializesFromRigidBodyQuaternion",
+	FAircraftPlanarHeadingRateRejectsPureRollTest,
+	"AircraftLab.Control.Attitude.PlanarHeadingRateRejectsPureRoll",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FAircraftYawHoldInitializesFromRigidBodyQuaternionTest::RunTest(const FString& Parameters)
+bool FAircraftPlanarHeadingRateRejectsPureRollTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	constexpr float DeltaSeconds = 1.0f / 120.0f;
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+	FAircraftPhysicsCache PhysicsCache;
+	FAircraftFlightControllerRuntimeConfig Config;
+	const FQuat ControlWorldRotation = FRotator(-20.0f, 35.0f, 12.0f).Quaternion();
+	const FQuat BodyWorldRotation = Config.GetBodyWorldRotation(ControlWorldRotation);
+	PhysicsCache.BodyTransform.SetRotation(BodyWorldRotation);
+	const FVector PureRollBodyRadPerSec = Config.GetForwardAxisBody();
+	PhysicsCache.AngularVelocityWorldRadPerSec = BodyWorldRotation.RotateVector(
+		PureRollBodyRadPerSec);
+	PhysicsCache.AngularVelocityControllerDegPerSec = FMath::RadiansToDegrees(
+		Config.BodyAngularToController(PureRollBodyRadPerSec));
+
+	FAircraftModeCapabilities Capabilities;
+	Capabilities.CanHoldYaw = true;
+	FAircraftManualCommand ManualCommand;
+	FAircraftTrajectoryReference Reference;
+	FAircraftControlAllocator Allocator;
+	Allocator.Cache.bIsValid = true;
+	Allocator.Cache.PositiveTorqueAuthority[2] = 10.0;
+	Allocator.Cache.NegativeTorqueAuthority[2] = 10.0;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
+	FAircraftFlightControlSolver Solver;
+
+	const FAircraftYawSetpoint Setpoint = Solver.ComputeYawSetpoint(Context, DeltaSeconds);
+	TestTrue(TEXT("Rotation around the aircraft forward axis does not change planar heading"),
+		FMath::Abs(Setpoint.FeedForwardRateDegPerSec) < 0.1f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftTiltedYawRateUsesFullBodyKinematicsTest,
+	"AircraftLab.Control.Attitude.TiltedYawRateUsesFullBodyKinematics",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftTiltedYawRateUsesFullBodyKinematicsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+	FAircraftPhysicsCache PhysicsCache;
+	FAircraftFlightControllerRuntimeConfig Config;
+	Config.bEnableAttitudeReferenceModel = false;
+	const FRotator ControlAttitude(-20.0f, 35.0f, 12.0f);
+	const FQuat BodyWorldRotation = Config.GetBodyWorldRotation(ControlAttitude.Quaternion());
+	PhysicsCache.BodyTransform.SetRotation(BodyWorldRotation);
+
+	FAircraftModeCapabilities Capabilities;
+	FAircraftManualCommand ManualCommand;
+	FAircraftTrajectoryReference Reference;
+	FAircraftControlAllocator Allocator;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
+	FAircraftFlightControlSolver Solver;
+	FAircraftYawSetpoint YawSetpoint;
+	YawSetpoint.TargetYawDegrees = ControlAttitude.Yaw;
+	YawSetpoint.FeedForwardRateDegPerSec = 60.0f;
+	YawSetpoint.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
+
+	const FVector DesiredRates = Solver.ComputeDesiredBodyRates(
+		Context, ControlAttitude, YawSetpoint, 1.0f / 120.0f);
+	const FVector ExpectedRates = FMath::RadiansToDegrees(Config.BodyAngularToController(
+		BodyWorldRotation.UnrotateVector(
+			FVector::UpVector * FMath::DegreesToRadians(YawSetpoint.FeedForwardRateDegPerSec))));
+	TestTrue(TEXT("Tilted world-up yaw contains controller Roll/Pitch rate components"),
+		!FVector2D(ExpectedRates.X, ExpectedRates.Y).IsNearlyZero(0.1f));
+	TestTrue(TEXT("Yaw feed-forward is transformed from world up into all controller axes"),
+		DesiredRates.Equals(ExpectedRates, 1.e-3f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawReferenceInitializesFromRigidBodyQuaternionTest,
+	"AircraftLab.Control.Attitude.YawReferenceInitializesFromRigidBodyQuaternion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawReferenceInitializesFromRigidBodyQuaternionTest::RunTest(const FString& Parameters)
 {
 	FAircraftFlightControlRuntimeState Runtime;
 	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
@@ -478,7 +560,7 @@ bool FAircraftYawHoldInitializesFromRigidBodyQuaternionTest::RunTest(const FStri
 		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
 	FAircraftFlightControlSolver Solver;
 
-	const FAircraftYawSetpoint YawSetpoint = Solver.ComputeYawSetpoint(Context);
+	const FAircraftYawSetpoint YawSetpoint = Solver.ComputeYawSetpoint(Context, 0.004f);
 	const FVector DesiredRates = Solver.ComputeDesiredBodyRates(
 		Context, FRotator(0.0f, 163.0f, 0.0f), YawSetpoint, 0.004f);
 
@@ -516,7 +598,7 @@ bool FAircraftYawSetpointRequiresAllocatorAuthorityTest::RunTest(const FString& 
 		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, true };
 	FAircraftFlightControlSolver Solver;
 
-	const FAircraftYawSetpoint Unavailable = Solver.ComputeYawSetpoint(Context);
+	const FAircraftYawSetpoint Unavailable = Solver.ComputeYawSetpoint(Context, 0.004f);
 	TestEqual(TEXT("Zero allocator authority disables yaw-rate limit"),
 		Unavailable.MaxRateDegPerSec, 0.0f, 1.e-4f);
 	TestEqual(TEXT("Zero allocator authority rejects yaw feed-forward"),
@@ -531,11 +613,132 @@ bool FAircraftYawSetpointRequiresAllocatorAuthorityTest::RunTest(const FString& 
 	Allocator.Cache.PositiveTorqueAuthority[2] = 10.0;
 	Allocator.Cache.NegativeTorqueAuthority[2] = 10.0;
 	Reference.YawRateLimitDegPerSec = 0.0f;
-	const FAircraftYawSetpoint ExplicitZeroLimit = Solver.ComputeYawSetpoint(Context);
+	const FAircraftYawSetpoint ExplicitZeroLimit = Solver.ComputeYawSetpoint(Context, 0.004f);
 	TestEqual(TEXT("Explicit zero trajectory limit cannot fall back to controller maximum"),
 		ExplicitZeroLimit.MaxRateDegPerSec, 0.0f, 1.e-4f);
 	TestEqual(TEXT("Explicit zero trajectory limit rejects yaw feed-forward"),
 		ExplicitZeroLimit.FeedForwardRateDegPerSec, 0.0f, 1.e-4f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftFlightControllerManualYawReleaseTest,
+	"AircraftLab.Control.Attitude.ManualYawReleaseCapturesMeasuredHold",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftFlightControllerManualYawReleaseTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	constexpr float DeltaSeconds = 1.0f / 120.0f;
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+	FAircraftPhysicsCache PhysicsCache;
+	PhysicsCache.BodyTransform = FTransform::Identity;
+	PhysicsCache.AngularVelocityWorldRadPerSec = FVector::ZeroVector;
+	PhysicsCache.AngularVelocityControllerDegPerSec = FVector::ZeroVector;
+	FAircraftModeCapabilities Capabilities;
+	Capabilities.CanHoldYaw = true;
+	FAircraftFlightControllerRuntimeConfig Config;
+	FAircraftManualCommand ManualCommand;
+	ManualCommand.DesiredYawRateDegPerSec = 90.0f;
+	FAircraftTrajectoryReference Reference;
+	FAircraftControlAllocator Allocator;
+	Allocator.Cache.bIsValid = true;
+	Allocator.Cache.PositiveTorqueAuthority[2] = 10.0;
+	Allocator.Cache.NegativeTorqueAuthority[2] = 10.0;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
+	FAircraftFlightControlSolver Solver;
+	FAircraftYawSetpoint Setpoint;
+	for (int32 Step = 0; Step < 60; ++Step)
+	{
+		Setpoint = Solver.ComputeYawSetpoint(Context, DeltaSeconds);
+		PhysicsCache.BodyTransform.SetRotation(Config.GetBodyWorldRotation(
+			FRotator(0.0f, Setpoint.TargetYawDegrees, 0.0f).Quaternion()));
+		PhysicsCache.AngularVelocityWorldRadPerSec = FVector::UpVector
+			* FMath::DegreesToRadians(Setpoint.FeedForwardRateDegPerSec);
+	}
+	const float ReleaseRateDegPerSec = Setpoint.FeedForwardRateDegPerSec;
+	TestTrue(TEXT("Manual stick builds a positive yaw-rate reference"),
+		ReleaseRateDegPerSec > 1.0f);
+
+	ManualCommand.DesiredYawRateDegPerSec = 0.0f;
+	for (int32 Step = 0; Step < 480; ++Step)
+	{
+		Setpoint = Solver.ComputeYawSetpoint(Context, DeltaSeconds);
+		PhysicsCache.BodyTransform.SetRotation(Config.GetBodyWorldRotation(
+			FRotator(0.0f, Setpoint.TargetYawDegrees, 0.0f).Quaternion()));
+		PhysicsCache.AngularVelocityWorldRadPerSec = FVector::UpVector
+			* FMath::DegreesToRadians(Setpoint.FeedForwardRateDegPerSec);
+	}
+	const float FinalMeasuredYawDegrees = Config.GetControlWorldRotation(
+		PhysicsCache.BodyTransform.GetRotation()).Rotator().Yaw;
+	TestTrue(TEXT("Released FlightController yaw latches the measured stop heading"),
+		FMath::Abs(FMath::FindDeltaAngleDegrees(
+			Setpoint.TargetYawDegrees, FinalMeasuredYawDegrees)) < 0.1f);
+	TestTrue(TEXT("Released FlightController yaw reference stops without reversing"),
+		Setpoint.FeedForwardRateDegPerSec >= -UE_KINDA_SMALL_NUMBER
+			&& FMath::Abs(Setpoint.FeedForwardRateDegPerSec) < 0.25f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftCombinedTiltYawReleaseFrameRateTest,
+	"AircraftLab.Control.Attitude.CombinedTiltYawReleaseFrameRateInvariant",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftCombinedTiltYawReleaseFrameRateTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	auto Simulate = [](const float DeltaSeconds)
+	{
+		FAircraftFlightControlRuntimeState Runtime;
+		Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+		FAircraftPhysicsCache PhysicsCache;
+		PhysicsCache.BodyTransform = FTransform::Identity;
+		PhysicsCache.AngularVelocityWorldRadPerSec = FVector::ZeroVector;
+		FAircraftModeCapabilities Capabilities;
+		FAircraftFlightControllerRuntimeConfig Config;
+		FAircraftManualCommand ManualCommand;
+		FAircraftTrajectoryReference Reference;
+		FAircraftControlAllocator Allocator;
+		FAircraftFlightControlSolverContext Context{
+			Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
+		FAircraftFlightControlSolver Solver;
+		FAircraftYawSetpoint YawSetpoint;
+		YawSetpoint.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
+
+		// Initialize the reference at hover before applying the combined command.
+		Solver.ComputeDesiredBodyRates(
+			Context, FRotator::ZeroRotator, YawSetpoint, DeltaSeconds);
+
+		const int32 CommandSteps = FMath::RoundToInt(0.4f / DeltaSeconds);
+		YawSetpoint.TargetYawDegrees = 75.0f;
+		YawSetpoint.FeedForwardRateDegPerSec = 60.0f;
+		for (int32 Step = 0; Step < CommandSteps; ++Step)
+		{
+			Solver.ComputeDesiredBodyRates(
+				Context, FRotator(-20.0f, 75.0f, 12.0f), YawSetpoint, DeltaSeconds);
+		}
+
+		const int32 ReleaseSteps = FMath::RoundToInt(0.4f / DeltaSeconds);
+		YawSetpoint.FeedForwardRateDegPerSec = 0.0f;
+		FVector Result = FVector::ZeroVector;
+		for (int32 Step = 0; Step < ReleaseSteps; ++Step)
+		{
+			Result = Solver.ComputeDesiredBodyRates(
+				Context, FRotator(-20.0f, 75.0f, 12.0f), YawSetpoint, DeltaSeconds);
+		}
+		return Result;
+	};
+
+	const FVector At30Hz = Simulate(1.0f / 30.0f);
+	const FVector At60Hz = Simulate(1.0f / 60.0f);
+	const FVector At120Hz = Simulate(1.0f / 120.0f);
+	TestTrue(*FString::Printf(TEXT("30/120 Hz result mismatch: 30=%s 120=%s"),
+		*At30Hz.ToString(), *At120Hz.ToString()), At30Hz.Equals(At120Hz, 0.1f));
+	TestTrue(*FString::Printf(TEXT("60/120 Hz result mismatch: 60=%s 120=%s"),
+		*At60Hz.ToString(), *At120Hz.ToString()), At60Hz.Equals(At120Hz, 0.1f));
 	return true;
 }
 
@@ -649,6 +852,190 @@ bool FAircraftAuthoritativePidLimitsTest::RunTest(const FString& Parameters)
 		Position.bFreezeIntegralWhenSaturated && Velocity.bFreezeIntegralWhenSaturated
 		&& RollRate.bFreezeIntegralWhenSaturated && Altitude.bFreezeIntegralWhenSaturated
 		&& VerticalVelocity.bFreezeIntegralWhenSaturated);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawRateReleaseReferenceTest,
+	"AircraftLab.Control.YawReference.RateReleaseBrakesToIntegratedHold",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawRateReleaseReferenceTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	constexpr float DeltaSeconds = 1.0f / 120.0f;
+	FAircraftYawReferenceLimits Limits;
+	Limits.MaxRateDegPerSec = 90.0f;
+	Limits.MaxAccelerationDegPerSecSq = 180.0f;
+	Limits.MaxJerkDegPerSecCubed = 600.0f;
+	Limits.ResponseTimeSeconds = 0.04f;
+	FAircraftYawReferenceState State;
+	float MeasuredYawDegrees = 0.0f;
+	float MeasuredRateDegPerSec = 0.0f;
+
+	for (int32 Step = 0; Step < 240; ++Step)
+	{
+		TestTrue(TEXT("Rate command update remains valid"),
+			FAircraftYawReferenceDynamics::UpdateRateCommand(
+				90.0f, MeasuredYawDegrees, MeasuredRateDegPerSec,
+				DeltaSeconds, Limits, State));
+		MeasuredRateDegPerSec = State.RateDegPerSec;
+		MeasuredYawDegrees = FRotator::NormalizeAxis(
+			MeasuredYawDegrees + MeasuredRateDegPerSec * DeltaSeconds);
+	}
+	const float ReleaseYawDegrees = State.YawDegrees;
+	const float ReleaseRateDegPerSec = State.RateDegPerSec;
+	TestTrue(TEXT("Held stick reaches a positive yaw rate"), ReleaseRateDegPerSec > 80.0f);
+
+	float PreviousYawDegrees = ReleaseYawDegrees;
+	float PreviousAccelerationDegPerSecSq = State.AccelerationDegPerSecSq;
+	for (int32 Step = 0; Step < 1200; ++Step)
+	{
+		TestTrue(TEXT("Released rate command update remains valid"),
+			FAircraftYawReferenceDynamics::UpdateRateCommand(
+				0.0f, MeasuredYawDegrees, MeasuredRateDegPerSec,
+				DeltaSeconds, Limits, State));
+		const float UnwrappedYawStep = FMath::FindDeltaAngleDegrees(
+			PreviousYawDegrees, State.YawDegrees);
+		TestTrue(TEXT("Reference yaw continues integrating while its rate brakes"),
+			UnwrappedYawStep >= -1.e-3f);
+		TestTrue(TEXT("Released reference rate never reverses direction"),
+			State.RateDegPerSec >= -1.e-3f);
+		TestTrue(TEXT("Yaw rate respects its hard limit"),
+			FMath::Abs(State.RateDegPerSec) <= Limits.MaxRateDegPerSec + 1.e-3f);
+		TestTrue(TEXT("Yaw acceleration respects its hard limit"),
+			FMath::Abs(State.AccelerationDegPerSecSq)
+				<= Limits.MaxAccelerationDegPerSecSq + 1.e-3f);
+		TestTrue(*FString::Printf(
+			TEXT("Yaw jerk respects its hard limit (step=%d previous=%.6f current=%.6f)"),
+			Step, PreviousAccelerationDegPerSecSq, State.AccelerationDegPerSecSq),
+			FMath::Abs(State.AccelerationDegPerSecSq - PreviousAccelerationDegPerSecSq)
+				<= Limits.MaxJerkDegPerSecCubed * DeltaSeconds + 1.e-3f);
+		PreviousYawDegrees = State.YawDegrees;
+		PreviousAccelerationDegPerSecSq = State.AccelerationDegPerSecSq;
+		MeasuredRateDegPerSec = State.RateDegPerSec;
+		MeasuredYawDegrees = FRotator::NormalizeAxis(
+			MeasuredYawDegrees + MeasuredRateDegPerSec * DeltaSeconds);
+	}
+
+	TestTrue(TEXT("Release converges to zero yaw rate"),
+		FMath::Abs(State.RateDegPerSec) < 0.1f);
+	TestTrue(TEXT("Release converges to zero yaw acceleration"),
+		FMath::Abs(State.AccelerationDegPerSecSq) < 0.1f);
+	TestTrue(TEXT("Final hold yaw is the integrated braking endpoint"),
+		FMath::Abs(FMath::FindDeltaAngleDegrees(ReleaseYawDegrees, State.YawDegrees)) > 10.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawRateReleaseCapturesMeasuredStopHeadingTest,
+	"AircraftLab.Control.YawReference.RateReleaseCapturesMeasuredStopHeading",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawRateReleaseCapturesMeasuredStopHeadingTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	constexpr float DeltaSeconds = 1.0f / 120.0f;
+	FAircraftYawReferenceLimits Limits;
+	Limits.MaxRateDegPerSec = 90.0f;
+	Limits.MaxAccelerationDegPerSecSq = 180.0f;
+	Limits.MaxJerkDegPerSecCubed = 600.0f;
+	Limits.ResponseTimeSeconds = 0.04f;
+	FAircraftYawReferenceState State;
+	float MeasuredYawDegrees = 0.0f;
+	float MeasuredRateDegPerSec = 0.0f;
+
+	for (int32 Step = 0; Step < 240; ++Step)
+	{
+		TestTrue(TEXT("Rate tracking remains valid"),
+			FAircraftYawReferenceDynamics::UpdateRateCommand(
+				90.0f, MeasuredYawDegrees, MeasuredRateDegPerSec,
+				DeltaSeconds, Limits, State));
+		MeasuredRateDegPerSec = State.RateDegPerSec;
+		MeasuredYawDegrees = FRotator::NormalizeAxis(
+			MeasuredYawDegrees + MeasuredRateDegPerSec * DeltaSeconds);
+	}
+
+	// The rigid body deliberately decelerates more slowly than the reference. Once the
+	// reference reaches zero, rate mode must keep the angle loop transparent until the
+	// measured body rate also stops; otherwise it pulls the aircraft back to an obsolete
+	// integrated reference and creates the observed yaw rebound.
+	MeasuredRateDegPerSec = 45.0f;
+	bool bReferenceStoppedWhileBodyMoving = false;
+	for (int32 Step = 0; Step < 360; ++Step)
+	{
+		MeasuredYawDegrees = FRotator::NormalizeAxis(
+			MeasuredYawDegrees + MeasuredRateDegPerSec * DeltaSeconds);
+		TestTrue(TEXT("Rate release remains valid"),
+			FAircraftYawReferenceDynamics::UpdateRateCommand(
+				0.0f, MeasuredYawDegrees, MeasuredRateDegPerSec,
+				DeltaSeconds, Limits, State));
+		if (FMath::Abs(State.RateDegPerSec) < 0.1f)
+		{
+			bReferenceStoppedWhileBodyMoving = true;
+			TestTrue(TEXT("Released rate mode follows the moving body instead of pulling backward"),
+				FMath::Abs(FMath::FindDeltaAngleDegrees(
+					State.YawDegrees, MeasuredYawDegrees)) < 0.1f);
+			break;
+		}
+	}
+	TestTrue(TEXT("The reference can stop before the lagging rigid body"),
+		bReferenceStoppedWhileBodyMoving);
+
+	for (int32 Step = 0; Step < 240; ++Step)
+	{
+		MeasuredRateDegPerSec = FMath::Max(
+			0.0f, MeasuredRateDegPerSec - 45.0f * DeltaSeconds);
+		MeasuredYawDegrees = FRotator::NormalizeAxis(
+			MeasuredYawDegrees + MeasuredRateDegPerSec * DeltaSeconds);
+		TestTrue(TEXT("Measured stop capture remains valid"),
+			FAircraftYawReferenceDynamics::UpdateRateCommand(
+				0.0f, MeasuredYawDegrees, MeasuredRateDegPerSec,
+				DeltaSeconds, Limits, State));
+	}
+	const float CapturedHoldYawDegrees = State.YawDegrees;
+	TestTrue(TEXT("Hold captures the actual heading where the rigid body stopped"),
+		FMath::Abs(FMath::FindDeltaAngleDegrees(
+			CapturedHoldYawDegrees, MeasuredYawDegrees)) < 0.25f);
+
+	MeasuredYawDegrees = FRotator::NormalizeAxis(MeasuredYawDegrees + 10.0f);
+	TestTrue(TEXT("Latched hold update remains valid"),
+		FAircraftYawReferenceDynamics::UpdateRateCommand(
+			0.0f, MeasuredYawDegrees, 0.0f, DeltaSeconds, Limits, State));
+	TestTrue(TEXT("After capture the hold heading no longer follows external drift"),
+		FMath::Abs(FMath::FindDeltaAngleDegrees(
+			State.YawDegrees, CapturedHoldYawDegrees)) < 0.1f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftYawAngleReferenceTest,
+	"AircraftLab.Control.YawReference.AngleCommandConvergesWithoutOvershoot",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftYawAngleReferenceTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	constexpr float DeltaSeconds = 1.0f / 120.0f;
+	FAircraftYawReferenceLimits Limits;
+	Limits.MaxRateDegPerSec = 90.0f;
+	Limits.MaxAccelerationDegPerSecSq = 180.0f;
+	Limits.MaxJerkDegPerSecCubed = 600.0f;
+	Limits.ResponseTimeSeconds = 0.04f;
+	FAircraftYawReferenceState State;
+	float MaximumYawDegrees = 0.0f;
+	for (int32 Step = 0; Step < 2400; ++Step)
+	{
+		TestTrue(TEXT("Angle command update remains valid"),
+			FAircraftYawReferenceDynamics::UpdateAngleCommand(
+				90.0f, 0.0f, 0.0f, DeltaSeconds, Limits, State));
+		MaximumYawDegrees = FMath::Max(MaximumYawDegrees, State.YawDegrees);
+	}
+
+	TestTrue(TEXT("Angle reference does not overshoot its target"), MaximumYawDegrees <= 90.05f);
+	TestTrue(TEXT("Angle reference converges to its target"),
+		FMath::Abs(FMath::FindDeltaAngleDegrees(State.YawDegrees, 90.0f)) < 0.05f);
+	TestTrue(TEXT("Settled angle reference has zero rate"), FMath::Abs(State.RateDegPerSec) < 0.1f);
 	return true;
 }
 

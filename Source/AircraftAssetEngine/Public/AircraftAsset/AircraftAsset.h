@@ -74,18 +74,14 @@ public:
 
 	//~ Begin UAircraftAssetBase interface
 	virtual bool HasValidAircraftSimulationModels() const override;
-	virtual int32 GetNumAircraftSimulationModels() const override
-	{
-		return AircraftSimulationModel.IsValid() ? 1 : 0;
-	}
 
-	virtual TSharedPtr<const FAircraftSimulationModel> GetAircraftSimulationModel(int32 /*ModelIndex*/) const override
+	virtual TSharedPtr<const FAircraftSimulationModel> GetAircraftSimulationModel() const override
 	{
 		return AircraftSimulationModel;
 	}
 
 	virtual void SetCollections(TArray<TSharedRef<const FManagedArrayCollection>>&& InCollections) override;
-	virtual const TArray<TSharedRef<const FManagedArrayCollection>>& GetCollections(int32 /*ModelIndex*/) const override;
+	virtual const TArray<TSharedRef<const FManagedArrayCollection>>& GetCollections() const override;
 	virtual USkeletalMesh* GetSimulationSkeletalMesh() const override { return SourceSkeletalMesh; }
 	//~ End UAircraftAssetBase interface
 

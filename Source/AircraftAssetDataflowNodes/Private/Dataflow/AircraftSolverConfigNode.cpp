@@ -16,13 +16,11 @@ bool FAircraftSolverConfigNode::ApplyToAircraftCollection(
 	FAircraftConfigEvaluationContext& Context) const
 {
 	using namespace UE::AircraftLab::AircraftAsset;
-	if (!FMath::IsFinite(AsyncFixedTimeStepSize)
-		|| AsyncFixedTimeStepSize < 0.001f || AsyncFixedTimeStepSize > 0.066667f
-		|| PositionSolverIterationCount < 0 || PositionSolverIterationCount > 255
+	if (PositionSolverIterationCount < 0 || PositionSolverIterationCount > 255
 		|| VelocitySolverIterationCount < 0 || VelocitySolverIterationCount > 255
 		|| ProjectionSolverIterationCount < 0 || ProjectionSolverIterationCount > 255)
 	{
-		return Context.Error(TEXT("Solver time step or iteration count is outside its valid range."));
+		return Context.Error(TEXT("Solver iteration count is outside its valid range."));
 	}
 	auto& AircraftCollection = Context.GetCollection();
 	auto& Facade = Context.GetAircraft();
@@ -36,8 +34,6 @@ bool FAircraftSolverConfigNode::ApplyToAircraftCollection(
 		AircraftCollection.Resize(1, AircraftCollectionGroup::Solver);
 	}
 
-	Facade.FindOrAddAttribute<float>(AircraftCollectionAttribute::AsyncFixedTimeStepSize, AircraftCollectionGroup::Solver)[0] =
-		AsyncFixedTimeStepSize;
 	Facade.FindOrAddAttribute<uint8>(AircraftCollectionAttribute::OverrideIterationCounts, AircraftCollectionGroup::Solver)[0] =
 		bOverrideIterationCounts ? uint8(1) : uint8(0);
 	Facade.FindOrAddAttribute<int32>(AircraftCollectionAttribute::PositionSolverIterationCount, AircraftCollectionGroup::Solver)[0] =

@@ -91,7 +91,10 @@ bool FAircraftNetworkReplicationContractTest::RunTest(const FString& Parameters)
 		UAircraftSimulationLODComponent::StaticClass()->FindFunctionByName(TEXT("SetSimulationLOD")));
 	return true;
 }
+
 #if WITH_METADATA
+// UFunction::GetMetaData 属于编辑器域元数据 API(WITH_METADATA = WITH_EDITORONLY_DATA),
+// Server 目标下不存在,此契约测试仅在含元数据的构建中编译。
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftSimulationLodPreservationPolicyContractTest,
 	"AircraftLab.SimulationLOD.PreservationPolicyContract",
@@ -120,5 +123,7 @@ bool FAircraftSimulationLodPreservationPolicyContractTest::RunTest(const FString
 		DefaultBudget.bPreserveSimulationState);
 	return true;
 }
-#endif
+
+#endif // WITH_METADATA
+
 #endif

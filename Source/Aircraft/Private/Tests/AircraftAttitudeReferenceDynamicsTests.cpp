@@ -25,18 +25,16 @@ namespace
 	}
 
 	FAircraftAttitudeMotionOutput StepConstraintTarget(
-		FAircraftAttitudeMotionState& State,
 		const FAircraftAttitudeMotionConfig& MotionConfig,
 		const FVector& Acceleration,
-		const float YawDegrees,
-		const float DeltaSeconds)
+		const float YawDegrees)
 	{
 		FAircraftFlightControllerRuntimeConfig FrameConfig;
 		FAircraftAttitudeMotionOutput Output;
-		const bool bUpdated = FAircraftAttitudeReferenceDynamics::UpdateDriveTarget(
+		const bool bUpdated = FAircraftAttitudeReferenceDynamics::BuildDriveTarget(
 			Acceleration, FVector::ZeroVector, YawDegrees, 0.0f, 980.0f,
-			DeltaSeconds, FrameConfig.GetBodyWorldRotation(FQuat::Identity),
-			FVector::ZeroVector, FrameConfig, MotionConfig, State, Output);
+			FrameConfig, MotionConfig.MaxTiltAngleDegrees,
+			MotionConfig.DynamicsFeedForwardScale, Output);
 		check(bUpdated);
 		return Output;
 	}
@@ -155,22 +153,57 @@ bool FAircraftConstraintDriveTargetTest::RunTest(const FString& Parameters)
 	FAircraftAttitudeMotionConfig FastDrive = SlowDrive;
 	FastDrive.NaturalFrequencyHz = 8.0f;
 	FastDrive.DampingRatio = 2.0f;
-	FAircraftAttitudeMotionState SlowState;
-	FAircraftAttitudeMotionState FastState;
 	FAircraftAttitudeMotionOutput SlowOutput;
 	FAircraftAttitudeMotionOutput FastOutput;
 	for (int32 Step = 0; Step < 120; ++Step)
 	{
 		SlowOutput = StepConstraintTarget(
-			SlowState, SlowDrive, FVector(700.0f, -300.0f, 0.0f), 90.0f, 1.0f / 120.0f);
+			SlowDrive, FVector(700.0f, -300.0f, 0.0f), 90.0f);
 		FastOutput = StepConstraintTarget(
-			FastState, FastDrive, FVector(700.0f, -300.0f, 0.0f), 90.0f, 1.0f / 120.0f);
+			FastDrive, FVector(700.0f, -300.0f, 0.0f), 90.0f);
 	}
 	TestTrue(TEXT("Constraint target shaping is independent of angular-drive spring tuning"),
 		SlowOutput.BodyWorldRotation.Equals(FastOutput.BodyWorldRotation, 1.e-5f));
 	TestTrue(TEXT("Constraint target velocity is independent of angular-drive damping tuning"),
 		SlowOutput.AngularVelocityBodyRadPerSec.Equals(
 			FastOutput.AngularVelocityBodyRadPerSec, 1.e-5f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftConstraintDriveTargetSettlingTest,
+	"AircraftLab.Control.AlternativeAttitude.ConstraintTargetSettlesAfterInitialAngularMotion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftConstraintDriveTargetSettlingTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	const FAircraftFlightControllerRuntimeConfig FrameConfig;
+	FAircraftAttitudeMotionConfig MotionConfig;
+	FAircraftAttitudeMotionOutput Output;
+
+	for (int32 Step = 0; Step < 1200; ++Step)
+	{
+		const bool bUpdated = FAircraftAttitudeReferenceDynamics::BuildDriveTarget(
+			FVector::ZeroVector, FVector::ZeroVector,
+			90.0f, 0.0f, 980.0f, FrameConfig,
+			MotionConfig.MaxTiltAngleDegrees,
+			MotionConfig.DynamicsFeedForwardScale, Output);
+		if (!TestTrue(TEXT("Every fixed-target update remains valid"), bUpdated))
+		{
+			return false;
+		}
+	}
+
+	TestTrue(TEXT("The shaped body target settles on the fixed hover orientation"),
+		Output.BodyWorldRotation.AngularDistance(FQuat::Identity)
+			< FMath::DegreesToRadians(0.25f));
+	TestTrue(TEXT("The shaped target angular velocity settles to zero"),
+		Output.AngularVelocityBodyRadPerSec.Size()
+			< FMath::DegreesToRadians(0.25f));
+	TestTrue(TEXT("The shaped target angular acceleration settles to zero"),
+		Output.AngularAccelerationBodyRadPerSecSq.Size()
+			< FMath::DegreesToRadians(1.0f));
 	return true;
 }
 

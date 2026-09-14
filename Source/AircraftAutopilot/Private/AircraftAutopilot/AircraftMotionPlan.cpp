@@ -130,6 +130,8 @@ float FAircraftMotionPlan::ResolveYaw(
 {
 	switch (Heading.Mode)
 	{
+	case EAircraftHeadingMode::YawRate:
+		return PreviousYawDegrees;
 	case EAircraftHeadingMode::FixedYaw:
 		return Heading.FixedYawDegrees;
 	case EAircraftHeadingMode::FaceVelocity:
@@ -409,9 +411,28 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 	if (!bContinuous)
 	{
 		SpeedLimits[0] = FMath::Min(SpeedLimits[0], InitialAlongTrackSpeed);
-		SpeedLimits.Last() = FMath::Min(SpeedLimits.Last(),
-			Intent.Completion.ArrivalMode == EAircraftArrivalMode::Stop
-				? 0.0f : Intent.Completion.TerminalSpeedCmPerSec);
+		float TerminalPathSpeedCmPerSec = 0.0f;
+		if (Intent.Completion.ArrivalMode == EAircraftArrivalMode::PassThrough)
+		{
+			const FVector TerminalTangent = Samples.Last().VelocityCmPerSec.GetSafeNormal();
+			TerminalPathSpeedCmPerSec = TNumericLimits<float>::Max();
+			const float HorizontalTangent = FVector2D(TerminalTangent.X, TerminalTangent.Y).Size();
+			if (HorizontalTangent > UE_SMALL_NUMBER)
+			{
+				TerminalPathSpeedCmPerSec = FMath::Min(TerminalPathSpeedCmPerSec,
+					Intent.Completion.TerminalHorizontalSpeedCmPerSec / HorizontalTangent);
+			}
+			if (FMath::Abs(TerminalTangent.Z) > UE_SMALL_NUMBER)
+			{
+				TerminalPathSpeedCmPerSec = FMath::Min(TerminalPathSpeedCmPerSec,
+					Intent.Completion.TerminalVerticalSpeedCmPerSec / FMath::Abs(TerminalTangent.Z));
+			}
+			if (TerminalPathSpeedCmPerSec == TNumericLimits<float>::Max())
+			{
+				TerminalPathSpeedCmPerSec = 0.0f;
+			}
+		}
+		SpeedLimits.Last() = FMath::Min(SpeedLimits.Last(), TerminalPathSpeedCmPerSec);
 	}
 
 	for (int32 Iteration = 0; Iteration < Config.Timing.MaxIterations; ++Iteration)
@@ -647,6 +668,16 @@ bool FAircraftMotionPlan::Build(
 		break;
 	}
 	return bValid;
+}
+
+void FAircraftMotionPlan::UpdateMetadata(const FAircraftMovementIntent& Intent)
+{
+	check(Intent.Type == SourceIntent.Type);
+	// Heading、ArrivalMode 和 terminal speeds 属于计划/时序定义；调用方仅在
+	// 这些字段未变化时走 metadata fast path。这里绝不重写样本，尤其不能覆盖
+	// TimedTrajectory 明确创作的 yaw/yaw-rate。
+	SourceIntent.Completion = Intent.Completion;
+	SourceIntent.TimeoutSeconds = Intent.TimeoutSeconds;
 }
 
 bool FAircraftMotionPlan::Evaluate(float TimeSeconds, FAircraftMotionPlanSample& OutSample) const

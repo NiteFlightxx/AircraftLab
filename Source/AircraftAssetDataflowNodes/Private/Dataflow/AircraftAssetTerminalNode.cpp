@@ -82,7 +82,6 @@ uint32 FAircraftAssetTerminalNode::ComputeCollectionChecksum(const FManagedArray
 		AircraftCollectionAttribute::PhysicsAssetSoftObjectPathName, AircraftCollectionGroup::Import));
 
 	/* Solver */
-	AccumulateArray(Facade.GetAsyncFixedTimeStepSize());
 	AccumulateArray(Facade.GetOverrideIterationCounts());
 	AccumulateArray(Facade.GetPositionSolverIterationCount());
 	AccumulateArray(Facade.GetVelocitySolverIterationCount());

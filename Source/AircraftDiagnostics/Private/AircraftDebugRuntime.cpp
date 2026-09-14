@@ -2,6 +2,7 @@
 
 #include "AircraftDiagnostics/AircraftDebug.h"
 #include "AircraftDiagnostics/AircraftDebugRegistry.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 

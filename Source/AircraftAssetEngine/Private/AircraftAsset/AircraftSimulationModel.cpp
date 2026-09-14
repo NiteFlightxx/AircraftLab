@@ -87,14 +87,9 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		OutModel.Reset();
 		const FConstAircraftCollection ConstCollection(InCollection);
 
-		/* Solver / binding。Solver 组为空表示完全使用项目物理设置。 */
-		const TManagedArray<float>* const AsyncFixedTimeStep = ConstCollection.GetAsyncFixedTimeStepSize();
-		OutModel.bOverrideSolverAsyncDeltaTime = AsyncFixedTimeStep && AsyncFixedTimeStep->Num() > 0;
-		OutModel.SolverAsyncDeltaTime = OutModel.bOverrideSolverAsyncDeltaTime
-			? FMath::Clamp((*AsyncFixedTimeStep)[0], 0.001f, 0.066667f)
-			: 0.0f;
-		OutModel.bOverrideSolverIterationCounts = OutModel.bOverrideSolverAsyncDeltaTime
-			&& ReadFirst<uint8>(ConstCollection.GetOverrideIterationCounts(), uint8(0)) != 0;
+		/* Solver / binding。全局 Chaos 时间步由项目设置拥有；这里只编译刚体迭代覆盖。 */
+		OutModel.bOverrideSolverIterationCounts =
+			ReadFirst<uint8>(ConstCollection.GetOverrideIterationCounts(), uint8(0)) != 0;
 		OutModel.PositionSolverIterationCount = static_cast<uint8>(FMath::Clamp(
 			ReadFirst<int32>(ConstCollection.GetPositionSolverIterationCount(), 8), 0, 255));
 		OutModel.VelocitySolverIterationCount = static_cast<uint8>(FMath::Clamp(
@@ -198,6 +193,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.HoverThrustEstimator.ProcessNoiseVariance"), OutModel.FlightController.HoverThrustEstimator.ProcessNoiseVariance);
 			OutModel.FlightController.HoverThrustEstimator.AccelNoiseVariance = Properties.GetValue<float>(
 				TEXT("FlightController.HoverThrustEstimator.AccelNoiseVariance"), OutModel.FlightController.HoverThrustEstimator.AccelNoiseVariance);
+			OutModel.FlightController.HoverThrustEstimator.AccelerationFilterCutoffHz = Properties.GetValue<float>(
+				TEXT("FlightController.HoverThrustEstimator.AccelerationFilterCutoffHz"), OutModel.FlightController.HoverThrustEstimator.AccelerationFilterCutoffHz);
 			OutModel.FlightController.HoverThrustEstimator.GateSize = Properties.GetValue<float>(
 				TEXT("FlightController.HoverThrustEstimator.GateSize"), OutModel.FlightController.HoverThrustEstimator.GateSize);
 			OutModel.FlightController.HoverThrustEstimator.MinHoverThrust = Properties.GetValue<float>(
@@ -279,34 +276,35 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				Properties.GetValue<int32>(TEXT("Aircraft.Initial.FlightMode"),
 					static_cast<int32>(OutModel.FlightController.InitialFlightMode)), 0,
 				static_cast<int32>(EAircraftFlightMode::AutoLand)));
-			FAircraftConstraintSimulationRuntimeConfig& Constraint = OutModel.ConstraintSimulation;
-			Constraint.LinearNaturalFrequencyHz = Properties.GetValue<float>(TEXT("Simulation.Constraint.Linear.NaturalFrequencyHz"), Constraint.LinearNaturalFrequencyHz);
-			Constraint.LinearDampingRatio = Properties.GetValue<float>(TEXT("Simulation.Constraint.Linear.DampingRatio"), Constraint.LinearDampingRatio);
-			Constraint.LinearExtraDampingPerSecond = Properties.GetValue<float>(TEXT("Simulation.Constraint.Linear.ExtraDampingPerSecond"), Constraint.LinearExtraDampingPerSecond);
-			Constraint.LinearForceLimitN = Properties.GetValue<float>(TEXT("Simulation.Constraint.Linear.ForceLimitN"), Constraint.LinearForceLimitN);
-			Constraint.GravityFeedForwardScale = Properties.GetValue<float>(TEXT("Simulation.Constraint.Linear.GravityFeedForwardScale"), Constraint.GravityFeedForwardScale);
-			Constraint.DynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("Simulation.Constraint.Linear.DynamicsFeedForwardScale"), Constraint.DynamicsFeedForwardScale);
-			Constraint.bLinearAccelerationMode = Properties.GetValue<bool>(TEXT("Simulation.Constraint.Linear.AccelerationMode"), Constraint.bLinearAccelerationMode);
-			Constraint.Attitude.MaxTiltAngleDegrees = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.MaxTiltAngleDegrees"), Constraint.Attitude.MaxTiltAngleDegrees);
-			Constraint.Attitude.NaturalFrequencyHz = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.NaturalFrequencyHz"), Constraint.Attitude.NaturalFrequencyHz);
-			Constraint.Attitude.DampingRatio = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.DampingRatio"), Constraint.Attitude.DampingRatio);
-			Constraint.Attitude.MaxAngularRateDegPerSec = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Constraint.Attitude.MaxAngularRateDegPerSec"), FVector3f(Constraint.Attitude.MaxAngularRateDegPerSec)));
-			Constraint.Attitude.MaxAngularAccelerationDegPerSecSq = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Constraint.Attitude.MaxAngularAccelerationDegPerSecSq"), FVector3f(Constraint.Attitude.MaxAngularAccelerationDegPerSecSq)));
-			Constraint.Attitude.MaxAngularJerkDegPerSecCubed = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Constraint.Attitude.MaxAngularJerkDegPerSecCubed"), FVector3f(Constraint.Attitude.MaxAngularJerkDegPerSecCubed)));
-			Constraint.Attitude.DynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.DynamicsFeedForwardScale"), Constraint.Attitude.DynamicsFeedForwardScale);
-			Constraint.AttitudeExtraDampingPerSecond = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.ExtraDampingPerSecond"), Constraint.AttitudeExtraDampingPerSecond);
-			Constraint.AttitudeTorqueLimitNm = Properties.GetValue<float>(TEXT("Simulation.Constraint.Attitude.TorqueLimitNm"), Constraint.AttitudeTorqueLimitNm);
-			Constraint.bAngularAccelerationMode = Properties.GetValue<bool>(TEXT("Simulation.Constraint.Attitude.AccelerationMode"), Constraint.bAngularAccelerationMode);
-
-			FAircraftKinematicSimulationRuntimeConfig& Kinematic = OutModel.KinematicSimulation;
-			Kinematic.AttitudeReference.MaxTiltAngleDegrees = Properties.GetValue<float>(TEXT("Simulation.Kinematic.Attitude.Reference.MaxTiltAngleDegrees"), Kinematic.AttitudeReference.MaxTiltAngleDegrees);
-			Kinematic.AttitudeReference.NaturalFrequencyHz = Properties.GetValue<float>(TEXT("Simulation.Kinematic.Attitude.Reference.NaturalFrequencyHz"), Kinematic.AttitudeReference.NaturalFrequencyHz);
-			Kinematic.AttitudeReference.DampingRatio = Properties.GetValue<float>(TEXT("Simulation.Kinematic.Attitude.Reference.DampingRatio"), Kinematic.AttitudeReference.DampingRatio);
-			Kinematic.AttitudeReference.MaxAngularRateDegPerSec = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Kinematic.Attitude.Reference.MaxAngularRateDegPerSec"), FVector3f(Kinematic.AttitudeReference.MaxAngularRateDegPerSec)));
-			Kinematic.AttitudeReference.MaxAngularAccelerationDegPerSecSq = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Kinematic.Attitude.Reference.MaxAngularAccelerationDegPerSecSq"), FVector3f(Kinematic.AttitudeReference.MaxAngularAccelerationDegPerSecSq)));
-			Kinematic.AttitudeReference.MaxAngularJerkDegPerSecCubed = FVector(Properties.GetValue<FVector3f>(TEXT("Simulation.Kinematic.Attitude.Reference.MaxAngularJerkDegPerSecCubed"), FVector3f(Kinematic.AttitudeReference.MaxAngularJerkDegPerSecCubed)));
-			Kinematic.AttitudeReference.DynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("Simulation.Kinematic.Attitude.Reference.DynamicsFeedForwardScale"), Kinematic.AttitudeReference.DynamicsFeedForwardScale);
-			Kinematic.bSweepMovement = Properties.GetValue<bool>(TEXT("Simulation.Kinematic.SweepMovement"), Kinematic.bSweepMovement);
+			OutModel.FlightController.ConstraintLinearNaturalFrequencyHz = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.NaturalFrequencyHz"), OutModel.FlightController.ConstraintLinearNaturalFrequencyHz);
+			OutModel.FlightController.ConstraintLinearDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.DampingRatio"), OutModel.FlightController.ConstraintLinearDampingRatio);
+			OutModel.FlightController.ConstraintLinearExtraDampingPerSecond = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.ExtraDampingPerSecond"), OutModel.FlightController.ConstraintLinearExtraDampingPerSecond);
+			OutModel.FlightController.ConstraintLinearForceLimitN = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.ForceLimitN"), OutModel.FlightController.ConstraintLinearForceLimitN);
+			OutModel.FlightController.ConstraintGravityFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.GravityFeedForwardScale"), OutModel.FlightController.ConstraintGravityFeedForwardScale);
+			OutModel.FlightController.ConstraintDynamicsFeedForwardScale = Properties.GetValue<float>(TEXT("FlightController.Constraint.Linear.DynamicsFeedForwardScale"), OutModel.FlightController.ConstraintDynamicsFeedForwardScale);
+			OutModel.FlightController.ConstraintAttitudeNaturalFrequencyHz = Properties.GetValue<float>(TEXT("FlightController.Constraint.Attitude.NaturalFrequencyHz"), OutModel.FlightController.ConstraintAttitudeNaturalFrequencyHz);
+			OutModel.FlightController.ConstraintAttitudeDampingRatio = Properties.GetValue<float>(TEXT("FlightController.Constraint.Attitude.DampingRatio"), OutModel.FlightController.ConstraintAttitudeDampingRatio);
+			OutModel.FlightController.ConstraintAttitudeExtraDampingPerSecond = Properties.GetValue<float>(TEXT("FlightController.Constraint.Attitude.ExtraDampingPerSecond"), OutModel.FlightController.ConstraintAttitudeExtraDampingPerSecond);
+			OutModel.FlightController.ConstraintAttitudeTorqueLimitNm = Properties.GetValue<float>(TEXT("FlightController.Constraint.Attitude.TorqueLimitNm"), OutModel.FlightController.ConstraintAttitudeTorqueLimitNm);
+			OutModel.FlightController.bConstraintLinearAccelerationMode = Properties.GetValue<bool>(TEXT("FlightController.Constraint.Linear.AccelerationMode"), OutModel.FlightController.bConstraintLinearAccelerationMode);
+			OutModel.FlightController.bKinematicSweepMovement = Properties.GetValue<bool>(TEXT("FlightController.Kinematic.SweepMovement"), OutModel.FlightController.bKinematicSweepMovement);
+			// Kinematic 姿态塑形三级限幅。PhysicsConstraint 姿态响应由原生
+			// Angular Drive 的 Strength、DampingRatio 和 TorqueLimit 唯一决定。
+			// Facade 无 FVector 重载，逐分量读取。
+			{
+				FVector& KRate = OutModel.FlightController.KinematicAttitudeMaxRateDegPerSec;
+				KRate.X = Properties.GetValue<float>(TEXT("FlightController.Kinematic.Attitude.MaxRateDegPerSec.X"), KRate.X);
+				KRate.Y = Properties.GetValue<float>(TEXT("FlightController.Kinematic.Attitude.MaxRateDegPerSec.Y"), KRate.Y);
+				KRate.Z = Properties.GetValue<float>(TEXT("FlightController.Kinematic.Attitude.MaxRateDegPerSec.Z"), KRate.Z);
+				FVector& KAccel = OutModel.FlightController.KinematicAttitudeMaxAccelerationDegPerSecSq;
+				KAccel.X = Properties.GetValue<float>(TEXT("FlightController.Kinematic.Attitude.MaxAccelerationDegPerSecSq.X"), KAccel.X);
+				KAccel.Y = Properties.GetValue<float>(TEXT("FlightController.Kinematic.Attitude.MaxAccelerationDegPerSecSq.Y"), KAccel.Y);
+				KAccel.Z = Properties.GetValue<float>(TEXT("FlightController.Kinematic.Attitude.MaxAccelerationDegPerSecSq.Z"), KAccel.Z);
+				FVector& KJerk = OutModel.FlightController.KinematicAttitudeMaxJerkDegPerSecCubed;
+				KJerk.X = Properties.GetValue<float>(TEXT("FlightController.Kinematic.Attitude.MaxJerkDegPerSecCubed.X"), KJerk.X);
+				KJerk.Y = Properties.GetValue<float>(TEXT("FlightController.Kinematic.Attitude.MaxJerkDegPerSecCubed.Y"), KJerk.Y);
+				KJerk.Z = Properties.GetValue<float>(TEXT("FlightController.Kinematic.Attitude.MaxJerkDegPerSecCubed.Z"), KJerk.Z);
+			}
 
 			/* Autopilot：空间路径、动力学重定时和 MPCC 各自只有一个配置来源。 */
 			FAircraftAutopilotRuntimeConfig& Autopilot = OutModel.Autopilot;

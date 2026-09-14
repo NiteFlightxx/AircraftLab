@@ -25,6 +25,8 @@ struct AIRCRAFTNAVIGATION_API FAircraftAvoidanceAgentState
 	FVector CommandedVelocityCmPerSec = FVector::ZeroVector;
 	double SampleTimeSeconds = 0.0;
 	float MaxHorizontalSpeedCmPerSec = 0.0f;
+	float MaxClimbRateCmPerSec = 0.0f;
+	float MaxDescentRateCmPerSec = 0.0f;
 	float BodyRadiusCm = 0.0f;
 	float TrackingReserveCm = 0.0f;
 	uint8 Priority = 128;
@@ -49,18 +51,8 @@ struct AIRCRAFTNAVIGATION_API FAircraftAvoidanceLimits
 	float MaxVerticalJerkCmPerSecCubed = 0.0f;
 	float SmoothingWeight = 0.15f;
 	int32 HorizontalPlaneCount = 16;
-	/** 降级容差：LeastViolation 速度的最大违约量小于此值时按 Degraded 档发布而非刹车。 */
-	float DegradedVelocityToleranceCmPerSec = 10.0f;
 
 	bool IsValid() const;
-};
-
-/** 求解结果的可行档位：可行 / 轻微违约降级 / 不可行。 */
-enum class EAircraftAvoidanceDegradation : uint8
-{
-	None,
-	Degraded,
-	Infeasible
 };
 
 struct AIRCRAFTNAVIGATION_API FAircraftAvoidanceResult
@@ -73,8 +65,6 @@ struct AIRCRAFTNAVIGATION_API FAircraftAvoidanceResult
 	uint64 MostDangerousAgentId = 0;
 	bool bAvoidanceRequired = false;
 	bool bFeasible = false;
-	/** 违约档位：None=精确可行，Degraded=LeastViolation 速度在容差内可用，Infeasible=超容差。 */
-	EAircraftAvoidanceDegradation Degradation = EAircraftAvoidanceDegradation::None;
 };
 
 /** Stateless, deterministic, capability-constrained three-dimensional ORCA solver. */
@@ -87,5 +77,5 @@ public:
 		const FVector& PreferredVelocityCmPerSec,
 		const FVector& PreviousCommandAccelerationCmPerSecSq,
 		const FAircraftAvoidanceLimits& Limits,
-		TConstArrayView<FAircraftVelocityConstraintCapsule> EnvironmentCapsules);
+		TConstArrayView<FAircraftVelocityConstraintCapsule> CorridorAlternatives);
 };

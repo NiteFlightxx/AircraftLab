@@ -23,7 +23,6 @@ namespace UE::AircraftLab::AircraftAsset
 		const FName SkeletalMeshSoftObjectPathName(TEXT("SkeletalMeshSoftObjectPathName"));
 		const FName PhysicsAssetSoftObjectPathName(TEXT("PhysicsAssetSoftObjectPathName"));
 
-		const FName AsyncFixedTimeStepSize(TEXT("AsyncFixedTimeStepSize"));
 		const FName OverrideIterationCounts(TEXT("OverrideIterationCounts"));
 		const FName PositionSolverIterationCount(TEXT("PositionSolverIterationCount"));
 		const FName VelocitySolverIterationCount(TEXT("VelocitySolverIterationCount"));

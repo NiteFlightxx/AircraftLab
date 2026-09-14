@@ -39,8 +39,10 @@ bool FAircraftGuidanceTrajectoryBuilder::BuildVelocityGuidance(
 	}
 
 	const FAircraftDynamicCapabilitySnapshot& Capability = AircraftState.Capability;
+	const double SolveDeltaTimeSeconds = FMath::Max(
+		static_cast<double>(Settings.SolveDeltaTimeSeconds), UE_DOUBLE_SMALL_NUMBER);
 	const FVector DesiredAcceleration = (TargetVelocityCmPerSec
-		- AircraftState.VehicleState.VelocityCmPerSec) / Settings.SolveDeltaTimeSeconds;
+		- AircraftState.VehicleState.VelocityCmPerSec) / SolveDeltaTimeSeconds;
 	const FVector CurrentHorizontalVelocity(
 		AircraftState.VehicleState.VelocityCmPerSec.X,
 		AircraftState.VehicleState.VelocityCmPerSec.Y,
@@ -66,15 +68,21 @@ bool FAircraftGuidanceTrajectoryBuilder::BuildVelocityGuidance(
 		return false;
 	}
 
+	// jerk 预算：0 = 未启用（与 ORCA 求解器 AddCapabilityPlanes 的语义一致），
+	// 跳过该项校验；否则允许的加速度变化量为 jerk·dt（含加速度域容差）。
 	const FVector AccelerationDelta = DesiredAcceleration
 		- Settings.PreviousCommandAccelerationCmPerSecSq;
 	const FVector HorizontalAccelerationDelta(AccelerationDelta.X, AccelerationDelta.Y, 0.0);
 	const double HorizontalJerkStep = FMath::Max(
-		Capability.MaxHorizontalJerkCmPerSecCubed, 0.0f) * Settings.SolveDeltaTimeSeconds;
+		Capability.MaxHorizontalJerkCmPerSecCubed, 0.0f) * SolveDeltaTimeSeconds;
 	const double VerticalJerkStep = FMath::Max(
-		Capability.MaxVerticalJerkCmPerSecCubed, 0.0f) * Settings.SolveDeltaTimeSeconds;
-	if (HorizontalAccelerationDelta.Size() > HorizontalJerkStep + UE_KINDA_SMALL_NUMBER
-		|| FMath::Abs(AccelerationDelta.Z) > VerticalJerkStep + UE_KINDA_SMALL_NUMBER)
+		Capability.MaxVerticalJerkCmPerSecCubed, 0.0f) * SolveDeltaTimeSeconds;
+	if ((Capability.MaxHorizontalJerkCmPerSecCubed > 0.0f
+			&& HorizontalAccelerationDelta.Size()
+				> HorizontalJerkStep + UE_KINDA_SMALL_NUMBER)
+		|| (Capability.MaxVerticalJerkCmPerSecCubed > 0.0f
+			&& FMath::Abs(AccelerationDelta.Z)
+				> VerticalJerkStep + UE_KINDA_SMALL_NUMBER))
 	{
 		return false;
 	}

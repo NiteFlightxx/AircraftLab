@@ -130,7 +130,6 @@ bool FAircraftVerticalControlUsesEstimatedHoverTest::RunTest(const FString& Para
 	Runtime.EstimatedState.State.AccelerationWorldCmPerSecSq = FVector::ZeroVector;
 	Runtime.HoldTargets.HeldAltitudeCm = 1000.0f;
 	Runtime.HoldTargets.bAltitudeHoldInitialized = true;
-	Runtime.HoldTargets.bYawHoldInitialized = true;
 	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
 
 	FAircraftPhysicsCache PhysicsCache;
@@ -155,6 +154,42 @@ bool FAircraftVerticalControlUsesEstimatedHoverTest::RunTest(const FString& Para
 		Context, 1.0f / 60.0f, OutDesiredVerticalVelocity);
 	TestTrue(TEXT("Hovering collective follows the estimated baseline (0.6), not the static config (0.5)"),
 		FMath::Abs(Collective - 0.6f) < 0.01f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftHoverThrustEstimatorSecondOrderFilterTest,
+	"AircraftLab.FlightControl.HoverThrustEstimator.SecondOrderFilterIsDeltaStable",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftHoverThrustEstimatorSecondOrderFilterTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftHoverThrustEstimatorConfig Config;
+	Config.AccelerationFilterCutoffHz = 5.0f;
+	TestTrue(TEXT("Default estimator configuration is valid"), Config.IsValid());
+
+	auto Simulate = [&Config](const float DeltaSeconds)
+	{
+		FAircraftHoverThrustEstimator Estimator;
+		Estimator.Configure(Config, 0.5f);
+		for (float TimeSeconds = 0.0f; TimeSeconds < 0.5f; TimeSeconds += DeltaSeconds)
+		{
+			Estimator.Update(DeltaSeconds, 0.0f, 0.5f, 9.8f);
+		}
+		for (float TimeSeconds = 0.0f; TimeSeconds < 1.5f; TimeSeconds += DeltaSeconds)
+		{
+			Estimator.Update(DeltaSeconds, -1.0f, 0.5f, 9.8f);
+		}
+		return Estimator.GetHoverThrust();
+	};
+	const float EstimateAt30Hz = Simulate(1.0f / 30.0f);
+	const float EstimateAt120Hz = Simulate(1.0f / 120.0f);
+	TestTrue(TEXT("Exact-discretized two-pole filter remains stable across frame rates"),
+		FMath::Abs(EstimateAt30Hz - EstimateAt120Hz) < 0.015f);
+
+	Config.AccelerationFilterCutoffHz = -1.0f;
+	TestFalse(TEXT("Negative filter cutoff is rejected"), Config.IsValid());
 	return true;
 }
 

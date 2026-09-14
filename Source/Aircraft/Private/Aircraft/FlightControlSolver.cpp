@@ -7,49 +7,30 @@
 
 namespace
 {
-	/**
-	 * 从刚体四元数提取世界水平面中的机头方向。
-	 * 正常姿态使用机体 Forward；其水平投影退化时，使用机体 Right 重建 Forward。
-	 */
-	FVector GetPlanarHeadingDirection(
-		const FQuat& BodyRotation, const FAircraftFlightControllerRuntimeConfig& Config)
+	FAircraftAttitudeMotionConfig BuildFlightControllerAttitudeMotionConfig(
+		const FAircraftFlightControllerRuntimeConfig& Config,
+		const float MaxYawRateDegPerSec)
 	{
-		FVector Forward = BodyRotation.RotateVector(Config.GetForwardAxisBody());
-		Forward.Z = 0.0f;
-		if (Forward.Normalize())
-		{
-			return Forward;
-		}
-
-		FVector Right = BodyRotation.RotateVector(Config.GetRightAxisBody());
-		Right.Z = 0.0f;
-		if (Right.Normalize())
-		{
-			return FVector(Right.Y, -Right.X, 0.0f);
-		}
-
-		return FVector::ForwardVector;
-	}
-
-	float GetPlanarHeadingDegrees(
-		const FQuat& BodyRotation, const FAircraftFlightControllerRuntimeConfig& Config)
-	{
-		const FVector Forward = GetPlanarHeadingDirection(BodyRotation, Config);
-		return FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X));
-	}
-
-	/** 返回从当前水平航向转到目标航向的最短有符号角，单位为弧度。 */
-	float ComputePlanarHeadingErrorRadians(
-		const FQuat& BodyRotation, float TargetYawDegrees,
-		const FAircraftFlightControllerRuntimeConfig& Config)
-	{
-		const FVector CurrentForward = GetPlanarHeadingDirection(BodyRotation, Config);
-		const FQuat TargetHeadingRotation(
-			FVector::UpVector, FMath::DegreesToRadians(TargetYawDegrees));
-		const FVector TargetForward = TargetHeadingRotation.RotateVector(FVector::ForwardVector);
-		return FMath::Atan2(
-			FVector::CrossProduct(CurrentForward, TargetForward).Z,
-			FVector::DotProduct(CurrentForward, TargetForward));
+		const float NaturalAngularFrequency = FMath::Max(
+			Config.ReferenceModelNaturalFrequency, UE_SMALL_NUMBER);
+		FAircraftAttitudeMotionConfig Result;
+		Result.MaxTiltAngleDegrees = Config.MaxTiltAngleDegrees;
+		Result.NaturalFrequencyHz = NaturalAngularFrequency / UE_TWO_PI;
+		Result.DampingRatio = 1.0f;
+		Result.MaxAngularRateDegPerSec = FVector(
+			Config.MaxRollRateDegreesPerSec,
+			Config.MaxPitchRateDegreesPerSec,
+			FMath::Max(MaxYawRateDegPerSec, 0.0f));
+		Result.MaxAngularAccelerationDegPerSecSq = FVector(
+			2.0f * NaturalAngularFrequency * Result.MaxAngularRateDegPerSec.X,
+			2.0f * NaturalAngularFrequency * Result.MaxAngularRateDegPerSec.Y,
+			Config.MaxYawAccelerationDegPerSecSq);
+		Result.MaxAngularJerkDegPerSecCubed = FVector(
+			2.0f * NaturalAngularFrequency * Result.MaxAngularAccelerationDegPerSecSq.X,
+			2.0f * NaturalAngularFrequency * Result.MaxAngularAccelerationDegPerSecSq.Y,
+			Config.MaxYawJerkDegPerSecCubed);
+		Result.DynamicsFeedForwardScale = 0.0f;
+		return Result;
 	}
 }
 
@@ -302,7 +283,7 @@ FRotator FAircraftFlightControlSolver::ComputeDesiredAttitude(FAircraftFlightCon
 	// ---- 路径 B：速度/位置 PID → 悬停倾斜方程 ----
 	const FVector DesiredHorizontalAcceleration = ComputeDesiredHorizontalAcceleration(Context, DeltaSeconds);
 	const float GravityMagnitude = Context.PhysicsCache.GravityMagnitudeCmPerSecSq;
-	const float CurrentHeadingDegrees = GetPlanarHeadingDegrees(
+	const float CurrentHeadingDegrees = AircraftAttitudeReference::GetPlanarHeadingDegrees(
 		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized(), Config);
 
 	return AircraftAttitudeReference::Build(
@@ -314,13 +295,15 @@ FRotator FAircraftFlightControlSolver::ComputeDesiredAttitude(FAircraftFlightCon
 }
 
 
-FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(FAircraftFlightControlSolverContext& Context)
+FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(
+	FAircraftFlightControlSolverContext& Context, const float DeltaSeconds)
 {
 	const FAircraftFlightControllerRuntimeConfig& Config = Context.Config;
 	FAircraftYawSetpoint Result;
 	// 航向保持初始化与下游航向误差必须使用同一份刚体四元数真值。
-	const float CurrentYawDegrees = GetPlanarHeadingDegrees(
-		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized(), Config);
+	const FQuat BodyWorldRotation = Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized();
+	const float CurrentYawDegrees = AircraftAttitudeReference::GetPlanarHeadingDegrees(
+		BodyWorldRotation, Config);
 	Result.TargetYawDegrees = CurrentYawDegrees;
 	Result.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
 	const bool bHasYawTorqueAuthority =
@@ -330,8 +313,7 @@ FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(FAircraftF
 			> AircraftAllocation::AuthorityEpsilon;
 	if (!bHasYawTorqueAuthority)
 	{
-		Context.Runtime.HoldTargets.HeldYawDegrees = CurrentYawDegrees;
-		Context.Runtime.HoldTargets.bYawHoldInitialized = true;
+		YawReferenceModel.Reset();
 		Result.MaxRateDegPerSec = 0.0f;
 		return Result;
 	}
@@ -339,6 +321,7 @@ FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(FAircraftF
 	// ---- 统一轨迹参考 ----
 	if (Context.bUseTrajectoryReference && Context.TrajectoryReference.bValid)
 	{
+		YawReferenceModel.Reset();
 		const FAircraftTrajectoryReference& Reference = Context.TrajectoryReference;
 		if (!bTrajectoryPositionTrackingInitialized
 			|| bLastTrajectoryPositionTrackingEnabled != Reference.bPositionTrackingEnabled)
@@ -364,37 +347,30 @@ FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(FAircraftF
 		return Result;
 	}
 
-	// ---- 手动路径 ----
-	const float ManualYawRate = Context.ManualCommand.DesiredYawRateDegPerSec;
-
-	if (!Context.ModeCapabilities.CanHoldYaw)
+	// 手动路径与 Autopilot 使用同一个 jerk/加速度/速率受限参考动态。
+	// 松杆时目标速率变为零，参考角继续按剩余角速度积分并自然制动；
+	// 制动结束时的积分角度就是新的 Hold，而不是松杆瞬间冻结的旧角度。
+	FAircraftYawReferenceLimits Limits;
+	Limits.MaxRateDegPerSec = Result.MaxRateDegPerSec;
+	Limits.MaxAccelerationDegPerSecSq = Config.MaxYawAccelerationDegPerSecSq;
+	Limits.MaxJerkDegPerSecCubed = Config.MaxYawJerkDegPerSecCubed;
+	Limits.ResponseTimeSeconds = 1.0f / FMath::Max(
+		Config.ReferenceModelNaturalFrequency, UE_SMALL_NUMBER);
+	const float MeasuredYawRateDegPerSec =
+		AircraftAttitudeReference::GetPlanarHeadingRateDegreesPerSecond(
+			BodyWorldRotation,
+			Context.PhysicsCache.AngularVelocityWorldRadPerSec,
+			Config.GetForwardAxisBody(), Config.GetRightAxisBody());
+	if (!FAircraftYawReferenceDynamics::UpdateRateCommand(
+		Context.ManualCommand.DesiredYawRateDegPerSec,
+		CurrentYawDegrees, MeasuredYawRateDegPerSec,
+		DeltaSeconds, Limits, YawReferenceModel))
 	{
-		// 无航向保持：目标姿态使用当前航向，摇杆只作为角速度前馈。
-		Context.Runtime.HoldTargets.bYawHoldInitialized = false;
-		Result.FeedForwardRateDegPerSec = FMath::Clamp(
-			ManualYawRate, -Result.MaxRateDegPerSec, Result.MaxRateDegPerSec);
+		YawReferenceModel.Reset();
 		return Result;
 	}
-
-	// 摇杆超出死区 → 手动偏航率，同时重新锁定航向
-	if (FMath::Abs(ManualYawRate) > UE_SMALL_NUMBER)
-	{
-		Context.Runtime.HoldTargets.HeldYawDegrees = CurrentYawDegrees;
-		Context.Runtime.HoldTargets.bYawHoldInitialized = true;
-		Result.TargetYawDegrees = Context.Runtime.HoldTargets.HeldYawDegrees;
-		Result.FeedForwardRateDegPerSec = FMath::Clamp(
-			ManualYawRate, -Result.MaxRateDegPerSec, Result.MaxRateDegPerSec);
-		return Result;
-	}
-
-	// 初始化锁定航向
-	if (!Context.Runtime.HoldTargets.bYawHoldInitialized)
-	{
-		Context.Runtime.HoldTargets.HeldYawDegrees = CurrentYawDegrees;
-		Context.Runtime.HoldTargets.bYawHoldInitialized = true;
-	}
-
-	Result.TargetYawDegrees = FRotator::NormalizeAxis(Context.Runtime.HoldTargets.HeldYawDegrees);
+	Result.TargetYawDegrees = YawReferenceModel.YawDegrees;
+	Result.FeedForwardRateDegPerSec = YawReferenceModel.RateDegPerSec;
 	return Result;
 }
 
@@ -403,91 +379,89 @@ FVector FAircraftFlightControlSolver::ComputeDesiredBodyRates(FAircraftFlightCon
 	const FRotator& DesiredAttitude, const FAircraftYawSetpoint& YawSetpoint, float DeltaSeconds)
 {
 	const FAircraftFlightControllerRuntimeConfig& Config = Context.Config;
-	// Acro/Manual 模式的默认值：摇杆直通
-	float DesiredRollRate = Context.ManualCommand.DesiredBodyRatesDegPerSec.X;
-	float DesiredPitchRate = Context.ManualCommand.DesiredBodyRatesDegPerSec.Y;
-	float DesiredYawRate = YawSetpoint.FeedForwardRateDegPerSec;
-	// 角速度前馈由姿态参考模型导数产生。
-	float RollRateFF = 0.0f;
-	float PitchRateFF = 0.0f;
-	float YawRateFF = 0.0f;
-
-	// 非角速度直通模式统一使用四元数姿态误差。
-	if (Context.Runtime.AttitudeMode != EAircraftAttitudeMode::Acro && Context.Runtime.AttitudeMode != EAircraftAttitudeMode::Manual)
+	if (Context.Runtime.AttitudeMode == EAircraftAttitudeMode::Acro
+		|| Context.Runtime.AttitudeMode == EAircraftAttitudeMode::Manual)
 	{
-		// 2 阶临界阻尼参考模型（对标 PX4 AttitudeControl.cpp）。
-		// ẍ + 2ω·ẋ + ω²·(x − x_sp) = 0，ζ=1 临界阻尼。
-		float SmoothedRoll = DesiredAttitude.Roll;
-		float SmoothedPitch = DesiredAttitude.Pitch;
-
-		if (Config.bEnableAttitudeReferenceModel)
-		{
-			const float Omega = FMath::Max(Config.ReferenceModelNaturalFrequency, UE_SMALL_NUMBER);
-			const float FFLimit = Config.ReferenceModelRateFeedForwardLimitDegPerSec;
-			// ZOH 半隐式离散积分：
-			//   v += ω²·(x_sp − x)·dt − 2ω·v·dt
-			//   x += v·dt
-			auto StepRefModel = [Omega, DeltaSeconds](FAircraftReferenceModelState& S, float Setpoint)
-			{
-				if (!S.bInitialized) { S.x = Setpoint; S.v = 0.0f; S.bInitialized = true; return; }
-				const float Accel = Omega * Omega * (Setpoint - S.x) - 2.0f * Omega * S.v;
-				S.v += Accel * DeltaSeconds;
-				S.x += S.v * DeltaSeconds;
-			};
-			StepRefModel(RollReferenceModel, DesiredAttitude.Roll);
-			StepRefModel(PitchReferenceModel, DesiredAttitude.Pitch);
-			// 偏航目标角同样过参考模型。偏航是环形量：先按当前模型状态的最短弧把
-			// 目标展开成连续值（消除 ±180° 环绕跳变），再喂给线性模型。
-			const float UnwrappedTargetYaw = YawReferenceModel.x
-				+ FMath::FindDeltaAngleDegrees(YawReferenceModel.x,
-					YawSetpoint.TargetYawDegrees);
-			StepRefModel(YawReferenceModel, UnwrappedTargetYaw);
-			SmoothedRoll = RollReferenceModel.x;
-			SmoothedPitch = PitchReferenceModel.x;
-			RollRateFF = FMath::Clamp(RollReferenceModel.v, -FFLimit, FFLimit);
-			PitchRateFF = FMath::Clamp(PitchReferenceModel.v, -FFLimit, FFLimit);
-			YawRateFF = FMath::Clamp(YawReferenceModel.v, -FFLimit, FFLimit);
-		}
-
-		// Roll/Pitch 命令是在当前机头航向坐标系中生成的，目标倾斜姿态必须继续使用当前航向；
-		// 目标 Yaw 作为独立航向闭环处理，避免 Yaw 误差泄漏到 Roll/Pitch 通道。
-		const FQuat QBody = Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized();
-		const FQuat QCur = Config.GetControlWorldRotation(QBody);
-		const float CurrentHeadingDegrees = GetPlanarHeadingDegrees(QBody, Config);
-		const FQuat QDes = FRotator(
-			SmoothedPitch, CurrentHeadingDegrees, SmoothedRoll).Quaternion();
-		FQuat QErr = QCur.Inverse() * QDes;
-		if (QErr.W < 0.0f)
-		{
-			QErr = FQuat(-QErr.X, -QErr.Y, -QErr.Z, -QErr.W);
-		}
-		QErr.Normalize();
-
-		// 2·q_err.imag 近似机体系姿态误差（rad）。X/Y 取负以匹配飞控
-		// Roll/Pitch 角速度符号约定；转换到 deg/s 后叠加参考模型前馈。
-		DesiredRollRate = FMath::RadiansToDegrees(
-			-2.0f * QErr.X * Config.AttitudeGains.X) + RollRateFF;
-		DesiredPitchRate = FMath::RadiansToDegrees(
-			-2.0f * QErr.Y * Config.AttitudeGains.Y) + PitchRateFF;
-
-		// 航向误差相对参考模型的平滑目标角（而非原始目标角）：模型速度作前馈，
-		// 模型与原始目标角的残差由模型自身动态渐近消除——与 Roll/Pitch 同构，
-		// 为偏航通道补上此前缺失的阻尼项。
-		const float SmoothedTargetYawDegrees = Config.bEnableAttitudeReferenceModel
-			? FRotator::NormalizeAxis(YawReferenceModel.x)
-			: YawSetpoint.TargetYawDegrees;
-		const float HeadingErrorRadians = ComputePlanarHeadingErrorRadians(
-			QBody, SmoothedTargetYawDegrees, Config);
-		DesiredYawRate += FMath::RadiansToDegrees(
-			HeadingErrorRadians * Config.AttitudeGains.Z) + YawRateFF;
+		FAircraftAttitudeReferenceDynamics::Reset(AttitudeReferenceModel);
+		return FVector(
+			FMath::Clamp(Context.ManualCommand.DesiredBodyRatesDegPerSec.X,
+				-Config.MaxRollRateDegreesPerSec, Config.MaxRollRateDegreesPerSec),
+			FMath::Clamp(Context.ManualCommand.DesiredBodyRatesDegPerSec.Y,
+				-Config.MaxPitchRateDegreesPerSec, Config.MaxPitchRateDegreesPerSec),
+			FMath::Clamp(YawSetpoint.FeedForwardRateDegPerSec,
+				-YawSetpoint.MaxRateDegPerSec, YawSetpoint.MaxRateDegPerSec));
 	}
 
-	// 限幅到最大角速率
-	DesiredRollRate = FMath::Clamp(DesiredRollRate, -Config.MaxRollRateDegreesPerSec, Config.MaxRollRateDegreesPerSec);
-	DesiredPitchRate = FMath::Clamp(DesiredPitchRate, -Config.MaxPitchRateDegreesPerSec, Config.MaxPitchRateDegreesPerSec);
-	DesiredYawRate = FMath::Clamp(DesiredYawRate,
-		-YawSetpoint.MaxRateDegPerSec, YawSetpoint.MaxRateDegPerSec);
-	return FVector(DesiredRollRate, DesiredPitchRate, DesiredYawRate);
+	const FQuat ActualBodyWorldRotation =
+		Context.PhysicsCache.BodyTransform.GetRotation().GetNormalized();
+	const FQuat ActualControlWorldRotation = Config.GetControlWorldRotation(
+		ActualBodyWorldRotation);
+	const FQuat RawControlWorldRotation = FRotator(
+		DesiredAttitude.Pitch,
+		YawSetpoint.TargetYawDegrees,
+		DesiredAttitude.Roll).Quaternion();
+	FQuat ShapedControlWorldRotation = RawControlWorldRotation;
+	FVector ReferenceBodyRateRadPerSec = ActualBodyWorldRotation.UnrotateVector(
+		FVector::UpVector * FMath::DegreesToRadians(
+			YawSetpoint.FeedForwardRateDegPerSec));
+
+	if (Config.bEnableAttitudeReferenceModel)
+	{
+		FAircraftAttitudeMotionOutput ReferenceOutput;
+		const FAircraftAttitudeMotionConfig MotionConfig =
+			BuildFlightControllerAttitudeMotionConfig(Config, YawSetpoint.MaxRateDegPerSec);
+		const FVector ActualAngularVelocityBodyRadPerSec =
+			ActualBodyWorldRotation.UnrotateVector(
+				Context.PhysicsCache.AngularVelocityWorldRadPerSec);
+		if (!FAircraftAttitudeReferenceDynamics::UpdateRotationTarget(
+			RawControlWorldRotation,
+			YawSetpoint.FeedForwardRateDegPerSec,
+			DeltaSeconds,
+			ActualBodyWorldRotation,
+			ActualAngularVelocityBodyRadPerSec,
+			Config,
+			MotionConfig,
+			AttitudeReferenceModel,
+			ReferenceOutput))
+		{
+			FAircraftAttitudeReferenceDynamics::Reset(AttitudeReferenceModel);
+			return FVector::ZeroVector;
+		}
+		ShapedControlWorldRotation = ReferenceOutput.ControlWorldRotation;
+		ReferenceBodyRateRadPerSec = ReferenceOutput.AngularVelocityBodyRadPerSec;
+	}
+	else
+	{
+		FAircraftAttitudeReferenceDynamics::Reset(AttitudeReferenceModel);
+	}
+
+	FVector ReferenceControllerRateDegPerSec = FMath::RadiansToDegrees(
+		Config.BodyAngularToController(ReferenceBodyRateRadPerSec));
+	const float AttitudeRateFeedForwardLimit = FMath::Max(
+		Config.ReferenceModelRateFeedForwardLimitDegPerSec, 0.0f);
+	ReferenceControllerRateDegPerSec.X = FMath::Clamp(
+		ReferenceControllerRateDegPerSec.X,
+		-AttitudeRateFeedForwardLimit, AttitudeRateFeedForwardLimit);
+	ReferenceControllerRateDegPerSec.Y = FMath::Clamp(
+		ReferenceControllerRateDegPerSec.Y,
+		-AttitudeRateFeedForwardLimit, AttitudeRateFeedForwardLimit);
+
+	const FVector RotationErrorControl =
+		AircraftAttitudeReference::GetShortestRotationVector(
+			ActualControlWorldRotation, ShapedControlWorldRotation);
+	const FVector AttitudeCorrectionControllerRadPerSec(
+		-RotationErrorControl.X * Config.AttitudeGains.X,
+		-RotationErrorControl.Y * Config.AttitudeGains.Y,
+		RotationErrorControl.Z * Config.AttitudeGains.Z);
+	const FVector DesiredControllerRateDegPerSec = ReferenceControllerRateDegPerSec
+		+ FMath::RadiansToDegrees(AttitudeCorrectionControllerRadPerSec);
+	return FVector(
+		FMath::Clamp(DesiredControllerRateDegPerSec.X,
+			-Config.MaxRollRateDegreesPerSec, Config.MaxRollRateDegreesPerSec),
+		FMath::Clamp(DesiredControllerRateDegPerSec.Y,
+			-Config.MaxPitchRateDegreesPerSec, Config.MaxPitchRateDegreesPerSec),
+		FMath::Clamp(DesiredControllerRateDegPerSec.Z,
+			-YawSetpoint.MaxRateDegPerSec, YawSetpoint.MaxRateDegPerSec));
 }
 
 

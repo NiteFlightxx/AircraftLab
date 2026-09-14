@@ -28,7 +28,8 @@ enum class EAircraftNavigationGuidanceFailureReason : uint8
 	InvalidGuidance,
 	Unavailable,
 	Expired,
-	IntentMismatch
+	IntentMismatch,
+	KinematicObstructed
 };
 
 /** A sample relative to FAircraftNavigationGuidance::GeneratedAtSeconds. */
@@ -62,23 +63,9 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftNavigationGuidance
 
 	TArray<FAircraftNavigationGuidanceSample> Samples;
 
-	/**
-	 * 求解器最小违约速度的降级档（可行域不可行时求解器算出的 LeastViolation 速度）。
-	 * 全分量 < 0 表示本次未产生降级档（哨兵值），消费端走现有路径。
-	 * 由发布端可选填充；不填即保持既有行为。
-	 */
-	FVector DegradedVelocityCmPerSec = FVector(-1.0);
-
 	bool IsValid() const;
 	bool IsFresh(double CurrentTimeSeconds) const;
 	bool Evaluate(double CurrentTimeSeconds, FAircraftNavigationGuidanceSample& OutSample) const;
-
-	/** 是否携带有效的降级速度档（用于失败路径的中间档消费）。 */
-	bool HasDegradedVelocity() const
-	{
-		return DegradedVelocityCmPerSec.X >= 0.0 || DegradedVelocityCmPerSec.Y >= 0.0
-			|| DegradedVelocityCmPerSec.Z >= 0.0;
-	}
 };
 
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftNavigationGuidanceStatus
@@ -94,6 +81,19 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftNavigationGuidanceStatus
 	double ValidUntilSeconds = 0.0;
 };
 
+/** Value-only result of the Actor-root sweep used by the kinematic backend. */
+struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftKinematicObstructionSnapshot
+{
+	uint64 Revision = 0;
+	int64 SourceIntentId = 0;
+	uint64 SourceIntentRevision = 0;
+	bool bBlocked = false;
+	float BlockingDurationSeconds = 0.0f;
+	FVector ActualPositionCm = FVector::ZeroVector;
+	FVector ImpactPointCm = FVector::ZeroVector;
+	FVector ImpactNormal = FVector::ZeroVector;
+};
+
 /** Read-only state and physical limits exported to an external navigation/avoidance owner. */
 struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftNavigationAgentSnapshot
 {
@@ -101,5 +101,6 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftNavigationAgentSnapshot
 	FAircraftDynamicCapabilitySnapshot Capability;
 	FAircraftTrajectoryReference NominalReference;
 	FAircraftNavigationGuidanceStatus GuidanceStatus;
+	FAircraftKinematicObstructionSnapshot KinematicObstruction;
 	bool bValid = false;
 };

@@ -110,9 +110,9 @@ namespace
 		MissingModel,
 		MissingSkeletalMesh,
 		MissingLod,
-		InvalidAlternativeDriveConfig,
 		InvalidRootBone,
 		MissingRootBody,
+		InvalidFlightControllerConfig,
 		InvalidRotorInstallation
 	};
 
@@ -149,18 +149,17 @@ namespace
 		for (int32 LodIndex = 0; LodIndex < Model->LodModels.Num(); ++LodIndex)
 		{
 			const FAircraftSimulationLodModel& LodModel = Model->LodModels[LodIndex];
-			if (!LodModel.ConstraintSimulation.IsValid()
-				|| !LodModel.KinematicSimulation.IsValid())
-			{
-				Result.Error = ECompiledAircraftModelError::InvalidAlternativeDriveConfig;
-				Result.LodIndex = LodIndex;
-				return Result;
-			}
 			if (!LodModel.FlightController.FrameBinding.IsValid())
 			{
 				Result.Error = ECompiledAircraftModelError::InvalidRootBone;
 				Result.LodIndex = LodIndex;
 				Result.RootBone = LodModel.RootBone;
+				return Result;
+			}
+			if (!LodModel.FlightController.HoverThrustEstimator.IsValid())
+			{
+				Result.Error = ECompiledAircraftModelError::InvalidFlightControllerConfig;
+				Result.LodIndex = LodIndex;
 				return Result;
 			}
 			if (UE::AircraftLab::AircraftAsset::ResolveAircraftChassisBodyName(
@@ -332,11 +331,6 @@ bool UAircraftAsset::CompileAndCommitAircraftState(
 	{
 	case ECompiledAircraftModelError::None:
 		break;
-	case ECompiledAircraftModelError::InvalidAlternativeDriveConfig:
-		AppendValidationError(Validation.LodIndex,
-			LOCTEXT("InvalidAlternativeDriveConfig",
-				"Constraint or Kinematic drive configuration contains a non-finite value, a negative limit, or an invalid tilt range."));
-		return false;
 	case ECompiledAircraftModelError::InvalidRootBone:
 		AppendValidationError(Validation.LodIndex, FText::Format(
 			LOCTEXT("InvalidRootBoneFrame",
@@ -361,12 +355,18 @@ bool UAircraftAsset::CompileAndCommitAircraftState(
 		AppendValidationError(Validation.LodIndex, MissingBodyText);
 		return false;
 	}
+	case ECompiledAircraftModelError::InvalidFlightControllerConfig:
+		AppendValidationError(Validation.LodIndex,
+			LOCTEXT("InvalidFlightControllerConfig",
+				"Flight-controller hover-thrust estimator parameters are invalid."));
+		return false;
 	default:
 		AppendValidationError(Validation.LodIndex,
 			LOCTEXT("InvalidCompiledAircraftModel",
 				"Aircraft frame compilation requires a skeletal mesh and at least one LOD."));
 		return false;
 	}
+
 	// 验证通过：一次性交换成员状态。
 	GetAircraftCollectionsInternal() = MoveTemp(Candidate.Collections);
 	SourceSkeletalMesh = Candidate.SkeletalMesh;
@@ -412,7 +412,7 @@ void UAircraftAsset::SetCollections(TArray<TSharedRef<const FManagedArrayCollect
 	SetAircraftCollections(MoveTemp(InCollections));
 }
 
-const TArray<TSharedRef<const FManagedArrayCollection>>& UAircraftAsset::GetCollections(int32 /*ModelIndex*/) const
+const TArray<TSharedRef<const FManagedArrayCollection>>& UAircraftAsset::GetCollections() const
 {
 	return GetAircraftCollections();
 }

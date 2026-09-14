@@ -30,7 +30,8 @@ enum class EAircraftHeadingMode : uint8
 	KeepCurrent,
 	FixedYaw,
 	FaceVelocity,
-	FaceTarget
+	FaceTarget,
+	YawRate
 };
 
 UENUM(BlueprintType)
@@ -121,6 +122,9 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftHeadingObjective
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Heading", meta = (Units = "deg"))
 	float FixedYawDegrees = 0.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Heading", meta = (Units = "deg/s"))
+	float YawRateDegPerSec = 0.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Heading", meta = (Units = "cm"))
 	FVector TargetPositionCm = FVector::ZeroVector;
 
@@ -137,7 +141,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftCompletionPolicy
 	EAircraftArrivalMode ArrivalMode = EAircraftArrivalMode::Stop;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "cm/s"))
-	float TerminalSpeedCmPerSec = 0.0f;
+	float TerminalHorizontalSpeedCmPerSec = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float TerminalVerticalSpeedCmPerSec = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "cm"))
 	float HorizontalToleranceCm = 50.0f;
@@ -146,7 +153,10 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftCompletionPolicy
 	float VerticalToleranceCm = 100.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "cm/s"))
-	float SpeedToleranceCmPerSec = 50.0f;
+	float HorizontalSpeedToleranceCmPerSec = 50.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", Units = "cm/s"))
+	float VerticalSpeedToleranceCmPerSec = 50.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Completion", meta = (ClampMin = "0.0", ClampMax = "180.0", Units = "deg"))
 	float YawToleranceDegrees = 5.0f;

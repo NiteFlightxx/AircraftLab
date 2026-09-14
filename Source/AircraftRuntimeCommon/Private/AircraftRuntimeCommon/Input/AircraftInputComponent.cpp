@@ -4,6 +4,7 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "GameFramework/Actor.h"
+#include "Engine/LocalPlayer.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 

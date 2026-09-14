@@ -97,8 +97,6 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	const FAircraftSimulationModel ProjectSettingsModel(CollectionsWithoutOverride, TEXT("ProjectSettings"));
 	const FAircraftSimulationLodModel* const ProjectSettingsLOD = ProjectSettingsModel.GetLodModel(0);
 	TestNotNull(TEXT("A collection compiles one LOD model"), ProjectSettingsLOD);
-	const FAircraftConstraintSimulationRuntimeConfig& ConstraintDefaults =
-		ProjectSettingsLOD->ConstraintSimulation;
 	const FAircraftFlightControllerRuntimeConfig RuntimeDefaults;
 	TestTrue(TEXT("Constraint strength is interpreted as frequency in Hz"),
 		FMath::IsNearlyEqual(
@@ -108,17 +106,17 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	float ConstraintDamping = 0.0f;
 	UE::AircraftLab::ConstraintDrive::ConvertStrengthToSpringParams(
 		ConstraintStiffness, ConstraintDamping,
-		ConstraintDefaults.LinearNaturalFrequencyHz,
-		ConstraintDefaults.LinearDampingRatio,
-		ConstraintDefaults.LinearExtraDampingPerSecond);
+		RuntimeDefaults.ConstraintLinearNaturalFrequencyHz,
+		RuntimeDefaults.ConstraintLinearDampingRatio,
+		RuntimeDefaults.ConstraintLinearExtraDampingPerSecond);
 	TestTrue(TEXT("Default constraint strength converts to the previous stiffness"),
 		FMath::IsNearlyEqual(ConstraintStiffness, 100.0f, 1.e-3f));
 	TestTrue(TEXT("Default constraint damping ratio converts to the previous damping"),
 		FMath::IsNearlyEqual(ConstraintDamping, 20.0f, 1.e-3f));
 	TestEqual(TEXT("Constraint gravity feed-forward defaults to full compensation"),
-		ConstraintDefaults.GravityFeedForwardScale, 1.0f);
+		RuntimeDefaults.ConstraintGravityFeedForwardScale, 1.0f);
 	TestEqual(TEXT("Constraint linear-damping feed-forward defaults to full compensation"),
-		ConstraintDefaults.DynamicsFeedForwardScale, 1.0f);
+		RuntimeDefaults.ConstraintDynamicsFeedForwardScale, 1.0f);
 	const double VelocityTrackingTarget =
 		UE::AircraftLab::ConstraintDrive::ComputeVelocityTrackingPositionTarget(
 			100.0, 200.0, 800.0, 2.0);
@@ -155,9 +153,10 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("A PhysicsConstraint manual roll input produces horizontal target velocity"),
 		FVector2D(ConstraintManualCommand.DesiredVelocityCmPerSec.X,
 			ConstraintManualCommand.DesiredVelocityCmPerSec.Y).Size() > 1.0f);
-	TestFalse(TEXT("An empty Solver group uses project physics settings"), ProjectSettingsLOD->bOverrideSolverAsyncDeltaTime);
 	TestFalse(TEXT("An empty Solver group uses project iteration settings"), ProjectSettingsLOD->bOverrideSolverIterationCounts);
-	TestEqual(TEXT("No override stores a zero solver delta"), ProjectSettingsLOD->SolverAsyncDeltaTime, 0.0f);
+	TestNull(TEXT("Aircraft schema does not own the shared Chaos async time step"),
+		Collection->FindAttributeTyped<float>(FName(TEXT("AsyncFixedTimeStepSize")),
+			AircraftCollectionGroup::Solver));
 
 	FCollectionAircraftPropertyMutableFacade FrameProperties(Collection);
 	FrameProperties.DefineSchema();
@@ -173,15 +172,10 @@ bool FAircraftOptionalSolverConfigTest::RunTest(const FString& Parameters)
 			FVector::UpVector, 1.e-4));
 	Collection->AddElements(1, AircraftCollectionGroup::Solver);
 	AircraftCollection.UpdateArrays();
-	(*AircraftCollection.GetAsyncFixedTimeStepSize())[0] = 1.0f / 120.0f;
-
 	const TArray<TSharedRef<const FManagedArrayCollection>> CollectionsWithOverride = { Collection };
 	const FAircraftSimulationModel OverrideModel(CollectionsWithOverride, TEXT("Override"));
 	const FAircraftSimulationLodModel* const OverrideLOD = OverrideModel.GetLodModel(0);
-	TestTrue(TEXT("A Solver entry enables the aircraft override"), OverrideLOD->bOverrideSolverAsyncDeltaTime);
 	TestFalse(TEXT("Iteration override remains independently disabled"), OverrideLOD->bOverrideSolverIterationCounts);
-	TestTrue(TEXT("The configured async fixed time step reaches the runtime model"),
-		FMath::IsNearlyEqual(OverrideLOD->SolverAsyncDeltaTime, 1.0f / 120.0f));
 
 	(*AircraftCollection.GetOverrideIterationCounts())[0] = uint8(1);
 	(*AircraftCollection.GetPositionSolverIterationCount())[0] = 12;
@@ -353,15 +347,8 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	Set(TEXT("FlightController.Altitude.AltitudeDerivativeCutoffHz"), 2.0f);
 	Set(TEXT("FlightController.Altitude.VerticalVelocityFreezeIntegralWhenSaturated"), false);
 	Set(TEXT("FlightController.Execution.ControllerEnabledByDefault"), false);
-	Set(TEXT("Simulation.Constraint.Linear.GravityFeedForwardScale"), 0.8f);
-	Set(TEXT("Simulation.Constraint.Linear.DynamicsFeedForwardScale"), 0.6f);
-	Set(TEXT("Simulation.Constraint.Attitude.NaturalFrequencyHz"), 0.85f);
-	Set(TEXT("Simulation.Constraint.Attitude.DampingRatio"), 0.9f);
-	Set(TEXT("Simulation.Constraint.Attitude.ExtraDampingPerSecond"), 0.3f);
-	Set(TEXT("Simulation.Constraint.Attitude.TorqueLimitNm"), 2.25f);
-	Set(TEXT("Simulation.Constraint.Attitude.AccelerationMode"), false);
-	Set(TEXT("Simulation.Kinematic.Attitude.Reference.NaturalFrequencyHz"), 1.75f);
-	Set(TEXT("Simulation.Kinematic.Attitude.Reference.DynamicsFeedForwardScale"), 0.25f);
+	Set(TEXT("FlightController.Constraint.Linear.GravityFeedForwardScale"), 0.8f);
+	Set(TEXT("FlightController.Constraint.Linear.DynamicsFeedForwardScale"), 0.6f);
 
 	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = { Collection };
 	const FAircraftSimulationModel Model(Collections, TEXT("CompletePid"));
@@ -377,23 +364,9 @@ bool FAircraftCompletePidConfigCompilationTest::RunTest(const FString& Parameter
 	TestFalse(TEXT("Vertical-velocity anti-windup configuration compiles"), Config.GetVerticalVelocityPidGains().bFreezeIntegralWhenSaturated);
 	TestFalse(TEXT("Controller execution default compiles"), Config.bControllerEnabledByDefault);
 	TestEqual(TEXT("Constraint gravity feed-forward compiles"),
-		Model.GetLodModel(0)->ConstraintSimulation.GravityFeedForwardScale, 0.8f);
+		Config.ConstraintGravityFeedForwardScale, 0.8f);
 	TestEqual(TEXT("Constraint linear-damping feed-forward compiles"),
-		Model.GetLodModel(0)->ConstraintSimulation.DynamicsFeedForwardScale, 0.6f);
-	TestEqual(TEXT("Constraint attitude bandwidth compiles into its angular drive"),
-		Model.GetLodModel(0)->ConstraintSimulation.Attitude.NaturalFrequencyHz, 0.85f);
-	TestEqual(TEXT("Constraint attitude damping compiles into its angular drive"),
-		Model.GetLodModel(0)->ConstraintSimulation.Attitude.DampingRatio, 0.9f);
-	TestEqual(TEXT("Constraint angular-drive extra damping compiles"),
-		Model.GetLodModel(0)->ConstraintSimulation.AttitudeExtraDampingPerSecond, 0.3f);
-	TestEqual(TEXT("Constraint angular-drive torque limit compiles"),
-		Model.GetLodModel(0)->ConstraintSimulation.AttitudeTorqueLimitNm, 2.25f);
-	TestFalse(TEXT("Constraint angular-drive acceleration mode compiles"),
-		Model.GetLodModel(0)->ConstraintSimulation.bAngularAccelerationMode);
-	TestEqual(TEXT("Kinematic attitude-reference bandwidth compiles independently"),
-		Model.GetLodModel(0)->KinematicSimulation.AttitudeReference.NaturalFrequencyHz, 1.75f);
-	TestEqual(TEXT("Kinematic attitude feed-forward compiles independently"),
-		Model.GetLodModel(0)->KinematicSimulation.AttitudeReference.DynamicsFeedForwardScale, 0.25f);
+		Config.ConstraintDynamicsFeedForwardScale, 0.6f);
 	return true;
 }
 

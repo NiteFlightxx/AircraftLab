@@ -1,5 +1,6 @@
 #include "AircraftDiagnostics/AircraftDebugSettings.h"
 
+#include "DrawDebugHelpers.h"
 #include "HAL/IConsoleManager.h"
 
 namespace UE::AircraftLab::Diagnostics::Private

@@ -20,6 +20,7 @@
 #include "Aircraft/ControlAllocator.h"
 #include "Aircraft/RotorModel.h"
 #include "Aircraft/RotorEffectivenessManager.h"
+#include "Aircraft/AircraftAttitudeReferenceDynamics.h"
 #include "AircraftAutopilot/AircraftTrajectoryRuntime.h"
 #include "AircraftDiagnostics/AircraftDebugSnapshot.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntent.h"
@@ -59,13 +60,29 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationOutputFrame
 	FAircraftVehicleStateSnapshot VehicleState;
 	FAircraftFlightControlOutput ControlOutput;
 	FAircraftSimulationControlDiagnostics ControlDiagnostics;
-	FAircraftAlternativeAttitudeDiagnostics AlternativeAttitude;
 	FAircraftTrajectoryReference TrajectoryReference;
 	FAircraftTrajectoryReference NominalTrajectoryReference;
 	FAircraftDynamicCapabilitySnapshot DynamicCapability;
 	FAircraftNavigationGuidanceStatus NavigationGuidanceStatus;
+	FAircraftKinematicObstructionSnapshot KinematicObstruction;
 	FAircraftAutopilotDiagnostics AutopilotDiagnostics;
 	FAircraftControlAuthorityInfo AuthorityInfo;
+	/** 替代驱动（Constraint/Kinematic）的 SO(3) 塑形姿态参考诊断（GT 消费）。 */
+	FAircraftAlternativeAttitudeDiagnostics AlternativeAttitude;
+};
+
+/** Coherent lightweight PT-to-GT view for trajectory consumers and navigation. */
+struct AIRCRAFTASSETENGINE_API FAircraftNavigationOutputSnapshot
+{
+	uint64 PhysicsStateSequence = 0;
+	uint64 ControlSequence = 0;
+	FAircraftEstimatedState EstimatedState;
+	FAircraftVehicleStateSnapshot VehicleState;
+	FAircraftTrajectoryReference TrajectoryReference;
+	FAircraftTrajectoryReference NominalTrajectoryReference;
+	FAircraftDynamicCapabilitySnapshot DynamicCapability;
+	FAircraftNavigationGuidanceStatus NavigationGuidanceStatus;
+	FAircraftKinematicObstructionSnapshot KinematicObstruction;
 };
 
 /* ===========================================================================
@@ -116,7 +133,8 @@ public:
 	void ClearNavigationGuidance_GameThread(uint64 Revision);
 	void GetNavigationGuidanceStatus_GameThread(
 		FAircraftNavigationGuidanceStatus& OutStatus) const;
-	void GetTrajectoryReference_GameThread(FAircraftTrajectoryReference& OutReference) const;
+	void GetNavigationOutputSnapshot_GameThread(
+		FAircraftNavigationOutputSnapshot& OutSnapshot) const;
 	void GetAutopilotDiagnostics_GameThread(FAircraftAutopilotDiagnostics& OutDiagnostics) const;
 	bool GetMotionPlan_GameThread(TArray<FAircraftMotionPlanSample>& OutSamples,
 		float& OutDurationSeconds, float& OutLengthCm, uint64& OutPlanRevision) const;
@@ -124,6 +142,7 @@ public:
 		const FTransform& BodyTransform, const FVector& CenterOfMassWorldCm,
 		const FVector& VelocityCmPerSec,
 		const FVector& AngularVelocityWorldRadPerSec,
+		const FAircraftKinematicObstructionSnapshot& Obstruction,
 		const FAircraftSimulationLodModel& Model);
 	void SetSimulationState_GameThread(bool bEnabled, bool bSuspended);
 	/** 通知下一物理子步重新捕获新 Chaos 刚体的原生阻尼状态。 */
@@ -153,14 +172,16 @@ public:
 	{
 		return LastPhysicsDeltaSeconds.load(std::memory_order_relaxed);
 	}
-	/** 替代驱动后端（约束/运动学，GT 执行）写回估计状态，覆盖 PT 输出槽。 */
-	void SetAlternativeDriveOutput_GameThread(
-		const FAircraftEstimatedState& InState,
-		const FAircraftAlternativeAttitudeDiagnostics& AttitudeDiagnostics,
-		const FQuat& ActualControlWorldRotation);
+	/**
+	 * Kinematic 移动完成后原子提交同一执行时刻的实际状态、参考、能力与阻塞状态。
+	 * 调用方必须基于一次 GetNavigationOutputSnapshot_GameThread() 的结果更新实际状态。
+	 */
+	void CommitKinematicNavigationOutput_GameThread(
+		const FAircraftNavigationOutputSnapshot& Snapshot);
+	/** 消费控制权边界产生的后端局部状态重置请求。Kinematic 仅在 GT 调用。 */
+	bool ConsumeBackendLocalStateReset_GameThread();
 	EAircraftArmState GetArmState_GameThread() const;
 	EAircraftFlightMode GetFlightMode_GameThread() const;
-	float GetCollectiveThrustCommand_GameThread() const;
 
 	void GetControlAuthorityInfo_GameThread(FAircraftControlAuthorityInfo& OutInfo) const;
 	//~ End GameThread API
@@ -169,13 +190,17 @@ public:
 	/**
 	 * 物理线程子步入口。AsyncPhysicsTickComponent 路径下 DeltaTime 是物理子步长（恒定高频），
 	 * FlightController 在此执行 MPCC、PID、分配与旋翼；PhysicsConstraint 在此执行
-	 * 确定性轨迹进度、可选空气动力和显式姿态扭矩。Kinematic 不进入本函数。
+	 * 确定性轨迹进度与可选空气动力。PhysicsConstraint 的 6-DOF Drive 目标由组件更新，
+	 * Kinematic 不进入本函数。
 	 */
 	void TickPhysicsThread(FBodyInstanceAsyncPhysicsTickHandle PhysicsHandle,
-		float DeltaTime, float SimTime, float ForceAccumulationScale = 1.0f);
+		float DeltaTime, float SimTime);
 	//~ End PhysicsThread API
 
 private:
+	friend class FAircraftBackendResetInterleavingTest;
+	friend class FAircraftBackendControlBoundaryRotorTopologyTest;
+
 	enum class ENavigationGuidanceInputState : uint8
 	{
 		Inactive,
@@ -189,11 +214,22 @@ private:
 	void RefreshControlAuthority_PhysicsThread(
 		const FAircraftFlightControllerRuntimeConfig& Config);
 	void ApplyPendingConfiguration_ExecutionThread();
+	/** 显式气动 wrench 计算与施加；arm 门之外也会调用（坠落机体仍受空气阻力）。 */
+	void ApplyAerodynamics_ExecutionThread(
+		Chaos::FRigidBodyHandle_Internal* Handle,
+		const FAircraftFlightControllerRuntimeConfig& Config,
+		const FQuat& WorldQuat,
+		const FVector& LinearVelCmPerSec,
+		const FVector& AngularVelBodyRadPerSec,
+		FAircraftSimulationControlDiagnostics& StepDiagnostics);
 	void ApplyNavigationGuidance_ExecutionThread(
 		ENavigationGuidanceInputState State,
 		const TSharedPtr<const FAircraftNavigationGuidance, ESPMode::ThreadSafe>& Guidance,
 		uint64 Revision);
 	void PublishEmptyOutputFrame_ExecutionThread();
+	void ResetBackendLocalState_ExecutionThread();
+	/** Runtime reset 只消费开始前已发布的边界请求；之后的请求必须留给下一执行帧。 */
+	void ConsumeBackendLocalStateResetCoveredByRuntimeReset_ExecutionThread();
 	void StampLatestOutputMetadata_NoLock(uint64 PhysicsStateSequence);
 	/** 由飞行模式推导能力缓存与姿态模式。 */
 	void UpdateModeCapabilities(EAircraftFlightMode Mode);
@@ -240,7 +276,7 @@ private:
 	TMap<FName, float> PendingRotorEffectivenessByName;
 	uint64 PendingRotorEffectivenessRevision = 1;
 	std::atomic<uint8> PendingFlightMode{ static_cast<uint8>(EAircraftFlightMode::PositionHold) };
-	std::atomic<bool> bPendingControllerReset{ false };
+	std::atomic<bool> bPendingBackendLocalStateReset{ false };
 	std::atomic<bool> bSimulationEnabled{ true };
 	std::atomic<bool> bSimulationSuspended{ false };
 	std::atomic<bool> bControllerEnabled{ true };
@@ -254,12 +290,13 @@ private:
 	FAircraftFlightControlOutput LatestControlOutput;
 	FAircraftControlAuthorityInfo LatestAuthorityInfo;
 	FAircraftSimulationControlDiagnostics LatestControlDiagnostics;
-	FAircraftAlternativeAttitudeDiagnostics LatestAlternativeAttitude;
 	FAircraftTrajectoryReference LatestTrajectoryReference;
 	FAircraftTrajectoryReference LatestNominalTrajectoryReference;
 	FAircraftDynamicCapabilitySnapshot LatestDynamicCapability;
 	FAircraftNavigationGuidanceStatus LatestNavigationGuidanceStatus;
+	FAircraftKinematicObstructionSnapshot LatestKinematicObstruction;
 	FAircraftAutopilotDiagnostics LatestAutopilotDiagnostics;
+	FAircraftAlternativeAttitudeDiagnostics LatestAlternativeAttitude;
 	uint64 LatestPhysicsStateSequence = 0;
 	uint64 LatestControlSequence = 0;
 	EAircraftSimulationDriveMode LatestDriveMode = EAircraftSimulationDriveMode::FlightController;
@@ -293,7 +330,6 @@ private:
 	/** 模式能力缓存。 */
 	FAircraftModeCapabilities ModeCapabilities;
 	FAircraftTrajectoryRuntime TrajectoryRuntime;
-	FAircraftAttitudeMotionState ConstraintAttitudeMotionState;
 	uint64 ActiveMovementIntentRevision = 0;
 	int64 ActiveMovementIntentId = 0;
 	uint64 ActiveNavigationGuidanceRevision = 0;

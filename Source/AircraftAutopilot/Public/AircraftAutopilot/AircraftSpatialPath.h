@@ -10,7 +10,6 @@ struct AIRCRAFTAUTOPILOT_API FAircraftSpatialPathState
 	FVector Tangent = FVector::ForwardVector;
 	FVector CurvaturePerCm = FVector::ZeroVector;
 	float DistanceCm = 0.0f;
-	int32 SegmentIndex = INDEX_NONE;
 	bool bValid = false;
 };
 
@@ -25,12 +24,21 @@ public:
 		bool bGlobalSearch, FAircraftSpatialPathState& OutState) const;
 	float ComputeCorridorViolationCm(const FVector& PositionCm, float DistanceCm) const;
 	FVector ComputeCorridorCorrectionCm(const FVector& PositionCm, float DistanceCm) const;
+	bool BuildContinuousCorridorCandidates(const FVector& ActualPositionCm,
+		const FVector& PredictedPositionCm, int32& InOutActiveSegmentIndex,
+		TArray<int32>& OutCandidateIndices) const;
+	float ComputeCorridorUnionViolationCm(const FVector& PositionCm,
+		TConstArrayView<int32> CandidateIndices) const;
+	bool IsCorridorLineContinuouslyCovered(const FVector& StartCm,
+		const FVector& EndCm, TConstArrayView<int32> CandidateIndices,
+		float AdditionalSafetyMarginCm) const;
 	float GetRouteDistanceCm(float DistanceCm) const;
 
 	float GetLengthCm() const { return TotalLengthCm; }
 	float GetRouteLengthCm() const { return RouteLengthCm; }
 	bool IsClosed() const { return bClosed; }
 	bool IsValid() const { return !Segments.IsEmpty() && TotalLengthCm > UE_SMALL_NUMBER; }
+	bool HasCorridor() const { return !Corridor.IsEmpty(); }
 
 private:
 	struct FSegment
@@ -49,6 +57,8 @@ private:
 	};
 
 	TArray<FSegment> Segments;
+	TArray<float> SegmentEndDistancesCm;
+	mutable int32 CachedSegmentIndex = INDEX_NONE;
 	float TotalLengthCm = 0.0f;
 	float RouteLengthCm = 0.0f;
 	bool bClosed = false;

@@ -36,6 +36,9 @@ struct AIRCRAFT_API FAircraftControlAllocator
 	/** 替换旋翼描述集合（数量或定义变化时调用），并标记缓存脏。 */
 	void SetRotorDescriptors(const TArray<FAircraftRotorAllocationInfo>& InRotorInfos);
 
+	/** 清除单步控制分配状态，但保留当前旋翼拓扑、效能和几何缓存。 */
+	void ResetControlState();
+
 	/** 由描述与旋翼效能重建雅可比、归一化列和方向性权限。 */
 	void RebuildAllocationCache(const FAircraftFlightControllerRuntimeConfig& Config);
 

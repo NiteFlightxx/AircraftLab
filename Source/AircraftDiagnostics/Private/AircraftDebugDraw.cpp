@@ -1,9 +1,9 @@
 #include "AircraftDiagnostics/AircraftDebugDraw.h"
 
 #include "AircraftDiagnostics/AircraftDebugSettings.h"
+#include "DrawDebugHelpers.h"
 
 #if ENABLE_DRAW_DEBUG
-#include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "PrimitiveDrawInterface.h"
 #include "PrimitiveDrawingUtils.h"

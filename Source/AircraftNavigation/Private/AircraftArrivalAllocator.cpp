@@ -1,5 +1,7 @@
 #include "AircraftNavigation/AircraftArrivalAllocator.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogAircraftArrival, Warning, All);
+
 namespace UE::AircraftLab::Navigation::Private
 {
 	constexpr int32 MaximumCandidateCount = 512;
@@ -150,9 +152,20 @@ FAircraftArrivalAllocationResult FAircraftArrivalAllocator::Allocate(
 	SortedClaims.Reserve(Claims.Num());
 	for (const FAircraftArrivalClaim& Claim : Claims)
 	{
-		if (!Claim.IsValid() || StableIds.Contains(Claim.StableId))
+		// 单个坏 claim 只影响自身：跳过而不是令整场分配失败——
+		// 否则一架状态异常的飞机会让所有相关飞机的移动请求同时判 Invalid。
+		if (!Claim.IsValid())
 		{
-			return Result;
+			UE_LOG(LogAircraftArrival, Warning,
+				TEXT("Skipped invalid arrival claim (StableId=%llu)."), Claim.StableId);
+			continue;
+		}
+		if (StableIds.Contains(Claim.StableId))
+		{
+			UE_LOG(LogAircraftArrival, Warning,
+				TEXT("Skipped duplicate arrival claim (StableId=%llu); first claim wins."),
+				Claim.StableId);
+			continue;
 		}
 		StableIds.Add(Claim.StableId);
 		SortedClaims.Add(&Claim);

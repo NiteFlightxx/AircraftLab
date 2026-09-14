@@ -37,7 +37,6 @@ namespace UE::AircraftLab::AircraftAsset
 		extern AIRCRAFTASSET_API const FName PhysicsAssetSoftObjectPathName;
 
 		/* Solver */
-		extern AIRCRAFTASSET_API const FName AsyncFixedTimeStepSize;
 		extern AIRCRAFTASSET_API const FName OverrideIterationCounts;
 		extern AIRCRAFTASSET_API const FName PositionSolverIterationCount;
 		extern AIRCRAFTASSET_API const FName VelocitySolverIterationCount;
@@ -140,10 +139,6 @@ namespace UE::AircraftLab::AircraftAsset
 		}
 
 		/* ------------------------- Solver ------------------------- */
-		TConstArrayView<float> GetAsyncFixedTimeStepSize() const
-		{
-			return FConstAircraftCollection::GetElements(AircraftCollection->GetAsyncFixedTimeStepSize());
-		}
 		TConstArrayView<uint8> GetOverrideIterationCounts() const
 		{
 			return FConstAircraftCollection::GetElements(AircraftCollection->GetOverrideIterationCounts());
@@ -271,10 +266,6 @@ namespace UE::AircraftLab::AircraftAsset
 		void SetPhysicsAssetSoftObjectPathName(const FSoftObjectPath& PathName);
 
 		/* Solver */
-		TArrayView<float> GetAsyncFixedTimeStepSize()
-		{
-			return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetAsyncFixedTimeStepSize());
-		}
 		TArrayView<uint8> GetOverrideIterationCounts()
 		{
 			return FAircraftCollection::GetMutableElements(GetAircraftCollection()->GetOverrideIterationCounts());
