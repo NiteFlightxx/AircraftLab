@@ -113,6 +113,25 @@ namespace
 				* FMath::Max(AreaCoefficient, 0.0f) * FMath::Square(SpeedMps);
 		return Result + DragForceN * 100.0f / Capability.MassKg;
 	}
+
+	float ResolveSpatialPathYaw(
+		const FAircraftHeadingObjective& Heading,
+		const FVector& PositionCm,
+		const FVector& PathTangent,
+		float PreviousYawDegrees)
+	{
+		if (Heading.Mode == EAircraftHeadingMode::FaceVelocity)
+		{
+			const FVector2D HorizontalDirection(PathTangent.X, PathTangent.Y);
+			return HorizontalDirection.SizeSquared() > UE_SMALL_NUMBER
+				? FMath::RadiansToDegrees(FMath::Atan2(
+					HorizontalDirection.Y, HorizontalDirection.X))
+				: PreviousYawDegrees;
+		}
+
+		return FAircraftMotionPlan::ResolveYaw(
+			Heading, PositionCm, PathTangent, PreviousYawDegrees);
+	}
 }
 
 void FAircraftMotionPlan::Reset()
@@ -393,19 +412,26 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		Sample.AccelerationCmPerSecSq = PathState.CurvaturePerCm;
 	}
 
+	// 空间路径的 FaceVelocity 航向来自几何切线，而不是随后生成的速度包络。
+	// 起点和终点允许速度为零，但它们仍有确定的路径航向。速度可达性与最终
+	// 轨迹采样必须共享这一组航向，否则起步时会先保留旧航向、再突然转向。
+	TArray<float> PathYawDegrees;
+	PathYawDegrees.SetNum(Count);
+	float PreviousPathYaw = InitialState.ControlRotation.Rotator().Yaw;
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		PathYawDegrees[Index] = ResolveSpatialPathYaw(
+			Intent.Heading,
+			Samples[Index].PositionCm,
+			Samples[Index].VelocityCmPerSec,
+			PreviousPathYaw);
+		PreviousPathYaw = PathYawDegrees[Index];
+	}
+
 	// 航向是轨迹可达性的一部分。高速通过急转弯但同时把偏航速率截断，
 	// 会让机体朝向、阻力方向和控制轴全部脱离空间路径。
 	if (Intent.Limits.MaxYawRateDegPerSec > UE_SMALL_NUMBER)
 	{
-		TArray<float> PathYawDegrees;
-		PathYawDegrees.SetNum(Count);
-		float PreviousYaw = InitialState.ControlRotation.Rotator().Yaw;
-		for (int32 Index = 0; Index < Count; ++Index)
-		{
-			PathYawDegrees[Index] = ResolveYaw(Intent.Heading, Samples[Index].PositionCm,
-				Samples[Index].VelocityCmPerSec, PreviousYaw);
-			PreviousYaw = PathYawDegrees[Index];
-		}
 		for (int32 Index = 1; Index < Count; ++Index)
 		{
 			const float DistanceDelta = Samples[Index].DistanceCm
@@ -634,8 +660,7 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 				/ (Sample.TimeSeconds - Samples[Index - 1].TimeSeconds) : 0.0f;
 		Sample.AccelerationCmPerSecSq = Tangent * TangentialAcceleration
 			+ Curvature * FMath::Square(SpeedLimits[Index]);
-		Sample.YawDegrees = ResolveYaw(Intent.Heading, Sample.PositionCm,
-			Sample.VelocityCmPerSec, PreviousYaw);
+		Sample.YawDegrees = PathYawDegrees[Index];
 		if (Index > 0)
 		{
 			const float Dt = Sample.TimeSeconds - Samples[Index - 1].TimeSeconds;

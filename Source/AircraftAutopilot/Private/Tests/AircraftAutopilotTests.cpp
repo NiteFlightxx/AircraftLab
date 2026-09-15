@@ -2282,6 +2282,39 @@ bool FAircraftRemoteHoldMatchesTwoPointRouteTest::RunTest(const FString& Paramet
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftFaceVelocityRouteStartsWithGeometricHeadingTest,
+	"AircraftLab.Autopilot.MotionPlan.FaceVelocityRouteStartsWithGeometricHeading",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftFaceVelocityRouteStartsWithGeometricHeadingTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(3000.0f);
+	Intent.Route.PointsCm = { FVector::ZeroVector, FVector(0.0f, 3000.0f, 0.0f) };
+	Intent.Heading.Mode = EAircraftHeadingMode::FaceVelocity;
+
+	FAircraftVehicleStateSnapshot State;
+	State.PositionCm = Intent.Route.PointsCm[0];
+	State.VelocityCmPerSec = FVector::ZeroVector;
+	State.ControlRotation = FQuat(FVector::UpVector, FMath::DegreesToRadians(-35.0f));
+
+	FAircraftMotionPlan Plan;
+	TestTrue(TEXT("Face-velocity route builds"), Plan.Build(
+		Intent, FAircraftAutopilotRuntimeConfig(), State, MakeCapability()));
+	TestTrue(TEXT("Face-velocity route has a time-parameterized path"),
+		Plan.GetSamples().Num() >= 2);
+	if (Plan.GetSamples().Num() >= 2)
+	{
+		TestTrue(TEXT("The zero-speed first sample already faces the route tangent"),
+			FMath::IsNearlyEqual(Plan.GetSamples()[0].YawDegrees, 90.0f, 0.1f));
+		TestTrue(TEXT("The first moving sample retains the same route heading"),
+			FMath::IsNearlyEqual(Plan.GetSamples()[1].YawDegrees, 90.0f, 0.1f));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftRemoteHoldFaceVelocityUsesApproachDirectionTest,
 	"AircraftLab.Autopilot.MotionPlan.RemoteHoldFaceVelocityUsesApproachDirection",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
