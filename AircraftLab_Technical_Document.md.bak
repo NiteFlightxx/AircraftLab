@@ -8,29 +8,15 @@
 
 ## 阅读路线
 
-本文按“由浅入深、由概念到公式”组织为五个部分；每部分内部先讲“是什么、为什么”，再进入公式推导：
-
-- **第一部分 总览**（第 1～2 章）：技术选型、模块划分与端到端数据流。不涉及公式，适合所有人建立全局图景。
-- **第二部分 数学与物理基础**（第 3～4 章）：坐标、单位、刚体方程与执行器模型。这是后面所有公式的共同前提，先读一遍可避免在飞控与规划章节中反复回头。
-- **第三部分 低层飞控**（第 5～6 章）：串级 PID、前馈、控制分配与旋翼效能——轨迹如何变成力。
-- **第四部分 自动驾驶**（第 7～10 章）：安全走廊、空间路径、时间规划、预测跟踪与任务完成——目标如何变成轨迹。难度递增：7～8 章偏几何，9 章偏数值，10 章最综合。
-- **第五部分 引擎与游戏接入**（第 11～15 章）：线程边界、Backend/LOD/网络/Preview、诊断路线、性能评估与验收边界——系统如何在真实项目中运行与排查。
-
-推荐路径：
-
-| 读者 | 建议路径 |
-|---|---|
-| 15 分钟总览 | 第一部分 + 第 11、15 章 |
-| 飞控开发 | 第一、二、三部分（第 1～6 章），再按需读第 11 章线程边界 |
-| 自动驾驶开发 | 第一部分 + 第二部分（第 3～4 章）+ 第四部分（第 7～10 章） |
-| 引擎与游戏接入 | 第一部分 + 第五部分（第 11～15 章） |
-| 分享主线 | 不是逐个介绍类，而是回答“目标如何变成轨迹，轨迹如何变成力，力如何在 Chaos 中产生运动” |
+- **15 分钟总览**：第 1、2、3、12、15 章，了解技术选型、三种驱动和主要边界。
+- **飞控开发**：第 4～7 章，理解坐标、动力学、PID、分配和执行器。
+- **自动驾驶开发**：第 8～11 章，理解几何路径、时间规划、预测控制和完成语义。
+- **引擎与游戏接入**：第 3、12～14 章，理解线程、生命周期、LOD、Preview、网络与诊断。
+- **分享主线**：不是逐个介绍类，而是回答“目标如何变成轨迹，轨迹如何变成力，力如何在 Chaos 中产生运动”。
 
 公式采用 Markdown 数学语法。建议使用支持 LaTeX 的阅读器；各式均附变量含义和对应源码，避免仅依赖公式渲染。
 
 ---
-
-# 第一部分 总览：系统是什么
 
 ## 1. 技术路线：资产驱动、分层控制、多个执行后端
 
@@ -142,14 +128,49 @@ AI / Blueprint / Preview / Pilot
 
 `UAutopilotComponent::TickComponent()` 负责任务、目标 Actor 解析及结果检查；**它不是物理线程预测求解器的推进入口**。预测求解在 Proxy 的对应执行域内发生。
 
+## 3. Dataflow、Chaos 与线程边界
+
+### 3.1 为什么不是 Dataflow Solver 推进飞控
+
+Dataflow 用于配置图以及编辑器模拟场景的生命周期、播放和可视化接入；Aircraft 不需要再建立一个空 SimulationGraph 假装成独立物理 Solver。
+
+- 动态驱动通过 `AsyncPhysicsTickComponent()` 调用 Proxy。
+- 飞控从当前有效的 `FBodyInstanceAsyncPhysicsTickHandle` 读取/施加物理状态。
+- 世界 Chaos 负责刚体积分、接触和约束。
+- Kinematic 使用 GT 更新，不做真实旋翼动力学积分。
+
+这是**职责选择**，不是“Dataflow 不能异步”或“引擎禁止异步模拟”。
+
+### 3.2 不要把异步物理误解成固定 240～500 Hz
+
+插件开启 Async Tick，不意味着机器天然以某个固定高频运行。实际频率取决于项目物理配置、Solver、时间步覆写及运行负载。
+
+当前 `ApplySolverSettingsToBodyInstance()` 在启用异步步长覆写时还会调用所属 Solver 的 `EnableAsyncMode(...)`。这可能影响共享该 Solver 的物理世界，**不是每架飞机拥有独立、无外部影响的物理时钟**。性能评估需要同时观察世界物理成本。
+
+控制器应使用回调提供的实际 Δt；调试中的 WorldDelta、PhysicsDelta、ControlSequence 用于确认执行事实。不能用“异步”二字替代时间步实测。
+
+### 3.3 数据所有权
+
+| 数据/操作 | 所在边界 |
+|---|---|
+| Actor/组件、资源加载、Blueprint 调用、任务回调 | GT / 资产编译边界 |
+| Pending 配置、输入、意图、效能 | Proxy 输入临界区或原子控制状态 |
+| PID、分配、旋翼动态、轨迹运行状态 | 当前唯一执行域；动态为 PT，Kinematic 为 GT |
+| 输出读取 | 输出临界区及类型化快照 |
+| PhysicsState / Constraint 重建 | 组件生命周期事务，先禁止旧后端继续执行 |
+| 调试绘制 | 捕获值快照后由环境对应后端输出 |
+
+这不是 lock-free 系统。Proxy 使用 `FCriticalSection` 和原子变量，也持有组件引用供其 GT 路径使用；因此不能声称“整个 Proxy 没有 UObject 引用”。应保证的是：**数值计算所需数据在边界上完成解析，不从物理求解路径随意加载或遍历 UObject**。
+
+单独的原子标志只能发布状态，不能自动保证旧 Body / Constraint / Proxy 的生命周期安全。结构事务、回调停止、句柄重新绑定仍然必要。
+
+依据：[组件实现](Source/AircraftAssetEngine/Private/AircraftAsset/AircraftComponent.cpp)、[Proxy 声明](Source/AircraftAssetEngine/Public/AircraftAsset/AircraftSimulationProxy.h)、[Proxy 执行](Source/AircraftAssetEngine/Private/AircraftAsset/AircraftSimulationProxy.cpp)。
 
 ---
 
-# 第二部分 数学与物理基础：所有公式的前提
+## 4. 坐标与单位：所有公式的前提
 
-## 3. 坐标与单位：所有公式的前提
-
-### 3.1 四个空间和一个角向量符号映射
+### 4.1 四个空间和一个角向量符号映射
 
 | 记号 | 空间 | 含义 |
 |---|---|---|
@@ -182,7 +203,7 @@ $$
 
 **模型前向配置和 RootBone 旋转不互斥**：前者定义飞机的语义机头，后者定义把这一机头换算进所选物理 Body 的方式。
 
-### 3.2 Socket 不要求是 RootBone 的子骨骼
+### 4.2 Socket 不要求是 RootBone 的子骨骼
 
 先把 Socket/骨骼安装点解析到统一 Model 空间，再变换到 Body：
 
@@ -207,7 +228,7 @@ $$
 
 因此同层级 Socket 也可通过模型空间解析。**不能只相减不同坐标系的局部位置，也不能重复叠加 RootBone 旋转**。位置变换与方向变换对缩放的处理不同，尤其需要避免把非均匀缩放当作纯旋转。
 
-### 3.3 几何轴与 Roll/Pitch/Yaw 符号不是一回事
+### 4.3 几何轴与 Roll/Pitch/Yaw 符号不是一回事
 
 当前代码明确使用：
 
@@ -224,7 +245,7 @@ $$
 
 这解释了为什么调试画出来的 RGB 几何轴，不应直接被理解为所有 UE Euler 参数的正号约定。开发时统一调用这些转换函数，不在各调用点自行添加负号。
 
-### 3.4 SI 与 Chaos 单位推导
+### 4.4 SI 与 Chaos 单位推导
 
 力：
 
@@ -252,9 +273,9 @@ $$
 
 依据：[FrameBinding](Source/Aircraft/Public/Aircraft/AircraftFrameBinding.h)、[控制坐标转换](Source/Aircraft/Public/Aircraft/FlightControllerRuntimeConfig.h)、[物理单位](Source/Aircraft/Public/Aircraft/AircraftPhysicsUnits.h)。
 
-## 4. 物理模型与执行器
+## 5. 物理模型与执行器
 
-### 4.1 基本刚体关系
+### 5.1 基本刚体关系
 
 以 SI 形式表达概念模型：
 
@@ -270,7 +291,7 @@ $$
 
 Aircraft 计算施加的力和力矩；这些方程的物理积分、接触和多 Body 约束由 Chaos 处理。公式中的完整刚体方程是建模背景，**不表示插件控制器自行实现了全部陀螺耦合前馈**。
 
-### 4.2 电机指令、转速与推力
+### 5.2 电机指令、转速与推力
 
 单旋翼指令 `u∈[0,1]` 先做可选 slew 限制。非零指令对应：
 
@@ -307,7 +328,7 @@ $$
 
 此模型的优点是廉价、直观、可表达上升/下降响应差异；限制是没有完整桨叶元素、入流、地效、电池电压、转子互扰模型。参数“调得像”不等于已经过实机系统辨识。
 
-### 4.3 气动阻力
+### 5.3 气动阻力
 
 相对气流先变换到控制坐标，以 m/s 表示：
 
@@ -340,14 +361,9 @@ $$
 依据：[RotorModel](Source/Aircraft/Private/Aircraft/RotorModel.cpp)、[AircraftAerodynamics](Source/Aircraft/Private/Aircraft/AircraftAerodynamics.cpp)。
 
 
+## 6. 串级飞控：反馈负责误差，前馈负责已知运动
 
----
-
-# 第三部分 低层飞控：从轨迹到旋翼力
-
-## 5. 串级飞控：反馈负责误差，前馈负责已知运动
-
-### 5.1 为什么需要多层控制
+### 6.1 为什么需要多层控制
 
 位置不能直接决定某个旋翼的转速。当前主要链条是：
 
@@ -364,7 +380,7 @@ $$
 
 “内环比外环响应快”是整定原则，不是代码自动保证。若电机转速响应比姿态环预期慢，外环继续加码会产生超调，增加位置 Kp 通常不能解决根因。
 
-### 5.2 PID 离散公式与微分滤波
+### 6.2 PID 离散公式与微分滤波
 
 连续形式：
 
@@ -401,7 +417,7 @@ $$
 
 当截止频率为零时不滤波；IntegralLimit / OutputLimit 为零时，按该 PID 类型定义表示不启用对应限幅，不应把所有配置中的零值统一解释。
 
-### 5.3 下游饱和为什么需要回传
+### 6.3 下游饱和为什么需要回传
 
 仅限幅 PID 自己的输出不够。例如：
 
@@ -428,7 +444,7 @@ $$
 
 依据：[PID](Source/Aircraft/Public/Aircraft/FlightControlPid.h)、[FlightControlSolver](Source/Aircraft/Private/Aircraft/FlightControlSolver.cpp)。串级结构及 ARW 的外部背景可参考 [PX4 官方控制架构](https://docs.px4.io/main/en/flight_stack/controller_diagrams)，但本插件不是该实现的等价替代。
 
-### 5.4 从轨迹到加速度与姿态
+### 6.4 从轨迹到加速度与姿态
 
 可用概念式理解位置/速度链：
 
@@ -460,7 +476,7 @@ $$
 
 因此当前实现是明确的 Euler 参考构造，**不是任意姿态下完整几何控制器的证明**。大倾角时二维 Euler 限幅与精确推力锥并不完全等价。
 
-### 5.5 总距前馈与悬停估计
+### 6.5 总距前馈与悬停估计
 
 若 `h` 是抵消重力所需的归一化悬停总距，期望垂直加速度为 `a_z`：
 
@@ -510,9 +526,9 @@ $$
 
 依据：[姿态参考](Source/Aircraft/Private/Aircraft/AircraftAttitudeReference.cpp)、[HoverThrustEstimator](Source/Aircraft/Private/Aircraft/HoverThrustEstimator.cpp)。
 
-## 6. 控制分配与旋翼效能
+## 7. 控制分配与旋翼效能
 
-### 6.1 由单旋翼几何推导分配矩阵
+### 7.1 由单旋翼几何推导分配矩阵
 
 以全健康最大可分配推力 `T̄_i` 为基准，旋翼力臂单位 m，推力轴为 `d_i`：
 
@@ -552,7 +568,7 @@ $$
 T_i^{\mathrm{target}}=x_i\eta_i\bar T_i
 $$
 
-### 6.2 阻尼伪逆推导
+### 7.2 阻尼伪逆推导
 
 暂不考虑上下界，求：
 
@@ -574,7 +590,7 @@ $$
 
 这里 `BBᵀ` 只有 4×4，适合少量旋翼的实时计算；阻尼能改善病态矩阵问题，但会以残差换数值稳定性。
 
-### 6.3 饱和锁定
+### 7.3 饱和锁定
 
 代码每轮：
 
@@ -600,7 +616,7 @@ $$
 
 电机有滞后，所以分配残差很小不等于当帧实际力矩误差很小。
 
-### 6.4 损伤模型的能力与限制
+### 7.4 损伤模型的能力与限制
 
 `SetRotorEffectiveness` 用于模拟旋翼降效/失效，并让能力评估及分配感知剩余权限。
 
@@ -610,11 +626,9 @@ $$
 
 ---
 
-# 第四部分 自动驾驶：从任务到轨迹
+## 8. 安全走廊与空间路径
 
-## 7. 安全走廊与空间路径
-
-### 7.1 胶囊体的定义
+### 8.1 胶囊体的定义
 
 每段走廊包含轴线端点 A、B、外半径 R，以及它负责的 RouteDistance 区间。
 
@@ -647,7 +661,7 @@ $$
 
 胶囊包括直线段和两端半球；相邻轴线共用一个拐点时，端部天然提供重叠，不需要再独立存储转角球。
 
-### 7.2 当前自动构建流程
+### 8.2 当前自动构建流程
 
 `FAircraftSafeCorridorBuilder::BuildOpenPolyline()`：
 
@@ -669,7 +683,7 @@ $$
 
 本仓库的核心插件描述依赖 Dataflow 与 EnhancedInput，不能把 NxGame/FlyingNav 的场景数据和导航调用描述成本仓库自动完成的功能。
 
-### 7.3 空间平滑不是“最小 snap 时间轨迹”
+### 8.3 空间平滑不是“最小 snap 时间轨迹”
 
 当前 `OptimizeWaypoints()` 使用局部加权目标：
 
@@ -692,7 +706,7 @@ $$
 
 再混合原中心线、曲率目标与四阶差分目标，投回负责的走廊。它是空间节点平滑启发式，不是求解 `min ∫||d⁴p/dt⁴||²dt` 的全局最小 snap 问题：此处还没有时间参数。
 
-### 7.4 五次曲线与凸包约束
+### 8.4 五次曲线与凸包约束
 
 空间段由端点位置、一级和二级参数导数构造五次多项式。等价五次 Bézier 控制点为：
 
@@ -721,9 +735,9 @@ Bézier 曲线是控制点的凸组合。**同一段全部控制点在同一个�
 
 依据：[走廊构建器](Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSafeCorridorBuilder.cpp)、[空间路径](Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftSpatialPath.cpp)。
 
-## 8. 时间规划、制动与连续轨迹
+## 9. 时间规划、制动与连续轨迹
 
-### 8.1 路程和时间解耦
+### 9.1 路程和时间解耦
 
 设空间曲线按弧长表示为 p(s)，令：
 
@@ -749,7 +763,7 @@ $$
 
 当前弧长使用数值表和反查，曲率变化项也有有限差分近似；上述等式是理论关系，实际计算精度依赖采样间距与几何质量。
 
-### 8.2 为什么转弯必须降速
+### 9.2 为什么转弯必须降速
 
 若可用法向加速度为 `a_n,max`：
 
@@ -775,7 +789,7 @@ $$
 
 “弯处慢”可能是曲率、姿态转向、垂直限制、储备或求解预算造成，不能一概认为是 MPCC 权重太保守。
 
-### 8.3 前向加速、后向制动包络
+### 9.3 前向加速、后向制动包络
 
 由 `a=v dv/ds`：
 
@@ -802,7 +816,7 @@ $$
 
 恒减速度的停止距离 `v²/(2d)` 只适用于其假设；电机响应、jerk 上限、重力/阻力和姿态调整都可能增加实际所需距离。
 
-### 8.4 五次 Hermite 时间段的完整系数推导
+### 9.4 五次 Hermite 时间段的完整系数推导
 
 设段时长 T，归一化时间 `u=t/T`：
 
@@ -863,7 +877,7 @@ $$
 - Route/Orbit：对路程 s(t) 做时间插值，再回到同一条空间曲线。
 - Hold/TimedTrajectory：直接对世界位置向量做时间插值。
 
-### 8.5 Route 的末端释放与局部重定时
+### 9.5 Route 的末端释放与局部重定时
 
 当前 `FinalizeSpatialTiming()` 根据相邻速度构造：
 
@@ -893,7 +907,7 @@ $$
 
 **有解析依据的是非负 Bernstein 控制值的单调性；其余动力学上限仍主要依赖有限采样与有限迭代。** 当前 Route 每段导数检查为 17 点，额外预算峰值采集为 65 点，不能宣称连续全域约束已经严格认证。
 
-### 8.6 Hold：从当前状态过渡，不直接把参考跳到目标
+### 9.6 Hold：从当前状态过渡，不直接把参考跳到目标
 
 当前 Hold 先读取实际 p/v/a，末端要求：
 
@@ -936,7 +950,7 @@ $$
 - CaptureCurrentPosition 是捕获当前位置作为最终目标；已有惯性时可能先滑出再回来，不等同于手动“自然刹车后捕获停止点”。
 - Hold 过渡本身不生成障碍物走廊；跨障碍飞行应提交有导航依据的 Route。
 
-### 8.7 TimedTrajectory：尊重调用者的时钟
+### 9.7 TimedTrajectory：尊重调用者的时钟
 
 调用者提供每个时刻的 p/v/a/yaw/yaw-rate，代码验证端点和段内插值，不替调用者悄悄重定时。
 
@@ -945,9 +959,9 @@ $$
 依据：[MotionPlan](Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftMotionPlan.cpp)、[五次多项式](Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftTrajectoryPolynomial.h)。第三阶约束与完整目标状态的外部研究可参考 [Ruckig 原论文](https://arxiv.org/abs/2105.04830)；当前插件没有接入 Ruckig。
 
 
-## 9. 预测跟踪：当前“MPCC”到底优化了什么
+## 10. 预测跟踪：当前“MPCC”到底优化了什么
 
-### 9.1 术语边界
+### 10.1 术语边界
 
 当前类名为 `FAircraftMpccController`，但其技术实质更准确地说是：
 
@@ -957,7 +971,7 @@ $$
 
 对照依据：[Liniger 的 MPCC 官方实现说明](https://github.com/alexliniger/MPCC)。
 
-### 9.2 轮廓误差和滞后误差
+### 10.2 轮廓误差和滞后误差
 
 参考位置为 `p_r`，单位切线为 t，位置误差 e：
 
@@ -977,7 +991,7 @@ $$
 
 当前切线取参考速度的归一化方向。参考速度为零时切线退化为零，误差进入轮廓项；这也提示终端行为不能简单按高速段的权重直觉理解。
 
-### 9.3 预测状态与简化动力学
+### 10.3 预测状态与简化动力学
 
 设离散步长 h，优化修正为 δu，名义轨迹加速度为 aᵣ：
 
@@ -1007,7 +1021,7 @@ $$
 
 这比瞬时加速度模型更能反映制动迟滞，但仍是简化的平移模型：没有在优化器中展开每个旋翼 RPM、完整姿态动力学、接触碰撞及完整惯性耦合。
 
-### 9.4 目标函数与权重的真实含义
+### 10.4 目标函数与权重的真实含义
 
 忽略投影非光滑性，可把代码的梯度结构理解为以下离散目标：
 
@@ -1043,7 +1057,7 @@ $$
 
 距离、速度、加速度等量纲混合，因此权重本身带有隐含尺度。把权重数字大小直接当成严格优先级没有依据。
 
-### 9.5 梯度为什么可以反向传播
+### 10.5 梯度为什么可以反向传播
 
 把从后续状态累计的伴随量记为 `λp,λv,λa`。先加当前阶段位置/速度误差梯度，再由预测方程得到：
 
@@ -1079,7 +1093,7 @@ $$
 
 步长由权重与时域步数构造，并非完整线搜索。最终还会重新前向滚动并投影，避免直接发布最后一次未经投影的梯度结果；修正序列向前移位，供下一次 warm start。
 
-### 9.6 当前优化器的明确限制
+### 10.6 当前优化器的明确限制
 
 - 轮廓/走廊梯度建立在当前参考与预测上，未完整微分所有夹取、推力响应分支和投影算子。
 - 走廊使用二次软惩罚，权重 1000 仍不是不可违反的硬约束，也不是字典序最高优先级求解。
@@ -1091,7 +1105,7 @@ $$
 
 这些限制不意味着不适合游戏，而是要求对其定位诚实：**可调、可观测、成本可控的近似预测控制，而不是飞行安全证书**。
 
-### 9.7 多速率调度与参考新鲜度
+### 10.7 多速率调度与参考新鲜度
 
 当前结构默认值（资产可覆盖）：
 
@@ -1111,9 +1125,9 @@ $$
 
 依据：[MpccController](Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftMpccController.cpp)、[运行配置](Source/AircraftRuntimeInterface/Public/AircraftRuntimeInterface/AircraftAutopilotConfig.h)。
 
-## 10. 进度调节、三种驱动与任务完成
+## 11. 进度调节、三种驱动与任务完成
 
-### 10.1 为什么不能靠实际投影每帧重设参考时钟
+### 11.1 为什么不能靠实际投影每帧重设参考时钟
 
 若飞机减速后稍微落后于参考，并且下一帧又把参考进度拉回到实际投影点，参考自身的末端制动过程可能反复滞留，表现为“很早刹住，然后一点点挪到目标”。
 
@@ -1123,7 +1137,7 @@ $$
 - PlanTime：拥有独立推进的参考时钟。
 - ProgressScale：因偏离路径等原因减慢参考推进，而非每帧跳到实际投影。
 
-### 10.2 时间缩放的完整链式关系
+### 11.2 时间缩放的完整链式关系
 
 令名义时钟为 `τ(t)`，`α=dτ/dt∈[0,1]`：
 
@@ -1149,7 +1163,7 @@ $$
 
 只缩小速度而不加入 `v_r α̇`，就会使位置、速度和加速度参考互相矛盾；这对带位置/速度/加速度前馈的约束驱动尤其明显。
 
-### 10.3 当前共享 time-warp 的积分
+### 11.3 当前共享 time-warp 的积分
 
 名义调节目标可由轮廓误差给出：
 
@@ -1194,7 +1208,7 @@ $$
 
 限制：峰值来自采样；使用整条路径的保守预算可能减慢局部响应；能力重建、预算变化和极端初值仍需验证。当前同 Handle 的空间意图更新保留尺度状态，但能力重规划仍有独立重置逻辑，不能宣称任意热更新均无瞬态。
 
-### 10.4 三种驱动的相同与不同
+### 11.4 三种驱动的相同与不同
 
 | 项目 | FlightController | PhysicsConstraint | Kinematic |
 |---|---|---|---|
@@ -1209,7 +1223,7 @@ $$
 
 “确定性采样”只是固定输入与时钟下的算法路径，不是网络确定性保证。
 
-### 10.5 PhysicsConstraint 的弹簧参数推导
+### 11.5 PhysicsConstraint 的弹簧参数推导
 
 配置使用频率 f、阻尼比 ζ、额外阻尼 dₑ：
 
@@ -1241,7 +1255,7 @@ $$
 
 当前直接写入的 k/d 没有自动全部乘 m，所以实际自然频率、阻尼比会随质量变化；“f 是实际自然频率”的解释主要适用于加速度模式，不能无条件套到力模式。
 
-### 10.6 为什么约束目标需要前馈偏移
+### 11.6 为什么约束目标需要前馈偏移
 
 期望参考 xᵣ/vᵣ/aᵣ。若只设置 xₜ=xᵣ、vₜ=vᵣ，完全跟踪时弹簧/阻尼误差为零，无法提供持续重力补偿或非零参考加速度。
 
@@ -1288,7 +1302,7 @@ $$
 
 依据：[ConstraintDriveUtils](Source/Aircraft/Public/Aircraft/ConstraintDriveUtils.h)、[组件线性 Drive](Source/AircraftAssetEngine/Private/AircraftAsset/AircraftComponent.cpp)、[Proxy 姿态力矩](Source/AircraftAssetEngine/Private/AircraftAsset/AircraftSimulationProxy.cpp)。
 
-### 10.7 任务完成不等于释放自动控制
+### 11.7 任务完成不等于释放自动控制
 
 当前 Stop 任务满足路径、位置、速度、航向及稳定时间条件后上报 Succeeded，但继续保留：
 
@@ -1309,51 +1323,6 @@ $$
 
 依据：[AutopilotComponent](Source/AircraftAutopilot/Private/AircraftAutopilot/AutopilotComponent.cpp)、[TrajectoryRuntime](Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftTrajectoryRuntime.cpp)、[TimeWarp](Source/AircraftAutopilot/Private/AircraftAutopilot/AircraftTrajectoryTimeWarp.h)。
 
-
-
----
-
-# 第五部分 引擎与游戏接入：线程、生命周期、规模与验收
-
-## 11. Dataflow、Chaos 与线程边界
-
-### 11.1 为什么不是 Dataflow Solver 推进飞控
-
-Dataflow 用于配置图以及编辑器模拟场景的生命周期、播放和可视化接入；Aircraft 不需要再建立一个空 SimulationGraph 假装成独立物理 Solver。
-
-- 动态驱动通过 `AsyncPhysicsTickComponent()` 调用 Proxy。
-- 飞控从当前有效的 `FBodyInstanceAsyncPhysicsTickHandle` 读取/施加物理状态。
-- 世界 Chaos 负责刚体积分、接触和约束。
-- Kinematic 使用 GT 更新，不做真实旋翼动力学积分。
-
-这是**职责选择**，不是“Dataflow 不能异步”或“引擎禁止异步模拟”。
-
-### 11.2 不要把异步物理误解成固定 240～500 Hz
-
-插件开启 Async Tick，不意味着机器天然以某个固定高频运行。实际频率取决于项目物理配置、Solver、时间步覆写及运行负载。
-
-当前 `ApplySolverSettingsToBodyInstance()` 在启用异步步长覆写时还会调用所属 Solver 的 `EnableAsyncMode(...)`。这可能影响共享该 Solver 的物理世界，**不是每架飞机拥有独立、无外部影响的物理时钟**。性能评估需要同时观察世界物理成本。
-
-控制器应使用回调提供的实际 Δt；调试中的 WorldDelta、PhysicsDelta、ControlSequence 用于确认执行事实。不能用“异步”二字替代时间步实测。
-
-### 11.3 数据所有权
-
-| 数据/操作 | 所在边界 |
-|---|---|
-| Actor/组件、资源加载、Blueprint 调用、任务回调 | GT / 资产编译边界 |
-| Pending 配置、输入、意图、效能 | Proxy 输入临界区或原子控制状态 |
-| PID、分配、旋翼动态、轨迹运行状态 | 当前唯一执行域；动态为 PT，Kinematic 为 GT |
-| 输出读取 | 输出临界区及类型化快照 |
-| PhysicsState / Constraint 重建 | 组件生命周期事务，先禁止旧后端继续执行 |
-| 调试绘制 | 捕获值快照后由环境对应后端输出 |
-
-这不是 lock-free 系统。Proxy 使用 `FCriticalSection` 和原子变量，也持有组件引用供其 GT 路径使用；因此不能声称“整个 Proxy 没有 UObject 引用”。应保证的是：**数值计算所需数据在边界上完成解析，不从物理求解路径随意加载或遍历 UObject**。
-
-单独的原子标志只能发布状态，不能自动保证旧 Body / Constraint / Proxy 的生命周期安全。结构事务、回调停止、句柄重新绑定仍然必要。
-
-依据：[组件实现](Source/AircraftAssetEngine/Private/AircraftAsset/AircraftComponent.cpp)、[Proxy 声明](Source/AircraftAssetEngine/Public/AircraftAsset/AircraftSimulationProxy.h)、[Proxy 执行](Source/AircraftAssetEngine/Private/AircraftAsset/AircraftSimulationProxy.cpp)。
-
----
 
 ## 12. Backend、LOD、网络与 Preview
 
@@ -1621,9 +1590,6 @@ $$
 4. **三个驱动共享运动语义，但不共享同一种动力学真实性和执行成本。**
 5. **数值限制、软惩罚、数学充分条件和测试通过，是四种不同层次的保证。**
 
-
----
-
 ## 附录 A：源码阅读索引
 
 下列路径均相对于插件根目录，便于文档随仓库迁移。行号会随改动变化，因此这里链接稳定文件并给出搜索函数名。
@@ -1648,9 +1614,6 @@ $$
 | LOD / 网络预算 | [AircraftSimulationLODComponent.cpp](Source/AircraftRuntimeCommon/Private/AircraftRuntimeCommon/LOD/AircraftSimulationLODComponent.cpp) |
 | 调试配置边界 | [AircraftDebugSettings.cpp](Source/AircraftDiagnostics/Private/AircraftDebugSettings.cpp) |
 
-
----
-
 ## 附录 B：测试源码与证据层级
 
 测试源码可帮助理解契约，但“存在测试”不等于“已执行并通过”。
@@ -1668,9 +1631,6 @@ $$
 2. **数学推导**：在明确模型与假设下推导；不自动扩展为全系统稳定性证明。
 3. **外部研究**：用于解释背景和对照算法，非本插件已集成依赖。
 4. **待验证效果**：编译、单测、PIE/Preview 和多机性能由后续执行结果确认。
-
-
----
 
 ## 附录 C：外部技术背景
 
