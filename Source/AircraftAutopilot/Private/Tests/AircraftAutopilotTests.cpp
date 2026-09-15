@@ -2203,4 +2203,238 @@ bool FAircraftSteadyGuidanceSkipsMpccTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftRemoteHoldBuildsPointToPointPlanTest,
+	"AircraftLab.Autopilot.MotionPlan.RemoteHoldBuildsPointToPointPlan",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftRemoteHoldBuildsPointToPointPlanTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::Hold;
+	Intent.Hold.bCaptureCurrentPosition = false;
+	Intent.Hold.PositionCm = FVector(1200.0f, 0.0f, 200.0f);
+	FAircraftVehicleStateSnapshot State;
+	State.PositionCm = FVector(100.0f, 0.0f, 200.0f);
+	FAircraftMotionPlan Plan;
+
+	TestTrue(TEXT("Remote hold builds"), Plan.Build(
+		Intent, FAircraftAutopilotRuntimeConfig(), State, MakeCapability()));
+	TestTrue(TEXT("Remote hold owns a spatial transit path"),
+		Plan.GetLengthCm() > UE_SMALL_NUMBER);
+	TestTrue(TEXT("Remote hold contains a time-parameterized transit"),
+		Plan.GetSamples().Num() >= 2 && Plan.GetDurationSeconds() > 0.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftRemoteHoldMatchesTwoPointRouteTest,
+	"AircraftLab.Autopilot.MotionPlan.RemoteHoldMatchesTwoPointRoute",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftRemoteHoldMatchesTwoPointRouteTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftVehicleStateSnapshot State;
+	State.PositionCm = FVector(100.0f, -50.0f, 200.0f);
+	State.VelocityCmPerSec = FVector(120.0f, 0.0f, 0.0f);
+	FAircraftMovementIntent RouteIntent = MakeRouteIntent(3100.0f);
+	RouteIntent.Route.PointsCm = { State.PositionCm, FVector(3100.0f, -50.0f, 200.0f) };
+	RouteIntent.Heading.Mode = EAircraftHeadingMode::FaceVelocity;
+	FAircraftMovementIntent HoldIntent = RouteIntent;
+	HoldIntent.Type = EAircraftMovementIntentType::Hold;
+	HoldIntent.Hold.bCaptureCurrentPosition = false;
+	HoldIntent.Hold.PositionCm = RouteIntent.Route.PointsCm.Last();
+	HoldIntent.Route = {};
+
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	Capability.ThrustRiseResponseTimeSeconds = 0.25f;
+	Capability.ThrustFallResponseTimeSeconds = 0.35f;
+	const FAircraftAutopilotRuntimeConfig Config;
+	FAircraftMotionPlan RoutePlan;
+	FAircraftMotionPlan HoldPlan;
+	TestTrue(TEXT("Two-point route builds"),
+		RoutePlan.Build(RouteIntent, Config, State, Capability));
+	TestTrue(TEXT("Remote hold builds"),
+		HoldPlan.Build(HoldIntent, Config, State, Capability));
+	TestEqual(TEXT("Hold and route sample counts match"),
+		HoldPlan.GetSamples().Num(), RoutePlan.GetSamples().Num());
+	if (HoldPlan.GetSamples().Num() == RoutePlan.GetSamples().Num())
+	{
+		for (int32 Index = 0; Index < HoldPlan.GetSamples().Num(); ++Index)
+		{
+			const FAircraftMotionPlanSample& HoldSample = HoldPlan.GetSamples()[Index];
+			const FAircraftMotionPlanSample& RouteSample = RoutePlan.GetSamples()[Index];
+			TestTrue(FString::Printf(TEXT("Sample %d position matches"), Index),
+				HoldSample.PositionCm.Equals(RouteSample.PositionCm, 0.01));
+			TestTrue(FString::Printf(TEXT("Sample %d velocity matches"), Index),
+				HoldSample.VelocityCmPerSec.Equals(RouteSample.VelocityCmPerSec, 0.01));
+			TestTrue(FString::Printf(TEXT("Sample %d acceleration matches"), Index),
+				HoldSample.AccelerationCmPerSecSq.Equals(
+					RouteSample.AccelerationCmPerSecSq, 0.01));
+			TestTrue(FString::Printf(TEXT("Sample %d yaw matches"), Index),
+				FMath::IsNearlyEqual(HoldSample.YawDegrees,
+					RouteSample.YawDegrees, 0.01f));
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftRemoteHoldFaceVelocityUsesApproachDirectionTest,
+	"AircraftLab.Autopilot.MotionPlan.RemoteHoldFaceVelocityUsesApproachDirection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftRemoteHoldFaceVelocityUsesApproachDirectionTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent;
+	Intent.Type = EAircraftMovementIntentType::Hold;
+	Intent.Hold.bCaptureCurrentPosition = false;
+	Intent.Hold.PositionCm = FVector(0.0f, 1200.0f, 0.0f);
+	Intent.Heading.Mode = EAircraftHeadingMode::FaceVelocity;
+	FAircraftVehicleStateSnapshot State;
+	State.ControlRotation = FQuat(FVector::UpVector, FMath::DegreesToRadians(-35.0f));
+	FAircraftMotionPlan Plan;
+
+	TestTrue(TEXT("Remote face-velocity hold builds"), Plan.Build(
+		Intent, FAircraftAutopilotRuntimeConfig(), State, MakeCapability()));
+	TestTrue(TEXT("Remote hold retains its final approach heading"),
+		FMath::IsNearlyEqual(Plan.GetSamples().Last().YawDegrees, 90.0f, 0.1f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftStopPlanEndsAtRestTest,
+	"AircraftLab.Autopilot.MotionPlan.StopPlanEndsAtRest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftStopPlanEndsAtRestTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMotionPlan Plan;
+	TestTrue(TEXT("Stop route builds"), Plan.Build(
+		MakeRouteIntent(4000.0f), FAircraftAutopilotRuntimeConfig(),
+		FAircraftVehicleStateSnapshot(), MakeCapability()));
+	const FAircraftMotionPlanSample& Terminal = Plan.GetSamples().Last();
+	TestTrue(TEXT("Stop route terminal velocity is zero"),
+		Terminal.VelocityCmPerSec.IsNearlyZero(0.1f));
+	TestTrue(TEXT("Stop route terminal acceleration is zero"),
+		Terminal.AccelerationCmPerSecSq.IsNearlyZero(0.1f));
+	TestTrue(TEXT("Stop route terminal yaw rate is zero"),
+		FMath::IsNearlyZero(Terminal.YawRateDegPerSec, 0.1f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftStopPlanAccountsForResponseLagTest,
+	"AircraftLab.Autopilot.MotionPlan.StopPlanAccountsForResponseLag",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftStopPlanAccountsForResponseLagTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	const FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	const FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftVehicleStateSnapshot State;
+	FAircraftDynamicCapabilitySnapshot ImmediateCapability = MakeCapability();
+	ImmediateCapability.ThrustRiseResponseTimeSeconds = 0.0f;
+	ImmediateCapability.ThrustFallResponseTimeSeconds = 0.0f;
+	FAircraftDynamicCapabilitySnapshot LaggedCapability = ImmediateCapability;
+	LaggedCapability.ThrustRiseResponseTimeSeconds = 0.45f;
+	LaggedCapability.ThrustFallResponseTimeSeconds = 0.45f;
+	FAircraftMotionPlan ImmediatePlan;
+	FAircraftMotionPlan LaggedPlan;
+	TestTrue(TEXT("Immediate-response route builds"),
+		ImmediatePlan.Build(Intent, Config, State, ImmediateCapability));
+	TestTrue(TEXT("Lagged-response route builds"),
+		LaggedPlan.Build(Intent, Config, State, LaggedCapability));
+
+	FAircraftMotionPlanSample ImmediateSample;
+	FAircraftMotionPlanSample LaggedSample;
+	TestTrue(TEXT("Immediate-response route can be sampled"), ImmediatePlan.Evaluate(
+		ImmediatePlan.TimeAtDistance(2800.0f), ImmediateSample));
+	TestTrue(TEXT("Lagged-response route can be sampled"), LaggedPlan.Evaluate(
+		LaggedPlan.TimeAtDistance(2800.0f), LaggedSample));
+	TestTrue(TEXT("Actuator lag moves the braking envelope earlier"),
+		LaggedSample.VelocityCmPerSec.Size()
+			< ImmediateSample.VelocityCmPerSec.Size() - 1.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftStopPlanSpeedProfileIsUnimodalTest,
+	"AircraftLab.Autopilot.MotionPlan.StopPlanSpeedProfileIsUnimodal",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftStopPlanSpeedProfileIsUnimodalTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	Capability.ThrustRiseResponseTimeSeconds = 0.45f;
+	Capability.ThrustFallResponseTimeSeconds = 0.45f;
+	FAircraftMotionPlan Plan;
+	TestTrue(TEXT("Response-aware stop route builds"), Plan.Build(
+		MakeRouteIntent(4000.0f), FAircraftAutopilotRuntimeConfig(),
+		FAircraftVehicleStateSnapshot(), Capability));
+
+	bool bDecelerationStarted = false;
+	const TArray<FAircraftMotionPlanSample>& Samples = Plan.GetSamples();
+	for (int32 Index = 1; Index < Samples.Num(); ++Index)
+	{
+		const float PreviousSpeed = Samples[Index - 1].VelocityCmPerSec.Size();
+		const float CurrentSpeed = Samples[Index].VelocityCmPerSec.Size();
+		if (CurrentSpeed < PreviousSpeed - 0.1f)
+		{
+			bDecelerationStarted = true;
+		}
+		else if (bDecelerationStarted && CurrentSpeed > PreviousSpeed + 0.1f)
+		{
+			AddError(FString::Printf(
+				TEXT("Stop profile accelerates again after braking at sample %d: %.3f -> %.3f cm/s"),
+				Index, PreviousSpeed, CurrentSpeed));
+			break;
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMpccTerminalStoppingGuardTest,
+	"AircraftLab.Autopilot.MPCC.TerminalStoppingGuard",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMpccTerminalStoppingGuardTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	const FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	Capability.ThrustRiseResponseTimeSeconds = 0.45f;
+	Capability.ThrustFallResponseTimeSeconds = 0.45f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.VelocityCmPerSec = FVector(800.0f, 0.0f, 0.0f);
+	FAircraftMpccController Controller;
+	TestTrue(TEXT("Route is accepted"),
+		Controller.SetIntent(Intent, 101, 1, Config, State, Capability));
+
+	State.TimeSeconds += 1.0f / Config.Mpcc.UpdateRateHz + 0.001f;
+	State.Sequence = 1;
+	State.PositionCm = FVector(2300.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector(1000.0f, 0.0f, 0.0f);
+	State.AccelerationCmPerSecSq = FVector::ZeroVector;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Terminal guard reference is solved"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(FString::Printf(
+		TEXT("Stopping-infeasible state commands jerk-limited emergency braking (actual %.3f)"),
+		Reference.ControlAccelerationCmPerSecSq.X),
+		Reference.ControlAccelerationCmPerSecSq.X < -70.0f);
+	return true;
+}
+
 #endif

@@ -1,4 +1,5 @@
 #include "AircraftAutopilot/AircraftMotionPlan.h"
+#include "AircraftAutopilotDynamics.h"
 #include "AircraftDiagnostics/AircraftDebug.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 
@@ -151,13 +152,28 @@ float FAircraftMotionPlan::ResolveYaw(
 }
 
 bool FAircraftMotionPlan::BuildHoldPlan(
-	const FAircraftMovementIntent& Intent, const FAircraftVehicleStateSnapshot& InitialState)
+	const FAircraftMovementIntent& Intent,
+	const FAircraftAutopilotRuntimeConfig& Config,
+	const FAircraftVehicleStateSnapshot& InitialState,
+	const FAircraftDynamicCapabilitySnapshot& Capability)
 {
-	FAircraftMotionPlanSample Sample;
-	Sample.PositionCm = Intent.Hold.bCaptureCurrentPosition
+	const FVector TargetPositionCm = Intent.Hold.bCaptureCurrentPosition
 		? InitialState.PositionCm : Intent.Hold.PositionCm;
+	if (!Intent.Hold.bCaptureCurrentPosition
+		&& FVector::Distance(InitialState.PositionCm, TargetPositionCm)
+			>= Config.Path.MinimumSegmentLengthCm)
+	{
+		FAircraftMovementIntent TransitIntent = Intent;
+		TransitIntent.Route.PointsCm = { InitialState.PositionCm, TargetPositionCm };
+		TransitIntent.Route.Corridor.Reset();
+		TransitIntent.Route.bClosed = false;
+		return BuildSpatialPlan(TransitIntent, Config, InitialState, Capability);
+	}
+
+	FAircraftMotionPlanSample Sample;
+	Sample.PositionCm = TargetPositionCm;
 	Sample.YawDegrees = ResolveYaw(Intent.Heading, Sample.PositionCm,
-		FVector::ZeroVector, InitialState.ControlRotation.Rotator().Yaw);
+		InitialState.VelocityCmPerSec, InitialState.ControlRotation.Rotator().Yaw);
 	Samples.Add(Sample);
 	bContinuous = true;
 	return true;
@@ -435,6 +451,37 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		SpeedLimits.Last() = FMath::Min(SpeedLimits.Last(), TerminalPathSpeedCmPerSec);
 	}
 
+	// Stop 路径的速度包络必须覆盖从“发出制动指令”到“实际制动力建立”
+	// 的完整距离。只使用 v²/(2a) 会把旋翼响应和 jerk 建立时间留给位置
+	// 控制器补偿，最终表现为越过终点后再拉回。
+	if (!bContinuous && Intent.Completion.ArrivalMode == EAircraftArrivalMode::Stop)
+	{
+		const float BrakingReserveScale = 1.0f - Config.Timing.BrakingReserveFraction;
+		const float VerticalDecelerationLimit =
+			Intent.Limits.MaxVerticalAccelerationCmPerSecSq * BrakingReserveScale;
+		for (int32 Index = 0; Index < Count; ++Index)
+		{
+			const FVector Tangent = Samples[Index].VelocityCmPerSec.GetSafeNormal();
+			const float TangentialDeceleration =
+				AircraftAutopilotDynamics::ResolveTangentialLimit(
+					Tangent, DecelerationLimit, VerticalDecelerationLimit);
+			const float TangentialJerk =
+				AircraftAutopilotDynamics::ResolveTangentialLimit(
+					Tangent,
+					Intent.Limits.MaxJerkCmPerSecCubed,
+					Intent.Limits.MaxVerticalJerkCmPerSecCubed);
+			const float BrakingDelaySeconds =
+				AircraftAutopilotDynamics::ComputeBrakingDelaySeconds(
+					TangentialDeceleration, TangentialJerk, Capability);
+			const float RemainingDistanceCm = Length - Samples[Index].DistanceCm;
+			SpeedLimits[Index] = FMath::Min(SpeedLimits[Index],
+				AircraftAutopilotDynamics::ComputeMaximumStoppingSpeedCmPerSec(
+					RemainingDistanceCm,
+					TangentialDeceleration,
+					BrakingDelaySeconds));
+		}
+	}
+
 	for (int32 Iteration = 0; Iteration < Config.Timing.MaxIterations; ++Iteration)
 	{
 		const TArray<float> PreviousSpeedLimits = SpeedLimits;
@@ -498,20 +545,10 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 	};
 	auto TangentialJerkLimit = [this, &Intent](int32 Index)
 	{
-		const FVector Tangent = Samples[Index].VelocityCmPerSec;
-		float Limit = TNumericLimits<float>::Max();
-		const float HorizontalTangent = FVector2D(Tangent.X, Tangent.Y).Size();
-		if (HorizontalTangent > UE_SMALL_NUMBER)
-		{
-			Limit = FMath::Min(Limit,
-				Intent.Limits.MaxJerkCmPerSecCubed / HorizontalTangent);
-		}
-		if (FMath::Abs(Tangent.Z) > UE_SMALL_NUMBER)
-		{
-			Limit = FMath::Min(Limit,
-				Intent.Limits.MaxVerticalJerkCmPerSecCubed / FMath::Abs(Tangent.Z));
-		}
-		return Limit == TNumericLimits<float>::Max() ? 0.0f : FMath::Max(Limit, 0.0f);
+		return AircraftAutopilotDynamics::ResolveTangentialLimit(
+			Samples[Index].VelocityCmPerSec,
+			Intent.Limits.MaxJerkCmPerSecCubed,
+			Intent.Limits.MaxVerticalJerkCmPerSecCubed);
 	};
 	const int32 SegmentCount = Count - 1;
 	const int32 MaximumJerkPropagationSweeps = Config.Timing.MaxIterations
@@ -609,6 +646,13 @@ bool FAircraftMotionPlan::BuildSpatialPlan(
 		}
 		PreviousYaw = Sample.YawDegrees;
 	}
+	if (!bContinuous && Intent.Completion.ArrivalMode == EAircraftArrivalMode::Stop)
+	{
+		FAircraftMotionPlanSample& Terminal = Samples.Last();
+		Terminal.VelocityCmPerSec = FVector::ZeroVector;
+		Terminal.AccelerationCmPerSecSq = FVector::ZeroVector;
+		Terminal.YawRateDegPerSec = 0.0f;
+	}
 	DurationSeconds = Samples.Last().TimeSeconds;
 	if (DurationSeconds <= 0.0f)
 	{
@@ -651,7 +695,7 @@ bool FAircraftMotionPlan::Build(
 	switch (SourceIntent.Type)
 	{
 	case EAircraftMovementIntentType::Hold:
-		bValid = BuildHoldPlan(SourceIntent, InitialState);
+		bValid = BuildHoldPlan(SourceIntent, Config, InitialState, Capability);
 		break;
 	case EAircraftMovementIntentType::Route:
 	case EAircraftMovementIntentType::Orbit:

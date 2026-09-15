@@ -77,5 +77,7 @@ private:
 		const FAircraftDynamicCapabilitySnapshot& Capability);
 	bool BuildTimedPlan(const FAircraftMovementIntent& Intent);
 	bool BuildHoldPlan(const FAircraftMovementIntent& Intent,
-		const FAircraftVehicleStateSnapshot& InitialState);
+		const FAircraftAutopilotRuntimeConfig& Config,
+		const FAircraftVehicleStateSnapshot& InitialState,
+		const FAircraftDynamicCapabilitySnapshot& Capability);
 };

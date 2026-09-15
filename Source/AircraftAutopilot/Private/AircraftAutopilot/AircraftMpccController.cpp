@@ -408,9 +408,12 @@ FVector FAircraftMpccController::ProjectAcceleration(
 	FVector Result = Acceleration;
 	const bool bHorizontalBraking = FVector2D::DotProduct(
 		FVector2D(Result.X, Result.Y), FVector2D(VelocityCmPerSec.X, VelocityCmPerSec.Y)) < 0.0f;
+	const float CapabilityHorizontalLimit = bHorizontalBraking
+		? Capability.MaxHorizontalDecelerationCmPerSecSq
+		: Capability.MaxHorizontalAccelerationCmPerSecSq;
 	const float HorizontalLimit = ResolveHardLimit(
 		bHorizontalBraking ? Limits.MaxDecelerationCmPerSecSq : Limits.MaxAccelerationCmPerSecSq,
-		Capability.MaxHorizontalAccelerationCmPerSecSq);
+		CapabilityHorizontalLimit);
 	const FVector2D Horizontal(Result.X, Result.Y);
 	if (HorizontalLimit > 0.0f && Horizontal.SizeSquared() > FMath::Square(HorizontalLimit))
 	{
@@ -990,6 +993,79 @@ bool FAircraftMpccController::SolvePlan(
 		if (MaximumCorrectionStep <= OptimizationCorrectionToleranceCmPerSecSq)
 		{
 			break;
+		}
+	}
+
+	// MPCC 代价负责平滑跟踪，但“能否在终点前停住”不是可交换的软目标。
+	// 当实际速度已经越过响应/jerk 感知的停止包络时，只覆盖优化结果的
+	// 切向分量为最大可达制动；横向的路径/走廊修正仍然保留。
+	if (!Plan.IsContinuous()
+		&& Plan.GetIntent().Completion.ArrivalMode == EAircraftArrivalMode::Stop
+		&& PlanLengthCm > UE_SMALL_NUMBER)
+	{
+		FVector BrakingTangent = Projection.VelocityCmPerSec.GetSafeNormal();
+		if (BrakingTangent.IsNearlyZero())
+		{
+			BrakingTangent = ReferenceScratch[0].VelocityCmPerSec.GetSafeNormal();
+		}
+		if (BrakingTangent.IsNearlyZero())
+		{
+			BrakingTangent = State.VelocityCmPerSec.GetSafeNormal();
+		}
+		if (!BrakingTangent.IsNearlyZero())
+		{
+			const float BrakingReserveScale =
+				1.0f - RuntimeConfig.Timing.BrakingReserveFraction;
+			const float HorizontalDeceleration = ResolveHardLimit(
+				Limits.MaxDecelerationCmPerSecSq,
+				Capability.MaxHorizontalDecelerationCmPerSecSq)
+				* BrakingReserveScale;
+			const float VerticalDeceleration = ResolveHardLimit(
+				Limits.MaxVerticalAccelerationCmPerSecSq,
+				Capability.MaxVerticalAccelerationCmPerSecSq)
+				* BrakingReserveScale;
+			const float TangentialDeceleration =
+				AircraftAutopilotDynamics::ResolveTangentialLimit(
+					BrakingTangent, HorizontalDeceleration, VerticalDeceleration);
+			const float TangentialJerk =
+				AircraftAutopilotDynamics::ResolveTangentialLimit(
+					BrakingTangent,
+					Limits.MaxJerkCmPerSecCubed,
+					Limits.MaxVerticalJerkCmPerSecCubed);
+			const float BrakingDelaySeconds =
+				AircraftAutopilotDynamics::ComputeBrakingDelaySeconds(
+					TangentialDeceleration, TangentialJerk, Capability);
+			const float RemainingDistanceCm = FMath::Max(
+				PlanLengthCm - Projection.DistanceCm, 0.0f);
+			const float ActualAlongTrackSpeedCmPerSec = FMath::Max(
+				static_cast<float>(FVector::DotProduct(
+					State.VelocityCmPerSec, BrakingTangent)), 0.0f);
+			const float RequiredStoppingDistanceCm =
+				AircraftAutopilotDynamics::ComputeStoppingDistanceCm(
+					ActualAlongTrackSpeedCmPerSec,
+					TangentialDeceleration,
+					BrakingDelaySeconds);
+			if (RequiredStoppingDistanceCm
+				> RemainingDistanceCm + UE_KINDA_SMALL_NUMBER)
+			{
+				for (int32 Index = 0; Index < Steps; ++Index)
+				{
+					FVector Tangent = ReferenceScratch[Index].VelocityCmPerSec.GetSafeNormal();
+					if (Tangent.IsNearlyZero())
+					{
+						Tangent = BrakingTangent;
+					}
+					const float StepDeceleration =
+						AircraftAutopilotDynamics::ResolveTangentialLimit(
+							Tangent, HorizontalDeceleration, VerticalDeceleration);
+					const FVector PlannedAcceleration =
+						ReferenceScratch[Index].AccelerationCmPerSecSq
+							+ ControlCorrectionHorizon[Index];
+					ControlCorrectionHorizon[Index] += Tangent
+						* (-StepDeceleration - static_cast<float>(
+							FVector::DotProduct(PlannedAcceleration, Tangent)));
+				}
+			}
 		}
 	}
 
