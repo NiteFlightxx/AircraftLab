@@ -62,10 +62,9 @@ struct AIRCRAFT_API FAircraftAlternativeAttitudeDiagnostics
 class AIRCRAFT_API FAircraftAttitudeReferenceDynamics
 {
 public:
-	/** Shapes an already-built control-frame orientation target. */
-	static bool UpdateRotationTarget(
-		const FQuat& RawControlWorldRotation,
-		float YawRateDegPerSec,
+	/** Shapes a yaw-neutral control-frame tilt target. Heading dynamics belong to FAircraftYawReferenceDynamics. */
+	static bool UpdateTiltTarget(
+		const FQuat& RawTiltControlWorldRotation,
 		float DeltaSeconds,
 		const FQuat& ActualBodyWorldRotation,
 		const FVector& ActualAngularVelocityBodyRadPerSec,

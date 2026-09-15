@@ -8,11 +8,12 @@
 namespace
 {
 	FAircraftAttitudeMotionConfig BuildFlightControllerAttitudeMotionConfig(
-		const FAircraftFlightControllerRuntimeConfig& Config,
-		const float MaxYawRateDegPerSec)
+		const FAircraftFlightControllerRuntimeConfig& Config)
 	{
 		const float NaturalAngularFrequency = FMath::Max(
 			Config.ReferenceModelNaturalFrequency, UE_SMALL_NUMBER);
+		const float MaxTiltRateDegPerSec = FMath::Max(
+			Config.MaxRollRateDegreesPerSec, Config.MaxPitchRateDegreesPerSec);
 		FAircraftAttitudeMotionConfig Result;
 		Result.MaxTiltAngleDegrees = Config.MaxTiltAngleDegrees;
 		Result.NaturalFrequencyHz = NaturalAngularFrequency / UE_TWO_PI;
@@ -20,15 +21,15 @@ namespace
 		Result.MaxAngularRateDegPerSec = FVector(
 			Config.MaxRollRateDegreesPerSec,
 			Config.MaxPitchRateDegreesPerSec,
-			FMath::Max(MaxYawRateDegPerSec, 0.0f));
+			MaxTiltRateDegPerSec);
 		Result.MaxAngularAccelerationDegPerSecSq = FVector(
 			2.0f * NaturalAngularFrequency * Result.MaxAngularRateDegPerSec.X,
 			2.0f * NaturalAngularFrequency * Result.MaxAngularRateDegPerSec.Y,
-			Config.MaxYawAccelerationDegPerSecSq);
+			2.0f * NaturalAngularFrequency * Result.MaxAngularRateDegPerSec.Z);
 		Result.MaxAngularJerkDegPerSecCubed = FVector(
 			2.0f * NaturalAngularFrequency * Result.MaxAngularAccelerationDegPerSecSq.X,
 			2.0f * NaturalAngularFrequency * Result.MaxAngularAccelerationDegPerSecSq.Y,
-			Config.MaxYawJerkDegPerSecCubed);
+			2.0f * NaturalAngularFrequency * Result.MaxAngularAccelerationDegPerSecSq.Z);
 		Result.DynamicsFeedForwardScale = 0.0f;
 		return Result;
 	}
@@ -407,18 +408,44 @@ FVector FAircraftFlightControlSolver::ComputeDesiredBodyRates(FAircraftFlightCon
 
 	if (Config.bEnableAttitudeReferenceModel)
 	{
+		// YawDegrees/YawRate have already been shaped by the single authoritative
+		// FAircraftYawReferenceDynamics instance. The SO(3) reference model owns only
+		// Roll/Pitch tilt dynamics; otherwise two stateful yaw loops chase each other.
+		const FRotator ActualControlAttitude = ActualControlWorldRotation.Rotator();
+		const FQuat ActualTiltControlWorldRotation = FRotator(
+			ActualControlAttitude.Pitch, 0.0f, ActualControlAttitude.Roll).Quaternion();
+		const FQuat ActualTiltBodyWorldRotation = Config.GetBodyWorldRotation(
+			ActualTiltControlWorldRotation);
+		const FVector ActualAngularVelocityWorldRadPerSec =
+			Context.PhysicsCache.AngularVelocityWorldRadPerSec;
+		const float ActualHeadingRateDegPerSec =
+			AircraftAttitudeReference::GetPlanarHeadingRateDegreesPerSecond(
+				ActualBodyWorldRotation,
+				Context.PhysicsCache.AngularVelocityWorldRadPerSec,
+				Config.GetForwardAxisBody(), Config.GetRightAxisBody());
+		const float ActualHeadingDegrees =
+			AircraftAttitudeReference::GetPlanarHeadingDegrees(
+				ActualBodyWorldRotation, Config);
+		const FQuat ActualHeadingWorldRotation(
+			FVector::UpVector, FMath::DegreesToRadians(ActualHeadingDegrees));
+		const FVector ActualTiltAngularVelocityNeutralWorldRadPerSec =
+			ActualHeadingWorldRotation.UnrotateVector(
+				ActualAngularVelocityWorldRadPerSec
+				- FVector::UpVector * FMath::DegreesToRadians(
+					ActualHeadingRateDegPerSec));
+		const FVector ActualTiltAngularVelocityBodyRadPerSec =
+			ActualTiltBodyWorldRotation.UnrotateVector(
+				ActualTiltAngularVelocityNeutralWorldRadPerSec);
+		const FQuat RawTiltControlWorldRotation = FRotator(
+			DesiredAttitude.Pitch, 0.0f, DesiredAttitude.Roll).Quaternion();
 		FAircraftAttitudeMotionOutput ReferenceOutput;
 		const FAircraftAttitudeMotionConfig MotionConfig =
-			BuildFlightControllerAttitudeMotionConfig(Config, YawSetpoint.MaxRateDegPerSec);
-		const FVector ActualAngularVelocityBodyRadPerSec =
-			ActualBodyWorldRotation.UnrotateVector(
-				Context.PhysicsCache.AngularVelocityWorldRadPerSec);
-		if (!FAircraftAttitudeReferenceDynamics::UpdateRotationTarget(
-			RawControlWorldRotation,
-			YawSetpoint.FeedForwardRateDegPerSec,
+			BuildFlightControllerAttitudeMotionConfig(Config);
+		if (!FAircraftAttitudeReferenceDynamics::UpdateTiltTarget(
+			RawTiltControlWorldRotation,
 			DeltaSeconds,
-			ActualBodyWorldRotation,
-			ActualAngularVelocityBodyRadPerSec,
+			ActualTiltBodyWorldRotation,
+			ActualTiltAngularVelocityBodyRadPerSec,
 			Config,
 			MotionConfig,
 			AttitudeReferenceModel,
@@ -427,8 +454,28 @@ FVector FAircraftFlightControlSolver::ComputeDesiredBodyRates(FAircraftFlightCon
 			FAircraftAttitudeReferenceDynamics::Reset(AttitudeReferenceModel);
 			return FVector::ZeroVector;
 		}
-		ShapedControlWorldRotation = ReferenceOutput.ControlWorldRotation;
-		ReferenceBodyRateRadPerSec = ReferenceOutput.AngularVelocityBodyRadPerSec;
+		const FRotator ShapedTiltAttitude =
+			ReferenceOutput.ControlWorldRotation.Rotator();
+		ShapedControlWorldRotation = FRotator(
+			ShapedTiltAttitude.Pitch,
+			YawSetpoint.TargetYawDegrees,
+			ShapedTiltAttitude.Roll).Quaternion();
+		const FVector ReferenceTiltControllerRateRadPerSec =
+			Config.BodyAngularToController(
+				ReferenceOutput.AngularVelocityBodyRadPerSec);
+		const FVector ReferenceTiltBodyRateRadPerSec =
+			Config.ControlToBodyVector(FVector(
+				-ReferenceTiltControllerRateRadPerSec.X,
+				-ReferenceTiltControllerRateRadPerSec.Y,
+				0.0f));
+		const FQuat ShapedBodyWorldRotation = Config.GetBodyWorldRotation(
+			ShapedControlWorldRotation);
+		const FVector AuthoritativeYawBodyRateRadPerSec =
+			ShapedBodyWorldRotation.UnrotateVector(
+				FVector::UpVector * FMath::DegreesToRadians(
+					YawSetpoint.FeedForwardRateDegPerSec));
+		ReferenceBodyRateRadPerSec = ReferenceTiltBodyRateRadPerSec
+			+ AuthoritativeYawBodyRateRadPerSec;
 	}
 	else
 	{

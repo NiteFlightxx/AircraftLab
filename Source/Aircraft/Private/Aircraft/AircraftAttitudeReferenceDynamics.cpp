@@ -239,9 +239,8 @@ bool FAircraftAttitudeReferenceDynamics::Update(
 		InOutState, OutReference);
 }
 
-bool FAircraftAttitudeReferenceDynamics::UpdateRotationTarget(
-	const FQuat& RawControlWorldRotation,
-	const float YawRateDegPerSec,
+bool FAircraftAttitudeReferenceDynamics::UpdateTiltTarget(
+	const FQuat& RawTiltControlWorldRotation,
 	const float DeltaSeconds,
 	const FQuat& ActualBodyWorldRotation,
 	const FVector& ActualAngularVelocityBodyRadPerSec,
@@ -250,9 +249,9 @@ bool FAircraftAttitudeReferenceDynamics::UpdateRotationTarget(
 	FAircraftAttitudeMotionState& InOutState,
 	FAircraftAttitudeMotionOutput& OutReference)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_AttitudeReference_UpdateRotationTarget);
+	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_AttitudeReference_UpdateTiltTarget);
 	return UpdateInternal(
-		RawControlWorldRotation, YawRateDegPerSec, DeltaSeconds,
+		RawTiltControlWorldRotation, 0.0f, DeltaSeconds,
 		ActualBodyWorldRotation, ActualAngularVelocityBodyRadPerSec,
 		FrameConfig, MotionConfig,
 		InOutState, OutReference);

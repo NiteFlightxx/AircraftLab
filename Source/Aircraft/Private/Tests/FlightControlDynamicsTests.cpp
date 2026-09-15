@@ -2,6 +2,7 @@
 // FAutopilotMovementIntent → FAircraftManualCommand；类型前缀 FFlightControl* → FAircraftFlightControl*。
 
 #include "Aircraft/FlightControlSolver.h"
+#include "Aircraft/AircraftAttitudeReference.h"
 #include "Aircraft/AircraftYawReferenceDynamics.h"
 #include "Aircraft/ControlAllocator.h"
 #include "Aircraft/ConstraintDriveUtils.h"
@@ -412,6 +413,104 @@ bool FAircraftQuaternionAttitudeUsesRigidBodyRotationTest::RunTest(const FString
 		Context, FRotator::ZeroRotator, YawSetpoint, 0.004f);
 	TestTrue(TEXT("Target yaw is closed from the quaternion-derived heading, not an Euler PID"),
 		FMath::Abs(YawRates.Z) > 1.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftFlightControllerYawBypassesAttitudeReferenceDynamicsTest,
+	"AircraftLab.Control.Attitude.YawBypassesAttitudeReferenceDynamics",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftFlightControllerYawBypassesAttitudeReferenceDynamicsTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	constexpr float DeltaSeconds = 1.0f / 120.0f;
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+	FAircraftPhysicsCache PhysicsCache;
+	PhysicsCache.BodyTransform.SetRotation(FQuat::Identity);
+	PhysicsCache.AngularVelocityWorldRadPerSec = FVector::ZeroVector;
+	FAircraftModeCapabilities Capabilities;
+	FAircraftFlightControllerRuntimeConfig Config;
+	Config.bEnableAttitudeReferenceModel = true;
+	FAircraftManualCommand ManualCommand;
+	FAircraftTrajectoryReference Reference;
+	FAircraftControlAllocator Allocator;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
+
+	FAircraftFlightControlSolver AngleSolver;
+	FAircraftYawSetpoint AngleSetpoint;
+	AngleSetpoint.TargetYawDegrees = 45.0f;
+	AngleSetpoint.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
+	const FVector AngleRates = AngleSolver.ComputeDesiredBodyRates(
+		Context, FRotator(20.0f, 45.0f, -15.0f), AngleSetpoint, DeltaSeconds);
+	TestTrue(TEXT("The authoritative shaped yaw angle reaches the attitude loop immediately"),
+		FMath::Abs(AngleRates.Z) > 80.0f);
+	TestTrue(TEXT("Roll and Pitch remain inside the SO(3) reference dynamics"),
+		FVector2D(AngleRates.X, AngleRates.Y).IsNearlyZero(1.e-3f));
+
+	const FQuat TargetControlWorldRotation = FRotator(0.0f, 45.0f, 0.0f).Quaternion();
+	PhysicsCache.BodyTransform.SetRotation(
+		Config.GetBodyWorldRotation(TargetControlWorldRotation));
+	FAircraftFlightControlSolver RateSolver;
+	FAircraftYawSetpoint RateSetpoint;
+	RateSetpoint.TargetYawDegrees = 45.0f;
+	RateSetpoint.FeedForwardRateDegPerSec = 30.0f;
+	RateSetpoint.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
+	const FVector RateCommand = RateSolver.ComputeDesiredBodyRates(
+		Context, FRotator(0.0f, 45.0f, 0.0f), RateSetpoint, DeltaSeconds);
+	TestEqual(TEXT("The authoritative shaped yaw rate is not delayed by the SO(3) model"),
+		RateCommand.Z, 30.0, 1.e-3);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftFlightControllerTiltDynamicsIgnoreYawLimitsTest,
+	"AircraftLab.Control.Attitude.TiltDynamicsIgnoreYawLimits",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftFlightControllerTiltDynamicsIgnoreYawLimitsTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	constexpr float DeltaSeconds = 1.0f / 120.0f;
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+	FAircraftPhysicsCache PhysicsCache;
+	PhysicsCache.BodyTransform.SetRotation(FQuat::Identity);
+	FAircraftModeCapabilities Capabilities;
+	FAircraftFlightControllerRuntimeConfig Config;
+	Config.bEnableAttitudeReferenceModel = true;
+	FAircraftManualCommand ManualCommand;
+	FAircraftTrajectoryReference Reference;
+	FAircraftControlAllocator Allocator;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
+	const float CurrentYawDegrees = AircraftAttitudeReference::GetPlanarHeadingDegrees(
+		PhysicsCache.BodyTransform.GetRotation(), Config);
+	FAircraftYawSetpoint NoYawAuthority;
+	NoYawAuthority.TargetYawDegrees = CurrentYawDegrees;
+	NoYawAuthority.MaxRateDegPerSec = 0.0f;
+	FAircraftYawSetpoint FullYawAuthority = NoYawAuthority;
+	FullYawAuthority.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
+	FAircraftFlightControlSolver NoYawSolver;
+	FAircraftFlightControlSolver FullYawSolver;
+	FVector NoYawRates = FVector::ZeroVector;
+	FVector FullYawRates = FVector::ZeroVector;
+	for (int32 Step = 0; Step < 60; ++Step)
+	{
+		NoYawRates = NoYawSolver.ComputeDesiredBodyRates(
+			Context, FRotator(20.0f, CurrentYawDegrees, 20.0f),
+			NoYawAuthority, DeltaSeconds);
+		FullYawRates = FullYawSolver.ComputeDesiredBodyRates(
+			Context, FRotator(20.0f, CurrentYawDegrees, 20.0f),
+			FullYawAuthority, DeltaSeconds);
+	}
+	TestTrue(TEXT("Roll/Pitch reference dynamics do not depend on yaw authority"),
+		FVector2D(NoYawRates.X, NoYawRates.Y).Equals(
+			FVector2D(FullYawRates.X, FullYawRates.Y), 1.e-3f));
 	return true;
 }
 
