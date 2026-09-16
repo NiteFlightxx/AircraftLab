@@ -1008,12 +1008,12 @@ bool FAircraftMpccController::SolvePlan(
 	Diagnostics.MotionPlanAccelerationCmPerSecSq =
 		ReferenceScratch[0].AccelerationCmPerSecSq;
 	Diagnostics.MpccCorrectionCmPerSecSq = MpccCorrectionBeforeTerminalGuard;
+	FVector TerminalTangent = FVector::ZeroVector;
 	if (!Plan.IsContinuous())
 	{
 		const TArray<FAircraftMotionPlanSample>& Samples = Plan.GetSamples();
 		if (Samples.Num() >= 2)
 		{
-			FVector TerminalTangent = FVector::ZeroVector;
 			for (int32 SampleIndex = Samples.Num() - 1;
 				SampleIndex > 0 && TerminalTangent.IsNearlyZero(); --SampleIndex)
 			{
@@ -1033,19 +1033,20 @@ bool FAircraftMpccController::SolvePlan(
 	// 切向分量为最大可达制动；横向的路径/走廊修正仍然保留。
 	if (!Plan.IsContinuous()
 		&& Plan.GetIntent().Completion.ArrivalMode == EAircraftArrivalMode::Stop
-		&& PlanLengthCm > UE_SMALL_NUMBER)
+		&& PlanLengthCm > UE_SMALL_NUMBER
+		&& !TerminalTangent.IsNearlyZero())
 	{
-		FVector BrakingTangent = Projection.VelocityCmPerSec.GetSafeNormal();
-		if (BrakingTangent.IsNearlyZero())
+		const float RemainingDistanceCm = Diagnostics.SignedTerminalDistanceCm;
+		const float ActualAlongTrackSpeedCmPerSec = static_cast<float>(
+			FVector::DotProduct(State.VelocityCmPerSec, TerminalTangent));
+		// This is a stopping-envelope guard, not a terminal position controller.
+		// It may only brake an aircraft that is still before the terminal plane and
+		// moving toward it. Once the aircraft has crossed the plane or is returning
+		// from an overshoot, the normal position/velocity feedback owns convergence.
+		if (RemainingDistanceCm > UE_KINDA_SMALL_NUMBER
+			&& ActualAlongTrackSpeedCmPerSec > UE_KINDA_SMALL_NUMBER)
 		{
-			BrakingTangent = ReferenceScratch[0].VelocityCmPerSec.GetSafeNormal();
-		}
-		if (BrakingTangent.IsNearlyZero())
-		{
-			BrakingTangent = State.VelocityCmPerSec.GetSafeNormal();
-		}
-		if (!BrakingTangent.IsNearlyZero())
-		{
+			const FVector BrakingTangent = TerminalTangent;
 			const float BrakingReserveScale =
 				1.0f - RuntimeConfig.Timing.BrakingReserveFraction;
 			const float HorizontalDeceleration = ResolveHardLimit(
@@ -1067,11 +1068,6 @@ bool FAircraftMpccController::SolvePlan(
 			const float BrakingDelaySeconds =
 				AircraftAutopilotDynamics::ComputeBrakingDelaySeconds(
 					TangentialDeceleration, TangentialJerk, Capability);
-			const float RemainingDistanceCm = FMath::Max(
-				PlanLengthCm - Projection.DistanceCm, 0.0f);
-			const float ActualAlongTrackSpeedCmPerSec = FMath::Max(
-				static_cast<float>(FVector::DotProduct(
-					State.VelocityCmPerSec, BrakingTangent)), 0.0f);
 			const float RequiredStoppingDistanceCm =
 				AircraftAutopilotDynamics::ComputeStoppingDistanceCm(
 					ActualAlongTrackSpeedCmPerSec,

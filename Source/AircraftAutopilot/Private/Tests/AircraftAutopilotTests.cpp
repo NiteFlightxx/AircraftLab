@@ -2660,6 +2660,43 @@ bool FAircraftMpccTerminalStoppingGuardDoesNotPolluteWarmStartTest::RunTest(
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMpccTerminalStoppingGuardDoesNotBrakeReturningOvershootTest,
+	"AircraftLab.Autopilot.MPCC.TerminalStoppingGuardDoesNotBrakeReturningOvershoot",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMpccTerminalStoppingGuardDoesNotBrakeReturningOvershootTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	const FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	FAircraftMpccController Controller;
+	TestTrue(TEXT("Route is accepted"),
+		Controller.SetIntent(Intent, 103, 1, Config, State, Capability));
+
+	State.TimeSeconds += 1.0f / Config.Mpcc.UpdateRateHz + 0.001f;
+	State.Sequence = 1;
+	State.PositionCm = FVector(4010.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector(-100.0f, 0.0f, 0.0f);
+	State.AccelerationCmPerSecSq = FVector::ZeroVector;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Returning overshoot state is solved"),
+		Controller.Update(State, Capability, Reference));
+	const FAircraftAutopilotDiagnostics& Diagnostics = Controller.GetDiagnostics();
+	TestFalse(TEXT("Terminal guard does not oppose motion returning from an overshoot"),
+		Diagnostics.bTerminalBrakingActive);
+	TestTrue(FString::Printf(
+		TEXT("Terminal safety contribution is zero while returning (actual %s)"),
+		*Diagnostics.TerminalBrakeCorrectionCmPerSecSq.ToCompactString()),
+		Diagnostics.TerminalBrakeCorrectionCmPerSecSq.IsNearlyZero(UE_KINDA_SMALL_NUMBER));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftStopRouteFlightControllerUsesSingleTerminalReferenceTest,
 	"AircraftLab.Autopilot.Runtime.StopRouteFlightControllerUsesSingleTerminalReference",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
