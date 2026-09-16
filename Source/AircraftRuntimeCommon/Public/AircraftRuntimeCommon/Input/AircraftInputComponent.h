@@ -16,6 +16,7 @@
 #include "AircraftInputComponent.generated.h"
 
 class UEnhancedInputComponent;
+class UEnhancedInputLocalPlayerSubsystem;
 class UInputAction;
 class UInputMappingContext;
 
@@ -28,7 +29,9 @@ public:
 	UAircraftInputComponent();
 
 	/** 将输入映射上下文添加到本地玩家子系统。 */
-	void ApplyMappingContext() const;
+	void ApplyMappingContext();
+	/** 结束本地操控：提交一次中立输入并移除本组件拥有的映射。 */
+	void DeactivateInput();
 
 	/** 绑定 Enhanced Input 的 Action 到回调（在 Pawn 的 SetupPlayerInputComponent 中调用）。 */
 	void BindInput(UInputComponent* PlayerInputComponent);
@@ -39,6 +42,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 	UPROPERTY(EditAnywhere, Category = "Aircraft|Input")
@@ -63,6 +67,8 @@ private:
 	mutable TWeakObjectPtr<UActorComponent> FlightControllerComponent;
 	mutable double InputDebugLastLogTimeSeconds = -DBL_MAX;
 	mutable bool bReportedMissingFlightController = false;
+	TWeakObjectPtr<UEnhancedInputLocalPlayerSubsystem> AppliedInputSubsystem;
+	TWeakObjectPtr<UInputMappingContext> AppliedInputMapping;
 
 	void InputMove(const FInputActionValue& Value);
 	void InputThrottle(const FInputActionValue& Value);
@@ -73,4 +79,5 @@ private:
 
 	void PushPilotInput() const;
 	void ResolveFlightController() const;
+	void RemoveAppliedMappingContext();
 };

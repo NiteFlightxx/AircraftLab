@@ -109,12 +109,12 @@ namespace UE::AircraftLab::DataflowNodes
 		Collections.Add(SharedCollection);
 		FConstructionAircraftModel Result;
 		Result.SkeletalMesh = Mesh;
-		Result.SimulationModel = FAircraftSimulationModel(
-			Collections, TEXT("ConstructionPreview"), Mesh);
 		const TConstArrayView<FSoftObjectPath> PhysicsAssetPaths = Facade.GetPhysicsAssetSoftObjectPathName();
 		Result.PhysicsAsset = PhysicsAssetPaths.IsEmpty()
 			? Mesh->GetPhysicsAsset()
 			: Cast<UPhysicsAsset>(PhysicsAssetPaths[0].ResolveObject());
+		Result.SimulationModel = FAircraftSimulationModel(
+			Collections, TEXT("ConstructionPreview"), Mesh, Result.PhysicsAsset);
 		return Result;
 	}
 

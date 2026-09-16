@@ -526,6 +526,59 @@ bool FAircraftArrivalSkipsInvalidClaimsTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftArrivalInvalidClaimDoesNotChangeCandidateLayoutTest,
+	"AircraftLab.Navigation.Arrival.InvalidClaimDoesNotChangeCandidateLayout",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftArrivalInvalidClaimDoesNotChangeCandidateLayoutTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftArrivalRegion Region;
+	Region.Mode = EAircraftArrivalAllocationMode::SharedCylinder;
+	Region.CenterCm = FVector::ZeroVector;
+	Region.HorizontalRadiusCm = 500.0f;
+	Region.VerticalHalfHeightCm = 0.0f;
+	Region.SeparationPaddingCm = 0.0f;
+
+	TArray<FAircraftArrivalClaim> ValidClaims;
+	for (uint64 StableId = 1; StableId <= 2; ++StableId)
+	{
+		FAircraftArrivalClaim& Claim = ValidClaims.AddDefaulted_GetRef();
+		Claim.StableId = StableId;
+		Claim.BodyRadiusCm = 100.0f;
+		Claim.RequestOrder = static_cast<int64>(StableId);
+	}
+	TArray<FAircraftArrivalClaim> MixedClaims = ValidClaims;
+	FAircraftArrivalClaim& Invalid = MixedClaims.InsertDefaulted_GetRef(0);
+	Invalid.StableId = 99;
+	Invalid.BodyRadiusCm = 0.0f;
+
+	const FAircraftArrivalAllocationResult ValidResult =
+		FAircraftArrivalAllocator::Allocate(ValidClaims, Region);
+	const FAircraftArrivalAllocationResult MixedResult =
+		FAircraftArrivalAllocator::Allocate(MixedClaims, Region);
+	const FAircraftArrivalAllocationResult InvalidOnlyResult =
+		FAircraftArrivalAllocator::Allocate(MakeArrayView(&Invalid, 1), Region);
+	TestEqual(TEXT("Invalid claims do not reduce the number of assigned valid aircraft"),
+		MixedResult.CountAssigned(), ValidResult.CountAssigned());
+	TestTrue(TEXT("An empty effective claim set is a valid empty allocation"),
+		InvalidOnlyResult.bValid && InvalidOnlyResult.Assignments.IsEmpty());
+	for (const FAircraftArrivalClaim& Claim : ValidClaims)
+	{
+		const FAircraftArrivalAssignment* const Expected =
+			ValidResult.FindAssignment(Claim.StableId);
+		const FAircraftArrivalAssignment* const Actual =
+			MixedResult.FindAssignment(Claim.StableId);
+		TestTrue(TEXT("Valid claims keep the same deterministic candidate assignment"),
+			Expected && Actual && Expected->Status == Actual->Status
+			&& Expected->CandidateIndex == Actual->CandidateIndex
+			&& Expected->PositionCm.Equals(Actual->PositionCm));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftGuidanceTrajectoryJerkTest,
 	"AircraftLab.Navigation.Guidance.JerkLimitedTrajectory",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

@@ -20,7 +20,7 @@ namespace UE::AircraftLab::Navigation::Private
 		const FVector& CandidatePositionCm,
 		const float CandidateRadiusCm,
 		TConstArrayView<FAircraftArrivalAssignment> Assignments,
-		TConstArrayView<FAircraftArrivalClaim> Claims,
+		TConstArrayView<const FAircraftArrivalClaim*> Claims,
 		const float SeparationPaddingCm)
 	{
 		for (const FAircraftArrivalAssignment& Assignment : Assignments)
@@ -29,17 +29,17 @@ namespace UE::AircraftLab::Navigation::Private
 			{
 				continue;
 			}
-			const FAircraftArrivalClaim* AssignedClaim = Claims.FindByPredicate(
-				[&Assignment](const FAircraftArrivalClaim& Claim)
+			const FAircraftArrivalClaim* const* AssignedClaim = Claims.FindByPredicate(
+				[&Assignment](const FAircraftArrivalClaim* Claim)
 				{
-					return Claim.StableId == Assignment.StableId;
+					return Claim && Claim->StableId == Assignment.StableId;
 				});
-			if (!AssignedClaim)
+			if (!AssignedClaim || !*AssignedClaim)
 			{
 				return false;
 			}
 			const double RequiredDistanceCm = CandidateRadiusCm
-				+ AssignedClaim->BodyRadiusCm + SeparationPaddingCm;
+				+ (*AssignedClaim)->BodyRadiusCm + SeparationPaddingCm;
 			if (FVector::DistSquared(CandidatePositionCm, Assignment.PositionCm)
 				< FMath::Square(RequiredDistanceCm) - UE_KINDA_SMALL_NUMBER)
 			{
@@ -188,6 +188,11 @@ FAircraftArrivalAllocationResult FAircraftArrivalAllocator::Allocate(
 	});
 
 	Result.Assignments.Reserve(Claims.Num());
+	if (SortedClaims.IsEmpty())
+	{
+		Result.bValid = true;
+		return Result;
+	}
 	if (Region.Mode == EAircraftArrivalAllocationMode::ExclusivePoint)
 	{
 		bool bAssigned = false;
@@ -230,7 +235,7 @@ FAircraftArrivalAllocationResult FAircraftArrivalAllocator::Allocate(
 			Assignment.CandidateIndex = 0;
 			Assignment.Status = HasClearance(
 				Claim->RequestedPositionCm, Claim->BodyRadiusCm,
-				Result.Assignments, Claims, Region.SeparationPaddingCm)
+				Result.Assignments, SortedClaims, Region.SeparationPaddingCm)
 				? EAircraftArrivalAssignmentStatus::Assigned
 				: EAircraftArrivalAssignmentStatus::Invalid;
 		}
@@ -239,9 +244,9 @@ FAircraftArrivalAllocationResult FAircraftArrivalAllocator::Allocate(
 	}
 
 	float MinimumBodyRadiusCm = TNumericLimits<float>::Max();
-	for (const FAircraftArrivalClaim& Claim : Claims)
+	for (const FAircraftArrivalClaim* Claim : SortedClaims)
 	{
-		MinimumBodyRadiusCm = FMath::Min(MinimumBodyRadiusCm, Claim.BodyRadiusCm);
+		MinimumBodyRadiusCm = FMath::Min(MinimumBodyRadiusCm, Claim->BodyRadiusCm);
 	}
 	TArray<FVector, TInlineAllocator<512>> Candidates;
 	BuildSharedCandidates(Region, MinimumBodyRadiusCm, Candidates);
@@ -253,7 +258,7 @@ FAircraftArrivalAllocationResult FAircraftArrivalAllocator::Allocate(
 		{
 			if (HasRejectedCandidate(*Claim, CandidateIndex)
 				|| !HasClearance(Candidates[CandidateIndex], Claim->BodyRadiusCm,
-					Result.Assignments, Claims, Region.SeparationPaddingCm))
+					Result.Assignments, SortedClaims, Region.SeparationPaddingCm))
 			{
 				continue;
 			}

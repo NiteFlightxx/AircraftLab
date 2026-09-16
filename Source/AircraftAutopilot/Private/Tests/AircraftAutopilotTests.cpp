@@ -1,10 +1,13 @@
 #include "AircraftAutopilot/AutopilotComponent.h"
 #include "AircraftAutopilot/AircraftMotionPlan.h"
+#include "AircraftAutopilot/AircraftAutopilotCompletion.h"
 #include "AircraftAutopilot/AircraftMpccController.h"
 #include "AircraftAutopilot/AircraftTrajectoryRuntime.h"
 #include "AircraftAutopilot/AircraftSpatialPath.h"
 #include "AircraftRuntimeInterface/AircraftNavigationGuidance.h"
 #include "Misc/AutomationTest.h"
+#include "UObject/UnrealType.h"
+#include "Tests/AircraftAutopilotTestListener.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -2278,6 +2281,137 @@ bool FAircraftRemoteHoldMatchesTwoPointRouteTest::RunTest(const FString& Paramet
 					RouteSample.YawDegrees, 0.01f));
 		}
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMovementIntentActorReferencesAreWeakTest,
+	"AircraftLab.Autopilot.Lifecycle.ActorTargetsAreWeak",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMovementIntentActorReferencesAreWeakTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	TestNotNull(TEXT("Hold target is represented by a weak UObject property"),
+		FindFProperty<FWeakObjectProperty>(FAircraftHoldIntent::StaticStruct(),
+			GET_MEMBER_NAME_CHECKED(FAircraftHoldIntent, TargetActor)));
+	TestNotNull(TEXT("Orbit center is represented by a weak UObject property"),
+		FindFProperty<FWeakObjectProperty>(FAircraftOrbitIntent::StaticStruct(),
+			GET_MEMBER_NAME_CHECKED(FAircraftOrbitIntent, CenterActor)));
+	TestNotNull(TEXT("Heading target is represented by a weak UObject property"),
+		FindFProperty<FWeakObjectProperty>(FAircraftHeadingObjective::StaticStruct(),
+			GET_MEMBER_NAME_CHECKED(FAircraftHeadingObjective, TargetActor)));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAutopilotCompletionGateTest,
+	"AircraftLab.Autopilot.Completion.ZeroStableTimeStillRequiresArrival",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAutopilotCompletionGateTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UE::AircraftLab::Autopilot::Private;
+	TestFalse(TEXT("Zero stable time does not bypass failed arrival conditions"),
+		HasStableCompletion(false, 0.0f, 0.0f));
+	TestTrue(TEXT("Zero stable time removes only the waiting period"),
+		HasStableCompletion(true, 0.0f, 0.0f));
+	TestFalse(TEXT("Timed trajectory requires an authoritative terminal reference"),
+		IsPlanComplete(EAircraftMovementIntentType::TimedTrajectory, false, 1.0f));
+	TestFalse(TEXT("Timed trajectory cannot finish before its plan progress reaches the end"),
+		IsPlanComplete(EAircraftMovementIntentType::TimedTrajectory, true, 0.5f));
+	TestTrue(TEXT("Timed trajectory becomes complete at terminal progress"),
+		IsPlanComplete(EAircraftMovementIntentType::TimedTrajectory, true, 1.0f));
+
+	FAircraftMovementIntent HoldIntent;
+	HoldIntent.Type = EAircraftMovementIntentType::Hold;
+	HoldIntent.Hold.bCaptureCurrentPosition = true;
+	FAircraftTrajectoryReference Reference;
+	Reference.PositionCm = FVector(10000.0f, 20000.0f, 3000.0f);
+	FVector Target;
+	TestFalse(TEXT("Capture-current hold waits for the executor's resolved reference"),
+		ResolveCompletionTarget(HoldIntent, false, Reference, Target));
+	TestTrue(TEXT("Capture-current hold consumes the executor's resolved reference"),
+		ResolveCompletionTarget(HoldIntent, true, Reference, Target));
+	TestTrue(TEXT("Capture-current completion target is not the default origin"),
+		Target.Equals(Reference.PositionCm));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAutopilotReplacementReentrancyTest,
+	"AircraftLab.Autopilot.Lifecycle.ReentrantReplacementKeepsNewestIntent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAutopilotReplacementReentrancyTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	UAutopilotComponent* const Autopilot = NewObject<UAutopilotComponent>();
+	Autopilot->SetAutopilotActive(true);
+	FAircraftHoldIntent InitialHold;
+	InitialHold.bCaptureCurrentPosition = false;
+	InitialHold.PositionCm = FVector(100.0f, 0.0f, 0.0f);
+	TestTrue(TEXT("Initial intent is accepted"), Autopilot->SubmitHoldIntent(
+		InitialHold, FAircraftMovementIntentSettings(), FAircraftCompletionPolicy()).IsValid());
+
+	UAircraftAutopilotReentrantTestListener* const Listener =
+		NewObject<UAircraftAutopilotReentrantTestListener>();
+	Listener->Autopilot = Autopilot;
+	Autopilot->OnMovementIntentChanged.AddDynamic(
+		Listener, &UAircraftAutopilotReentrantTestListener::HandleIntentChanged);
+	FAircraftHoldIntent OuterReplacement = InitialHold;
+	OuterReplacement.PositionCm = FVector(200.0f, 0.0f, 0.0f);
+	const FAircraftMovementIntentHandle OuterHandle = Autopilot->SubmitHoldIntent(
+		OuterReplacement, FAircraftMovementIntentSettings(), FAircraftCompletionPolicy());
+	TestFalse(TEXT("The outer replacement reports that a reentrant newer request won"),
+		OuterHandle.IsValid());
+	FAircraftMovementIntent ActiveIntent;
+	FAircraftMovementIntentHandle ActiveHandle;
+	uint64 Revision = 0;
+	TestTrue(TEXT("The reentrant intent remains active"), Autopilot->GetAircraftMovementIntent(
+		ActiveIntent, ActiveHandle, Revision));
+	TestEqual(TEXT("The active handle belongs to the reentrant submission"),
+		ActiveHandle.Id, Listener->SubmittedHandle.Id);
+	TestTrue(TEXT("The reentrant payload is not overwritten by the outer request"),
+		ActiveIntent.Hold.PositionCm.Equals(Listener->SubmittedTargetCm));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftAutopilotInterruptReentrancyTest,
+	"AircraftLab.Autopilot.Lifecycle.ReentrantInterruptKeepsNewestIntent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftAutopilotInterruptReentrancyTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	UAutopilotComponent* const Autopilot = NewObject<UAutopilotComponent>();
+	Autopilot->SetAutopilotActive(true);
+	FAircraftHoldIntent InitialHold;
+	InitialHold.bCaptureCurrentPosition = false;
+	InitialHold.PositionCm = FVector(100.0f, 0.0f, 0.0f);
+	const FAircraftMovementIntentHandle InitialHandle = Autopilot->SubmitHoldIntent(
+		InitialHold, FAircraftMovementIntentSettings(), FAircraftCompletionPolicy());
+	TestTrue(TEXT("Initial intent is accepted"), InitialHandle.IsValid());
+
+	UAircraftAutopilotReentrantTestListener* const Listener =
+		NewObject<UAircraftAutopilotReentrantTestListener>();
+	Listener->Autopilot = Autopilot;
+	Autopilot->OnMovementIntentChanged.AddDynamic(
+		Listener, &UAircraftAutopilotReentrantTestListener::HandleIntentChanged);
+	Autopilot->OnAircraftMovementIntentInterrupted(
+		InitialHandle, EAircraftMovementFailureReason::SimulationLODChanged);
+
+	FAircraftMovementIntent ActiveIntent;
+	FAircraftMovementIntentHandle ActiveHandle;
+	uint64 Revision = 0;
+	TestTrue(TEXT("The callback-submitted intent remains active after interruption"),
+		Autopilot->GetAircraftMovementIntent(ActiveIntent, ActiveHandle, Revision));
+	TestEqual(TEXT("The active handle belongs to the callback submission"),
+		ActiveHandle.Id, Listener->SubmittedHandle.Id);
+	TestTrue(TEXT("The callback payload is not cleared after the event returns"),
+		ActiveIntent.Hold.PositionCm.Equals(Listener->SubmittedTargetCm));
 	return true;
 }
 

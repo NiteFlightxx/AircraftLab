@@ -8,10 +8,12 @@
 
 #include "AircraftAsset/AircraftSimulationModel.h"
 
+#include "AircraftAsset/AircraftBodyBinding.h"
 #include "AircraftAsset/AircraftCollection.h"
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "Engine/SkeletalMesh.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
+#include "PhysicsEngine/PhysicsAsset.h"
 #include "UObject/SoftObjectPath.h"
 
 namespace UE::AircraftLab::AircraftAsset::Private
@@ -31,7 +33,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 	}
 
 	static void CompileFrameBinding(
-		FAircraftSimulationLodModel& Model, const USkeletalMesh* SkeletalMesh)
+		FAircraftSimulationLodModel& Model, const USkeletalMesh* SkeletalMesh,
+		const UPhysicsAsset* PhysicsAsset)
 	{
 		if (!SkeletalMesh)
 		{
@@ -40,9 +43,12 @@ namespace UE::AircraftLab::AircraftAsset::Private
 		}
 
 		const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
-		const FName RootBoneName = Model.RootBone.IsNone()
-			? (ReferenceSkeleton.GetNum() > 0 ? ReferenceSkeleton.GetBoneName(0) : NAME_None)
-			: Model.RootBone;
+		if (Model.RootBone.IsNone())
+		{
+			Model.RootBone = UE::AircraftLab::AircraftAsset::ResolveAircraftChassisBodyName(
+				SkeletalMesh, PhysicsAsset, NAME_None);
+		}
+		const FName RootBoneName = Model.RootBone;
 		if (RootBoneName.IsNone() || ReferenceSkeleton.FindBoneIndex(RootBoneName) == INDEX_NONE)
 		{
 			Model.FlightController.FrameBinding.Invalidate();
@@ -82,7 +88,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 	static void ParseLodModel(
 		const TSharedRef<const FManagedArrayCollection>& InCollection,
 		FAircraftSimulationLodModel& OutModel,
-		const USkeletalMesh* SkeletalMesh)
+		const USkeletalMesh* SkeletalMesh,
+		const UPhysicsAsset* PhysicsAsset)
 	{
 		OutModel.Reset();
 		const FConstAircraftCollection ConstCollection(InCollection);
@@ -361,7 +368,7 @@ namespace UE::AircraftLab::AircraftAsset::Private
 			}
 		}
 
-		CompileFrameBinding(OutModel, SkeletalMesh);
+		CompileFrameBinding(OutModel, SkeletalMesh, PhysicsAsset);
 
 		/* Motors → 临时 map（按 Name 索引），供 Propeller 解析时关联 */
 		TMap<FName, FAircraftMotorModelConfig> MotorByName;
@@ -487,7 +494,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 FAircraftSimulationModel::FAircraftSimulationModel(
 	const TArray<TSharedRef<const FManagedArrayCollection>>& InAircraftCollections,
 	FName InAircraftName,
-	USkeletalMesh* InSkeletalMesh)
+	USkeletalMesh* InSkeletalMesh,
+	UPhysicsAsset* InPhysicsAsset)
 {
 	AircraftName = InAircraftName;
 	LodModels.SetNum(InAircraftCollections.Num());
@@ -495,7 +503,8 @@ FAircraftSimulationModel::FAircraftSimulationModel(
 	for (int32 LodIndex = 0; LodIndex < InAircraftCollections.Num(); ++LodIndex)
 	{
 		UE::AircraftLab::AircraftAsset::Private::ParseLodModel(
-			InAircraftCollections[LodIndex], LodModels[LodIndex], InSkeletalMesh);
+			InAircraftCollections[LodIndex], LodModels[LodIndex], InSkeletalMesh,
+			InPhysicsAsset);
 		SimulationLOD.LODs[LodIndex] = UE::AircraftLab::AircraftAsset::Private::ParseLodSettings(
 			InAircraftCollections[LodIndex], LodIndex);
 	}

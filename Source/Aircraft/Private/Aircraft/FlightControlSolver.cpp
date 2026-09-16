@@ -517,26 +517,31 @@ FVector FAircraftFlightControlSolver::ComputeBodyTorqueCommand(FAircraftFlightCo
 	const FAircraftFlightControllerRuntimeConfig& Config = Context.Config;
 	const FVector CurrentBodyRates = Context.Runtime.EstimatedState.State.AngularVelocityBodyDegreesPerSec;
 
-	// ---- 分配饱和回传抗 windup（对标 PX4 rate_control.cpp）----
-	// 上一帧 Allocate 算出的饱和标志（1 帧延迟，可接受）：
-	// 某轴正/负方向分配饱和时，禁止该方向角速度误差继续累积积分。
-	auto MakeAntiWindupGains = [](FAircraftPidGains G, bool bSaturatedPos, bool bSaturatedNeg, float RateError) -> FAircraftPidGains
+	// 上一帧分配器饱和方向只冻结本帧积分增量；已有积分仍参与输出，
+	// 反向误差仍可卸载积分，避免临时 Ki=0 造成隐藏 windup 和解饱和跳变。
+	auto AllowsIntegralAccumulation = [](bool bSaturatedPos, bool bSaturatedNeg,
+		float RateError)
 	{
-		// 仅当误差方向与饱和方向一致时禁积分
-		if ((bSaturatedPos && RateError > 0.0f) || (bSaturatedNeg && RateError < 0.0f))
-		{
-			G.Ki = 0.0f;
-		}
-		return G;
+		return !((bSaturatedPos && RateError > 0.0f)
+			|| (bSaturatedNeg && RateError < 0.0f));
 	};
 
 	const float RollError  = DesiredBodyRatesDegreesPerSec.X - CurrentBodyRates.X;
 	const float PitchError = DesiredBodyRatesDegreesPerSec.Y - CurrentBodyRates.Y;
 	const float YawError   = DesiredBodyRatesDegreesPerSec.Z - CurrentBodyRates.Z;
 
-	FAircraftPidGains RollGains  = MakeAntiWindupGains(Config.GetRatePidGains(0), Context.AllocationFeedback.bSaturatedPositive[0], Context.AllocationFeedback.bSaturatedNegative[0], RollError);
-	FAircraftPidGains PitchGains = MakeAntiWindupGains(Config.GetRatePidGains(1), Context.AllocationFeedback.bSaturatedPositive[1], Context.AllocationFeedback.bSaturatedNegative[1], PitchError);
-	FAircraftPidGains YawGains   = MakeAntiWindupGains(Config.GetRatePidGains(2), Context.AllocationFeedback.bSaturatedPositive[2], Context.AllocationFeedback.bSaturatedNegative[2], YawError);
+	FAircraftPidGains RollGains = Config.GetRatePidGains(0);
+	FAircraftPidGains PitchGains = Config.GetRatePidGains(1);
+	FAircraftPidGains YawGains = Config.GetRatePidGains(2);
+	const bool bIntegrateRoll = AllowsIntegralAccumulation(
+		Context.AllocationFeedback.bSaturatedPositive[0],
+		Context.AllocationFeedback.bSaturatedNegative[0], RollError);
+	const bool bIntegratePitch = AllowsIntegralAccumulation(
+		Context.AllocationFeedback.bSaturatedPositive[1],
+		Context.AllocationFeedback.bSaturatedNegative[1], PitchError);
+	const bool bIntegrateYaw = AllowsIntegralAccumulation(
+		Context.AllocationFeedback.bSaturatedPositive[2],
+		Context.AllocationFeedback.bSaturatedNegative[2], YawError);
 
 	if (Config.AngularDampingFeedForwardScale > UE_SMALL_NUMBER)
 	{
@@ -564,9 +569,15 @@ FVector FAircraftFlightControlSolver::ComputeBodyTorqueCommand(FAircraftFlightCo
 
 	// u = Kp·(ω_des − ω) + Ki·∫ + Kd·d(ω)/dt + normalized_damping_ff
 	FVector Result(
-		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.X, CurrentBodyRates.X, DeltaSeconds, RollGains, LastAngularDampingFeedForward.X),
-		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Y, CurrentBodyRates.Y, DeltaSeconds, PitchGains, LastAngularDampingFeedForward.Y),
-		PidStates.Rate.Yaw.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Z, CurrentBodyRates.Z, DeltaSeconds, YawGains, LastAngularDampingFeedForward.Z));
+		PidStates.Rate.Roll.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.X,
+			CurrentBodyRates.X, DeltaSeconds, RollGains,
+			LastAngularDampingFeedForward.X, bIntegrateRoll),
+		PidStates.Rate.Pitch.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Y,
+			CurrentBodyRates.Y, DeltaSeconds, PitchGains,
+			LastAngularDampingFeedForward.Y, bIntegratePitch),
+		PidStates.Rate.Yaw.UpdateFromMeasurement(DesiredBodyRatesDegreesPerSec.Z,
+			CurrentBodyRates.Z, DeltaSeconds, YawGains,
+			LastAngularDampingFeedForward.Z, bIntegrateYaw));
 	if (Context.AllocationFeedback.Cache.RowScale[1] <= AircraftAllocation::AuthorityEpsilon)
 	{
 		PidStates.Rate.Roll.Reset();

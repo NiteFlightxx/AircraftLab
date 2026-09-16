@@ -129,7 +129,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftHeadingObjective
 	FVector TargetPositionCm = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Heading")
-	TObjectPtr<AActor> TargetActor = nullptr;
+	TWeakObjectPtr<AActor> TargetActor;
 };
 
 USTRUCT(BlueprintType)
@@ -195,7 +195,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftHoldIntent
 	FVector PositionCm = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
-	TObjectPtr<AActor> TargetActor = nullptr;
+	TWeakObjectPtr<AActor> TargetActor;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
 	bool bCaptureCurrentPosition = true;
@@ -271,7 +271,7 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftOrbitIntent
 	FVector CenterCm = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement")
-	TObjectPtr<AActor> CenterActor = nullptr;
+	TWeakObjectPtr<AActor> CenterActor;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aircraft|Movement", meta = (ClampMin = "1.0", Units = "cm"))
 	float RadiusCm = 500.0f;

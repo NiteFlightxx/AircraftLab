@@ -102,7 +102,9 @@ struct FAircraftPidState
 	 * Derivative-on-measurement 形式：D = -d(PV)/dt，
 	 * 避免设定值阶跃造成的微分冲击（Derivative Kick）。
 	 */
-	float UpdateFromMeasurement(float Setpoint, float Measurement, float DeltaSeconds, const FAircraftPidGains& Gains, float FeedForwardInput = 0.0f)
+	float UpdateFromMeasurement(float Setpoint, float Measurement, float DeltaSeconds,
+		const FAircraftPidGains& Gains, float FeedForwardInput = 0.0f,
+		bool bAllowIntegralAccumulation = true)
 	{
 		if (DeltaSeconds <= UE_SMALL_NUMBER)
 		{
@@ -111,7 +113,10 @@ struct FAircraftPidState
 
 		const float Error = Setpoint - Measurement;
 		const float PreviousIntegral = Integral;
-		Integral += Error * DeltaSeconds;
+		if (bAllowIntegralAccumulation)
+		{
+			Integral += Error * DeltaSeconds;
+		}
 		if (Gains.IntegralLimit > 0.0f)
 		{
 			Integral = FMath::Clamp(Integral, -Gains.IntegralLimit, Gains.IntegralLimit);

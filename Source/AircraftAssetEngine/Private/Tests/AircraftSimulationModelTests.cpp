@@ -5,12 +5,64 @@
 #include "AircraftAsset/CollectionAircraftPropertyFacade.h"
 #include "AircraftAsset/AircraftPilotInputMapping.h"
 #include "AircraftAsset/AircraftDataflowPreviewActor.h"
+#include "AircraftAsset/AircraftBodyBinding.h"
 #include "AircraftAsset/AircraftComponent.h"
 #include "AircraftRuntimeInterface/AircraftMovementIntentProvider.h"
 #include "Dataflow/DataflowSimulationManager.h"
+#include "Engine/SkeletalMesh.h"
 #include "Misc/AutomationTest.h"
+#include "PhysicsEngine/PhysicsAsset.h"
+#include "PhysicsEngine/SkeletalBodySetup.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftImplicitRootBoneUsesFirstPhysicsBodyTest,
+	"AircraftLab.Dataflow.Runtime.FrameBinding.ImplicitRootUsesFirstPhysicsBody",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftImplicitRootBoneUsesFirstPhysicsBodyTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	USkeletalMesh* const Mesh = NewObject<USkeletalMesh>();
+	const FName ChassisBone(TEXT("Chassis"));
+	{
+		FReferenceSkeletonModifier SkeletonModifier(Mesh->GetRefSkeleton(), nullptr);
+		FMeshBoneInfo DummyRootInfo(
+			FName(TEXT("DummyRoot")), TEXT("DummyRoot"), INDEX_NONE);
+		SkeletonModifier.Add(DummyRootInfo, FTransform::Identity);
+		FMeshBoneInfo ChassisInfo(ChassisBone, TEXT("Chassis"), 0);
+		SkeletonModifier.Add(ChassisInfo,
+			FTransform(FRotator(0.0f, 90.0f, 0.0f), FVector(25.0f, 0.0f, 10.0f)));
+	}
+	Mesh->CalculateInvRefMatrices();
+
+	UPhysicsAsset* const PhysicsAsset = NewObject<UPhysicsAsset>();
+	USkeletalBodySetup* const ChassisBody = NewObject<USkeletalBodySetup>(PhysicsAsset);
+	ChassisBody->BoneName = ChassisBone;
+	PhysicsAsset->SkeletalBodySetups.Add(ChassisBody);
+	PhysicsAsset->UpdateBodySetupIndexMap();
+	TestEqual(TEXT("The transient skeleton contains the chassis bone"),
+		Mesh->GetRefSkeleton().FindBoneIndex(ChassisBone), 1);
+	TestEqual(TEXT("The transient PhysicsAsset contains the chassis body"),
+		PhysicsAsset->FindBodyIndex(ChassisBone), 0);
+	TestEqual(TEXT("The shared chassis resolver selects the first physical body"),
+		UE::AircraftLab::AircraftAsset::ResolveAircraftChassisBodyName(
+			Mesh, PhysicsAsset, NAME_None), ChassisBone);
+
+	const TSharedRef<FManagedArrayCollection> Collection = MakeShared<FManagedArrayCollection>();
+	UE::AircraftLab::AircraftAsset::FAircraftCollection(Collection).DefineSchema();
+	const TArray<TSharedRef<const FManagedArrayCollection>> Collections = { Collection };
+	const FAircraftSimulationModel Model(
+		Collections, TEXT("ImplicitRoot"), Mesh, PhysicsAsset);
+	const FAircraftSimulationLodModel* const LOD = Model.GetLodModel(0);
+	TestNotNull(TEXT("The model compiles an LOD"), LOD);
+	TestEqual(TEXT("The implicit root is baked to the first actual physics body"),
+		LOD->RootBone, ChassisBone);
+	TestTrue(TEXT("The frame binding is compiled from the resolved chassis body"),
+		LOD->FlightController.FrameBinding.IsValid());
+	return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftDataflowPreviewActorProtocolsTest,

@@ -277,7 +277,8 @@ struct AIRCRAFTASSETENGINE_API FAircraftSimulationModel
 	explicit FAircraftSimulationModel(
 		const TArray<TSharedRef<const FManagedArrayCollection>>& InAircraftCollections,
 		FName InAircraftName = NAME_None,
-		USkeletalMesh* InSkeletalMesh = nullptr);
+		USkeletalMesh* InSkeletalMesh = nullptr,
+		UPhysicsAsset* InPhysicsAsset = nullptr);
 
 	FName AircraftName = NAME_None;
 	FAircraftSimulationLODProfileRuntimeConfig SimulationLOD;

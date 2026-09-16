@@ -585,8 +585,17 @@ void FAircraftTrajectoryRuntime::FinalizeReference(
 	OutReference.StateSequence = State.Sequence;
 	OutReference.GeneratedAtSeconds = State.TimeSeconds;
 	OutReference.ValidUntilSeconds = State.TimeSeconds + ReferenceAgeSeconds;
-	OutReference.PathProgress = GetPlan().GetLengthCm() > UE_SMALL_NUMBER
-		? PlanDistanceCm / GetPlan().GetLengthCm() : 0.0f;
+	if (GetPlan().GetIntent().Type == EAircraftMovementIntentType::TimedTrajectory)
+	{
+		OutReference.PathProgress = GetPlan().GetDurationSeconds() > UE_SMALL_NUMBER
+			? FMath::Clamp(PlanTimeSeconds / GetPlan().GetDurationSeconds(), 0.0f, 1.0f)
+			: 1.0f;
+	}
+	else
+	{
+		OutReference.PathProgress = GetPlan().GetLengthCm() > UE_SMALL_NUMBER
+			? PlanDistanceCm / GetPlan().GetLengthCm() : 0.0f;
+	}
 	OutReference.RouteProgress = GetPlan().GetRouteLengthCm() > UE_SMALL_NUMBER
 		? GetPlan().GetRouteDistanceCm(PlanDistanceCm) / GetPlan().GetRouteLengthCm()
 		: 0.0f;

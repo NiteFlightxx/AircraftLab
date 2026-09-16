@@ -21,11 +21,9 @@ namespace UE::AircraftLab::KinematicDrive
 
 		const FTransform AircraftRelativeToRoot =
 			CurrentAircraftWorld.GetRelativeTransform(CurrentRootWorld);
-		// 解 Root' * Rel = Target（Aircraft = Root * Rel 的挂接约定）：
-		// Root' = Target * Rel^-1。注意 GetRelativeTransformReverse(Other) 的引擎语义
-		// 是 this^-1 * Other（Transform.cpp A(-1)*B 注释），方向与此处所需相反；
-		// 旧实现误用它产生 Rel^-1 * Target，仅在纯 Z 轴旋转（可交换）时碰巧正确。
-		OutTargetRootWorld = TargetAircraftWorld * AircraftRelativeToRoot.Inverse();
+		// SceneComponent.cpp 的权威组合为 ComponentWorld = Relative * ParentWorld。
+		// 解 Relative * Root' = Target，得到 Root' = Relative^-1 * Target。
+		OutTargetRootWorld = AircraftRelativeToRoot.Inverse() * TargetAircraftWorld;
 		OutTargetRootWorld.SetScale3D(CurrentRootWorld.GetScale3D());
 		return OutTargetRootWorld.IsValid();
 	}

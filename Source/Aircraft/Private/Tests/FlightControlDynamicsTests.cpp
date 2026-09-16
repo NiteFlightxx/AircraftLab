@@ -11,6 +11,31 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftPidExternalSaturationAntiWindupTest,
+	"AircraftLab.Control.PID.ExternalSaturationDoesNotHideIntegral",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftPidExternalSaturationAntiWindupTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftPidState State;
+	FAircraftPidGains Gains;
+	Gains.Ki = 1.0f;
+	Gains.IntegralLimit = 1000.0f;
+
+	for (int32 Step = 0; Step < 100; ++Step)
+	{
+		State.UpdateFromMeasurement(10.0f, 0.0f, 0.01f, Gains,
+			0.0f, false);
+	}
+	const float OutputAfterRelease = State.UpdateFromMeasurement(
+		0.0f, 0.0f, 0.01f, Gains);
+	TestTrue(TEXT("External saturation must not accumulate a hidden integral"),
+		FMath::IsNearlyZero(OutputAfterRelease, 1.e-4f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftConstraintDynamicsFeedForwardTest,
 	"AircraftLab.Control.Constraint.DynamicsFeedForward",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

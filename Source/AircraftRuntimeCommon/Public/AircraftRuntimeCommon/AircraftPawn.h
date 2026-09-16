@@ -33,6 +33,7 @@ public:
 	virtual void BeginPlay() override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void PawnClientRestart() override;
+	virtual void UnPossessed() override;
 	virtual void OnRep_Controller() override;
 
 	/** 机身（UAircraftComponent，骨骼网格 + 飞控一体）。 */

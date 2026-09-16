@@ -237,7 +237,8 @@ bool FAircraftMovementIntent::IsValid() const
 	switch (Type)
 	{
 	case EAircraftMovementIntentType::Hold:
-		return Hold.bCaptureCurrentPosition || Hold.TargetActor || IsFiniteVector(Hold.PositionCm);
+		return Hold.bCaptureCurrentPosition || Hold.TargetActor.IsValid()
+			|| IsFiniteVector(Hold.PositionCm);
 	case EAircraftMovementIntentType::Velocity:
 		return IsFiniteVector(Velocity.VelocityCmPerSec);
 	case EAircraftMovementIntentType::Route:

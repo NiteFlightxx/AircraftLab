@@ -33,6 +33,20 @@ void UAircraftInputComponent::BeginPlay()
 	}
 }
 
+void UAircraftInputComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	DeactivateInput();
+	FlightControllerComponent.Reset();
+	Super::EndPlay(EndPlayReason);
+}
+
+void UAircraftInputComponent::DeactivateInput()
+{
+	PilotInputAxes = FVector4(0.0, 0.0, 0.0, 0.0);
+	PushPilotInput();
+	RemoveAppliedMappingContext();
+}
+
 void UAircraftInputComponent::ResolveFlightController() const
 {
 	if (FlightControllerComponent.IsValid())
@@ -61,10 +75,11 @@ void UAircraftInputComponent::ResolveFlightController() const
 	}
 }
 
-void UAircraftInputComponent::ApplyMappingContext() const
+void UAircraftInputComponent::ApplyMappingContext()
 {
 	if (!InputMapping)
 	{
+		RemoveAppliedMappingContext();
 		UE_LOG(LogAircraft, Warning,
 			TEXT("[Aircraft.Input.Mapping] Owner=%s Result=MissingInputMapping"),
 			*GetNameSafe(GetOwner()));
@@ -78,7 +93,15 @@ void UAircraftInputComponent::ApplyMappingContext() const
 		if (UEnhancedInputLocalPlayerSubsystem* const Subsystem =
 			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
 		{
+			if (AppliedInputSubsystem.Get() == Subsystem
+				&& AppliedInputMapping.Get() == InputMapping)
+			{
+				return;
+			}
+			RemoveAppliedMappingContext();
 			Subsystem->AddMappingContext(InputMapping, 0);
+			AppliedInputSubsystem = Subsystem;
+			AppliedInputMapping = InputMapping;
 			if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(EAircraftDiagnosticLogChannel::Input))
 			{
 				UE_LOG(LogAircraft, Display,
@@ -89,10 +112,24 @@ void UAircraftInputComponent::ApplyMappingContext() const
 	}
 	else
 	{
+		RemoveAppliedMappingContext();
 		UE_LOG(LogAircraft, Warning,
 			TEXT("[Aircraft.Input.Mapping] Owner=%s Result=NoLocalPlayer"),
 			*GetNameSafe(GetOwner()));
 	}
+}
+
+void UAircraftInputComponent::RemoveAppliedMappingContext()
+{
+	if (UEnhancedInputLocalPlayerSubsystem* const Subsystem = AppliedInputSubsystem.Get())
+	{
+		if (const UInputMappingContext* const Mapping = AppliedInputMapping.Get())
+		{
+			Subsystem->RemoveMappingContext(Mapping);
+		}
+	}
+	AppliedInputSubsystem.Reset();
+	AppliedInputMapping.Reset();
 }
 
 void UAircraftInputComponent::BindInput(UInputComponent* PlayerInputComponent)

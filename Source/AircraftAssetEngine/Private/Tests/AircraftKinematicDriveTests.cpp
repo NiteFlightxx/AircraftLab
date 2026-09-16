@@ -1,5 +1,7 @@
 #include "AircraftAsset/AircraftKinematicDrive.h"
 
+#include "Components/SceneComponent.h"
+#include "GameFramework/Actor.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -34,24 +36,37 @@ bool FAircraftKinematicRootTargetTransformTest::RunTest(const FString& Parameter
 		UE::AircraftLab::KinematicDrive::ComputeRootTargetTransform(
 			CurrentRootWorld, CurrentAircraftWorld, TargetAircraftWorld,
 			TargetRootWorld));
-	// 数值断言改为性质断言：Root' * Rel == Target（挂接约束的直接表达），
-	// 避免手写期望值时 FTransform 乘法语义的心算错误。
+	// SceneComponent 的权威组合顺序是 Relative * ParentWorld。
 	TestTrue(TEXT("The root target reconstructs the requested aircraft transform"),
-		(TargetRootWorld * CurrentAircraftWorld.GetRelativeTransform(CurrentRootWorld))
+		(CurrentAircraftWorld.GetRelativeTransform(CurrentRootWorld) * TargetRootWorld)
 			.Equals(TargetAircraftWorld, 1.e-3));
-	TestTrue(TEXT("The component rotation is removed from the root target rotation"),
-		TargetRootWorld.GetRotation().Equals(FRotator(0.0, 90.0, 0.0).Quaternion(), 1.e-5));
 	TestTrue(TEXT("The component rotation is removed from the root target rotation"),
 		TargetRootWorld.GetRotation().Equals(FRotator(0.0, 90.0, 0.0).Quaternion(), 1.e-5));
 	TestTrue(TEXT("Kinematic movement never changes actor root scale"),
 		TargetRootWorld.GetScale3D().Equals(FVector::OneVector, 1.e-6));
+
+	AActor* const Owner = NewObject<AActor>();
+	USceneComponent* const Root = NewObject<USceneComponent>(Owner);
+	USceneComponent* const Aircraft = NewObject<USceneComponent>(Owner);
+	Owner->SetRootComponent(Root);
+	Aircraft->SetupAttachment(Root);
+	Root->SetWorldTransform(CurrentRootWorld);
+	Aircraft->SetRelativeTransform(
+		CurrentAircraftWorld.GetRelativeTransform(CurrentRootWorld));
+	Aircraft->UpdateComponentToWorld();
+	TestTrue(TEXT("The actual attachment hierarchy starts at the expected transform"),
+		Aircraft->GetComponentTransform().Equals(CurrentAircraftWorld, 1.e-3));
+	Root->SetWorldTransform(TargetRootWorld);
+	Aircraft->UpdateComponentToWorld();
+	TestTrue(TEXT("Moving the real Actor root reconstructs the requested Aircraft world transform"),
+		Aircraft->GetComponentTransform().Equals(TargetAircraftWorld, 1.e-3));
 
 	return true;
 }
 
 namespace
 {
-	/** 任意挂接偏移下都必须满足的核心性质：Root' * (Aircraft 相对 Root) == Target。
+	/** 任意挂接偏移下都必须满足的核心性质：(Aircraft 相对 Root) * Root' == Target。
 	 *  容差按数值链（轴角构造未归一化 + 三次变换乘法）的累积误差上限放宽，
 	 *  仍远小于组合序错误时的系统性偏差（偏移量级 ~100cm / 角度量级 ~90°）。 */
 	bool RootTargetReconstructsAircraftWorld(
@@ -69,7 +84,7 @@ namespace
 		const FTransform AircraftRelativeToRoot =
 			CurrentAircraftWorld.GetRelativeTransform(CurrentRootWorld);
 		const FTransform ReconstructedAircraftWorld =
-			OutTargetRootWorld * AircraftRelativeToRoot;
+			AircraftRelativeToRoot * OutTargetRootWorld;
 		const FQuat RotationDelta = ReconstructedAircraftWorld.GetRotation()
 			* TargetAircraftWorld.GetRotation().Inverse();
 		const double RotationErrorDegrees = FMath::RadiansToDegrees(2.0 * FMath::Acos(
@@ -150,7 +165,7 @@ bool FAircraftKinematicRootTargetTransformRandomizedTest::RunTest(const FString&
 			FVector(RandomStream.FRandRange(-200.0f, 200.0f),
 				RandomStream.FRandRange(-200.0f, 200.0f),
 				RandomStream.FRandRange(-200.0f, 200.0f)));
-		const FTransform CurrentAircraftWorld = CurrentRootWorld * AircraftRelativeToRoot;
+		const FTransform CurrentAircraftWorld = AircraftRelativeToRoot * CurrentRootWorld;
 		const FTransform TargetAircraftWorld(
 			FQuat(RandomStream.VRand(), RandomStream.FRand() * UE_PI).GetNormalized(),
 			FVector(RandomStream.FRandRange(-10000.0f, 10000.0f),

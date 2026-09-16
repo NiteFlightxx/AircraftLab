@@ -214,7 +214,8 @@ namespace
 			Candidate.PhysicsAsset = Candidate.SkeletalMesh->GetPhysicsAsset();
 		}
 		Candidate.SimulationModel = MakeShared<FAircraftSimulationModel>(
-			Candidate.Collections, AircraftName, Candidate.SkeletalMesh);
+			Candidate.Collections, AircraftName, Candidate.SkeletalMesh,
+			Candidate.PhysicsAsset);
 		return Candidate;
 	}
 

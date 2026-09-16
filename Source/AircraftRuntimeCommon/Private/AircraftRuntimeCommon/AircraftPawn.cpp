@@ -56,11 +56,28 @@ void AAircraftPawn::PawnClientRestart()
 	}
 }
 
+void AAircraftPawn::UnPossessed()
+{
+	if (AircraftInput)
+	{
+		AircraftInput->DeactivateInput();
+	}
+	Super::UnPossessed();
+}
+
 void AAircraftPawn::OnRep_Controller()
 {
 	Super::OnRep_Controller();
-	if (AircraftInput && IsLocallyControlled())
+	if (!AircraftInput)
+	{
+		return;
+	}
+	if (IsLocallyControlled())
 	{
 		AircraftInput->ApplyMappingContext();
+	}
+	else
+	{
+		AircraftInput->DeactivateInput();
 	}
 }

@@ -3,6 +3,7 @@
 #include "Engine/World.h"
 
 #include "AircraftAutopilot/AircraftMotionPlan.h"
+#include "AircraftAutopilot/AircraftAutopilotCompletion.h"
 #include "AircraftDiagnostics/AircraftDebug.h"
 #include "AircraftDiagnostics/AircraftDebugSettings.h"
 #include "GameFramework/Actor.h"
@@ -251,8 +252,15 @@ FAircraftMovementIntentHandle UAutopilotComponent::SubmitIntent(
 	}
 	if (ActiveHandle.IsValid())
 	{
+		const uint64 ExpectedRevisionAfterFinish = IntentRevision + 1;
 		Finish(EAircraftMovementIntentStatus::Interrupted,
 			EAircraftMovementFailureReason::Replaced);
+		// 同步事件允许监听者提交更晚的新任务。该新任务拥有控制权，
+		// 外层替换请求不得在回调返回后覆盖它。
+		if (ActiveHandle.IsValid() || IntentRevision != ExpectedRevisionAfterFinish)
+		{
+			return {};
+		}
 	}
 	ClearAutomaticContinuation();
 	AcquireFlightControl();
@@ -363,26 +371,44 @@ void UAutopilotComponent::ResolveActorTargets()
 {
 	const FAircraftMovementIntent Previous = ResolvedIntent;
 	ResolvedIntent = SourceIntent;
-	const bool bHasHoldActor = IsValid(SourceIntent.Hold.TargetActor);
-	const bool bHasOrbitActor = IsValid(SourceIntent.Orbit.CenterActor);
-	const bool bHasHeadingActor = IsValid(SourceIntent.Heading.TargetActor);
+	const bool bHasHoldActor = SourceIntent.Hold.TargetActor.IsValid();
+	const bool bHasOrbitActor = SourceIntent.Orbit.CenterActor.IsValid();
+	const bool bHasHeadingActor = SourceIntent.Heading.TargetActor.IsValid();
+	const bool bHadHoldActor = !SourceIntent.Hold.TargetActor.IsExplicitlyNull();
+	const bool bHadOrbitActor = !SourceIntent.Orbit.CenterActor.IsExplicitlyNull();
+	const bool bHadHeadingActor = !SourceIntent.Heading.TargetActor.IsExplicitlyNull();
 	const bool bHasActorTarget = bHasHoldActor || bHasOrbitActor || bHasHeadingActor;
 	if (bHasHoldActor)
 	{
 		ResolvedIntent.Hold.PositionCm = SourceIntent.Hold.TargetActor->GetActorLocation();
 		ResolvedIntent.Hold.bCaptureCurrentPosition = false;
-		ResolvedIntent.Hold.TargetActor = nullptr;
+	}
+	else if (bHadHoldActor)
+	{
+		ResolvedIntent.Hold.PositionCm = Previous.Hold.PositionCm;
+		ResolvedIntent.Hold.bCaptureCurrentPosition = false;
 	}
 	if (bHasOrbitActor)
 	{
 		ResolvedIntent.Orbit.CenterCm = SourceIntent.Orbit.CenterActor->GetActorLocation();
-		ResolvedIntent.Orbit.CenterActor = nullptr;
+	}
+	else if (bHadOrbitActor)
+	{
+		ResolvedIntent.Orbit.CenterCm = Previous.Orbit.CenterCm;
 	}
 	if (bHasHeadingActor)
 	{
 		ResolvedIntent.Heading.TargetPositionCm = SourceIntent.Heading.TargetActor->GetActorLocation();
-		ResolvedIntent.Heading.TargetActor = nullptr;
 	}
+	else if (bHadHeadingActor)
+	{
+		ResolvedIntent.Heading.TargetPositionCm = Previous.Heading.TargetPositionCm;
+	}
+	// Actor references belong to the Game Thread source intent only. The resolved
+	// snapshot crossing into the simulation thread is always pointer-free.
+	ResolvedIntent.Hold.TargetActor.Reset();
+	ResolvedIntent.Orbit.CenterActor.Reset();
+	ResolvedIntent.Heading.TargetActor.Reset();
 	const UWorld* const World = GetWorld();
 	const double CurrentTimeSeconds = World ? World->GetTimeSeconds() : 0.0;
 	if (ActiveHandle.IsValid() && bHasActorTarget && !bHasActorTargetBumpBaseline)
@@ -434,6 +460,10 @@ void UAutopilotComponent::Finish(
 	CurrentResult.ElapsedSeconds = ElapsedSeconds;
 	const FAircraftMovementIntentResult FinishedResult = CurrentResult;
 	ActiveHandle = {};
+	SourceIntent = {};
+	ResolvedIntent = {};
+	StableTimeSeconds = 0.0f;
+	InitialDistanceToTargetCm = -1.0f;
 	DiagnosticLogAccumulatorSeconds = 0.0f;
 	++IntentRevision;
 	OnMovementIntentChanged.Broadcast(FinishedResult);
@@ -446,6 +476,7 @@ void UAutopilotComponent::ClearAutomaticContinuation()
 }
 
 void UAutopilotComponent::BeginPassThroughContinuation(
+	const FAircraftMovementIntent& CompletedIntent,
 	const FVector& ExitVelocityCmPerSec,
 	const FAircraftMovementIntentHandle SourceHandle)
 {
@@ -453,10 +484,10 @@ void UAutopilotComponent::BeginPassThroughContinuation(
 	AutomaticContinuationIntent.Type = EAircraftMovementIntentType::Velocity;
 	AutomaticContinuationIntent.Velocity.VelocityCmPerSec = ExitVelocityCmPerSec;
 	AutomaticContinuationIntent.Velocity.Frame = EAircraftVelocityFrame::World;
-	AutomaticContinuationIntent.Limits = ResolvedIntent.Limits;
+	AutomaticContinuationIntent.Limits = CompletedIntent.Limits;
 	AutomaticContinuationIntent.bHasRequestedMotionLimits =
-		ResolvedIntent.bHasRequestedMotionLimits;
-	AutomaticContinuationIntent.Heading = ResolvedIntent.Heading;
+		CompletedIntent.bHasRequestedMotionLimits;
+	AutomaticContinuationIntent.Heading = CompletedIntent.Heading;
 	if (AutomaticContinuationIntent.Heading.Mode == EAircraftHeadingMode::FaceTarget)
 	{
 		AutomaticContinuationIntent.Heading.Mode = EAircraftHeadingMode::FaceVelocity;
@@ -469,15 +500,16 @@ void UAutopilotComponent::BeginPassThroughContinuation(
 void UAutopilotComponent::BeginTerminalHoldContinuation(
 	const FVector& PositionCm,
 	const float FixedYawDegrees,
+	const FAircraftMovementIntent& CompletedIntent,
 	const FAircraftMovementIntentHandle SourceHandle)
 {
 	AutomaticContinuationIntent = {};
 	AutomaticContinuationIntent.Type = EAircraftMovementIntentType::Hold;
 	AutomaticContinuationIntent.Hold.PositionCm = PositionCm;
 	AutomaticContinuationIntent.Hold.bCaptureCurrentPosition = false;
-	AutomaticContinuationIntent.Limits = ResolvedIntent.Limits;
+	AutomaticContinuationIntent.Limits = CompletedIntent.Limits;
 	AutomaticContinuationIntent.bHasRequestedMotionLimits =
-		ResolvedIntent.bHasRequestedMotionLimits;
+		CompletedIntent.bHasRequestedMotionLimits;
 	AutomaticContinuationIntent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
 	AutomaticContinuationIntent.Heading.FixedYawDegrees = FixedYawDegrees;
 	AutomaticContinuationHandle = SourceHandle;
@@ -502,20 +534,17 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 	{
 		return;
 	}
-	FVector Target = ResolvedIntent.Hold.PositionCm;
-	if (ResolvedIntent.Type == EAircraftMovementIntentType::Route)
-	{
-		Target = ResolvedIntent.Route.PointsCm.Last();
-	}
-	else if (ResolvedIntent.Type == EAircraftMovementIntentType::TimedTrajectory)
-	{
-		Target = ResolvedIntent.TimedTrajectory.Samples.Last().PositionCm;
-	}
-	const FVector Error = Target - State.PositionCm;
-	const float DistanceToTargetCm = static_cast<float>(Error.Size());
 	FAircraftTrajectoryReference Reference;
 	const bool bHasReference = Controller->GetAircraftTrajectoryReference(Reference)
 		&& Reference.bValid;
+	FVector Target;
+	if (!UE::AircraftLab::Autopilot::Private::ResolveCompletionTarget(
+		ResolvedIntent, bHasReference, Reference, Target))
+	{
+		return;
+	}
+	const FVector Error = Target - State.PositionCm;
+	const float DistanceToTargetCm = static_cast<float>(Error.Size());
 	if (InitialDistanceToTargetCm < 0.0f)
 	{
 		InitialDistanceToTargetCm = FMath::Max(DistanceToTargetCm, 1.0f);
@@ -526,8 +555,7 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 	}
 	else if (ResolvedIntent.Type == EAircraftMovementIntentType::TimedTrajectory)
 	{
-		CurrentResult.Progress = FMath::Clamp(ElapsedSeconds / FMath::Max(
-			ResolvedIntent.TimedTrajectory.Samples.Last().TimeSeconds, UE_SMALL_NUMBER), 0.0f, 1.0f);
+		CurrentResult.Progress = bHasReference ? Reference.PathProgress : 0.0f;
 	}
 	else
 	{
@@ -536,12 +564,8 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 	}
 	// 完成判据加空间约束：Progress 由时间/投影驱动，避障绕行期间可能走到 1.0
 	// 而机体仍在目标远处——必须同时处于位置容差内才算路径完成。
-	const bool bPathComplete = ResolvedIntent.Type != EAircraftMovementIntentType::Route
-		|| (CurrentResult.Progress >= 0.999f
-			&& FVector2D(Error.X, Error.Y).Size()
-				<= ResolvedIntent.Completion.HorizontalToleranceCm
-			&& FMath::Abs(Error.Z)
-				<= ResolvedIntent.Completion.VerticalToleranceCm);
+	const bool bPathComplete = UE::AircraftLab::Autopilot::Private::IsPlanComplete(
+		ResolvedIntent.Type, bHasReference, CurrentResult.Progress);
 	const bool bWithinPosition = FVector2D(Error.X, Error.Y).Size()
 		<= ResolvedIntent.Completion.HorizontalToleranceCm
 		&& FMath::Abs(Error.Z) <= ResolvedIntent.Completion.VerticalToleranceCm;
@@ -550,6 +574,7 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 		if (bWithinPosition && bPathComplete)
 		{
 			const FAircraftMovementIntentHandle CompletedHandle = ActiveHandle;
+			const FAircraftMovementIntent CompletedIntent = ResolvedIntent;
 			const FVector ExitVelocityCmPerSec = bHasReference
 				? Reference.VelocityCmPerSec
 				: State.VelocityCmPerSec;
@@ -558,7 +583,8 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 				EAircraftMovementFailureReason::None);
 			if (bActive && !ActiveHandle.IsValid())
 			{
-				BeginPassThroughContinuation(ExitVelocityCmPerSec, CompletedHandle);
+				BeginPassThroughContinuation(
+					CompletedIntent, ExitVelocityCmPerSec, CompletedHandle);
 			}
 		}
 		return;
@@ -585,18 +611,23 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 		ResolvedIntent.Heading, State.PositionCm, HeadingVelocity, State.AttitudeDegrees.Yaw);
 	const bool bWithinYaw = FMath::Abs(FMath::FindDeltaAngleDegrees(
 		State.AttitudeDegrees.Yaw, DesiredYaw)) <= ResolvedIntent.Completion.YawToleranceDegrees;
-	StableTimeSeconds = bPathComplete && bWithinPosition
-		&& bWithinHorizontalSpeed && bWithinVerticalSpeed && bWithinYaw
+	const bool bArrivalConditionsSatisfied = bPathComplete && bWithinPosition
+		&& bWithinHorizontalSpeed && bWithinVerticalSpeed && bWithinYaw;
+	StableTimeSeconds = bArrivalConditionsSatisfied
 		? StableTimeSeconds + DeltaTime : 0.0f;
-	if (StableTimeSeconds >= ResolvedIntent.Completion.StableTimeSeconds)
+	if (UE::AircraftLab::Autopilot::Private::HasStableCompletion(
+		bArrivalConditionsSatisfied, StableTimeSeconds,
+		ResolvedIntent.Completion.StableTimeSeconds))
 	{
 		const FAircraftMovementIntentHandle CompletedHandle = ActiveHandle;
+		const FAircraftMovementIntent CompletedIntent = ResolvedIntent;
 		CurrentResult.Progress = 1.0f;
 		Finish(EAircraftMovementIntentStatus::Succeeded,
 			EAircraftMovementFailureReason::None);
 		if (bActive && !ActiveHandle.IsValid())
 		{
-			BeginTerminalHoldContinuation(Target, DesiredYaw, CompletedHandle);
+			BeginTerminalHoldContinuation(
+				Target, DesiredYaw, CompletedIntent, CompletedHandle);
 		}
 	}
 }
@@ -762,18 +793,10 @@ void UAutopilotComponent::OnAircraftMovementIntentInterrupted(
 	{
 		ClearAutomaticContinuation();
 		Finish(EAircraftMovementIntentStatus::Interrupted, Reason);
-		SourceIntent = {};
-		ResolvedIntent = {};
-		StableTimeSeconds = 0.0f;
-		InitialDistanceToTargetCm = -1.0f;
 	}
 	else if (Handle == AutomaticContinuationHandle)
 	{
 		ClearAutomaticContinuation();
-		SourceIntent = {};
-		ResolvedIntent = {};
-		StableTimeSeconds = 0.0f;
-		InitialDistanceToTargetCm = -1.0f;
 		CurrentResult.Handle = Handle;
 		CurrentResult.Status = EAircraftMovementIntentStatus::Interrupted;
 		CurrentResult.FailureReason = Reason;
