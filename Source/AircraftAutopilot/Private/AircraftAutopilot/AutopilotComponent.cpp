@@ -10,6 +10,41 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AutopilotComponent)
 
+namespace
+{
+	void LogIntentConfiguration(const AActor* const Owner,
+		const FAircraftMovementIntentHandle Handle, const uint64 Revision,
+		const FAircraftMovementIntent& Intent)
+	{
+		if (!UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(
+			EAircraftDiagnosticLogChannel::Autopilot))
+		{
+			return;
+		}
+
+		UE_LOG(LogAircraft, Log,
+			TEXT("[Aircraft.Autopilot.IntentConfig] Owner=%s Intent=%lld Revision=%llu Type=%s Arrival=%s Heading=%s OverrideLimits=%d Limits(Speed/Accel/Decel/Jerk)=(%.1f,%.1f,%.1f,%.1f) Completion(H/V/TH/TV/HS/VS/Yaw/Stable)=(%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.3f) Timeout=%.3f"),
+			*GetNameSafe(Owner), Handle.Id, Revision,
+			*UEnum::GetDisplayValueAsText(Intent.Type).ToString(),
+			*UEnum::GetDisplayValueAsText(Intent.Completion.ArrivalMode).ToString(),
+			*UEnum::GetDisplayValueAsText(Intent.Heading.Mode).ToString(),
+			Intent.bHasRequestedMotionLimits ? 1 : 0,
+			Intent.Limits.CruiseSpeedCmPerSec,
+			Intent.Limits.MaxAccelerationCmPerSecSq,
+			Intent.Limits.MaxDecelerationCmPerSecSq,
+			Intent.Limits.MaxJerkCmPerSecCubed,
+			Intent.Completion.HorizontalToleranceCm,
+			Intent.Completion.VerticalToleranceCm,
+			Intent.Completion.TerminalHorizontalSpeedCmPerSec,
+			Intent.Completion.TerminalVerticalSpeedCmPerSec,
+			Intent.Completion.HorizontalSpeedToleranceCmPerSec,
+			Intent.Completion.VerticalSpeedToleranceCmPerSec,
+			Intent.Completion.YawToleranceDegrees,
+			Intent.Completion.StableTimeSeconds,
+			Intent.TimeoutSeconds);
+	}
+}
+
 UAutopilotComponent::UAutopilotComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -277,6 +312,7 @@ FAircraftMovementIntentHandle UAutopilotComponent::SubmitIntent(
 	CurrentResult.Handle = ActiveHandle;
 	CurrentResult.Status = EAircraftMovementIntentStatus::Accepted;
 	ResolveActorTargets();
+	LogIntentConfiguration(GetOwner(), ActiveHandle, IntentRevision, ResolvedIntent);
 	OnMovementIntentChanged.Broadcast(CurrentResult);
 	return ActiveHandle;
 }
@@ -296,6 +332,7 @@ bool UAutopilotComponent::UpdateIntent(
 	InitialDistanceToTargetCm = -1.0f;
 	CurrentResult.Status = EAircraftMovementIntentStatus::Accepted;
 	ResolveActorTargets();
+	LogIntentConfiguration(GetOwner(), ActiveHandle, IntentRevision, ResolvedIntent);
 	OnMovementIntentChanged.Broadcast(CurrentResult);
 	return true;
 }
@@ -497,23 +534,28 @@ void UAutopilotComponent::BeginPassThroughContinuation(
 	++IntentRevision;
 }
 
-void UAutopilotComponent::BeginTerminalHoldContinuation(
+void UAutopilotComponent::BeginTerminalContinuation(
 	const FVector& PositionCm,
 	const float FixedYawDegrees,
 	const FAircraftMovementIntent& CompletedIntent,
 	const FAircraftMovementIntentHandle SourceHandle)
 {
-	AutomaticContinuationIntent = {};
-	AutomaticContinuationIntent.Type = EAircraftMovementIntentType::Hold;
-	AutomaticContinuationIntent.Hold.PositionCm = PositionCm;
-	AutomaticContinuationIntent.Hold.bCaptureCurrentPosition = false;
-	AutomaticContinuationIntent.Limits = CompletedIntent.Limits;
-	AutomaticContinuationIntent.bHasRequestedMotionLimits =
-		CompletedIntent.bHasRequestedMotionLimits;
-	AutomaticContinuationIntent.Heading.Mode = EAircraftHeadingMode::FixedYaw;
-	AutomaticContinuationIntent.Heading.FixedYawDegrees = FixedYawDegrees;
+	AutomaticContinuationIntent =
+		UE::AircraftLab::Autopilot::Private::BuildTerminalContinuationIntent(
+			CompletedIntent, PositionCm, FixedYawDegrees);
 	AutomaticContinuationHandle = SourceHandle;
 	++IntentRevision;
+	if (UE::AircraftLab::Diagnostics::GetAircraftDiagnosticLogSelection().IsEnabled(
+		EAircraftDiagnosticLogChannel::Autopilot))
+	{
+		UE_LOG(LogAircraft, Log,
+			TEXT("[Aircraft.Autopilot.Continuation] Owner=%s Intent=%lld Revision=%llu CompletedType=%s ContinuationType=%s ReusePlan=%d PositionCm=%s Yaw=%.2f"),
+			*GetNameSafe(GetOwner()), SourceHandle.Id, IntentRevision,
+			*UEnum::GetDisplayValueAsText(CompletedIntent.Type).ToString(),
+			*UEnum::GetDisplayValueAsText(AutomaticContinuationIntent.Type).ToString(),
+			AutomaticContinuationIntent.Type == CompletedIntent.Type ? 1 : 0,
+			*PositionCm.ToCompactString(), FixedYawDegrees);
+	}
 }
 
 void UAutopilotComponent::UpdateCompletion(float DeltaTime)
@@ -626,7 +668,7 @@ void UAutopilotComponent::UpdateCompletion(float DeltaTime)
 			EAircraftMovementFailureReason::None);
 		if (bActive && !ActiveHandle.IsValid())
 		{
-			BeginTerminalHoldContinuation(
+			BeginTerminalContinuation(
 				Target, DesiredYaw, CompletedIntent, CompletedHandle);
 		}
 	}

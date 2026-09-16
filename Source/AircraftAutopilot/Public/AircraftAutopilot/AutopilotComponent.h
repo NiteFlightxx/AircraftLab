@@ -183,7 +183,7 @@ private:
 	void ClearAutomaticContinuation();
 	void BeginPassThroughContinuation(const FAircraftMovementIntent& CompletedIntent,
 		const FVector& ExitVelocityCmPerSec, FAircraftMovementIntentHandle SourceHandle);
-	void BeginTerminalHoldContinuation(const FVector& PositionCm, float FixedYawDegrees,
+	void BeginTerminalContinuation(const FVector& PositionCm, float FixedYawDegrees,
 		const FAircraftMovementIntent& CompletedIntent,
 		FAircraftMovementIntentHandle SourceHandle);
 	void UpdateCompletion(float DeltaTime);

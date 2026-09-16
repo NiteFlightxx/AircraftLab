@@ -317,6 +317,26 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 			PhysicsCache.AngularDampingPerSecond.X,
 			PhysicsCache.AngularDampingPerSecond.Y,
 			PhysicsCache.AngularDampingPerSecond.Z);
+		UE_LOG(LogAircraft, Log,
+			TEXT("[AircraftDF.ControlConfig] Owner=%s LOD=%d PositionPID(X/Y P,I,D)=(%.4f,%.4f,%.4f)/(%.4f,%.4f,%.4f) PositionFF=(%.3f,%.3f) PositionIntegralLimit=(%.1f,%.1f) PositionOutputLimit=(%.1f,%.1f) PositionDerivativeHz=(%.2f,%.2f) VelocityPID(X/Y P,I,D)=(%.4f,%.4f,%.4f)/(%.4f,%.4f,%.4f) VelocityFF=(%.3f,%.3f) VelocityIntegralLimit=(%.1f,%.1f) VelocityOutputLimit=(%.1f,%.1f) VelocityDerivativeHz=(%.2f,%.2f) MotionLimits(Speed/Accel/Decel/Jerk/Tilt)=(%.1f,%.1f,%.1f,%.1f,%.1f)"),
+			*AircraftOwnerName, ActiveLodIndex,
+			Config.PositionKp.X, Config.PositionKi.X, Config.PositionKd.X,
+			Config.PositionKp.Y, Config.PositionKi.Y, Config.PositionKd.Y,
+			Config.PositionKff.X, Config.PositionKff.Y,
+			Config.PositionIntegralLimit.X, Config.PositionIntegralLimit.Y,
+			Config.PositionOutputLimit.X, Config.PositionOutputLimit.Y,
+			Config.PositionDerivativeCutoffHz.X, Config.PositionDerivativeCutoffHz.Y,
+			Config.VelocityKp.X, Config.VelocityKi.X, Config.VelocityKd.X,
+			Config.VelocityKp.Y, Config.VelocityKi.Y, Config.VelocityKd.Y,
+			Config.VelocityKff.X, Config.VelocityKff.Y,
+			Config.VelocityIntegralLimit.X, Config.VelocityIntegralLimit.Y,
+			Config.VelocityOutputLimit.X, Config.VelocityOutputLimit.Y,
+			Config.VelocityDerivativeCutoffHz.X, Config.VelocityDerivativeCutoffHz.Y,
+			Config.MaxHorizontalSpeedCmPerSec,
+			Config.MaxHorizontalAccelerationCmPerSecSq,
+			Config.MaxHorizontalDecelerationCmPerSecSq,
+			Config.MaxHorizontalJerkCmPerSecCubed,
+			Config.MaxTiltAngleDegrees);
 
 		for (int32 RotorIndex = 0; RotorIndex < ControlAllocator.RotorInfoBuffer.Num(); ++RotorIndex)
 		{

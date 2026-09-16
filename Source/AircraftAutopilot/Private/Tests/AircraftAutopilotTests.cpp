@@ -2339,6 +2339,44 @@ bool FAircraftAutopilotCompletionGateTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftRouteTerminalContinuationPreservesPlanTest,
+	"AircraftLab.Autopilot.Completion.RouteTerminalContinuationPreservesPlan",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftRouteTerminalContinuationPreservesPlanTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UE::AircraftLab::Autopilot::Private;
+	FAircraftMovementIntent CompletedRoute = MakeRouteIntent(4000.0f);
+	CompletedRoute.Heading.Mode = EAircraftHeadingMode::FaceVelocity;
+	const FAircraftMovementIntent Continuation = BuildTerminalContinuationIntent(
+		CompletedRoute, CompletedRoute.Route.PointsCm.Last(), 35.0f);
+
+	TestEqual(TEXT("A stopped route keeps its route intent for terminal continuation"),
+		Continuation.Type, EAircraftMovementIntentType::Route);
+	TestEqual(TEXT("Terminal continuation keeps the complete route geometry"),
+		Continuation.Route.PointsCm.Num(), CompletedRoute.Route.PointsCm.Num());
+	TestTrue(TEXT("Terminal continuation preserves the route points"),
+		Continuation.Route.PointsCm == CompletedRoute.Route.PointsCm);
+	TestEqual(TEXT("Terminal continuation preserves the completed heading policy"),
+		Continuation.Heading.Mode, CompletedRoute.Heading.Mode);
+
+	FAircraftMpccController Controller;
+	FAircraftVehicleStateSnapshot State;
+	const FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	TestTrue(TEXT("Completed route plan builds"), Controller.SetIntent(
+		CompletedRoute, 91, 1, Config, State, Capability));
+	const uint64 PlanRevision = Controller.GetDiagnostics().PlanRevision;
+	TestTrue(TEXT("Terminal continuation is accepted as the same plan"), Controller.SetIntent(
+		Continuation, 91, 2, Config, State, Capability));
+	TestEqual(TEXT("Terminal continuation does not rebuild the route plan"),
+		Controller.GetDiagnostics().PlanRevision, PlanRevision);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftAutopilotReplacementReentrancyTest,
 	"AircraftLab.Autopilot.Lifecycle.ReentrantReplacementKeepsNewestIntent",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
