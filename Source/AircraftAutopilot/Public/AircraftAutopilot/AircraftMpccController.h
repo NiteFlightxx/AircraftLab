@@ -51,6 +51,8 @@ private:
 	FVector FilteredAccelerationCmPerSecSq = FVector::ZeroVector;
 	double LastFilterUpdateTimeSeconds = 0.0;
 	bool bFilterInitialized = false;
+	/** Stop Route 已进入终点位置收敛；锁存到意图/几何真正变化。 */
+	bool bTerminalConvergenceActive = false;
 	uint64 IntentRevision = 0;
 	int64 ActiveIntentId = 0;
 	uint64 PlanRevision = 0;

@@ -240,6 +240,7 @@ void FAircraftMpccController::Reset()
 	FilteredAccelerationCmPerSecSq = FVector::ZeroVector;
 	LastFilterUpdateTimeSeconds = 0.0;
 	bFilterInitialized = false;
+	bTerminalConvergenceActive = false;
 	IntentRevision = 0;
 	ActiveIntentId = 0;
 	PlanRevision = 0;
@@ -315,6 +316,7 @@ bool FAircraftMpccController::SetIntent(
 	PlanGeometryHash = NewGeometryHash;
 	IntentMetadataHash = NewMetadataHash;
 	PlanConfigHash = NewPlanConfigHash;
+	bTerminalConvergenceActive = false;
 	Diagnostics = {};
 	Diagnostics.ActiveIntentId = InIntentId;
 	Diagnostics.IntentRevision = InIntentRevision;
@@ -799,6 +801,68 @@ bool FAircraftMpccController::SolvePlan(
 	const float CorridorViolationCm = Plan.ComputeCorridorViolationCm(
 		State.PositionCm, EstimatedDistanceCm);
 
+	const FAircraftMovementIntent& Intent = Plan.GetIntent();
+	const TArray<FAircraftMotionPlanSample>& Samples = Plan.GetSamples();
+	if (!bTerminalConvergenceActive
+		&& Intent.Type == EAircraftMovementIntentType::Route
+		&& Intent.Completion.ArrivalMode == EAircraftArrivalMode::Stop
+		&& !Plan.IsContinuous() && !Samples.IsEmpty()
+		&& CorridorViolationCm <= 0.0f)
+	{
+		const FVector TerminalErrorCm = Samples.Last().PositionCm - State.PositionCm;
+		const float HorizontalSpeedCmPerSec = FVector2D(
+			State.VelocityCmPerSec.X, State.VelocityCmPerSec.Y).Size();
+		const float HorizontalSpeedLimitCmPerSec = FMath::Max(
+			Intent.Completion.TerminalHorizontalSpeedCmPerSec,
+			Intent.Completion.HorizontalSpeedToleranceCmPerSec);
+		const float VerticalSpeedLimitCmPerSec = FMath::Max(
+			Intent.Completion.TerminalVerticalSpeedCmPerSec,
+			Intent.Completion.VerticalSpeedToleranceCmPerSec);
+		bTerminalConvergenceActive = FVector2D(
+			TerminalErrorCm.X, TerminalErrorCm.Y).Size()
+				<= Intent.Completion.HorizontalToleranceCm
+			&& FMath::Abs(TerminalErrorCm.Z)
+				<= Intent.Completion.VerticalToleranceCm
+			&& HorizontalSpeedCmPerSec <= HorizontalSpeedLimitCmPerSec
+			&& FMath::Abs(State.VelocityCmPerSec.Z) <= VerticalSpeedLimitCmPerSec;
+		if (bTerminalConvergenceActive)
+		{
+			ControlCorrectionHorizon.Reset();
+			PathReferenceScale = 1.0f;
+		}
+	}
+
+	if (bTerminalConvergenceActive)
+	{
+		const FAircraftMotionPlanSample& Terminal = Samples.Last();
+		EstimatedDistanceCm = PlanLengthCm;
+		EstimatedPlanTimeSeconds = Plan.GetDurationSeconds();
+		OutReference.PositionCm = Terminal.PositionCm;
+		OutReference.VelocityCmPerSec = FVector::ZeroVector;
+		OutReference.AccelerationCmPerSecSq = FVector::ZeroVector;
+		OutReference.ControlAccelerationCmPerSecSq = FVector::ZeroVector;
+		OutReference.DynamicsFeedForwardAccelerationCmPerSecSq = FVector::ZeroVector;
+		OutReference.bPositionTrackingEnabled = true;
+		OutReference.YawDegrees = Terminal.YawDegrees;
+		OutReference.YawRateDegPerSec = 0.0f;
+		OutReference.YawAccelerationDegPerSecSq = 0.0f;
+		OutReference.PathProgress = 1.0f;
+		OutReference.RouteProgress = 1.0f;
+		Diagnostics.ContourErrorCm = static_cast<float>(
+			FVector::Distance(State.PositionCm, Terminal.PositionCm));
+		Diagnostics.LagErrorCm = 0.0f;
+		Diagnostics.CorridorViolationCm = Plan.ComputeCorridorViolationCm(
+			State.PositionCm, PlanLengthCm);
+		Diagnostics.PredictedCorridorViolationCm = 0.0f;
+		Diagnostics.bCorridorViolated = Diagnostics.CorridorViolationCm > 0.0f;
+		Diagnostics.PathTrackingState = Diagnostics.bCorridorViolated
+			? EAircraftPathTrackingState::CorridorRecovery
+			: EAircraftPathTrackingState::Nominal;
+		Diagnostics.ProgressScale = 1.0f;
+		Diagnostics.SolverIterations = 0;
+		return true;
+	}
+
 	const int32 Steps = FMath::Clamp(RuntimeConfig.Mpcc.HorizonSteps, 2, 64);
 	const float Dt = RuntimeConfig.Mpcc.HorizonSeconds / static_cast<float>(Steps);
 	ReferenceScratch.SetNum(Steps + 1, EAllowShrinking::No);
@@ -1011,7 +1075,6 @@ bool FAircraftMpccController::SolvePlan(
 	FVector TerminalTangent = FVector::ZeroVector;
 	if (!Plan.IsContinuous())
 	{
-		const TArray<FAircraftMotionPlanSample>& Samples = Plan.GetSamples();
 		if (Samples.Num() >= 2)
 		{
 			for (int32 SampleIndex = Samples.Num() - 1;

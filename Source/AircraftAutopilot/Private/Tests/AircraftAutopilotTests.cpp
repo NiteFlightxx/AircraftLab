@@ -2784,4 +2784,43 @@ bool FAircraftStopRouteFlightControllerUsesSingleTerminalReferenceTest::RunTest(
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMpccStopRouteCapturesExactTerminalReferenceTest,
+	"AircraftLab.Autopilot.MPCC.StopRouteCapturesExactTerminalReference",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMpccStopRouteCapturesExactTerminalReferenceTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	Intent.Completion.HorizontalToleranceCm = 200.0f;
+	Intent.Completion.HorizontalSpeedToleranceCmPerSec = 50.0f;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.PositionCm = FVector(3995.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector::ZeroVector;
+
+	FAircraftMpccController Controller;
+	TestTrue(TEXT("Near-terminal stop route is accepted"),
+		Controller.SetIntent(Intent, 204, 1, Config, State, Capability));
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Near-terminal stop route produces a reference"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("Terminal convergence targets the exact route endpoint"),
+		Reference.PositionCm.Equals(Intent.Route.PointsCm.Last(), 0.01f));
+	TestTrue(TEXT("Terminal convergence publishes zero velocity"),
+		Reference.VelocityCmPerSec.IsNearlyZero(0.01f));
+	TestTrue(TEXT("Terminal convergence removes route acceleration feed-forward"),
+		Reference.ControlAccelerationCmPerSecSq.IsNearlyZero(0.01f));
+	TestEqual(TEXT("Terminal convergence publishes completed path progress"),
+		Reference.PathProgress, 1.0f);
+	return true;
+}
+
 #endif
