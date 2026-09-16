@@ -37,6 +37,8 @@ private:
 	FVector LastVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 	FVector CandidateVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 	TArray<FVector> ControlCorrectionHorizon;
+	/** 发布前安全覆盖的临时副本；绝不能回写优化器的跨帧初值。 */
+	TArray<FVector> SafetyCorrectionScratch;
 	TArray<FAircraftMotionPlanSample> ReferenceScratch;
 	TArray<FVector> CommandAccelerationScratch;
 	TArray<FVector> PositionScratch;
@@ -81,6 +83,7 @@ private:
 		const FAircraftDynamicCapabilitySnapshot& Capability,
 		const FAircraftRequestedMotionLimits& Limits,
 		const TArray<FAircraftMotionPlanSample>& References,
+		TConstArrayView<FVector> ControlCorrections,
 		float Dt, int32 Steps,
 		TArray<FVector>& CommandAccelerationHorizon,
 		TArray<FVector>& Positions, TArray<FVector>& Velocities,

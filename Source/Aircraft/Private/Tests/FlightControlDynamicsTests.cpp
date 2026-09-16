@@ -275,6 +275,8 @@ bool FAircraftTrajectoryDynamicsFeedForwardOwnershipTest::RunTest(const FString&
 		Solver.LastVelocityDragFeedForwardCmPerSecSq.X, 0.0, 1.e-3);
 	TestEqual(TEXT("Kinematic and dynamics reference accelerations are combined once"),
 		Acceleration.X, 40.0, 1.e-3);
+	TestEqual(TEXT("Velocity diagnostics expose the PID feedback independently from feed-forward"),
+		Solver.LastVelocityFeedbackAccelerationCmPerSecSq.X, 0.0, 1.e-3);
 	return true;
 }
 

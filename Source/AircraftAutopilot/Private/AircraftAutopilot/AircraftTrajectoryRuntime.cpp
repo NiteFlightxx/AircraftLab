@@ -11,6 +11,32 @@ namespace
 	// guidance is a hard-safety event and therefore transitions directly to braking.
 	constexpr float GuidanceBlendRampSeconds = 0.2f;
 
+	void BeginReferenceDiagnostics(
+		FAircraftAutopilotDiagnostics& Diagnostics,
+		const FAircraftTrajectoryReference& NominalReference)
+	{
+		Diagnostics.NominalReferenceVelocityCmPerSec =
+			NominalReference.VelocityCmPerSec;
+		Diagnostics.NominalReferenceControlAccelerationCmPerSecSq =
+			NominalReference.ControlAccelerationCmPerSecSq;
+		Diagnostics.FinalReferenceVelocityCmPerSec =
+			NominalReference.VelocityCmPerSec;
+		Diagnostics.FinalReferenceControlAccelerationCmPerSecSq =
+			NominalReference.ControlAccelerationCmPerSecSq;
+		Diagnostics.GuidanceBlendAlpha = 0.0f;
+		Diagnostics.bGuidanceApplied = false;
+		Diagnostics.bGuidanceBraking = false;
+	}
+
+	void FinishReferenceDiagnostics(
+		FAircraftAutopilotDiagnostics& Diagnostics,
+		const FAircraftTrajectoryReference& FinalReference)
+	{
+		Diagnostics.FinalReferenceVelocityCmPerSec = FinalReference.VelocityCmPerSec;
+		Diagnostics.FinalReferenceControlAccelerationCmPerSecSq =
+			FinalReference.ControlAccelerationCmPerSecSq;
+	}
+
 	float HardLimit(float Requested, float Available)
 	{
 		if (Requested <= 0.0f) return Available;
@@ -356,8 +382,10 @@ bool FAircraftTrajectoryRuntime::UpdateFlightController(
 		PlanDistanceCm = OutReference.PathProgress * GetPlan().GetLengthCm();
 		LastUpdateTimeSeconds = State.TimeSeconds;
 		LastNominalReference = OutReference;
+		BeginReferenceDiagnostics(Diagnostics, LastNominalReference);
 		ApplyNavigationGuidance(State, Capability, GuidanceDeltaTime, false, OutReference);
 		ShapeYawReference(State, Capability, GuidanceDeltaTime, OutReference);
+		FinishReferenceDiagnostics(Diagnostics, OutReference);
 		LastReference = OutReference;
 	}
 	return bUpdated;
@@ -568,8 +596,10 @@ bool FAircraftTrajectoryRuntime::UpdateDeterministic(
 				: EAircraftPathTrackingState::Nominal);
 	}
 	LastNominalReference = OutReference;
+	BeginReferenceDiagnostics(Diagnostics, LastNominalReference);
 	ApplyNavigationGuidance(State, Capability, DeltaTime, !bUseDynamics, OutReference);
 	ShapeYawReference(State, Capability, DeltaTime, OutReference);
+	FinishReferenceDiagnostics(Diagnostics, OutReference);
 	LastReference = OutReference;
 	return true;
 }
@@ -623,6 +653,7 @@ void FAircraftTrajectoryRuntime::ApplyNavigationGuidance(
 	{
 		ResetGuidanceBlendState();
 		BuildBrakingReference(State, Capability, Reason, DeltaTime, bKinematic, InOutReference);
+		Diagnostics.bGuidanceBraking = true;
 	};
 
 	if (!bNavigationGuidanceAvailable)
@@ -651,6 +682,7 @@ void FAircraftTrajectoryRuntime::ApplyNavigationGuidance(
 		BuildBrakingReference(State, Capability,
 			EAircraftNavigationGuidanceFailureReason::None,
 			DeltaTime, bKinematic, InOutReference);
+		Diagnostics.bGuidanceBraking = true;
 		return;
 	}
 
@@ -688,6 +720,7 @@ void FAircraftTrajectoryRuntime::ApplyNavigationGuidance(
 	}
 
 	const float Weight = FMath::Clamp(GuidanceBlendWeight, 0.0f, 1.0f);
+	float EffectiveGuidanceAlpha = Weight;
 	if (Weight >= 1.0f)
 	{
 		// Steady：等同原覆写语义。
@@ -792,6 +825,7 @@ void FAircraftTrajectoryRuntime::ApplyNavigationGuidance(
 			BuildBrakingReference(State, Capability,
 				EAircraftNavigationGuidanceFailureReason::InvalidGuidance,
 				DeltaTime, bKinematic, InOutReference);
+			Diagnostics.bGuidanceBraking = true;
 			return;
 		}
 
@@ -840,6 +874,7 @@ void FAircraftTrajectoryRuntime::ApplyNavigationGuidance(
 			InOutReference.bPositionTrackingEnabled = SafeAlpha > 0.5f
 				? GuidedReference.bPositionTrackingEnabled
 				: NominalReference.bPositionTrackingEnabled;
+			EffectiveGuidanceAlpha *= SafeAlpha;
 			Diagnostics.PathTrackingState = EAircraftPathTrackingState::CorridorConstrained;
 		}
 		Diagnostics.CorridorViolationCm = ComputeReferenceViolation(
@@ -869,6 +904,8 @@ void FAircraftTrajectoryRuntime::ApplyNavigationGuidance(
 		InOutReference.ValidUntilSeconds, NavigationGuidance->ValidUntilSeconds);
 	NavigationGuidanceStatus.State = EAircraftNavigationGuidanceState::Applied;
 	NavigationGuidanceStatus.FailureReason = EAircraftNavigationGuidanceFailureReason::None;
+	Diagnostics.GuidanceBlendAlpha = EffectiveGuidanceAlpha;
+	Diagnostics.bGuidanceApplied = true;
 }
 
 void FAircraftTrajectoryRuntime::ShapeYawReference(

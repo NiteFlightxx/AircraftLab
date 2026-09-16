@@ -630,6 +630,7 @@ FVector FAircraftFlightControlSolver::ComputeVelocityPidAcceleration(
 			DesiredVelocityCmPerSec.Y, CurrentVelocity.Y, DeltaSeconds,
 			Config.GetVelocityPidGains(1), TotalFeedForward.Y),
 		0.0f);
+	const FVector VelocityFeedbackAcceleration = DesiredAcceleration - TotalFeedForward;
 
 	const float TiltLimitedAcceleration = Context.PhysicsCache.GravityMagnitudeCmPerSecSq
 		* FMath::Tan(FMath::DegreesToRadians(Config.MaxTiltAngleDegrees));
@@ -646,6 +647,7 @@ FVector FAircraftFlightControlSolver::ComputeVelocityPidAcceleration(
 	LastDesiredHorizontalVelocityCmPerSec = FVector(DesiredVelocityCmPerSec.X, DesiredVelocityCmPerSec.Y, 0.0f);
 	LastVelocityDragFeedForwardCmPerSecSq = DragFeedForward;
 	LastTrajectoryAccelerationFeedForwardCmPerSecSq = TrajectoryFeedForward;
+	LastVelocityFeedbackAccelerationCmPerSecSq = VelocityFeedbackAcceleration;
 	LastDesiredHorizontalAccelerationCmPerSecSq = DesiredAcceleration;
 	return DesiredAcceleration;
 }
@@ -673,6 +675,7 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 		LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 		LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 		LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
+		LastVelocityFeedbackAccelerationCmPerSecSq = FVector::ZeroVector;
 		LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 		return FVector::ZeroVector;
 	}

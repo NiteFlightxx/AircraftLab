@@ -360,13 +360,15 @@ void FAircraftSimulationProxy::MaybeEmitDebugLog_PhysicsThread(
 		DesiredAttitude.Roll, DesiredAttitude.Pitch, DesiredAttitude.Yaw);
 
 		UE_LOG(LogAircraft, Log,
-		TEXT("[AircraftDF.Velocity] ManualVel=(%+.1f,%+.1f,%+.1f) DesiredXY=(%+.1f,%+.1f) ErrorXY=(%+.1f,%+.1f) DragFF=(%+.1f,%+.1f) TrajectoryFF=(%+.1f,%+.1f) AccelCmd=(%+.1f,%+.1f) HoldPos=%d Brake=%d Held=(%.1f,%.1f,%.1f)"),
+		TEXT("[AircraftDF.Velocity] ManualVel=(%+.1f,%+.1f,%+.1f) DesiredXY=(%+.1f,%+.1f) ErrorXY=(%+.1f,%+.1f) VelocityPID=(%+.1f,%+.1f) DragFF=(%+.1f,%+.1f) TrajectoryFF=(%+.1f,%+.1f) AccelCmd=(%+.1f,%+.1f) HoldPos=%d Brake=%d Held=(%.1f,%.1f,%.1f)"),
 		ManualCommand.DesiredVelocityCmPerSec.X,
 		ManualCommand.DesiredVelocityCmPerSec.Y,
 		ManualCommand.DesiredVelocityCmPerSec.Z,
 		ControlSolver.LastDesiredHorizontalVelocityCmPerSec.X,
 		ControlSolver.LastDesiredHorizontalVelocityCmPerSec.Y,
 		VelocityError.X, VelocityError.Y,
+		ControlSolver.LastVelocityFeedbackAccelerationCmPerSecSq.X,
+		ControlSolver.LastVelocityFeedbackAccelerationCmPerSecSq.Y,
 		ControlSolver.LastVelocityDragFeedForwardCmPerSecSq.X,
 		ControlSolver.LastVelocityDragFeedForwardCmPerSecSq.Y,
 		ControlSolver.LastTrajectoryAccelerationFeedForwardCmPerSecSq.X,
@@ -1269,22 +1271,45 @@ void FAircraftSimulationProxy::TickPhysicsThread(
 			return;
 		}
 		const FName ResultName(Result);
+		// Running and ForcesApplied occur in the same successful physics step. Treat
+		// them as one healthy state instead of alternating the de-duplication key and
+		// producing two lines for every substep.
+		if (ResultName == TEXT("Running"))
+		{
+			return;
+		}
+		const auto Emit = [&](const TCHAR* const Category, const TCHAR* const State)
+		{
+			UE_LOG(LogAircraft, Log,
+				TEXT("[%s] t=%.3f Owner=%s LOD=%d Drive=%s Result=%s Enabled=%d Suspended=%d Model=%d Rotors=%d PhysicsHandle=%d Arm=%s Controller=%d"),
+				Category, SimTime, *AircraftOwnerName, ActiveLodIndex,
+				FAircraftDebug::GetDriveModeLabel(ActiveDriveMode), State,
+				bSimulationEnabled.load(std::memory_order_relaxed) ? 1 : 0,
+				bSimulationSuspended.load(std::memory_order_relaxed) ? 1 : 0,
+				ActiveLodModel ? 1 : 0, ActiveLodModel ? ActiveLodModel->Rotors.Num() : 0,
+				PhysicsHandle.IsValid() ? 1 : 0,
+				FAircraftDebug::GetArmStateLabel(static_cast<EAircraftArmState>(
+					CurrentArmState.load(std::memory_order_relaxed))),
+				bControllerEnabled.load(std::memory_order_relaxed) ? 1 : 0);
+		};
+		const FName HealthyResult(TEXT("ForcesApplied"));
+		if (ResultName == HealthyResult)
+		{
+			const bool bRecovered = LastDriveGateResult != NAME_None
+				&& LastDriveGateResult != HealthyResult;
+			LastDriveGateResult = HealthyResult;
+			if (bRecovered)
+			{
+				Emit(TEXT("Aircraft.Drive.Physics"), TEXT("Recovered"));
+			}
+			return;
+		}
 		if (LastDriveGateResult == ResultName)
 		{
 			return;
 		}
 		LastDriveGateResult = ResultName;
-		UE_LOG(LogAircraft, Log,
-			TEXT("[Aircraft.Drive.Physics] t=%.3f Owner=%s LOD=%d Drive=%s Result=%s Enabled=%d Suspended=%d Model=%d Rotors=%d PhysicsHandle=%d Arm=%s Controller=%d"),
-			SimTime, *AircraftOwnerName, ActiveLodIndex,
-			FAircraftDebug::GetDriveModeLabel(ActiveDriveMode), Result,
-			bSimulationEnabled.load(std::memory_order_relaxed) ? 1 : 0,
-			bSimulationSuspended.load(std::memory_order_relaxed) ? 1 : 0,
-			ActiveLodModel ? 1 : 0, ActiveLodModel ? ActiveLodModel->Rotors.Num() : 0,
-			PhysicsHandle.IsValid() ? 1 : 0,
-			FAircraftDebug::GetArmStateLabel(static_cast<EAircraftArmState>(
-				CurrentArmState.load(std::memory_order_relaxed))),
-			bControllerEnabled.load(std::memory_order_relaxed) ? 1 : 0);
+		Emit(TEXT("Aircraft.Drive.Physics"), Result);
 	};
 
 	if (!bSimulationEnabled.load(std::memory_order_relaxed)

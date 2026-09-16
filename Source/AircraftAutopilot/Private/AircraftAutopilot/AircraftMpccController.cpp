@@ -492,6 +492,7 @@ void FAircraftMpccController::RolloutHorizon(
 	const FAircraftDynamicCapabilitySnapshot& Capability,
 	const FAircraftRequestedMotionLimits& Limits,
 	const TArray<FAircraftMotionPlanSample>& References,
+	const TConstArrayView<FVector> ControlCorrections,
 	const float Dt, const int32 Steps,
 	TArray<FVector>& CommandAccelerationHorizon,
 	TArray<FVector>& Positions, TArray<FVector>& Velocities,
@@ -503,7 +504,7 @@ void FAircraftMpccController::RolloutHorizon(
 	for (int32 Index = 0; Index < Steps; ++Index)
 	{
 		CommandAccelerationHorizon[Index] = ProjectAcceleration(
-			References[Index].AccelerationCmPerSecSq + ControlCorrectionHorizon[Index],
+			References[Index].AccelerationCmPerSecSq + ControlCorrections[Index],
 			Limits, Capability, Velocities[Index]);
 		CommandAccelerationHorizon[Index] = ApplyJerkLimit(
 			Index > 0 ? CommandAccelerationHorizon[Index - 1] : FilteredAccelerationCmPerSecSq,
@@ -674,6 +675,12 @@ bool FAircraftMpccController::SolvePlan(
 	const double SolveDeadlineSeconds)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Aircraft_MPCC_OptimizePlan);
+	Diagnostics.MotionPlanAccelerationCmPerSecSq = FVector::ZeroVector;
+	Diagnostics.MpccCorrectionCmPerSecSq = FVector::ZeroVector;
+	Diagnostics.TerminalBrakeCorrectionCmPerSecSq = FVector::ZeroVector;
+	Diagnostics.CommandAccelerationCmPerSecSq = FVector::ZeroVector;
+	Diagnostics.SignedTerminalDistanceCm = 0.0f;
+	Diagnostics.bTerminalBrakingActive = false;
 	FAircraftMotionPlanSample Projection;
 	const float PlanLengthCm = Plan.GetLengthCm();
 	const float NominalSolveDeltaTime = 1.0f / RuntimeConfig.Mpcc.UpdateRateHz;
@@ -879,7 +886,8 @@ bool FAircraftMpccController::SolvePlan(
 		{
 			break;
 		}
-		RolloutHorizon(State, Capability, Limits, ReferenceScratch, Dt, Steps,
+		RolloutHorizon(State, Capability, Limits, ReferenceScratch,
+			ControlCorrectionHorizon, Dt, Steps,
 			CommandAccelerationScratch, PositionScratch, VelocityScratch,
 			RealizedAccelerationScratch, ResponseAlphaScratch);
 		float MaximumPredictedCorridorViolationCm = 0.0f;
@@ -995,6 +1003,30 @@ bool FAircraftMpccController::SolvePlan(
 			break;
 		}
 	}
+	const FVector MpccCorrectionBeforeTerminalGuard = ControlCorrectionHorizon[0];
+	SafetyCorrectionScratch = ControlCorrectionHorizon;
+	Diagnostics.MotionPlanAccelerationCmPerSecSq =
+		ReferenceScratch[0].AccelerationCmPerSecSq;
+	Diagnostics.MpccCorrectionCmPerSecSq = MpccCorrectionBeforeTerminalGuard;
+	if (!Plan.IsContinuous())
+	{
+		const TArray<FAircraftMotionPlanSample>& Samples = Plan.GetSamples();
+		if (Samples.Num() >= 2)
+		{
+			FVector TerminalTangent = FVector::ZeroVector;
+			for (int32 SampleIndex = Samples.Num() - 1;
+				SampleIndex > 0 && TerminalTangent.IsNearlyZero(); --SampleIndex)
+			{
+				TerminalTangent = (Samples[SampleIndex].PositionCm
+					- Samples[SampleIndex - 1].PositionCm).GetSafeNormal();
+			}
+			if (!TerminalTangent.IsNearlyZero())
+			{
+				Diagnostics.SignedTerminalDistanceCm = static_cast<float>(FVector::DotProduct(
+					Samples.Last().PositionCm - State.PositionCm, TerminalTangent));
+			}
+		}
+	}
 
 	// MPCC 代价负责平滑跟踪，但“能否在终点前停住”不是可交换的软目标。
 	// 当实际速度已经越过响应/jerk 感知的停止包络时，只覆盖优化结果的
@@ -1060,18 +1092,23 @@ bool FAircraftMpccController::SolvePlan(
 							Tangent, HorizontalDeceleration, VerticalDeceleration);
 					const FVector PlannedAcceleration =
 						ReferenceScratch[Index].AccelerationCmPerSecSq
-							+ ControlCorrectionHorizon[Index];
-					ControlCorrectionHorizon[Index] += Tangent
+							+ SafetyCorrectionScratch[Index];
+					SafetyCorrectionScratch[Index] += Tangent
 						* (-StepDeceleration - static_cast<float>(
 							FVector::DotProduct(PlannedAcceleration, Tangent)));
 				}
 			}
 		}
 	}
+	Diagnostics.TerminalBrakeCorrectionCmPerSecSq =
+		SafetyCorrectionScratch[0] - MpccCorrectionBeforeTerminalGuard;
+	Diagnostics.bTerminalBrakingActive =
+		!Diagnostics.TerminalBrakeCorrectionCmPerSecSq.IsNearlyZero(UE_KINDA_SMALL_NUMBER);
 
 	// 最后一次梯度更新发生在约束投影之后；发布前必须重新滚动一次，
 	// 保证真正输出的第一步仍满足 jerk、倾角、总推力和阻力补偿约束。
-	RolloutHorizon(State, Capability, Limits, ReferenceScratch, Dt, Steps,
+	RolloutHorizon(State, Capability, Limits, ReferenceScratch,
+		SafetyCorrectionScratch, Dt, Steps,
 		CommandAccelerationScratch, PositionScratch, VelocityScratch,
 		RealizedAccelerationScratch, ResponseAlphaScratch);
 	Diagnostics.PredictedCorridorViolationCm = 0.0f;
@@ -1090,6 +1127,8 @@ bool FAircraftMpccController::SolvePlan(
 	OutReference.AccelerationCmPerSecSq = ReferenceScratch[0].AccelerationCmPerSecSq;
 	OutReference.ControlAccelerationCmPerSecSq = ProjectControlAcceleration(
 		CommandAccelerationScratch[0] + DragCompensation, Capability) - DragCompensation;
+	Diagnostics.CommandAccelerationCmPerSecSq =
+		OutReference.ControlAccelerationCmPerSecSq;
 	OutReference.DynamicsFeedForwardAccelerationCmPerSecSq = DragCompensation;
 	OutReference.bPositionTrackingEnabled = true;
 	OutReference.YawDegrees = ReferenceScratch[0].YawDegrees;

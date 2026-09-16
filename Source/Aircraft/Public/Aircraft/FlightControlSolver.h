@@ -76,6 +76,7 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 	FVector LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 	FVector LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 	FVector LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
+	FVector LastVelocityFeedbackAccelerationCmPerSecSq = FVector::ZeroVector;
 	FVector LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 	FVector LastAngularDampingFeedForward = FVector::ZeroVector;
 	float LastVerticalDampingCollectiveFeedForward = 0.0f;
@@ -121,6 +122,7 @@ struct AIRCRAFT_API FAircraftFlightControlSolver
 		LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 		LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 		LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
+		LastVelocityFeedbackAccelerationCmPerSecSq = FVector::ZeroVector;
 		LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 		LastAngularDampingFeedForward = FVector::ZeroVector;
 		LastVerticalDampingCollectiveFeedForward = 0.0f;

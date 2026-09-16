@@ -693,15 +693,44 @@ void UAutopilotComponent::TickComponent(
 			FAircraftTrajectoryReference Reference;
 			const bool bHasReference = Controller
 				&& Controller->GetAircraftTrajectoryReference(Reference) && Reference.bValid;
+			FAircraftFlightKinematicState FlightState;
+			const bool bHasFlightState = Controller
+				&& Controller->GetAircraftFlightKinematicState(FlightState);
+			FVector CompletionTargetCm = FVector::ZeroVector;
+			const bool bHasCompletionTarget =
+				UE::AircraftLab::Autopilot::Private::ResolveCompletionTarget(
+					ResolvedIntent, bHasReference, Reference, CompletionTargetCm);
 			UE_LOG(LogAircraft, Log,
-				TEXT("[Aircraft.Autopilot] Owner=%s Intent=%lld Revision=%llu Status=%s Tracking=%s Ref=%d PathProgress=%.3f RouteProgress=%.3f Contour=%.1fcm Lag=%.1fcm Corridor=%.1fcm Predicted=%.1fcm Solve=%.3fms"),
+				TEXT("[Aircraft.Autopilot] Owner=%s Intent=%lld Revision=%llu Status=%s Tracking=%s Ref=%d State=%d Target=%d PositionCm=%s TargetCm=%s RefPositionCm=%s VelocityCmPerSec=%s PathProgress=%.3f RouteProgress=%.3f ProgressScale=%.3f SignedTerminalCm=%.1f Contour=%.1fcm Lag=%.1fcm Corridor=%.1fcm Predicted=%.1fcm Solve=%.3fms"),
 				*GetNameSafe(GetOwner()), ActiveHandle.Id, IntentRevision,
 				*UEnum::GetDisplayValueAsText(CurrentResult.Status).ToString(),
 				*UEnum::GetDisplayValueAsText(CurrentResult.PathTrackingState).ToString(),
-				bHasReference ? 1 : 0, Reference.PathProgress, Reference.RouteProgress,
+				bHasReference ? 1 : 0, bHasFlightState ? 1 : 0,
+				bHasCompletionTarget ? 1 : 0,
+				*FlightState.PositionCm.ToCompactString(),
+				*CompletionTargetCm.ToCompactString(),
+				*Reference.PositionCm.ToCompactString(),
+				*FlightState.VelocityCmPerSec.ToCompactString(),
+				Reference.PathProgress, Reference.RouteProgress,
+				Diagnostics.ProgressScale, Diagnostics.SignedTerminalDistanceCm,
 				Diagnostics.ContourErrorCm, Diagnostics.LagErrorCm,
 				Diagnostics.CorridorViolationCm, Diagnostics.PredictedCorridorViolationCm,
 				Diagnostics.LastSolveMilliseconds);
+			UE_LOG(LogAircraft, Log,
+				TEXT("[Aircraft.Autopilot.Reference] Owner=%s Intent=%lld MotionPlanA=%s MpccCorrection=%s TerminalBrake=%s CommandA=%s NominalVel=%s NominalA=%s FinalVel=%s FinalA=%s TerminalBrakeActive=%d GuidanceApplied=%d GuidanceBraking=%d GuidanceAlpha=%.3f"),
+				*GetNameSafe(GetOwner()), ActiveHandle.Id,
+				*Diagnostics.MotionPlanAccelerationCmPerSecSq.ToCompactString(),
+				*Diagnostics.MpccCorrectionCmPerSecSq.ToCompactString(),
+				*Diagnostics.TerminalBrakeCorrectionCmPerSecSq.ToCompactString(),
+				*Diagnostics.CommandAccelerationCmPerSecSq.ToCompactString(),
+				*Diagnostics.NominalReferenceVelocityCmPerSec.ToCompactString(),
+				*Diagnostics.NominalReferenceControlAccelerationCmPerSecSq.ToCompactString(),
+				*Diagnostics.FinalReferenceVelocityCmPerSec.ToCompactString(),
+				*Diagnostics.FinalReferenceControlAccelerationCmPerSecSq.ToCompactString(),
+				Diagnostics.bTerminalBrakingActive ? 1 : 0,
+				Diagnostics.bGuidanceApplied ? 1 : 0,
+				Diagnostics.bGuidanceBraking ? 1 : 0,
+				Diagnostics.GuidanceBlendAlpha);
 		}
 	}
 	if (ResolvedIntent.TimeoutSeconds > 0.0f && ElapsedSeconds >= ResolvedIntent.TimeoutSeconds)
