@@ -23,8 +23,8 @@ struct FAircraftAttitudeControllerConfig
 	float AngularDampingFeedForwardScale = 1.0f;
 	UPROPERTY(EditAnywhere, Category = "Reference Model", meta = (DisplayName = "Enable Attitude Reference Model"))
 	bool bEnableAttitudeReferenceModel = true;
-	UPROPERTY(EditAnywhere, Category = "Reference Model", meta = (DisplayName = "Reference Model Natural Frequency (Hz)", EditCondition = "bEnableAttitudeReferenceModel", EditConditionHides, ClampMin = "0.5", ClampMax = "30.0"))
-	float ReferenceModelNaturalFrequency = 6.0f;
+	UPROPERTY(EditAnywhere, Category = "Reference Model", meta = (DisplayName = "Reference Model Natural Angular Frequency (rad/s)", EditCondition = "bEnableAttitudeReferenceModel", EditConditionHides, ClampMin = "0.5", ClampMax = "30.0", Units = "rad/s"))
+	float ReferenceModelNaturalAngularFrequencyRadPerSec = 6.0f;
 	UPROPERTY(EditAnywhere, Category = "Reference Model", meta = (DisplayName = "Reference Model Rate Feedforward Limit (deg/s)", EditCondition = "bEnableAttitudeReferenceModel", EditConditionHides, ClampMin = "0.0"))
 	float ReferenceModelRateFeedForwardLimitDegPerSec = 100.0f;
 };

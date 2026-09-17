@@ -2323,7 +2323,6 @@ bool FAircraftAutopilotCompletionGateTest::RunTest(const FString& Parameters)
 		IsPlanComplete(EAircraftMovementIntentType::TimedTrajectory, true, 0.5f));
 	TestTrue(TEXT("Timed trajectory becomes complete at terminal progress"),
 		IsPlanComplete(EAircraftMovementIntentType::TimedTrajectory, true, 1.0f));
-
 	FAircraftMovementIntent HoldIntent;
 	HoldIntent.Type = EAircraftMovementIntentType::Hold;
 	HoldIntent.Hold.bCaptureCurrentPosition = true;
@@ -2336,6 +2335,44 @@ bool FAircraftAutopilotCompletionGateTest::RunTest(const FString& Parameters)
 		ResolveCompletionTarget(HoldIntent, true, Reference, Target));
 	TestTrue(TEXT("Capture-current completion target is not the default origin"),
 		Target.Equals(Reference.PositionCm));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftRouteTerminalContinuationPreservesPlanTest,
+	"AircraftLab.Autopilot.Completion.RouteTerminalContinuationPreservesPlan",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftRouteTerminalContinuationPreservesPlanTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UE::AircraftLab::Autopilot::Private;
+	FAircraftMovementIntent CompletedRoute = MakeRouteIntent(4000.0f);
+	CompletedRoute.Heading.Mode = EAircraftHeadingMode::FaceVelocity;
+	const FAircraftMovementIntent Continuation = BuildTerminalContinuationIntent(
+		CompletedRoute, CompletedRoute.Route.PointsCm.Last(), 35.0f);
+
+	TestEqual(TEXT("A stopped route keeps its route intent for terminal continuation"),
+		Continuation.Type, EAircraftMovementIntentType::Route);
+	TestEqual(TEXT("Terminal continuation keeps the complete route geometry"),
+		Continuation.Route.PointsCm.Num(), CompletedRoute.Route.PointsCm.Num());
+	TestTrue(TEXT("Terminal continuation preserves the route points"),
+		Continuation.Route.PointsCm == CompletedRoute.Route.PointsCm);
+	TestEqual(TEXT("Terminal continuation preserves the completed heading policy"),
+		Continuation.Heading.Mode, CompletedRoute.Heading.Mode);
+
+	FAircraftMpccController Controller;
+	FAircraftVehicleStateSnapshot State;
+	const FAircraftAutopilotRuntimeConfig Config;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	TestTrue(TEXT("Completed route plan builds"), Controller.SetIntent(
+		CompletedRoute, 91, 1, Config, State, Capability));
+	const uint64 PlanRevision = Controller.GetDiagnostics().PlanRevision;
+	TestTrue(TEXT("Terminal continuation is accepted as the same plan"), Controller.SetIntent(
+		Continuation, 91, 2, Config, State, Capability));
+	TestEqual(TEXT("Terminal continuation does not rebuild the route plan"),
+		Controller.GetDiagnostics().PlanRevision, PlanRevision);
 	return true;
 }
 
@@ -2601,6 +2638,247 @@ bool FAircraftMpccTerminalStoppingGuardTest::RunTest(const FString& Parameters)
 		TEXT("Stopping-infeasible state commands jerk-limited emergency braking (actual %.3f)"),
 		Reference.ControlAccelerationCmPerSecSq.X),
 		Reference.ControlAccelerationCmPerSecSq.X < -70.0f);
+	const FAircraftAutopilotDiagnostics& Diagnostics = Controller.GetDiagnostics();
+	TestTrue(TEXT("Terminal stopping diagnostics identify an active braking override"),
+		Diagnostics.bTerminalBrakingActive);
+	TestTrue(TEXT("Terminal stopping diagnostics expose the braking contribution"),
+		Diagnostics.TerminalBrakeCorrectionCmPerSecSq.X < 0.0f);
+	TestTrue(TEXT("MPCC diagnostics expose a finite final command acceleration"),
+		!Diagnostics.CommandAccelerationCmPerSecSq.ContainsNaN());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMpccTerminalStoppingGuardDoesNotPolluteWarmStartTest,
+	"AircraftLab.Autopilot.MPCC.TerminalStoppingGuardDoesNotPolluteWarmStart",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMpccTerminalStoppingGuardDoesNotPolluteWarmStartTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	const FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	Capability.ThrustRiseResponseTimeSeconds = 0.45f;
+	Capability.ThrustFallResponseTimeSeconds = 0.45f;
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.VelocityCmPerSec = FVector(800.0f, 0.0f, 0.0f);
+	FAircraftMpccController Controller;
+	TestTrue(TEXT("Route is accepted"),
+		Controller.SetIntent(Intent, 102, 1, Config, State, Capability));
+
+	const float SolveStep = 1.0f / Config.Mpcc.UpdateRateHz + 0.001f;
+	State.TimeSeconds += SolveStep;
+	State.Sequence = 1;
+	State.PositionCm = FVector(2300.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector(1000.0f, 0.0f, 0.0f);
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Stopping-infeasible state is solved"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("The first solve applies the terminal safety guard"),
+		Controller.GetDiagnostics().bTerminalBrakingActive);
+
+	State.TimeSeconds += SolveStep;
+	State.Sequence = 2;
+	State.VelocityCmPerSec = FVector::ZeroVector;
+	State.AccelerationCmPerSecSq = FVector::ZeroVector;
+	TestTrue(TEXT("The following safe state is solved"),
+		Controller.Update(State, Capability, Reference));
+	const FAircraftAutopilotDiagnostics& Diagnostics = Controller.GetDiagnostics();
+	TestFalse(TEXT("The safe state no longer requires terminal braking"),
+		Diagnostics.bTerminalBrakingActive);
+	TestTrue(FString::Printf(
+		TEXT("Safety braking is not retained as the optimizer warm start (correction %.3f)"),
+		Diagnostics.MpccCorrectionCmPerSecSq.X),
+		FMath::Abs(Diagnostics.MpccCorrectionCmPerSecSq.X) < 50.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMpccTerminalStoppingGuardDoesNotBrakeReturningOvershootTest,
+	"AircraftLab.Autopilot.MPCC.TerminalStoppingGuardDoesNotBrakeReturningOvershoot",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMpccTerminalStoppingGuardDoesNotBrakeReturningOvershootTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	const FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	FAircraftMpccController Controller;
+	TestTrue(TEXT("Route is accepted"),
+		Controller.SetIntent(Intent, 103, 1, Config, State, Capability));
+
+	State.TimeSeconds += 1.0f / Config.Mpcc.UpdateRateHz + 0.001f;
+	State.Sequence = 1;
+	State.PositionCm = FVector(4010.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector(-100.0f, 0.0f, 0.0f);
+	State.AccelerationCmPerSecSq = FVector::ZeroVector;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Returning overshoot state is solved"),
+		Controller.Update(State, Capability, Reference));
+	const FAircraftAutopilotDiagnostics& Diagnostics = Controller.GetDiagnostics();
+	TestFalse(TEXT("Terminal guard does not oppose motion returning from an overshoot"),
+		Diagnostics.bTerminalBrakingActive);
+	TestTrue(FString::Printf(
+		TEXT("Terminal safety contribution is zero while returning (actual %s)"),
+		*Diagnostics.TerminalBrakeCorrectionCmPerSecSq.ToCompactString()),
+		Diagnostics.TerminalBrakeCorrectionCmPerSecSq.IsNearlyZero(UE_KINDA_SMALL_NUMBER));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftStopRouteFlightControllerUsesSingleTerminalReferenceTest,
+	"AircraftLab.Autopilot.Runtime.StopRouteFlightControllerUsesSingleTerminalReference",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftStopRouteFlightControllerUsesSingleTerminalReferenceTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	Intent.Limits.MaxDecelerationCmPerSecSq = 120.0f;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	FAircraftTrajectoryRuntime Runtime;
+	TestTrue(TEXT("Route is accepted"),
+		Runtime.SetIntent(Intent, 203, 1, Config, State, Capability));
+
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+	State.Sequence = 1;
+	State.PositionCm = FVector(2844.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector(580.0f, 0.0f, 0.0f);
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Flight controller produces a terminal-route reference"),
+		Runtime.UpdateFlightController(State, Capability, Reference));
+	const FVector FirstCorrection =
+		Runtime.GetDiagnostics().MpccCorrectionCmPerSecSq;
+	State.TimeSeconds += 0.2;
+	++State.Sequence;
+	State.PositionCm += State.VelocityCmPerSec * 0.2f;
+	State.PositionCm.Y = 250.0f;
+	State.VelocityCmPerSec = FVector(100.0f, -80.0f, 0.0f);
+	TestTrue(TEXT("Flight controller continues the terminal route"),
+		Runtime.UpdateFlightController(State, Capability, Reference));
+	const FAircraftAutopilotDiagnostics& Diagnostics = Runtime.GetDiagnostics();
+	TestFalse(TEXT("The MPCC terminal correction is recomputed from the latest physical state"),
+		Diagnostics.MpccCorrectionCmPerSecSq.Equals(FirstCorrection, 0.1f));
+	TestFalse(TEXT("No navigation guidance replaces the MPCC reference"),
+		Diagnostics.bGuidanceApplied || Diagnostics.bGuidanceBraking);
+	TestTrue(FString::Printf(
+		TEXT("The published acceleration has one authority (reference %s, MPCC %s)"),
+		*Reference.ControlAccelerationCmPerSecSq.ToCompactString(),
+		*Diagnostics.CommandAccelerationCmPerSecSq.ToCompactString()),
+		Reference.ControlAccelerationCmPerSecSq.Equals(
+			Diagnostics.CommandAccelerationCmPerSecSq, 0.1f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMpccStopRouteCapturesExactTerminalReferenceTest,
+	"AircraftLab.Autopilot.MPCC.StopRouteCapturesExactTerminalReference",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMpccStopRouteCapturesExactTerminalReferenceTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	Intent.Completion.HorizontalToleranceCm = 200.0f;
+	Intent.Completion.HorizontalSpeedToleranceCmPerSec = 50.0f;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.PositionCm = FVector(3995.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector::ZeroVector;
+
+	FAircraftMpccController Controller;
+	TestTrue(TEXT("Near-terminal stop route is accepted"),
+		Controller.SetIntent(Intent, 204, 1, Config, State, Capability));
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Near-terminal stop route produces a reference"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("Terminal convergence targets the exact route endpoint"),
+		Reference.PositionCm.Equals(Intent.Route.PointsCm.Last(), 0.01f));
+	TestTrue(TEXT("Terminal convergence publishes zero velocity"),
+		Reference.VelocityCmPerSec.IsNearlyZero(0.01f));
+	TestTrue(TEXT("Terminal convergence removes route acceleration feed-forward"),
+		Reference.ControlAccelerationCmPerSecSq.IsNearlyZero(0.01f));
+	TestEqual(TEXT("Terminal convergence publishes completed path progress"),
+		Reference.PathProgress, 1.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMpccTerminalConvergencePreservesReferenceContinuityTest,
+	"AircraftLab.Autopilot.MPCC.TerminalConvergencePreservesReferenceContinuity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMpccTerminalConvergencePreservesReferenceContinuityTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	Intent.Completion.HorizontalToleranceCm = 200.0f;
+	Intent.Completion.HorizontalSpeedToleranceCmPerSec = 50.0f;
+	Intent.Limits.MaxAccelerationCmPerSecSq = 400.0f;
+	Intent.Limits.MaxDecelerationCmPerSecSq = 400.0f;
+	Intent.Limits.MaxJerkCmPerSecCubed = 800.0f;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.PositionCm = FVector(3995.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector(40.0f, 0.0f, 0.0f);
+
+	FAircraftMpccController Controller;
+	TestTrue(TEXT("Moving near-terminal stop route is accepted"),
+		Controller.SetIntent(Intent, 205, 1, Config, State, Capability));
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Moving near-terminal stop route produces a reference"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("Terminal capture does not erase forward reference velocity in one solve"),
+		Reference.VelocityCmPerSec.X > UE_SMALL_NUMBER
+		&& Reference.VelocityCmPerSec.X <= State.VelocityCmPerSec.X + UE_SMALL_NUMBER);
+	TestTrue(TEXT("Terminal capture preserves a continuous position reference"),
+		Reference.PositionCm.X >= State.PositionCm.X
+		&& Reference.PositionCm.X <= Intent.Route.PointsCm.Last().X + UE_SMALL_NUMBER);
+	TestTrue(TEXT("Terminal capture respects the configured jerk bound"),
+		FMath::Abs(Reference.AccelerationCmPerSecSq.X)
+			<= Intent.Limits.MaxJerkCmPerSecCubed
+				/ Config.Mpcc.UpdateRateHz + 0.1f);
+
+	for (int32 Step = 0; Step < 300; ++Step)
+	{
+		State.PositionCm = Reference.PositionCm;
+		State.VelocityCmPerSec = Reference.VelocityCmPerSec;
+		State.AccelerationCmPerSecSq = Reference.AccelerationCmPerSecSq;
+		State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz;
+		++State.Sequence;
+		TestTrue(TEXT("Terminal convergence continues to publish a reference"),
+			Controller.Update(State, Capability, Reference));
+	}
+	TestTrue(TEXT("Terminal convergence reaches the exact endpoint without a second plan"),
+		Reference.PositionCm.Equals(Intent.Route.PointsCm.Last(), 0.1f));
+	TestTrue(TEXT("Terminal convergence settles its velocity"),
+		Reference.VelocityCmPerSec.IsNearlyZero(0.1f));
 	return true;
 }
 

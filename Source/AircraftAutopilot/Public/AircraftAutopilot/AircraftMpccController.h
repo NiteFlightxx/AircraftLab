@@ -37,6 +37,8 @@ private:
 	FVector LastVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 	FVector CandidateVelocityProfileAccelerationCmPerSecSq = FVector::ZeroVector;
 	TArray<FVector> ControlCorrectionHorizon;
+	/** 发布前安全覆盖的临时副本；绝不能回写优化器的跨帧初值。 */
+	TArray<FVector> SafetyCorrectionScratch;
 	TArray<FAircraftMotionPlanSample> ReferenceScratch;
 	TArray<FVector> CommandAccelerationScratch;
 	TArray<FVector> PositionScratch;
@@ -49,6 +51,13 @@ private:
 	FVector FilteredAccelerationCmPerSecSq = FVector::ZeroVector;
 	double LastFilterUpdateTimeSeconds = 0.0;
 	bool bFilterInitialized = false;
+	/** Stop Route 已进入终点位置收敛；锁存到意图/几何真正变化。 */
+	bool bTerminalConvergenceActive = false;
+	/** 终点收敛参考独立于物理状态连续推进，避免切换时位置/速度/加速度阶跃。 */
+	FVector TerminalReferencePositionCm = FVector::ZeroVector;
+	FVector TerminalReferenceVelocityCmPerSec = FVector::ZeroVector;
+	FVector TerminalReferenceAccelerationCmPerSecSq = FVector::ZeroVector;
+	bool bTerminalReferenceInitialized = false;
 	uint64 IntentRevision = 0;
 	int64 ActiveIntentId = 0;
 	uint64 PlanRevision = 0;
@@ -81,6 +90,7 @@ private:
 		const FAircraftDynamicCapabilitySnapshot& Capability,
 		const FAircraftRequestedMotionLimits& Limits,
 		const TArray<FAircraftMotionPlanSample>& References,
+		TConstArrayView<FVector> ControlCorrections,
 		float Dt, int32 Steps,
 		TArray<FVector>& CommandAccelerationHorizon,
 		TArray<FVector>& Positions, TArray<FVector>& Velocities,

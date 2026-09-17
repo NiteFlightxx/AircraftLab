@@ -185,10 +185,31 @@ struct AIRCRAFTRUNTIMEINTERFACE_API FAircraftAutopilotDiagnostics
 	float CorridorViolationCm = 0.0f;
 	float PredictedCorridorViolationCm = 0.0f;
 	float ProgressScale = 1.0f;
+	/** Motion-plan acceleration before MPCC, terminal braking, and navigation guidance. */
+	FVector MotionPlanAccelerationCmPerSecSq = FVector::ZeroVector;
+	/** First-horizon MPCC correction before the terminal stopping guard. */
+	FVector MpccCorrectionCmPerSecSq = FVector::ZeroVector;
+	/** Additional correction introduced only by the terminal stopping guard. */
+	FVector TerminalBrakeCorrectionCmPerSecSq = FVector::ZeroVector;
+	/** Final capability/jerk-limited acceleration command published by the controller. */
+	FVector CommandAccelerationCmPerSecSq = FVector::ZeroVector;
+	/** Nominal reference immediately before navigation guidance composition. */
+	FVector NominalReferenceVelocityCmPerSec = FVector::ZeroVector;
+	FVector NominalReferenceControlAccelerationCmPerSecSq = FVector::ZeroVector;
+	/** Reference actually consumed after guidance and corridor-safe blending. */
+	FVector FinalReferenceVelocityCmPerSec = FVector::ZeroVector;
+	FVector FinalReferenceControlAccelerationCmPerSecSq = FVector::ZeroVector;
+	/** Signed distance from the vehicle to the terminal point along the final route tangent. */
+	float SignedTerminalDistanceCm = 0.0f;
+	/** Effective nominal-to-guidance blend after corridor validation. */
+	float GuidanceBlendAlpha = 0.0f;
 	bool bPlanValid = false;
 	bool bReferenceFresh = false;
 	/** 求解器连续失败达到配置阈值且已无可复用参考。 */
 	bool bSolverFailed = false;
 	bool bCorridorViolated = false;
+	bool bTerminalBrakingActive = false;
+	bool bGuidanceApplied = false;
+	bool bGuidanceBraking = false;
 	EAircraftPathTrackingState PathTrackingState = EAircraftPathTrackingState::NotTracking;
 };

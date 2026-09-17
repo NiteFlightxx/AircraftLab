@@ -7,11 +7,44 @@
 
 namespace
 {
+	FVector ComputeThrustVectorPriorityError(
+		const FQuat& ActualControlWorldRotation,
+		const FQuat& DesiredControlWorldRotation,
+		const float YawWeight)
+	{
+		const FQuat Actual = ActualControlWorldRotation.GetNormalized();
+		const FQuat Desired = DesiredControlWorldRotation.GetNormalized();
+		const FVector ActualUp = Actual.RotateVector(FVector::UpVector);
+		const FVector DesiredUp = Desired.RotateVector(FVector::UpVector);
+		if (FVector::DotProduct(ActualUp, DesiredUp) < -1.0f + UE_KINDA_SMALL_NUMBER)
+		{
+			// The reduced attitude is singular for antiparallel thrust vectors.
+			return AircraftAttitudeReference::GetShortestRotationVector(
+				Actual, Desired);
+		}
+
+		const FQuat TiltDelta = FQuat::FindBetweenNormals(ActualUp, DesiredUp);
+		FQuat ReducedDesired = (TiltDelta * Actual).GetNormalized();
+		FQuat Residual = (ReducedDesired.Inverse() * Desired).GetNormalized();
+		if (Residual.W < 0.0f)
+		{
+			Residual = FQuat(-Residual.X, -Residual.Y, -Residual.Z, -Residual.W);
+		}
+		const float ResidualYawRadians = 2.0f * FMath::Atan2(Residual.Z, Residual.W);
+		const FVector TiltError =
+			AircraftAttitudeReference::GetShortestRotationVector(
+				Actual, ReducedDesired);
+		return FVector(
+			TiltError.X,
+			TiltError.Y,
+			FMath::Clamp(YawWeight, 0.0f, 1.0f) * ResidualYawRadians);
+	}
+
 	FAircraftAttitudeMotionConfig BuildFlightControllerAttitudeMotionConfig(
 		const FAircraftFlightControllerRuntimeConfig& Config)
 	{
 		const float NaturalAngularFrequency = FMath::Max(
-			Config.ReferenceModelNaturalFrequency, UE_SMALL_NUMBER);
+			Config.ReferenceModelNaturalAngularFrequencyRadPerSec, UE_SMALL_NUMBER);
 		const float MaxTiltRateDegPerSec = FMath::Max(
 			Config.MaxRollRateDegreesPerSec, Config.MaxPitchRateDegreesPerSec);
 		FAircraftAttitudeMotionConfig Result;
@@ -356,7 +389,7 @@ FAircraftYawSetpoint FAircraftFlightControlSolver::ComputeYawSetpoint(
 	Limits.MaxAccelerationDegPerSecSq = Config.MaxYawAccelerationDegPerSecSq;
 	Limits.MaxJerkDegPerSecCubed = Config.MaxYawJerkDegPerSecCubed;
 	Limits.ResponseTimeSeconds = 1.0f / FMath::Max(
-		Config.ReferenceModelNaturalFrequency, UE_SMALL_NUMBER);
+		Config.ReferenceModelNaturalAngularFrequencyRadPerSec, UE_SMALL_NUMBER);
 	const float MeasuredYawRateDegPerSec =
 		AircraftAttitudeReference::GetPlanarHeadingRateDegreesPerSecond(
 			BodyWorldRotation,
@@ -493,13 +526,21 @@ FVector FAircraftFlightControlSolver::ComputeDesiredBodyRates(FAircraftFlightCon
 		ReferenceControllerRateDegPerSec.Y,
 		-AttitudeRateFeedForwardLimit, AttitudeRateFeedForwardLimit);
 
-	const FVector RotationErrorControl =
-		AircraftAttitudeReference::GetShortestRotationVector(
-			ActualControlWorldRotation, ShapedControlWorldRotation);
+	const float RollPitchGain = 0.5f
+		* (FMath::Max(Config.AttitudeGains.X, 0.0f)
+			+ FMath::Max(Config.AttitudeGains.Y, 0.0f));
+	const float YawWeight = RollPitchGain > UE_SMALL_NUMBER
+		? FMath::Clamp(Config.AttitudeGains.Z / RollPitchGain, 0.0f, 1.0f)
+		: 1.0f;
+	const FVector RotationErrorControl = ComputeThrustVectorPriorityError(
+		ActualControlWorldRotation, ShapedControlWorldRotation, YawWeight);
+	const float EffectiveYawGain = YawWeight > UE_SMALL_NUMBER
+		? Config.AttitudeGains.Z / YawWeight
+		: 0.0f;
 	const FVector AttitudeCorrectionControllerRadPerSec(
 		-RotationErrorControl.X * Config.AttitudeGains.X,
 		-RotationErrorControl.Y * Config.AttitudeGains.Y,
-		RotationErrorControl.Z * Config.AttitudeGains.Z);
+		RotationErrorControl.Z * EffectiveYawGain);
 	const FVector DesiredControllerRateDegPerSec = ReferenceControllerRateDegPerSec
 		+ FMath::RadiansToDegrees(AttitudeCorrectionControllerRadPerSec);
 	return FVector(
@@ -630,6 +671,8 @@ FVector FAircraftFlightControlSolver::ComputeVelocityPidAcceleration(
 			DesiredVelocityCmPerSec.Y, CurrentVelocity.Y, DeltaSeconds,
 			Config.GetVelocityPidGains(1), TotalFeedForward.Y),
 		0.0f);
+	const FVector RequestedAcceleration = DesiredAcceleration;
+	const FVector VelocityFeedbackAcceleration = DesiredAcceleration - TotalFeedForward;
 
 	const float TiltLimitedAcceleration = Context.PhysicsCache.GravityMagnitudeCmPerSecSq
 		* FMath::Tan(FMath::DegreesToRadians(Config.MaxTiltAngleDegrees));
@@ -643,9 +686,21 @@ FVector FAircraftFlightControlSolver::ComputeVelocityPidAcceleration(
 		DesiredAcceleration.Y = Clamped.Y;
 	}
 
+	// The physical tilt/vector limit is downstream of the two scalar PID clamps.
+	// Feed the acceleration actually achievable by the aircraft back into each
+	// integrator so a sustained velocity error cannot wind the horizontal loop up
+	// behind that shared vector limit.
+	PidStates.Velocity.X.ApplyTrackingAntiWindup(
+		RequestedAcceleration.X, DesiredAcceleration.X, DeltaSeconds,
+		Config.GetVelocityPidGains(0));
+	PidStates.Velocity.Y.ApplyTrackingAntiWindup(
+		RequestedAcceleration.Y, DesiredAcceleration.Y, DeltaSeconds,
+		Config.GetVelocityPidGains(1));
+
 	LastDesiredHorizontalVelocityCmPerSec = FVector(DesiredVelocityCmPerSec.X, DesiredVelocityCmPerSec.Y, 0.0f);
 	LastVelocityDragFeedForwardCmPerSecSq = DragFeedForward;
 	LastTrajectoryAccelerationFeedForwardCmPerSecSq = TrajectoryFeedForward;
+	LastVelocityFeedbackAccelerationCmPerSecSq = VelocityFeedbackAcceleration;
 	LastDesiredHorizontalAccelerationCmPerSecSq = DesiredAcceleration;
 	return DesiredAcceleration;
 }
@@ -673,6 +728,7 @@ FVector FAircraftFlightControlSolver::ComputeDesiredHorizontalAcceleration(FAirc
 		LastDesiredHorizontalVelocityCmPerSec = FVector::ZeroVector;
 		LastVelocityDragFeedForwardCmPerSecSq = FVector::ZeroVector;
 		LastTrajectoryAccelerationFeedForwardCmPerSecSq = FVector::ZeroVector;
+		LastVelocityFeedbackAccelerationCmPerSecSq = FVector::ZeroVector;
 		LastDesiredHorizontalAccelerationCmPerSecSq = FVector::ZeroVector;
 		return FVector::ZeroVector;
 	}

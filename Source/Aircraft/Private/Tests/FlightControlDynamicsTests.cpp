@@ -36,6 +36,90 @@ bool FAircraftPidExternalSaturationAntiWindupTest::RunTest(const FString& Parame
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftVelocityTrackingAntiWindupUsesAchievableAccelerationTest,
+	"AircraftLab.Control.Velocity.TrackingAntiWindupUsesAchievableAcceleration",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftVelocityTrackingAntiWindupUsesAchievableAccelerationTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.EstimatedState.State.VelocityCmPerSec = FVector::ZeroVector;
+	FAircraftPhysicsCache PhysicsCache;
+	PhysicsCache.GravityMagnitudeCmPerSecSq = 980.0f;
+	FAircraftModeCapabilities Capabilities;
+	Capabilities.CanUseVelocityControl = true;
+	FAircraftFlightControllerRuntimeConfig Config;
+	Config.MaxTiltAngleDegrees = 1.0f;
+	Config.MaxHorizontalAccelerationCmPerSecSq = 1000.0f;
+	Config.VelocityKp = FVector3f(1.0f, 1.0f, 0.0f);
+	Config.VelocityKi = FVector3f(1.0f, 1.0f, 0.0f);
+	Config.VelocityKd = FVector3f::ZeroVector;
+	Config.VelocityKff = FVector3f::ZeroVector;
+	Config.VelocityIntegralLimit = FVector3f(1000.0f, 1000.0f, 0.0f);
+	Config.VelocityOutputLimit = FVector3f(1000.0f, 1000.0f, 0.0f);
+	FAircraftManualCommand ManualCommand;
+	FAircraftTrajectoryReference Reference;
+	Reference.bValid = true;
+	Reference.VelocityCmPerSec = FVector(100.0f, 0.0f, 0.0f);
+	FAircraftControlAllocator Allocator;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, true };
+	FAircraftFlightControlSolver Solver;
+
+	for (int32 Step = 0; Step < 100; ++Step)
+	{
+		Solver.ComputeVelocityPidAcceleration(
+			Context, Reference.VelocityCmPerSec, FVector::ZeroVector, 0.01f, false);
+	}
+
+	TestTrue(TEXT("Tracking anti-windup unloads the velocity integral when tilt limits acceleration"),
+		Solver.PidStates.Velocity.X.Integral < 0.0f);
+	TestTrue(TEXT("Published acceleration remains inside the physical tilt limit"),
+		Solver.LastDesiredHorizontalAccelerationCmPerSecSq.Size()
+			<= 980.0f * FMath::Tan(FMath::DegreesToRadians(1.0f)) + 0.1f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftReducedAttitudePrioritizesThrustVectorTest,
+	"AircraftLab.Control.Attitude.ReducedAttitudePrioritizesThrustVector",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftReducedAttitudePrioritizesThrustVectorTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftFlightControlRuntimeState Runtime;
+	Runtime.AttitudeMode = EAircraftAttitudeMode::Angle;
+	FAircraftPhysicsCache PhysicsCache;
+	PhysicsCache.BodyTransform.SetRotation(FQuat::Identity);
+	FAircraftModeCapabilities Capabilities;
+	FAircraftFlightControllerRuntimeConfig Config;
+	Config.FrameBinding.SetModelForwardAxis(EAircraftModelForwardAxis::PositiveX);
+	Config.bEnableAttitudeReferenceModel = false;
+	FAircraftManualCommand ManualCommand;
+	FAircraftTrajectoryReference Reference;
+	FAircraftControlAllocator Allocator;
+	FAircraftFlightControlSolverContext Context{
+		Runtime, PhysicsCache, Capabilities, Config, ManualCommand, Reference, Allocator, false };
+	FAircraftFlightControlSolver Solver;
+	FAircraftYawSetpoint YawSetpoint;
+	YawSetpoint.TargetYawDegrees = 180.0f;
+	YawSetpoint.MaxRateDegPerSec = Config.MaxYawRateDegreesPerSec;
+
+	const FVector Rates = Solver.ComputeDesiredBodyRates(
+		Context, FRotator(20.0f, 180.0f, 0.0f), YawSetpoint, 0.01f);
+	TestTrue(FString::Printf(TEXT("A pitch target remains primarily a pitch-rate correction despite a 180 degree yaw error: Rates=%s"),
+		*Rates.ToCompactString()),
+		FMath::Abs(Rates.Y) > FMath::Abs(Rates.X));
+	TestTrue(TEXT("The thrust-vector correction is not lost behind the yaw correction"),
+		FMath::Abs(Rates.Y) > 1.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FAircraftConstraintDynamicsFeedForwardTest,
 	"AircraftLab.Control.Constraint.DynamicsFeedForward",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -275,6 +359,8 @@ bool FAircraftTrajectoryDynamicsFeedForwardOwnershipTest::RunTest(const FString&
 		Solver.LastVelocityDragFeedForwardCmPerSecSq.X, 0.0, 1.e-3);
 	TestEqual(TEXT("Kinematic and dynamics reference accelerations are combined once"),
 		Acceleration.X, 40.0, 1.e-3);
+	TestEqual(TEXT("Velocity diagnostics expose the PID feedback independently from feed-forward"),
+		Solver.LastVelocityFeedbackAccelerationCmPerSecSq.X, 0.0, 1.e-3);
 	return true;
 }
 

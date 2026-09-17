@@ -65,4 +65,27 @@ namespace UE::AircraftLab::Autopilot::Private
 			&& StableTimeSeconds + UE_SMALL_NUMBER
 				>= FMath::Max(RequiredStableTimeSeconds, 0.0f);
 	}
+
+	inline FAircraftMovementIntent BuildTerminalContinuationIntent(
+		const FAircraftMovementIntent& CompletedIntent,
+		const FVector& PositionCm,
+		const float FixedYawDegrees)
+	{
+		if (CompletedIntent.Type == EAircraftMovementIntentType::Route
+			&& CompletedIntent.Completion.ArrivalMode == EAircraftArrivalMode::Stop)
+		{
+			return CompletedIntent;
+		}
+
+		FAircraftMovementIntent Continuation;
+		Continuation.Type = EAircraftMovementIntentType::Hold;
+		Continuation.Hold.PositionCm = PositionCm;
+		Continuation.Hold.bCaptureCurrentPosition = false;
+		Continuation.Limits = CompletedIntent.Limits;
+		Continuation.bHasRequestedMotionLimits =
+			CompletedIntent.bHasRequestedMotionLimits;
+		Continuation.Heading.Mode = EAircraftHeadingMode::FixedYaw;
+		Continuation.Heading.FixedYawDegrees = FixedYawDegrees;
+		return Continuation;
+	}
 }
