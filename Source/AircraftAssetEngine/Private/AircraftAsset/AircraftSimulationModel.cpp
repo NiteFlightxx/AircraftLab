@@ -241,8 +241,8 @@ namespace UE::AircraftLab::AircraftAsset::Private
 				TEXT("FlightController.Attitude.AngularDampingFeedForwardScale"), OutModel.FlightController.AngularDampingFeedForwardScale);
 			OutModel.FlightController.bEnableAttitudeReferenceModel = Properties.GetValue<bool>(
 				TEXT("FlightController.Attitude.EnableReferenceModel"), OutModel.FlightController.bEnableAttitudeReferenceModel);
-			OutModel.FlightController.ReferenceModelNaturalFrequency = Properties.GetValue<float>(
-				TEXT("FlightController.Attitude.ReferenceModelNaturalFrequency"), OutModel.FlightController.ReferenceModelNaturalFrequency);
+			OutModel.FlightController.ReferenceModelNaturalAngularFrequencyRadPerSec = Properties.GetValue<float>(
+				TEXT("FlightController.Attitude.ReferenceModelNaturalAngularFrequency"), OutModel.FlightController.ReferenceModelNaturalAngularFrequencyRadPerSec);
 			OutModel.FlightController.ReferenceModelRateFeedForwardLimitDegPerSec = Properties.GetValue<float>(
 				TEXT("FlightController.Attitude.ReferenceModelRateFeedForwardLimit"), OutModel.FlightController.ReferenceModelRateFeedForwardLimitDegPerSec);
 			OutModel.FlightController.AltitudeKff = Properties.GetValue<float>(TEXT("FlightController.Altitude.AltitudeKff"), OutModel.FlightController.AltitudeKff);

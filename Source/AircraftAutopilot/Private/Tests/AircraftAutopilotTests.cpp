@@ -2823,4 +2823,63 @@ bool FAircraftMpccStopRouteCapturesExactTerminalReferenceTest::RunTest(
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAircraftMpccTerminalConvergencePreservesReferenceContinuityTest,
+	"AircraftLab.Autopilot.MPCC.TerminalConvergencePreservesReferenceContinuity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAircraftMpccTerminalConvergencePreservesReferenceContinuityTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	FAircraftMovementIntent Intent = MakeRouteIntent(4000.0f);
+	Intent.Completion.HorizontalToleranceCm = 200.0f;
+	Intent.Completion.HorizontalSpeedToleranceCmPerSec = 50.0f;
+	Intent.Limits.MaxAccelerationCmPerSecSq = 400.0f;
+	Intent.Limits.MaxDecelerationCmPerSecSq = 400.0f;
+	Intent.Limits.MaxJerkCmPerSecCubed = 800.0f;
+	FAircraftAutopilotRuntimeConfig Config;
+	Config.Mpcc.SolveTimeBudgetMilliseconds = 100.0f;
+	const FAircraftDynamicCapabilitySnapshot Capability = MakeCapability();
+	FAircraftVehicleStateSnapshot State;
+	State.TimeSeconds = 1.0;
+	State.PositionCm = FVector(3995.0f, 0.0f, 0.0f);
+	State.VelocityCmPerSec = FVector(40.0f, 0.0f, 0.0f);
+
+	FAircraftMpccController Controller;
+	TestTrue(TEXT("Moving near-terminal stop route is accepted"),
+		Controller.SetIntent(Intent, 205, 1, Config, State, Capability));
+	State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz + 0.001;
+	State.Sequence = 1;
+	FAircraftTrajectoryReference Reference;
+	TestTrue(TEXT("Moving near-terminal stop route produces a reference"),
+		Controller.Update(State, Capability, Reference));
+	TestTrue(TEXT("Terminal capture does not erase forward reference velocity in one solve"),
+		Reference.VelocityCmPerSec.X > UE_SMALL_NUMBER
+		&& Reference.VelocityCmPerSec.X <= State.VelocityCmPerSec.X + UE_SMALL_NUMBER);
+	TestTrue(TEXT("Terminal capture preserves a continuous position reference"),
+		Reference.PositionCm.X >= State.PositionCm.X
+		&& Reference.PositionCm.X <= Intent.Route.PointsCm.Last().X + UE_SMALL_NUMBER);
+	TestTrue(TEXT("Terminal capture respects the configured jerk bound"),
+		FMath::Abs(Reference.AccelerationCmPerSecSq.X)
+			<= Intent.Limits.MaxJerkCmPerSecCubed
+				/ Config.Mpcc.UpdateRateHz + 0.1f);
+
+	for (int32 Step = 0; Step < 300; ++Step)
+	{
+		State.PositionCm = Reference.PositionCm;
+		State.VelocityCmPerSec = Reference.VelocityCmPerSec;
+		State.AccelerationCmPerSecSq = Reference.AccelerationCmPerSecSq;
+		State.TimeSeconds += 1.0 / Config.Mpcc.UpdateRateHz;
+		++State.Sequence;
+		TestTrue(TEXT("Terminal convergence continues to publish a reference"),
+			Controller.Update(State, Capability, Reference));
+	}
+	TestTrue(TEXT("Terminal convergence reaches the exact endpoint without a second plan"),
+		Reference.PositionCm.Equals(Intent.Route.PointsCm.Last(), 0.1f));
+	TestTrue(TEXT("Terminal convergence settles its velocity"),
+		Reference.VelocityCmPerSec.IsNearlyZero(0.1f));
+	return true;
+}
+
 #endif

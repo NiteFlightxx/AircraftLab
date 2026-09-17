@@ -213,7 +213,7 @@ bool FAircraftDataflowProfileDefaultsTest::RunTest(const FString& Parameters)
 		Position.VelocityX.OutputLimit, 600.0f);
 	const FAircraftAttitudeControllerConfig Attitude;
 	TestTrue(TEXT("Attitude controller has a positive reference-model frequency"),
-		Attitude.ReferenceModelNaturalFrequency > 0.0f);
+		Attitude.ReferenceModelNaturalAngularFrequencyRadPerSec > 0.0f);
 	TestEqual(TEXT("Attitude controller preserves authoritative roll-rate output limit"),
 		Attitude.RollRate.OutputLimit, 0.35f);
 	TestEqual(TEXT("Attitude controller preserves authoritative yaw-rate output limit"),

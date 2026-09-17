@@ -53,6 +53,11 @@ private:
 	bool bFilterInitialized = false;
 	/** Stop Route 已进入终点位置收敛；锁存到意图/几何真正变化。 */
 	bool bTerminalConvergenceActive = false;
+	/** 终点收敛参考独立于物理状态连续推进，避免切换时位置/速度/加速度阶跃。 */
+	FVector TerminalReferencePositionCm = FVector::ZeroVector;
+	FVector TerminalReferenceVelocityCmPerSec = FVector::ZeroVector;
+	FVector TerminalReferenceAccelerationCmPerSecSq = FVector::ZeroVector;
+	bool bTerminalReferenceInitialized = false;
 	uint64 IntentRevision = 0;
 	int64 ActiveIntentId = 0;
 	uint64 PlanRevision = 0;

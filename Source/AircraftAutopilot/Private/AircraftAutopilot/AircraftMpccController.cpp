@@ -241,6 +241,10 @@ void FAircraftMpccController::Reset()
 	LastFilterUpdateTimeSeconds = 0.0;
 	bFilterInitialized = false;
 	bTerminalConvergenceActive = false;
+	TerminalReferencePositionCm = FVector::ZeroVector;
+	TerminalReferenceVelocityCmPerSec = FVector::ZeroVector;
+	TerminalReferenceAccelerationCmPerSecSq = FVector::ZeroVector;
+	bTerminalReferenceInitialized = false;
 	IntentRevision = 0;
 	ActiveIntentId = 0;
 	PlanRevision = 0;
@@ -317,6 +321,7 @@ bool FAircraftMpccController::SetIntent(
 	IntentMetadataHash = NewMetadataHash;
 	PlanConfigHash = NewPlanConfigHash;
 	bTerminalConvergenceActive = false;
+	bTerminalReferenceInitialized = false;
 	Diagnostics = {};
 	Diagnostics.ActiveIntentId = InIntentId;
 	Diagnostics.IntentRevision = InIntentRevision;
@@ -768,6 +773,8 @@ bool FAircraftMpccController::SolvePlan(
 			ControlCorrectionHorizon.Reset();
 			LastReference = {};
 			PathReferenceScale = 1.0f;
+			bTerminalConvergenceActive = false;
+			bTerminalReferenceInitialized = false;
 		}
 
 		const FVector ProjectionTangent = Projection.VelocityCmPerSec.GetSafeNormal();
@@ -829,19 +836,91 @@ bool FAircraftMpccController::SolvePlan(
 		{
 			ControlCorrectionHorizon.Reset();
 			PathReferenceScale = 1.0f;
+			TerminalReferencePositionCm = LastReference.bValid
+				? LastReference.PositionCm : State.PositionCm;
+			TerminalReferenceVelocityCmPerSec = LastReference.bValid
+				? LastReference.VelocityCmPerSec : State.VelocityCmPerSec;
+			TerminalReferenceAccelerationCmPerSecSq = LastReference.bValid
+				? LastReference.AccelerationCmPerSecSq
+				: (bFilterInitialized
+					? FilteredAccelerationCmPerSecSq : State.AccelerationCmPerSecSq);
+			bTerminalReferenceInitialized = true;
 		}
 	}
 
 	if (bTerminalConvergenceActive)
 	{
 		const FAircraftMotionPlanSample& Terminal = Samples.Last();
+		const FAircraftRequestedMotionLimits& Limits = Intent.Limits;
+		if (!bTerminalReferenceInitialized)
+		{
+			TerminalReferencePositionCm = State.PositionCm;
+			TerminalReferenceVelocityCmPerSec = State.VelocityCmPerSec;
+			TerminalReferenceAccelerationCmPerSecSq = State.AccelerationCmPerSecSq;
+			bTerminalReferenceInitialized = true;
+		}
+
+		const FVector TerminalErrorCm = Terminal.PositionCm
+			- TerminalReferencePositionCm;
+		const float HorizontalSettleDistanceCm = FMath::Max(
+			1.0f, 0.05f * Intent.Completion.HorizontalToleranceCm);
+		const float VerticalSettleDistanceCm = FMath::Max(
+			1.0f, 0.05f * Intent.Completion.VerticalToleranceCm);
+		const float HorizontalReferenceSpeedCmPerSec = FVector2D(
+			TerminalReferenceVelocityCmPerSec.X,
+			TerminalReferenceVelocityCmPerSec.Y).Size();
+		const bool bReferenceSettled = FVector2D(
+			TerminalErrorCm.X, TerminalErrorCm.Y).Size()
+				<= HorizontalSettleDistanceCm
+			&& FMath::Abs(TerminalErrorCm.Z) <= VerticalSettleDistanceCm
+			&& HorizontalReferenceSpeedCmPerSec <= 1.0f
+			&& FMath::Abs(TerminalReferenceVelocityCmPerSec.Z) <= 1.0f;
+		if (bReferenceSettled)
+		{
+			TerminalReferencePositionCm = Terminal.PositionCm;
+			TerminalReferenceVelocityCmPerSec = FVector::ZeroVector;
+			TerminalReferenceAccelerationCmPerSecSq = FVector::ZeroVector;
+		}
+		else
+		{
+			// A critically damped terminal reference starts from the previously
+			// published state. Jerk limiting then guarantees C2 continuity across
+			// Route tracking -> terminal position convergence.
+			const float ResponseTimeSeconds = FMath::Max(
+				Intent.Completion.StableTimeSeconds, 0.5f);
+			const float NaturalAngularFrequency = 2.0f / ResponseTimeSeconds;
+			const FVector DesiredAcceleration =
+				TerminalErrorCm * FMath::Square(NaturalAngularFrequency)
+				- TerminalReferenceVelocityCmPerSec
+					* (2.0f * NaturalAngularFrequency);
+			// The MPCC reference is sampled at its configured fixed update rate.
+			// Wall-clock scheduling jitter must not change the terminal jerk profile.
+			const float TerminalStepDeltaTime = NominalSolveDeltaTime;
+			const FVector LimitedAcceleration = ApplyJerkLimit(
+				TerminalReferenceAccelerationCmPerSecSq,
+				ProjectAcceleration(DesiredAcceleration, Limits, Capability,
+					TerminalReferenceVelocityCmPerSec),
+				TerminalStepDeltaTime, Limits);
+			TerminalReferencePositionCm += TerminalReferenceVelocityCmPerSec
+					* TerminalStepDeltaTime
+				+ 0.5f * LimitedAcceleration * FMath::Square(TerminalStepDeltaTime);
+			TerminalReferenceVelocityCmPerSec += LimitedAcceleration
+				* TerminalStepDeltaTime;
+			TerminalReferenceAccelerationCmPerSecSq = LimitedAcceleration;
+		}
+
 		EstimatedDistanceCm = PlanLengthCm;
 		EstimatedPlanTimeSeconds = Plan.GetDurationSeconds();
-		OutReference.PositionCm = Terminal.PositionCm;
-		OutReference.VelocityCmPerSec = FVector::ZeroVector;
-		OutReference.AccelerationCmPerSecSq = FVector::ZeroVector;
-		OutReference.ControlAccelerationCmPerSecSq = FVector::ZeroVector;
-		OutReference.DynamicsFeedForwardAccelerationCmPerSecSq = FVector::ZeroVector;
+		OutReference.PositionCm = TerminalReferencePositionCm;
+		OutReference.VelocityCmPerSec = TerminalReferenceVelocityCmPerSec;
+		OutReference.AccelerationCmPerSecSq =
+			TerminalReferenceAccelerationCmPerSecSq;
+		const FVector DragCompensation = ComputeDragCompensation(
+			TerminalReferenceVelocityCmPerSec, State.BodyRotation, Capability);
+		OutReference.ControlAccelerationCmPerSecSq = ProjectControlAcceleration(
+			TerminalReferenceAccelerationCmPerSecSq + DragCompensation,
+			Capability) - DragCompensation;
+		OutReference.DynamicsFeedForwardAccelerationCmPerSecSq = DragCompensation;
 		OutReference.bPositionTrackingEnabled = true;
 		OutReference.YawDegrees = Terminal.YawDegrees;
 		OutReference.YawRateDegPerSec = 0.0f;
@@ -860,6 +939,8 @@ bool FAircraftMpccController::SolvePlan(
 			: EAircraftPathTrackingState::Nominal;
 		Diagnostics.ProgressScale = 1.0f;
 		Diagnostics.SolverIterations = 0;
+		Diagnostics.CommandAccelerationCmPerSecSq =
+			OutReference.ControlAccelerationCmPerSecSq;
 		return true;
 	}
 

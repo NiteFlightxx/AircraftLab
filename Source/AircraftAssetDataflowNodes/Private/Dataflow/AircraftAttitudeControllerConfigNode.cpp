@@ -28,10 +28,10 @@ bool FAircraftAttitudeControllerConfigNode::ApplyToAircraftCollection(FAircraftC
 		&& Config.QuaternionAttitudeGains.Z >= 0.0f;
 	if (!bValidAttitudeGains || !IsValidPid(Config.RollRate) || !IsValidPid(Config.PitchRate)
 		|| !IsValidPid(Config.YawRate) || !FMath::IsFinite(Config.AngularDampingFeedForwardScale)
-		|| !FMath::IsFinite(Config.ReferenceModelNaturalFrequency)
+		|| !FMath::IsFinite(Config.ReferenceModelNaturalAngularFrequencyRadPerSec)
 		|| !FMath::IsFinite(Config.ReferenceModelRateFeedForwardLimitDegPerSec)
 		|| Config.AngularDampingFeedForwardScale < 0.0f
-		|| Config.ReferenceModelNaturalFrequency < 0.5f
+		|| Config.ReferenceModelNaturalAngularFrequencyRadPerSec < 0.5f
 		|| Config.ReferenceModelRateFeedForwardLimitDegPerSec < 0.0f)
 	{
 		return Context.Error(TEXT("Attitude-controller PID or reference-model values are outside their valid range."));
@@ -54,7 +54,7 @@ bool FAircraftAttitudeControllerConfigNode::ApplyToAircraftCollection(FAircraftC
 	SetConfigProperty(Properties, TEXT("FlightController.Attitude.YawRateFreezeIntegralWhenSaturated"), Config.YawRate.bFreezeIntegralWhenSaturated);
 	SetConfigProperty(Properties, TEXT("FlightController.Attitude.AngularDampingFeedForwardScale"), Config.AngularDampingFeedForwardScale);
 	SetConfigProperty(Properties, TEXT("FlightController.Attitude.EnableReferenceModel"), Config.bEnableAttitudeReferenceModel);
-	SetConfigProperty(Properties, TEXT("FlightController.Attitude.ReferenceModelNaturalFrequency"), Config.ReferenceModelNaturalFrequency);
+	SetConfigProperty(Properties, TEXT("FlightController.Attitude.ReferenceModelNaturalAngularFrequency"), Config.ReferenceModelNaturalAngularFrequencyRadPerSec);
 	SetConfigProperty(Properties, TEXT("FlightController.Attitude.ReferenceModelRateFeedForwardLimit"), Config.ReferenceModelRateFeedForwardLimitDegPerSec);
 	return true;
 }

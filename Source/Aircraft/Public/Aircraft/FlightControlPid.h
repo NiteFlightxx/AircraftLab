@@ -145,6 +145,34 @@ struct FAircraftPidState
 		return Output;
 	}
 
+	/**
+	 * Back-calculation anti-windup for limits applied after the scalar PID output.
+	 * RequestedOutput and AchievedOutput use the PID output's physical units. The
+	 * correction unloads the integral toward the acceleration that the vehicle can
+	 * actually produce instead of accumulating against a downstream vector limit.
+	 */
+	void ApplyTrackingAntiWindup(float RequestedOutput, float AchievedOutput,
+		float DeltaSeconds, const FAircraftPidGains& Gains)
+	{
+		if (!Gains.bFreezeIntegralWhenSaturated
+			|| DeltaSeconds <= UE_SMALL_NUMBER
+			|| Gains.Ki <= UE_SMALL_NUMBER
+			|| !FMath::IsFinite(RequestedOutput)
+			|| !FMath::IsFinite(AchievedOutput))
+		{
+			return;
+		}
+
+		const float TrackingGain = 2.0f / FMath::Max(Gains.Kp, 0.1f);
+		Integral += (AchievedOutput - RequestedOutput)
+			* TrackingGain * DeltaSeconds / Gains.Ki;
+		if (Gains.IntegralLimit > 0.0f)
+		{
+			Integral = FMath::Clamp(
+				Integral, -Gains.IntegralLimit, Gains.IntegralLimit);
+		}
+	}
+
 private:
 	/** 一阶低通（IIR）：α = Δt / (1/(2π·f_c) + Δt)。 */
 	float ApplyDerivativeFilter(float RawDerivative, float DeltaSeconds, const FAircraftPidGains& Gains)

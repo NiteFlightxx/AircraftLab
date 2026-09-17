@@ -92,7 +92,8 @@ struct AIRCRAFT_API FAircraftFlightControllerRuntimeConfig
 	float AngularDampingFeedForwardScale = 1.0f;
 	float VerticalDampingFeedForwardScale = 1.0f;
 	bool bEnableAttitudeReferenceModel = true;
-	float ReferenceModelNaturalFrequency = 6.0f;
+	/** Attitude-reference angular natural frequency in rad/s (6 rad/s ~= 0.955 Hz). */
+	float ReferenceModelNaturalAngularFrequencyRadPerSec = 6.0f;
 	float ReferenceModelRateFeedForwardLimitDegPerSec = 100.0f;
 	bool bEnableTiltCompensation = true;
 	float MinimumCosTilt = 0.1f;
